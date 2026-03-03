@@ -1,6 +1,5 @@
 package io.softa.framework.orm.utils;
 
-import io.softa.framework.base.utils.Cast;
 import java.lang.reflect.Field;
 import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.ParameterizedType;
@@ -10,15 +9,19 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.stream.Collectors;
-import tools.jackson.core.type.TypeReference;
-import tools.jackson.databind.JsonNode;
 import jakarta.validation.constraints.NotNull;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.lang3.StringUtils;
+import org.springframework.beans.DirectFieldAccessor;
+import org.springframework.beans.NotWritablePropertyException;
+import org.springframework.beans.TypeMismatchException;
 import org.springframework.cglib.beans.BeanMap;
+import tools.jackson.core.type.TypeReference;
+import tools.jackson.databind.JsonNode;
 
 import io.softa.framework.base.constant.TimeConstant;
 import io.softa.framework.base.exception.IllegalArgumentException;
+import io.softa.framework.base.utils.Cast;
 import io.softa.framework.base.utils.DateUtils;
 import io.softa.framework.base.utils.JsonUtils;
 import io.softa.framework.orm.domain.Filters;
@@ -228,12 +231,20 @@ public class BeanTool {
         } catch (InstantiationException | IllegalAccessException | NoSuchMethodException | InvocationTargetException e) {
             throw new IllegalArgumentException(e.getMessage(), e);
         }
-        BeanMap beanMap = BeanMap.create(bean);
-        row.forEach((field, value) -> {
-            Class<?> fieldTypeClass = beanMap.getPropertyType(field);
+        // Use DirectFieldAccessor to set the field value directly, to avoid the accessibility check of the setter method
+        // Private/Protected setter method cannot be accessed by BeanMap.
+        DirectFieldAccessor accessor = new DirectFieldAccessor(bean);
+        row.forEach((fieldName, value) -> {
+            if (!accessor.isWritableProperty(fieldName)) {
+                if (!ignoreNotExist) {
+                    log.warn("Entity class {} does not contain writable field {}!", entityClass.getSimpleName(), fieldName);
+                }
+                return;
+            }
+            Class<?> fieldTypeClass = accessor.getPropertyType(fieldName);
             if (fieldTypeClass == null) {
                 if (!ignoreNotExist) {
-                    log.warn("Entity class {} does not contain attribute {}!", entityClass.getSimpleName(), field);
+                    log.warn("Entity class {} does not contain attribute {}!", entityClass.getSimpleName(), fieldName);
                 }
                 return;
             }
@@ -246,9 +257,10 @@ public class BeanTool {
                 value = false;
             }
             try {
-                beanMap.put(field, value);
-            } catch (ClassCastException e) {
-                throw new IllegalArgumentException("Field value type conversion error: {0}", e.getMessage());
+                accessor.setPropertyValue(fieldName, value);
+            } catch (TypeMismatchException | NotWritablePropertyException e) {
+                throw new IllegalArgumentException("Field `{0}`, type `{1}`, value `{2}`, assignment error: {3}",
+                        fieldName, fieldTypeClass.getSimpleName(), value, e.getMessage());
             }
         });
         return bean;

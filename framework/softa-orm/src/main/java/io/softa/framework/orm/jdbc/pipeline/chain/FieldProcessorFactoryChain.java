@@ -87,17 +87,6 @@ public class FieldProcessorFactoryChain {
                         Due to database performance considerations, obtain the model cascaded field {0}: {1},
                         the cascade level cannot exceed the {2} level.""",
                 modelName, fieldName, BaseConstant.CASCADE_LEVEL);
-        MetaField customCascadedField = new MetaField();
-        customCascadedField.setModelName(modelName);
-        customCascadedField.setFieldName(fieldName);
-        customCascadedField.setCascadedField(fieldName);
-        customCascadedField.setDynamic(true);
-        // Cascaded field, split by `.` into 2 groups. If there are more than 2 cascading levels, the remaining levels
-        // continue to cascade as a whole in the nested query.
-        customCascadedField.setDependentFields(List.of(StringUtils.split(fieldName, ".", 2)));
-        // Use the type of the last field as the actual value type.
-        MetaField lastField = ModelManager.getLastFieldOfCascaded(modelName, fieldName);
-        customCascadedField.setFieldType(lastField.getFieldType());
-        return customCascadedField;
+        return MetaField.createDynamicField(modelName, fieldName);
     }
 }

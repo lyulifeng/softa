@@ -12,6 +12,7 @@ import lombok.Getter;
 public enum AccountStatus {
     ACTIVE("Active", "Active"),
     UNVERIFIED("Unverified", "Unverified"),
+    LOCKED("Locked", "Locked"),
     FROZEN("Frozen", "Frozen"),
     PENDING_DELETION("PendingDeletion", "Pending Deletion"),
     DELETED("Deleted", "Deleted"),

@@ -99,7 +99,7 @@ public class SysPreDataServiceImpl extends EntityServiceImpl<SysPreData, Long> i
     /**
      * Loads predefined data from a given multipart file.
      * This method processes the provided multipart file to load predefined data into the system.
-     * The file is expected to be in a format that is recognized by the implementation, such as CSV, JSON, or XML.
+     * The file is expected to be in a format recognized by the implementation, such as CSV, JSON, or XML.
      *
      * @param file the multipart file containing the predefined data to be loaded into the system.
      *             The file should not be null and must contain valid data as per the required format.
@@ -137,7 +137,7 @@ public class SysPreDataServiceImpl extends EntityServiceImpl<SysPreData, Long> i
     }
 
     /**
-     * Process JSON format data, parse and map according to the data order in the JSON text to LinkedHashMap,
+     * Process JSON format data, parse and map, according to the data order in the JSON text to LinkedHashMap,
      * and process in order. JSON format data supports two-layer model nesting, i.e., main model and relatedModel,
      * but they will be created separately when loading. The main model data is created first to generate the ID,
      * then the relatedModel data is created.
@@ -160,9 +160,9 @@ public class SysPreDataServiceImpl extends EntityServiceImpl<SysPreData, Long> i
     }
 
     /**
-     * Process CSV format data, parse and map according to the data order in the CSV text.
-     * The first line of the CSV content is the header, and the data content is converted to a list of map.
-     * Default separator is comma, and the quote character is double quote
+     * Process CSV format data, parse and map, according to the data order in the CSV text.
+     * The first line of the CSV content is the header, and the data content is converted to a list of maps.
+     * The default separator is comma, and the quote character is double quote
      *
      * @param modelName Model name
      * @param content CSV string data content
@@ -241,8 +241,8 @@ public class SysPreDataServiceImpl extends EntityServiceImpl<SysPreData, Long> i
      */
     private Serializable handlePredefinedData(String model, Map<String, Object> row) {
         Map<String, Object> oneToManyMap = new LinkedHashMap<>();
-        // Extract OneToMany fields contained in the predefined data and put them in the OneToManyMap,
-        // and then remove them from row, used to independently handle the creation or update of associated model.
+        // Extract OneToMany fields contained in the predefined data and put them in the OneToManyMap
+        // and then remove them from the row, used to independently handle the creation or update of the associated model.
         Set<String> oneToManyFields = row.keySet().stream()
                 .filter(field -> FieldType.ONE_TO_MANY.equals(ModelManager.getModelField(model, field).getFieldType()))
                 .collect(Collectors.toSet());
@@ -284,7 +284,7 @@ public class SysPreDataServiceImpl extends EntityServiceImpl<SysPreData, Long> i
                         return handlePredefinedData(oneToManyMetaField.getRelatedModel(), castedItem);
                     })
                     .toList();
-            // Delete Many side data, but retain those that appear in the predefined data file.
+            // Delete Many side data but retain those that appear in the predefined data file.
             Filters deleteFilters = new Filters().eq(oneToManyMetaField.getRelatedField(), mainId);
             if (!manyIds.isEmpty()) {
                 deleteFilters.notIn(ID, manyIds);

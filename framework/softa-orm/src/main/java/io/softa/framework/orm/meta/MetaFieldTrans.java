@@ -1,14 +1,16 @@
 package io.softa.framework.orm.meta;
 
-import lombok.Data;
-
 import java.io.Serial;
 import java.io.Serializable;
+import lombok.*;
 
 /**
  * MetaFieldTrans object
  */
-@Data
+@Getter
+@Setter(AccessLevel.PACKAGE)
+@ToString
+@EqualsAndHashCode
 public class MetaFieldTrans implements Serializable {
 
     @Serial

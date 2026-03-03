@@ -29,7 +29,7 @@ import io.softa.framework.web.response.ApiResponse;
  * Model Common Controller.
  * The convertType of ModelController is `REFERENCE` by default,
  * means that the value of expandable fields will be converted to a reference object.
- * The value of ManyToOne/OneToOne field is a ModelReference object.
+ * The value of the ManyToOne / OneToOne field is a ModelReference object.
  * The value of Option/MultiOption field is a OptionReference object or List<OptionReference> object.
  *
  * @param <K> primary key type
@@ -128,7 +128,7 @@ public class ModelController<K extends Serializable> {
 
     /**
      * Get one row by id.
-     * If the fields is not specified, all accessible fields as the default.
+     * If the fields are not specified, all accessible fields as the default.
      * Set `convertType = REFERENCE` to get the reference object of expandable fields.
      *
      * @param modelName     model name
@@ -369,7 +369,7 @@ public class ModelController<K extends Serializable> {
     }
 
     /**
-     * Delete one slice of timeline model by `sliceId`, the primary key of timeline model.
+     * Delete one slice of the timeline model by `sliceId`, the primary key of the timeline model.
      *
      * @param modelName model name
      * @param sliceId   data id

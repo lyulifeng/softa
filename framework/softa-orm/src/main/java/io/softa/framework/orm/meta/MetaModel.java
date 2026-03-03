@@ -1,19 +1,20 @@
 package io.softa.framework.orm.meta;
 
-import io.softa.framework.orm.enums.IdStrategy;
-import io.softa.framework.orm.enums.StorageType;
 import java.io.Serial;
 import java.io.Serializable;
-import java.util.ArrayList;
-import java.util.HashSet;
-import java.util.List;
-import java.util.Set;
-import lombok.Data;
+import java.util.*;
+import lombok.*;
+
+import io.softa.framework.orm.enums.IdStrategy;
+import io.softa.framework.orm.enums.StorageType;
 
 /**
  * MetaModel object
  */
-@Data
+@Getter
+@Setter(AccessLevel.PACKAGE)
+@ToString
+@EqualsAndHashCode
 public class MetaModel implements Serializable {
 
     @Serial
@@ -37,9 +38,11 @@ public class MetaModel implements Serializable {
     private String defaultOrder;
 
     // Display name fields
+    @Setter(AccessLevel.NONE)
     private List<String> displayName;
 
     // Search name fields
+    @Setter(AccessLevel.NONE)
     private List<String> searchName;
 
     private String description;
@@ -61,17 +64,58 @@ public class MetaModel implements Serializable {
 
     private String serviceName;
 
+    @Setter(AccessLevel.NONE)
     private List<String> businessKey;
 
     private String partitionField;
 
     /** Advance attributes */
+    @Setter(AccessLevel.NONE)
     private List<MetaField> storedComputedFields = new ArrayList<>();
 
+    @Setter(AccessLevel.NONE)
     private List<MetaField> storedCascadedFields = new ArrayList<>();
 
+    @Setter(AccessLevel.NONE)
     private Set<String> auditCreateFields = new HashSet<>();
 
+    @Setter(AccessLevel.NONE)
     private Set<String> auditUpdateFields = new HashSet<>();
+
+    protected void setDisplayName(List<String> displayName) {
+        this.displayName = Collections.unmodifiableList(displayName);
+    }
+
+    protected void setSearchName(List<String> searchName) {
+        this.searchName = Collections.unmodifiableList(searchName);
+    }
+
+    protected void addStoredComputedField(MetaField metaField) {
+        this.storedComputedFields.add(metaField);
+    }
+
+    protected void addStoredCascadedField(MetaField metaField) {
+        this.storedCascadedFields.add(metaField);
+    }
+
+    protected void addAuditCreateField(String fieldName) {
+        this.auditCreateFields.add(fieldName);
+    }
+
+    protected void addAuditUpdateField(String fieldName) {
+        this.auditUpdateFields.add(fieldName);
+    }
+
+    /**
+     * Seal the model fields and related attributes to make them immutable after initialization,
+     * preventing accidental modification.
+     */
+    protected void sealModelFields() {
+        this.storedComputedFields = Collections.unmodifiableList(this.storedComputedFields);
+        this.storedCascadedFields = Collections.unmodifiableList(this.storedCascadedFields);
+        this.auditCreateFields = Collections.unmodifiableSet(this.auditCreateFields);
+        this.auditUpdateFields = Collections.unmodifiableSet(this.auditUpdateFields);
+    }
+
 
 }

@@ -1,5 +1,6 @@
 package io.softa.starter.user.service;
 
+import java.util.List;
 import java.util.Optional;
 import jakarta.validation.constraints.NotNull;
 
@@ -31,7 +32,7 @@ public interface UserAccountService extends EntityService<UserAccount, Long> {
     Optional<UserAccount> getUserByMobile(String mobile);
 
     /**
-     * Register new user
+     * Register a new user
      *
      * @param accountInfo User account information
      * @param profileInfo User profile information
@@ -40,7 +41,7 @@ public interface UserAccountService extends EntityService<UserAccount, Long> {
     UserInfo registerNewUser(@NotNull UserAccountDTO accountInfo, @NotNull UserProfileDTO profileInfo);
 
     /**
-     * Register new user (legacy method for backward compatibility)
+     * Register a new user (legacy method for backward compatibility)
      *
      * @param email Email
      * @param mobile Mobile
@@ -50,7 +51,7 @@ public interface UserAccountService extends EntityService<UserAccount, Long> {
     UserInfo registerNewUser(String email, String mobile, String password);
 
     /**
-     * Change current user's password
+     * Change the current user's password
      *
      * @param currentPassword Current password
      * @param newPassword New password
@@ -65,4 +66,16 @@ public interface UserAccountService extends EntityService<UserAccount, Long> {
      * @return Success status
      */
     boolean forceResetPassword(Long userId, String newPassword);
+
+    /**
+     * Lock a user account
+     */
+    void lockAccount(Long userId);
+
+    /**
+     * Unlock a user account
+     */
+    void unlockAccount(Long userId, String reason);
+
+    void unlockAccounts(List<Long> userIds, String reason);
 }

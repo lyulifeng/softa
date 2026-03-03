@@ -1,4 +1,4 @@
-PUT /test_xxxx_changelog
+PUT /dev_local_changelog
 {
     "mappings": {
         "dynamic": "false",

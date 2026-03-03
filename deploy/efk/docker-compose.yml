@@ -1,7 +1,7 @@
 services:
 
   elasticsearch:
-    image: elasticsearch:9.2.4
+    image: elasticsearch:9.3.1
     environment:
       discovery.type: single-node
       xpack.security.enabled: false
@@ -11,10 +11,29 @@ services:
     ports:
       - 9200:9200
       - 9300:9300
+    # 容器层资源限制
+    deploy:
+      resources:
+        limits:
+          cpus: '1'           # 限制使用 1 个 CPU 核心
+          memory: 1GB            # 限制容器最大使用 1G 内存 (需大于 ES_JAVA_OPTS)
+        reservations:
+          memory: 1GB          # 保证至少分配 512M 内存
 
   kibana:
-    image: kibana:9.2.4
+    image: kibana:9.3.1
     depends_on:
       - elasticsearch
     ports:
       - 5601:5601
+    environment:
+      # Kibana 连接 ES 的地址
+      ELASTICSEARCH_HOSTS: http://elasticsearch:9200
+    # 容器层资源限制
+    deploy:
+      resources:
+        limits:
+          cpus: '1'           # 限制使用 0.5 个 CPU 核心
+          memory: 1GB          # 限制容器最大使用 512M 内存
+        reservations:
+          memory: 512M

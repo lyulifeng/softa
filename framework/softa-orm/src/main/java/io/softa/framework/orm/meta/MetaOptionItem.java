@@ -2,7 +2,7 @@ package io.softa.framework.orm.meta;
 
 import java.io.Serial;
 import java.io.Serializable;
-import lombok.Data;
+import lombok.*;
 import org.apache.commons.lang3.StringUtils;
 
 import io.softa.framework.base.context.ContextHolder;
@@ -10,7 +10,10 @@ import io.softa.framework.base.context.ContextHolder;
 /**
  * MetaOptionItem
  */
-@Data
+@Getter
+@Setter(AccessLevel.PACKAGE)
+@ToString
+@EqualsAndHashCode
 public class MetaOptionItem implements Serializable {
 
     @Serial

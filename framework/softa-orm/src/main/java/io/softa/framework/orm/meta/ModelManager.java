@@ -53,6 +53,8 @@ public class ModelManager {
             this.validateFieldAttributes(fields);
             // Identify the audit fields of the models.
             this.identifyAuditFields(models);
+            // Seal the model attributes to make them immutable after initialization
+            this.sealModelAttributes(models);
         }
     }
 
@@ -163,23 +165,35 @@ public class ModelManager {
     private void identifyAuditFields(List<MetaModel> metaModels) {
         for (MetaModel metaModel : metaModels) {
             if (MODEL_FIELDS.get(metaModel.getModelName()).containsKey(ModelConstant.CREATED_ID)) {
-                metaModel.getAuditCreateFields().add(ModelConstant.CREATED_ID);
+                metaModel.addAuditCreateField(ModelConstant.CREATED_ID);
             }
             if (MODEL_FIELDS.get(metaModel.getModelName()).containsKey(ModelConstant.UPDATED_ID)) {
-                metaModel.getAuditUpdateFields().add(ModelConstant.UPDATED_ID);
+                metaModel.addAuditUpdateField(ModelConstant.UPDATED_ID);
             }
             if (MODEL_FIELDS.get(metaModel.getModelName()).containsKey(ModelConstant.CREATED_BY)) {
-                metaModel.getAuditCreateFields().add(ModelConstant.CREATED_BY);
+                metaModel.addAuditCreateField(ModelConstant.CREATED_BY);
             }
             if (MODEL_FIELDS.get(metaModel.getModelName()).containsKey(ModelConstant.UPDATED_BY)) {
-                metaModel.getAuditUpdateFields().add(ModelConstant.UPDATED_BY);
+                metaModel.addAuditUpdateField(ModelConstant.UPDATED_BY);
             }
             if (MODEL_FIELDS.get(metaModel.getModelName()).containsKey(ModelConstant.CREATED_TIME)) {
-                metaModel.getAuditCreateFields().add(ModelConstant.CREATED_TIME);
+                metaModel.addAuditCreateField(ModelConstant.CREATED_TIME);
             }
             if (MODEL_FIELDS.get(metaModel.getModelName()).containsKey(ModelConstant.UPDATED_TIME)) {
-                metaModel.getAuditUpdateFields().add(ModelConstant.UPDATED_TIME);
+                metaModel.addAuditUpdateField(ModelConstant.UPDATED_TIME);
             }
+        }
+    }
+
+    /**
+     * Seal the model fields and related attributes to make them immutable after initialization,
+     * preventing accidental modification.
+     *
+     * @param metaModels model metadata objects
+     */
+    private void sealModelAttributes(List<MetaModel> metaModels) {
+        for (MetaModel metaModel : metaModels) {
+            metaModel.sealModelFields();
         }
     }
 
@@ -429,7 +443,7 @@ public class ModelManager {
         if (!metaField.isDynamic()) {
             // Update the stored cascaded fields cache of the model
             MetaModel metaModel = MODEL_MAP.get(modelName);
-            metaModel.getStoredCascadedFields().add(metaField);
+            metaModel.addStoredCascadedField(metaField);
         }
     }
 
@@ -462,7 +476,7 @@ public class ModelManager {
             validateStoredFields(metaField.getModelName(), metaField.getDependentFields());
             // Update the stored computed fields cache of the model
             MetaModel metaModel = MODEL_MAP.get(metaField.getModelName());
-            metaModel.getStoredComputedFields().add(metaField);
+            metaModel.addStoredComputedField(metaField);
         }
     }
 

@@ -1,31 +1,44 @@
 package io.softa.starter.metadata.controller;
 
+import java.util.List;
+import io.swagger.v3.oas.annotations.Operation;
+import io.swagger.v3.oas.annotations.Parameter;
+import io.swagger.v3.oas.annotations.tags.Tag;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.web.bind.annotation.*;
+
 import io.softa.framework.base.enums.SystemUser;
 import io.softa.framework.base.utils.Assert;
 import io.softa.framework.orm.annotation.SwitchUser;
 import io.softa.framework.web.dto.MetadataUpgradePackage;
 import io.softa.framework.web.response.ApiResponse;
+import io.softa.starter.metadata.controller.dto.MetaModelDTO;
 import io.softa.starter.metadata.service.MetadataService;
-import io.swagger.v3.oas.annotations.Operation;
-import io.swagger.v3.oas.annotations.tags.Tag;
-import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.web.bind.annotation.PostMapping;
-import org.springframework.web.bind.annotation.RequestBody;
-import org.springframework.web.bind.annotation.RequestMapping;
-import org.springframework.web.bind.annotation.RestController;
-
-import java.util.List;
 
 /**
  * Metadata Upgrade controller
  */
-@Tag(name = "Metadata Upgrade API")
+@Tag(name = "Metadata API")
 @RestController
 @RequestMapping("/metadata")
 public class MetadataController {
 
     @Autowired
     private MetadataService metadataService;
+
+    /**
+     * Get the MetaModel object by modelName
+     *
+     * @param modelName model name
+     * @return metaModel object
+     */
+    @GetMapping("/getMetaModel")
+    @Operation(summary = "getMetaModel", description = "Get the MetaModel object by modelName")
+    @Parameter(name = "modelName", description = "Model name", required = true)
+    public ApiResponse<MetaModelDTO> getMetaModelDTO(String modelName) {
+        Assert.notBlank(modelName, "Model name cannot be empty.");
+        return ApiResponse.success(metadataService.getMetaModelDTO(modelName));
+    }
 
     /**
      * Upgrades the metadata of multiple models, all within a single transaction

@@ -37,6 +37,9 @@ public enum WidgetType {
     // OneToMany, ManyToMany fields
     CHECK_BOX("CheckBox", "CheckBox"),
 
+    // Tree structure, such as org structure, category, etc.
+    SELECT_TREE("SelectTree", "Tree Select"),
+
     // Single attachment, file key stored in a String field
     IMAGE("Image", "Single Image"),
 

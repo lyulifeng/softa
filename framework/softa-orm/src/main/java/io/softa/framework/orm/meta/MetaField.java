@@ -2,8 +2,9 @@ package io.softa.framework.orm.meta;
 
 import java.io.Serial;
 import java.io.Serializable;
+import java.util.Collections;
 import java.util.List;
-import lombok.Data;
+import lombok.*;
 import org.apache.commons.lang3.StringUtils;
 
 import io.softa.framework.base.context.ContextHolder;
@@ -14,7 +15,10 @@ import io.softa.framework.orm.enums.WidgetType;
 /**
  * MetaField object
  */
-@Data
+@Getter
+@Setter(AccessLevel.PACKAGE)
+@ToString
+@EqualsAndHashCode
 public class MetaField implements Serializable {
 
     @Serial
@@ -55,7 +59,7 @@ public class MetaField implements Serializable {
     // Field level filters used by frontend
     private String filters;
 
-    // Special values: `now` for Date and DateTime fields. Ignore case.
+    // Special values: `now` for Date and DateTime fields. Ignore a case.
     private String defaultValue;
 
     // Memory compute attribute: Instantiated object of the default value.
@@ -86,6 +90,7 @@ public class MetaField implements Serializable {
      * ComputedField scenario: field1 + field2 + field3 -> [field1, field2, field3]
      * CascadedField scenario: field1.field2 -> [field1, field2]
      */
+    @Setter(AccessLevel.NONE)
     private List<String> dependentFields;
 
     private boolean dynamic;
@@ -116,4 +121,31 @@ public class MetaField implements Serializable {
     public boolean isDynamicCascadedField() {
         return dynamic && StringUtils.isNotBlank(cascadedField);
     }
+
+    protected void setDependentFields(List<String> dependentFields) {
+        this.dependentFields = Collections.unmodifiableList(dependentFields);
+    }
+
+    /**
+     * Factory method to create a dynamic virtual field for query processing.
+     */
+    public static MetaField createDynamicField(String modelName, String fieldName) {
+        MetaField metaField = new MetaField();
+        metaField.modelName = modelName;
+        metaField.fieldName = fieldName;
+        metaField.cascadedField = fieldName;
+        metaField.dynamic = true;
+
+        // For dynamic virtual fields, split the fieldName by `.` into 2 groups.
+        // If there are more than 2 cascading levels,
+        // the remaining levels continue to cascade as a whole in the nested query.
+        String[] parts = fieldName.split("\\.", 2);
+        metaField.dependentFields = List.of(parts);
+
+        // Use the type of the last field as the actual value type.
+        MetaField lastField = ModelManager.getLastFieldOfCascaded(modelName, fieldName);
+        metaField.fieldType = lastField.getFieldType();
+        return metaField;
+    }
+
 }

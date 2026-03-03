@@ -1,15 +1,15 @@
 package io.softa.framework.orm.meta;
 
-import io.softa.framework.base.utils.Assert;
-import io.softa.framework.orm.jdbc.JdbcService;
-import lombok.extern.slf4j.Slf4j;
-import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.stereotype.Component;
-
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
+import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.stereotype.Component;
+
+import io.softa.framework.base.utils.Assert;
+import io.softa.framework.orm.jdbc.JdbcService;
 
 /**
  * Global option set cache manager
@@ -52,7 +52,7 @@ public class OptionManager {
     public static List<MetaOptionItem> getMetaOptionItems(String optionSetCode) {
         Assert.isTrue(META_OPTION_SET_MAP.containsKey(optionSetCode),
                 "optionSetCode {0} does not exist in OptionSet metadata.", optionSetCode);
-        return List.copyOf(META_OPTION_SET_MAP.get(optionSetCode).values());
+        return META_OPTION_SET_MAP.get(optionSetCode).values().stream().toList();
     }
 
     /**

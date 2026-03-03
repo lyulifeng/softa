@@ -3,6 +3,7 @@ package io.softa.starter.metadata.service.impl;
 import java.io.Serializable;
 import java.util.List;
 import java.util.Map;
+import java.util.stream.Collectors;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -12,9 +13,14 @@ import io.softa.framework.base.constant.BaseConstant;
 import io.softa.framework.base.context.ContextHolder;
 import io.softa.framework.base.utils.Assert;
 import io.softa.framework.base.utils.Cast;
+import io.softa.framework.orm.meta.MetaField;
+import io.softa.framework.orm.meta.MetaModel;
+import io.softa.framework.orm.meta.ModelManager;
 import io.softa.framework.orm.service.ModelService;
 import io.softa.framework.web.dto.MetadataUpgradePackage;
 import io.softa.starter.metadata.constant.MetadataConstant;
+import io.softa.starter.metadata.controller.dto.MetaFieldDTO;
+import io.softa.starter.metadata.controller.dto.MetaModelDTO;
 import io.softa.starter.metadata.message.InnerBroadcastProducer;
 import io.softa.starter.metadata.message.dto.InnerBroadcastMessage;
 import io.softa.starter.metadata.message.enums.InnerBroadcastType;
@@ -31,6 +37,63 @@ public class MetadataServiceImpl implements MetadataService {
 
     @Autowired
     private InnerBroadcastProducer innerBroadcastProducer;
+
+    private MetaFieldDTO convertMetaFieldToDTO(MetaField metaField) {
+        MetaFieldDTO fieldDTO = new MetaFieldDTO();
+        fieldDTO.setLabelName(metaField.getLabelName());
+        fieldDTO.setFieldName(metaField.getFieldName());
+        fieldDTO.setModelName(metaField.getModelName());
+        fieldDTO.setFieldType(metaField.getFieldType());
+        fieldDTO.setDescription(metaField.getDescription());
+        fieldDTO.setRequired(metaField.isRequired());
+        fieldDTO.setLength(metaField.getLength());
+        fieldDTO.setScale(metaField.getScale());
+        fieldDTO.setDefaultValue(metaField.getDefaultValueObject());
+        fieldDTO.setReadonly(metaField.isReadonly());
+        fieldDTO.setHidden(metaField.isHidden());
+        fieldDTO.setTranslatable(metaField.isTranslatable());
+        fieldDTO.setNonCopyable(metaField.isNonCopyable());
+        fieldDTO.setUnsearchable(metaField.isUnsearchable());
+        fieldDTO.setComputed(metaField.isComputed());
+        fieldDTO.setDynamic(metaField.isDynamic());
+        fieldDTO.setEncrypted(metaField.isEncrypted());
+        fieldDTO.setOptionSetCode(metaField.getOptionSetCode());
+        fieldDTO.setRelatedModel(metaField.getRelatedModel());
+        fieldDTO.setRelatedField(metaField.getRelatedField());
+        fieldDTO.setJoinModel(metaField.getJoinModel());
+        fieldDTO.setJoinLeft(metaField.getJoinLeft());
+        fieldDTO.setJoinRight(metaField.getJoinRight());
+        fieldDTO.setCascadedField(metaField.getCascadedField());
+        fieldDTO.setFilters(metaField.getFilters());
+        fieldDTO.setMaskingType(metaField.getMaskingType());
+        fieldDTO.setWidgetType(metaField.getWidgetType());
+        return fieldDTO;
+    }
+
+    /**
+     * Get the MetaModelDTO object by modelName
+     *
+     * @param modelName model name
+     * @return metaModelDTO object
+     */
+    @Override
+    public MetaModelDTO getMetaModelDTO(String modelName) {
+        MetaModel metaModel = ModelManager.getModel(modelName);
+        MetaModelDTO metaModelDTO = new MetaModelDTO();
+        metaModelDTO.setLabelName(metaModel.getLabelName());
+        metaModelDTO.setModelName(metaModel.getModelName());
+        metaModelDTO.setDescription(metaModel.getDescription());
+        metaModelDTO.setDisplayName(metaModel.getDisplayName());
+        metaModelDTO.setSearchName(metaModel.getSearchName());
+        metaModelDTO.setDefaultOrder(metaModel.getDefaultOrder());
+        metaModelDTO.setTimeline(metaModel.isTimeline());
+        // Get the fields of the model and convert them to DTOs
+        List<MetaField> metaFields = ModelManager.getModelFields(modelName);
+        Map<String, MetaFieldDTO> fieldDTOMap = metaFields.stream().
+                collect(Collectors.toMap(MetaField::getFieldName, this::convertMetaFieldToDTO));
+        metaModelDTO.setModelFields(fieldDTOMap);
+        return metaModelDTO;
+    }
 
     /**
      * The size of operation data in a single API call cannot exceed the MAX_BATCH_SIZE.

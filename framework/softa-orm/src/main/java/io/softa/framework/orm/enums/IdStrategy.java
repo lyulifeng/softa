@@ -17,7 +17,7 @@ public enum IdStrategy {
     DB_AUTO_ID("DbAutoID", "DB Auto-increment ID"),
 
     /**
-     * Distributed Unique ID of Long type (64-bit)
+     * Distributed Unique ID of a Long type (64-bit)
      * An implementation of SnowflakeId by CosID library.
      * Time-sorted, with 41-bit timestamp, 10-bit machine ID, and 12-bit sequence number.
      * Suitable for distributed systems to ensure uniqueness across multiple nodes.

@@ -1,13 +1,22 @@
 package io.softa.starter.metadata.service;
 
-import io.softa.framework.web.dto.MetadataUpgradePackage;
-
 import java.util.List;
+
+import io.softa.framework.web.dto.MetadataUpgradePackage;
+import io.softa.starter.metadata.controller.dto.MetaModelDTO;
 
 /**
  * Metadata Upgrade Service.
  */
 public interface MetadataService {
+
+    /**
+     * Get the MetaModelDTO object by modelName
+     *
+     * @param modelName model name
+     * @return metaModelDTO object
+     */
+    MetaModelDTO getMetaModelDTO(String modelName);
 
     /**
      /**

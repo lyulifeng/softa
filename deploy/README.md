@@ -35,6 +35,8 @@ Access the Kibana console at http://localhost:5601
 
 Or you can specify the `spring.elasticsearch.uris` property to connect to your own Elasticsearch cluster.
 
+Then create index using `demo-app/init_es/create_index`.
+
 # 3. Start Pulsar by Docker Compose (Optional)
 ```bash
 docker-compose -f deploy/pulsar/docker-compose.yml up -d

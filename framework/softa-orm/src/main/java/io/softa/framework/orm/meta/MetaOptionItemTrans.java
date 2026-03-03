@@ -1,14 +1,16 @@
 package io.softa.framework.orm.meta;
 
-import lombok.Data;
-
 import java.io.Serial;
 import java.io.Serializable;
+import lombok.*;
 
 /**
  * MetaOptionItemTrans object
  */
-@Data
+@Getter
+@Setter(AccessLevel.PACKAGE)
+@ToString
+@EqualsAndHashCode
 public class MetaOptionItemTrans implements Serializable {
 
     @Serial

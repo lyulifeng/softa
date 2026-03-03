@@ -1,5 +1,6 @@
 package io.softa.starter.user.service.impl;
 
+import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
 import jakarta.validation.constraints.NotNull;
@@ -173,5 +174,31 @@ public class UserAccountServiceImpl extends EntityServiceImpl<UserAccount, Long>
 
         log.info("User ID {} password was reset by admin.", userId);
         return true;
+    }
+
+    @Override
+    @Transactional
+    public void lockAccount(Long userId) {
+        UserAccount user = this.getById(userId).orElseThrow(() -> new BusinessException("User not found."));
+        user.setStatus(AccountStatus.LOCKED);
+        this.updateOne(user);
+    }
+
+    @Override
+    @Transactional
+    public void unlockAccount(Long userId, String reason) {
+        // TODO: Log the unlock reason for auditing purposes
+        UserAccount user = this.getById(userId).orElseThrow(() -> new BusinessException("User not found."));
+        user.setStatus(AccountStatus.ACTIVE);
+        this.updateOne(user);
+    }
+
+    @Override
+    @Transactional
+    public void unlockAccounts(List<Long> userIds, String reason) {
+        Filters filters = new Filters().in(UserAccount::getId, userIds);
+        UserAccount updateEntity = new UserAccount();
+        updateEntity.setStatus(AccountStatus.ACTIVE);
+        this.updateByFilter(filters, updateEntity);
     }
 }

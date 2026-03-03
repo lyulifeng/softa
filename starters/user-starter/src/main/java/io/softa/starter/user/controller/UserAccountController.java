@@ -1,11 +1,13 @@
 package io.softa.starter.user.controller;
 
+import java.util.List;
 import java.util.Optional;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 import jakarta.validation.Valid;
+import jakarta.validation.constraints.NotNull;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -21,6 +23,8 @@ import io.softa.framework.web.controller.EntityController;
 import io.softa.framework.web.response.ApiResponse;
 import io.softa.framework.web.utils.CookieUtils;
 import io.softa.starter.user.dto.ChangePasswordDTO;
+import io.softa.starter.user.dto.UnlockAccountDTO;
+import io.softa.starter.user.dto.UnlockAccountsDTO;
 import io.softa.starter.user.dto.UserAccountDTO;
 import io.softa.starter.user.entity.UserAccount;
 import io.softa.starter.user.service.UserAccountService;
@@ -44,6 +48,42 @@ public class UserAccountController extends EntityController<UserAccountService, 
         cacheService.clear(RedisConstant.SESSION + sessionId);
         CookieUtils.clearCookie(response, BaseConstant.SESSION_ID);
         return ApiResponse.success();
+    }
+
+    @Operation(summary = "Lock User Account")
+    @PostMapping("/lockAccount")
+    public ApiResponse<Void> lockAccount(@RequestParam @NotNull Long id) {
+        validateNotSelf(id, "lock");
+        service.lockAccount(id);
+        return ApiResponse.success();
+    }
+
+    @Operation(summary = "Unlock User Account")
+    @PostMapping("/unlockAccount")
+    public ApiResponse<Void> unlockAccount(@RequestBody @Valid UnlockAccountDTO unlockAccountDTO) {
+        Long userId = unlockAccountDTO.getId();
+        validateNotSelf(userId, "unlock");
+        service.unlockAccount(userId, unlockAccountDTO.getReason());
+        return ApiResponse.success();
+    }
+
+    @Operation(summary = "Batch Unlock User Accounts")
+    @PostMapping("/unlockAccounts")
+    public ApiResponse<Void> unlockAccounts(@RequestBody @Valid UnlockAccountsDTO unlockAccountsDTO) {
+        List<Long> userIds = unlockAccountsDTO.getIds();
+        Long currentUserId = ContextHolder.getContext().getUserId();
+        if (currentUserId != null && userIds.contains(currentUserId)) {
+            throw new BusinessException("You cannot unlock your own account.");
+        }
+        service.unlockAccounts(userIds, unlockAccountsDTO.getReason());
+        return ApiResponse.success();
+    }
+
+    private void validateNotSelf(Long userId, String action) {
+        Long currentUserId = ContextHolder.getContext().getUserId();
+        if (currentUserId != null && currentUserId.equals(userId)) {
+            throw new BusinessException("You cannot " + action + " your own account.");
+        }
     }
 
     @Operation(summary = "changeMyPassword")
