@@ -8,9 +8,9 @@ import java.util.HashMap;
 import java.util.Map;
 import org.apache.commons.lang3.StringUtils;
 
-import io.softa.framework.base.enums.AccessType;
 import io.softa.framework.base.utils.DateUtils;
 import io.softa.framework.orm.compute.ComputeUtils;
+import io.softa.framework.orm.enums.AccessType;
 import io.softa.framework.orm.enums.FieldType;
 import io.softa.framework.orm.meta.MetaField;
 import io.softa.framework.orm.meta.ModelManager;

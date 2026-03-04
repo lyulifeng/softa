@@ -1,4 +1,4 @@
-package io.softa.framework.base.enums;
+package io.softa.framework.orm.enums;
 
 import lombok.AllArgsConstructor;
 import lombok.Getter;

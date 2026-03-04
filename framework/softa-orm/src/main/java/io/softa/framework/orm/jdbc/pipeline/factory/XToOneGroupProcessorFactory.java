@@ -4,9 +4,9 @@ import java.util.HashMap;
 import java.util.Map;
 import org.apache.commons.lang3.StringUtils;
 
-import io.softa.framework.base.enums.AccessType;
 import io.softa.framework.orm.constant.ModelConstant;
 import io.softa.framework.orm.domain.FlexQuery;
+import io.softa.framework.orm.enums.AccessType;
 import io.softa.framework.orm.enums.ConvertType;
 import io.softa.framework.orm.enums.FieldType;
 import io.softa.framework.orm.jdbc.pipeline.processor.FieldProcessor;

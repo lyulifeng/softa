@@ -1,12 +1,12 @@
 package io.softa.framework.orm.jdbc.pipeline.processor;
 
-import io.softa.framework.base.enums.AccessType;
-import io.softa.framework.base.exception.IllegalArgumentException;
-import io.softa.framework.orm.domain.Filters;
-import io.softa.framework.orm.meta.MetaField;
+import java.util.Map;
 import org.apache.commons.lang3.StringUtils;
 
-import java.util.Map;
+import io.softa.framework.base.exception.IllegalArgumentException;
+import io.softa.framework.orm.domain.Filters;
+import io.softa.framework.orm.enums.AccessType;
+import io.softa.framework.orm.meta.MetaField;
 
 /**
  * Filter field processor

@@ -1,9 +1,9 @@
 package io.softa.framework.orm.jdbc.pipeline.factory;
 
+import io.softa.framework.orm.enums.AccessType;
 import io.softa.framework.orm.jdbc.pipeline.processor.ComputedProcessor;
 import io.softa.framework.orm.jdbc.pipeline.processor.FieldProcessor;
 import io.softa.framework.orm.meta.MetaField;
-import io.softa.framework.base.enums.AccessType;
 
 /**
  * Compute field processor factory.

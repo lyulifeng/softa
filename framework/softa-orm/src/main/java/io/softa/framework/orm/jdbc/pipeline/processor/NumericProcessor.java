@@ -1,12 +1,12 @@
 package io.softa.framework.orm.jdbc.pipeline.processor;
 
-import io.softa.framework.base.enums.AccessType;
-import io.softa.framework.base.exception.IllegalArgumentException;
-import io.softa.framework.orm.enums.FieldType;
-import io.softa.framework.orm.meta.MetaField;
+import java.util.Map;
 import lombok.extern.slf4j.Slf4j;
 
-import java.util.Map;
+import io.softa.framework.base.exception.IllegalArgumentException;
+import io.softa.framework.orm.enums.AccessType;
+import io.softa.framework.orm.enums.FieldType;
+import io.softa.framework.orm.meta.MetaField;
 
 /**
  * Numeric field processor.

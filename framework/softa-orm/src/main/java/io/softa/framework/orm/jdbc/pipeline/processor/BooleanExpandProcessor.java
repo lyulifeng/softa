@@ -1,15 +1,15 @@
 package io.softa.framework.orm.jdbc.pipeline.processor;
 
+import java.util.List;
+import java.util.Map;
+import lombok.extern.slf4j.Slf4j;
+
 import io.softa.framework.base.constant.BaseConstant;
-import io.softa.framework.base.enums.AccessType;
+import io.softa.framework.orm.enums.AccessType;
 import io.softa.framework.orm.enums.ConvertType;
 import io.softa.framework.orm.meta.MetaField;
 import io.softa.framework.orm.meta.MetaOptionItem;
 import io.softa.framework.orm.meta.OptionManager;
-import lombok.extern.slf4j.Slf4j;
-
-import java.util.List;
-import java.util.Map;
 
 /**
  * Boolean field expand processor

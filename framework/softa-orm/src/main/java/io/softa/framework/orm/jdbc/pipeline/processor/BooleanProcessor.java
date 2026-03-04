@@ -1,8 +1,9 @@
 package io.softa.framework.orm.jdbc.pipeline.processor;
 
-import io.softa.framework.base.enums.AccessType;
-import io.softa.framework.orm.meta.MetaField;
 import lombok.extern.slf4j.Slf4j;
+
+import io.softa.framework.orm.enums.AccessType;
+import io.softa.framework.orm.meta.MetaField;
 
 /**
  * Boolean field processor

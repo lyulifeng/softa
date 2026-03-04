@@ -7,8 +7,8 @@ import java.util.Map;
 import java.util.function.Supplier;
 
 import io.softa.framework.base.config.SystemConfig;
-import io.softa.framework.base.enums.AccessType;
 import io.softa.framework.base.utils.Assert;
+import io.softa.framework.orm.enums.AccessType;
 import io.softa.framework.orm.enums.IdStrategy;
 import io.softa.framework.orm.meta.MetaField;
 import io.softa.framework.orm.meta.ModelManager;

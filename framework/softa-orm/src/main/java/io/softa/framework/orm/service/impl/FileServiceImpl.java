@@ -13,7 +13,6 @@ import org.springframework.web.multipart.MultipartFile;
 
 import io.softa.framework.base.config.SystemConfig;
 import io.softa.framework.base.context.ContextHolder;
-import io.softa.framework.base.enums.AccessType;
 import io.softa.framework.base.exception.IllegalArgumentException;
 import io.softa.framework.base.exception.SystemException;
 import io.softa.framework.base.utils.DateUtils;
@@ -23,6 +22,7 @@ import io.softa.framework.orm.dto.DownloadFileDTO;
 import io.softa.framework.orm.dto.FileInfo;
 import io.softa.framework.orm.dto.UploadFileDTO;
 import io.softa.framework.orm.entity.FileRecord;
+import io.softa.framework.orm.enums.AccessType;
 import io.softa.framework.orm.enums.FileSource;
 import io.softa.framework.orm.enums.FileType;
 import io.softa.framework.orm.oss.OSSProperties;

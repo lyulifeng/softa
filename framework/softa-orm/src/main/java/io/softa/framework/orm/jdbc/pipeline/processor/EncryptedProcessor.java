@@ -1,13 +1,13 @@
 package io.softa.framework.orm.jdbc.pipeline.processor;
 
-import io.softa.framework.base.enums.AccessType;
-import io.softa.framework.base.security.EncryptUtils;
-import io.softa.framework.orm.meta.MetaField;
-import io.softa.framework.orm.utils.ListUtils;
-import org.springframework.util.CollectionUtils;
-
 import java.util.List;
 import java.util.Map;
+import org.springframework.util.CollectionUtils;
+
+import io.softa.framework.base.security.EncryptUtils;
+import io.softa.framework.orm.enums.AccessType;
+import io.softa.framework.orm.meta.MetaField;
+import io.softa.framework.orm.utils.ListUtils;
 
 /**
  * Encrypted field processor

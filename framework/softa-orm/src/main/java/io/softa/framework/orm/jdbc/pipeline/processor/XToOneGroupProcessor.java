@@ -1,26 +1,26 @@
 package io.softa.framework.orm.jdbc.pipeline.processor;
 
+import java.io.Serializable;
+import java.util.*;
+import java.util.stream.Collectors;
 import com.google.common.collect.Sets;
+import lombok.extern.slf4j.Slf4j;
+import org.apache.commons.lang3.StringUtils;
+import org.springframework.util.CollectionUtils;
+
 import io.softa.framework.base.constant.StringConstant;
-import io.softa.framework.base.enums.AccessType;
 import io.softa.framework.base.enums.Operator;
 import io.softa.framework.orm.constant.ModelConstant;
 import io.softa.framework.orm.domain.Filters;
 import io.softa.framework.orm.domain.FlexQuery;
 import io.softa.framework.orm.domain.SubQuery;
+import io.softa.framework.orm.enums.AccessType;
 import io.softa.framework.orm.enums.ConvertType;
 import io.softa.framework.orm.meta.MetaField;
 import io.softa.framework.orm.meta.ModelManager;
 import io.softa.framework.orm.utils.IdUtils;
 import io.softa.framework.orm.utils.ReflectTool;
 import io.softa.framework.orm.vo.ModelReference;
-import lombok.extern.slf4j.Slf4j;
-import org.apache.commons.lang3.StringUtils;
-import org.springframework.util.CollectionUtils;
-
-import java.io.Serializable;
-import java.util.*;
-import java.util.stream.Collectors;
 
 /**
  * OneToOne/ManyToOne field group processor.

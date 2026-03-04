@@ -6,8 +6,8 @@ import java.util.Set;
 import org.apache.commons.lang3.StringUtils;
 
 import io.softa.framework.base.constant.BaseConstant;
-import io.softa.framework.base.enums.AccessType;
 import io.softa.framework.base.utils.Assert;
+import io.softa.framework.orm.enums.AccessType;
 import io.softa.framework.orm.jdbc.pipeline.factory.FieldProcessorFactory;
 import io.softa.framework.orm.jdbc.pipeline.factory.XToOneGroupProcessorFactory;
 import io.softa.framework.orm.meta.MetaField;

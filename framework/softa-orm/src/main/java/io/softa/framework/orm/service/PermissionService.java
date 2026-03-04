@@ -1,12 +1,12 @@
 package io.softa.framework.orm.service;
 
-import io.softa.framework.base.enums.AccessType;
-import io.softa.framework.orm.domain.Filters;
-
 import java.io.Serializable;
 import java.util.Collection;
 import java.util.Map;
 import java.util.Set;
+
+import io.softa.framework.orm.domain.Filters;
+import io.softa.framework.orm.enums.AccessType;
 
 /**
  * Permission check service interface

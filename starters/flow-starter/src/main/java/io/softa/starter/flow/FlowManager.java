@@ -10,14 +10,14 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 import org.springframework.util.CollectionUtils;
 
-import io.softa.framework.base.enums.AccessType;
 import io.softa.framework.base.exception.IllegalArgumentException;
+import io.softa.framework.orm.enums.AccessType;
 import io.softa.framework.orm.jdbc.JdbcService;
 import io.softa.starter.flow.entity.FlowConfig;
 import io.softa.starter.flow.entity.FlowTrigger;
 import io.softa.starter.flow.enums.TriggerEventType;
 
-import static io.softa.framework.base.enums.AccessType.*;
+import static io.softa.framework.orm.enums.AccessType.*;
 
 /**
  * Flow manager, store all triggers and corresponding flow configs,

@@ -9,10 +9,10 @@ import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.lang3.StringUtils;
 
 import io.softa.framework.base.constant.StringConstant;
-import io.softa.framework.base.enums.AccessType;
 import io.softa.framework.orm.constant.ModelConstant;
 import io.softa.framework.orm.domain.FlexQuery;
 import io.softa.framework.orm.domain.SubQuery;
+import io.softa.framework.orm.enums.AccessType;
 import io.softa.framework.orm.enums.ConvertType;
 import io.softa.framework.orm.meta.MetaField;
 import io.softa.framework.orm.meta.ModelManager;

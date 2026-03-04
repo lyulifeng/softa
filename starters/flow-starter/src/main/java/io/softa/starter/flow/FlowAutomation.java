@@ -12,10 +12,10 @@ import org.springframework.util.CollectionUtils;
 
 import io.softa.framework.base.constant.TimeConstant;
 import io.softa.framework.base.context.ContextHolder;
-import io.softa.framework.base.enums.AccessType;
 import io.softa.framework.base.utils.Assert;
 import io.softa.framework.orm.changelog.message.dto.ChangeLog;
 import io.softa.framework.orm.compute.ComputeUtils;
+import io.softa.framework.orm.enums.AccessType;
 import io.softa.framework.orm.utils.MapUtils;
 import io.softa.starter.cron.message.dto.CronTaskMessage;
 import io.softa.starter.flow.dto.TriggerEventDTO;

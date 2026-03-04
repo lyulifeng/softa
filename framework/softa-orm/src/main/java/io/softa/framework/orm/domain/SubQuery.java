@@ -1,10 +1,10 @@
 package io.softa.framework.orm.domain;
 
-import io.swagger.v3.oas.annotations.media.Schema;
 import java.io.Serial;
 import java.io.Serializable;
 import java.util.List;
 import java.util.Map;
+import io.swagger.v3.oas.annotations.media.Schema;
 import lombok.AllArgsConstructor;
 import lombok.Data;
 import lombok.NoArgsConstructor;
@@ -14,16 +14,16 @@ import lombok.NoArgsConstructor;
  * Application scenarios of different field types:
  *      1. ManyToOne, OneToOne: specify the field list to get.
  *      2. OneToMany, ManyToMany: specify the fields to get, filters, orders, aggFunctions, topN.
- *      3. Count query ( + filters): specify the `count = true` to get the count for every group.
- *      For example: get the count of each department's employees.
+ *      3. Count query (+ filters): specify the `count = true` to get the count for every group.
+ *      For example, get the count of each department's employees.
  *      Note:
  *      If `filters` is specified, the `count` query will be based on the `filters` conditions.
  *      4. TopN query on OneToMany field: specify the `topN` and `orders` parameters to get the top N data.
- *      For example: set the topN = 10 and orders = ["createTime", "DESC"].
+ *      For example, set the topN = 10 and orders = ["createTime", "DESC"].
  *      Note:
  *      The topN query is not supported by all databases,
  *      only databases that support the `ROW_NUMBER()` function and `OVER` clause.
- *      Some databases support the `topN` query, such as:
+ *      Some databases support the `topN` query, such as
  *          Oracle Database: 10g and later
  * 	        Microsoft SQL Server: 2005 and later
  * 	        PostgreSQL: 8.4 and later

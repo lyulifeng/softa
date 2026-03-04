@@ -9,7 +9,6 @@ import org.springframework.stereotype.Component;
 
 import io.softa.framework.base.constant.BaseConstant;
 import io.softa.framework.base.constant.TimeConstant;
-import io.softa.framework.base.enums.AccessType;
 import io.softa.framework.base.utils.DateUtils;
 import io.softa.framework.orm.changelog.message.dto.ChangeLog;
 import io.softa.framework.orm.constant.ModelConstant;
@@ -17,6 +16,7 @@ import io.softa.framework.orm.domain.Filters;
 import io.softa.framework.orm.domain.FlexQuery;
 import io.softa.framework.orm.domain.Orders;
 import io.softa.framework.orm.domain.Page;
+import io.softa.framework.orm.enums.AccessType;
 import io.softa.framework.orm.jdbc.pipeline.DataPipelineProxy;
 import io.softa.framework.orm.meta.ModelManager;
 import io.softa.framework.orm.service.ModelService;
@@ -27,7 +27,7 @@ import io.softa.starter.designer.entity.DesignAppEnv;
 import io.softa.starter.designer.version.VersionControl;
 import io.softa.starter.es.service.ChangeLogService;
 
-import static io.softa.framework.base.enums.AccessType.UPDATE;
+import static io.softa.framework.orm.enums.AccessType.UPDATE;
 
 /**
  * Version control implementation

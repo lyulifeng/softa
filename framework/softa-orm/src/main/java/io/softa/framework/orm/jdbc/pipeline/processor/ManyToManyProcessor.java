@@ -8,15 +8,17 @@ import lombok.Getter;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.util.CollectionUtils;
 
-import io.softa.framework.base.enums.AccessType;
 import io.softa.framework.base.enums.Operator;
+import io.softa.framework.base.utils.Assert;
 import io.softa.framework.orm.constant.ModelConstant;
 import io.softa.framework.orm.domain.Filters;
 import io.softa.framework.orm.domain.FlexQuery;
 import io.softa.framework.orm.domain.SubQueries;
 import io.softa.framework.orm.domain.SubQuery;
 import io.softa.framework.orm.entity.AbstractModel;
+import io.softa.framework.orm.enums.AccessType;
 import io.softa.framework.orm.enums.ConvertType;
+import io.softa.framework.orm.enums.PatchType;
 import io.softa.framework.orm.meta.MetaField;
 import io.softa.framework.orm.utils.BeanTool;
 import io.softa.framework.orm.utils.IdUtils;
@@ -42,12 +44,17 @@ import io.softa.framework.orm.vo.ModelReference;
 @Slf4j
 public class ManyToManyProcessor extends BaseProcessor {
 
+    private static final Set<PatchType> MANY_TO_MANY_PATCH_TYPES =
+            EnumSet.of(PatchType.ADD, PatchType.REMOVE);
+
     private final FlexQuery flexQuery;
 
     private SubQuery subQuery;
 
     @Getter
     private boolean changed = false;
+
+    private record ManyToManyPatchValues(List<?> addIds, List<?> removeIds) {}
 
     public ManyToManyProcessor(MetaField metaField, AccessType accessType, FlexQuery flexQuery) {
         super(metaField, accessType);
@@ -93,20 +100,57 @@ public class ManyToManyProcessor extends BaseProcessor {
         rows.forEach(row -> {
             Serializable id = (Serializable) row.get(ModelConstant.ID);
             Object value = row.get(fieldName);
-            if (value instanceof List<?> valueList && !valueList.isEmpty()) {
-                if (valueList.getFirst() instanceof AbstractModel) {
-                    valueList = extractObjectsIds(valueList);
-                }
-                List<Serializable> rightIds = IdUtils.formatIds(metaField.getJoinModel(), metaField.getJoinRight(), valueList);
-                rightIds.forEach(i -> mappingRows.add(
-                        new HashMap<>(Map.of(metaField.getJoinLeft(), id, metaField.getJoinRight(), i))
-                ));
+            if (value instanceof List<?> valueList) {
+                List<Serializable> rightIds = getRightIds(valueList);
+                appendMappingRows(id, rightIds, mappingRows);
+            } else if (value instanceof Map<?, ?> patchMap) {
+                applyManyToManyCreatePatch(id, patchMap, mappingRows);
+            } else if (value != null) {
+                Assert.isTrue(false, "Model field {0}:{1} expects List or patch object value, but got: {2}",
+                        modelName, fieldName, value.getClass().getSimpleName());
             }
         });
         if (!CollectionUtils.isEmpty(mappingRows)) {
             changed = true;
             ReflectTool.createList(metaField.getJoinModel(), mappingRows);
         }
+    }
+
+    /**
+     * Apply ManyToMany patch in create scene.
+     */
+    private void applyManyToManyCreatePatch(Serializable leftId, Map<?, ?> patchMap, List<Map<String, Object>> mappingRows) {
+        ManyToManyPatchValues patchValues = parseManyToManyPatchValues(patchMap);
+        Assert.isEmpty(patchValues.removeIds(),
+                "Model field {0}:{1} in create scene does not support patch operation: {2}", modelName, fieldName, PatchType.REMOVE.getType());
+        if (!patchValues.addIds().isEmpty()) {
+            appendMappingRows(leftId, IdUtils.formatIds(metaField.getJoinModel(), metaField.getJoinRight(), patchValues.addIds()), mappingRows);
+        }
+    }
+
+    /**
+     * Build mapping rows from left id and right ids.
+     */
+    private void appendMappingRows(Serializable leftId, List<Serializable> rightIds, List<Map<String, Object>> mappingRows) {
+        if (!CollectionUtils.isEmpty(rightIds)) {
+            rightIds.forEach(rightId -> mappingRows.add(
+                    new HashMap<>(Map.of(metaField.getJoinLeft(), leftId, metaField.getJoinRight(), rightId))
+            ));
+        }
+    }
+
+    /**
+     * Get right ids from full-value list and format id type.
+     */
+    private List<Serializable> getRightIds(List<?> valueList) {
+        if (CollectionUtils.isEmpty(valueList)) {
+            return Collections.emptyList();
+        }
+        List<?> rightObjects = valueList;
+        if (valueList.getFirst() instanceof AbstractModel) {
+            rightObjects = extractObjectsIds(valueList);
+        }
+        return IdUtils.formatIds(metaField.getJoinModel(), metaField.getJoinRight(), rightObjects);
     }
 
     /**
@@ -124,34 +168,35 @@ public class ManyToManyProcessor extends BaseProcessor {
         List<Serializable> deleteJoinIds = new ArrayList<>();
         rows.forEach(row -> {
             Serializable id = (Serializable) row.get(ModelConstant.ID);
+            Map<Serializable, Serializable> previousMapping = mToMIdsMapping.getOrDefault(id, Collections.emptyMap());
             Object value = row.get(fieldName);
-            if (value == null && row.containsKey(fieldName) && mToMIdsMapping.containsKey(id)) {
-                deleteJoinIds.addAll(mToMIdsMapping.get(id).values());
+            if (value instanceof Map<?, ?> patchMap) {
+                applyManyToManyUpdatePatch(id, patchMap, previousMapping, newMToMRows, deleteJoinIds);
+            } else if (value == null && row.containsKey(fieldName) && !previousMapping.isEmpty()) {
+                deleteJoinIds.addAll(previousMapping.values());
             } else if (value instanceof List<?> valueList) {
-                if (valueList.isEmpty() && mToMIdsMapping.containsKey(id)) {
+                if (valueList.isEmpty() && !previousMapping.isEmpty()) {
                     // When the ManyToMany field value is an empty list, it means to clear the mapping table data
-                    deleteJoinIds.addAll(mToMIdsMapping.get(id).values());
+                    deleteJoinIds.addAll(previousMapping.values());
                 } else {
-                    if (valueList.getFirst() instanceof AbstractModel) {
-                        valueList = extractObjectsIds(valueList);
-                    }
-                    List<Serializable> rightIds = IdUtils.formatIds(metaField.getJoinModel(), metaField.getJoinRight(), valueList);
-                    if (mToMIdsMapping.containsKey(id)) {
+                    List<Serializable> rightIds = getRightIds(valueList);
+                    if (!previousMapping.isEmpty()) {
                         // Remove the existing ids of the relatedModel to obtain the newRightIds to be joined.
                         List<Serializable> newRightIds = new ArrayList<>(rightIds);
-                        newRightIds.removeAll(mToMIdsMapping.get(id).keySet());
+                        newRightIds.removeAll(previousMapping.keySet());
                         // The difference set means the relationship to be deleted.
-                        List<Serializable> unlinkRightIds = new ArrayList<>(mToMIdsMapping.get(id).keySet());
+                        List<Serializable> unlinkRightIds = new ArrayList<>(previousMapping.keySet());
                         unlinkRightIds.removeAll(rightIds);
                         if (!unlinkRightIds.isEmpty()) {
-                            unlinkRightIds.forEach(i -> deleteJoinIds.add(mToMIdsMapping.get(id).get(i)));
+                            unlinkRightIds.forEach(i -> deleteJoinIds.add(previousMapping.get(i)));
                         }
                         rightIds = newRightIds;
                     }
-                    rightIds.forEach(i -> newMToMRows.add(
-                            new HashMap<>(Map.of(metaField.getJoinLeft(), id, metaField.getJoinRight(), i))
-                    ));
+                    appendMappingRows(id, rightIds, newMToMRows);
                 }
+            } else if (value != null) {
+                Assert.isTrue(false, "Model field {0}:{1} expects List or patch object value, but got: {2}",
+                        modelName, fieldName, value.getClass().getSimpleName());
             }
         });
         if (!CollectionUtils.isEmpty(newMToMRows) || !CollectionUtils.isEmpty(deleteJoinIds)) {
@@ -161,6 +206,46 @@ public class ManyToManyProcessor extends BaseProcessor {
             // Delete join model rows
             ReflectTool.deleteList(metaField.getJoinModel(), deleteJoinIds);
         }
+    }
+
+    /**
+     * Apply ManyToMany patch in update scene.
+     */
+    private void applyManyToManyUpdatePatch(Serializable leftId, Map<?, ?> patchMap, Map<Serializable, Serializable> previousMapping,
+                                            List<Map<String, Object>> newMToMRows, List<Serializable> deleteJoinIds) {
+        ManyToManyPatchValues patchValues = parseManyToManyPatchValues(patchMap);
+        if (!patchValues.addIds().isEmpty()) {
+            List<Serializable> addIds = IdUtils.formatIds(metaField.getJoinModel(), metaField.getJoinRight(), patchValues.addIds());
+            addIds = addIds.stream().filter(addId -> !previousMapping.containsKey(addId)).distinct().toList();
+            appendMappingRows(leftId, addIds, newMToMRows);
+        }
+        if (!patchValues.removeIds().isEmpty()) {
+            List<Serializable> removeIds = IdUtils.formatIds(metaField.getJoinModel(), metaField.getJoinRight(), patchValues.removeIds());
+            removeIds.stream().distinct()
+                    .filter(previousMapping::containsKey)
+                    .forEach(removeId -> deleteJoinIds.add(previousMapping.get(removeId)));
+        }
+    }
+
+    /**
+     * Parse ManyToMany patch value object.
+     */
+    private ManyToManyPatchValues parseManyToManyPatchValues(Map<?, ?> patchMap) {
+        Map<PatchType, Object> patchData = parsePatchData(patchMap, MANY_TO_MANY_PATCH_TYPES);
+        return new ManyToManyPatchValues(
+                normalizePatchIds(getPatchList(patchData, PatchType.ADD)),
+                normalizePatchIds(getPatchList(patchData, PatchType.REMOVE))
+        );
+    }
+
+    /**
+     * Normalize patch list values to id list when values are model objects.
+     */
+    private List<?> normalizePatchIds(List<?> valueList) {
+        if (!valueList.isEmpty() && valueList.getFirst() instanceof AbstractModel) {
+            return extractObjectsIds(valueList);
+        }
+        return valueList;
     }
 
     /**
@@ -281,7 +366,7 @@ public class ManyToManyProcessor extends BaseProcessor {
 
     /**
      * Query the join model and right model according to the mainModelIds.
-     * By default, the `joinRight` value is converted to ModelReference object.
+     * By default, the `joinRight` value is converted to a ModelReference object.
      *
      * @param mainModelIds Main model ids
      * @return Join model rows: [{id, joinLeft, joinRight:{}},...]

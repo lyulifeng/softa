@@ -5,7 +5,7 @@ import java.util.Map;
 import lombok.Data;
 import lombok.NoArgsConstructor;
 
-import io.softa.framework.base.enums.AccessType;
+import io.softa.framework.orm.enums.AccessType;
 
 /**
  * DTO for row change information

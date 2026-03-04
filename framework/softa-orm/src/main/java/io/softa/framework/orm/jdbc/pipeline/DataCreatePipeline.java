@@ -1,7 +1,15 @@
 package io.softa.framework.orm.jdbc.pipeline;
 
-import io.softa.framework.base.enums.AccessType;
+import java.time.LocalDateTime;
+import java.util.List;
+import java.util.Map;
+import java.util.Set;
+import java.util.stream.Collectors;
+import lombok.Getter;
+import lombok.extern.slf4j.Slf4j;
+
 import io.softa.framework.orm.constant.ModelConstant;
+import io.softa.framework.orm.enums.AccessType;
 import io.softa.framework.orm.enums.IdStrategy;
 import io.softa.framework.orm.jdbc.AutofillFields;
 import io.softa.framework.orm.jdbc.pipeline.chain.FieldProcessorChain;
@@ -11,13 +19,6 @@ import io.softa.framework.orm.jdbc.pipeline.processor.IdProcessor;
 import io.softa.framework.orm.meta.MetaField;
 import io.softa.framework.orm.meta.MetaModel;
 import io.softa.framework.orm.meta.ModelManager;
-import java.time.LocalDateTime;
-import java.util.List;
-import java.util.Map;
-import java.util.Set;
-import java.util.stream.Collectors;
-import lombok.Getter;
-import lombok.extern.slf4j.Slf4j;
 
 /**
  * Pipeline for creating model data.

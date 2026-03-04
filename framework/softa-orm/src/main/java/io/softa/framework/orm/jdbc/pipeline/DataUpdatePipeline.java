@@ -9,10 +9,10 @@ import lombok.Getter;
 import lombok.extern.slf4j.Slf4j;
 
 import io.softa.framework.base.constant.TimeConstant;
-import io.softa.framework.base.enums.AccessType;
 import io.softa.framework.base.exception.VersionException;
 import io.softa.framework.base.utils.DateUtils;
 import io.softa.framework.orm.constant.ModelConstant;
+import io.softa.framework.orm.enums.AccessType;
 import io.softa.framework.orm.enums.FieldType;
 import io.softa.framework.orm.jdbc.AutofillFields;
 import io.softa.framework.orm.jdbc.pipeline.chain.FieldProcessorChain;

@@ -106,7 +106,7 @@ public class JdbcServiceImpl<K extends Serializable> implements JdbcService<K> {
         }
         // Collect changeLogs after filling in the id
         changeLogPublisher.publishCreationLog(modelName, rows, insertTime);
-        // Because its need to get the ids first, and finally process the OneToMany, ManyToMany parameters,
+        // Because its need to get the ids first, and finally process the OneToMany, ManyToMany parameters
         // to create associated table or intermediate table rows.
         pipeline.processXToManyData(rows);
         return rows;

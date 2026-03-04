@@ -1,12 +1,12 @@
 package io.softa.framework.orm.jdbc.pipeline.processor;
 
-import io.softa.framework.base.enums.AccessType;
-import io.softa.framework.orm.enums.ConvertType;
-import io.softa.framework.orm.meta.MetaField;
-
 import java.util.List;
 import java.util.Map;
 import java.util.stream.Collectors;
+
+import io.softa.framework.orm.enums.AccessType;
+import io.softa.framework.orm.enums.ConvertType;
+import io.softa.framework.orm.meta.MetaField;
 
 /**
  * MultiOption field processor.

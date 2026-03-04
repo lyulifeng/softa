@@ -1,5 +1,12 @@
 package io.softa.starter.es.service.impl;
 
+import java.io.Serializable;
+import java.util.*;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.context.annotation.Lazy;
+import org.springframework.stereotype.Service;
+
 import io.softa.framework.base.enums.Operator;
 import io.softa.framework.base.utils.Assert;
 import io.softa.framework.orm.changelog.message.dto.ChangeLog;
@@ -13,16 +20,9 @@ import io.softa.framework.orm.meta.ModelManager;
 import io.softa.framework.orm.service.ModelService;
 import io.softa.framework.orm.service.PermissionService;
 import io.softa.starter.es.service.ChangeLogService;
-import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.beans.factory.annotation.Value;
-import org.springframework.context.annotation.Lazy;
-import org.springframework.stereotype.Service;
 
-import java.io.Serializable;
-import java.util.*;
-
-import static io.softa.framework.base.enums.AccessType.*;
 import static io.softa.framework.orm.constant.ModelConstant.SLICE_ID;
+import static io.softa.framework.orm.enums.AccessType.*;
 
 /**
  * ChangeLog Service Implementation

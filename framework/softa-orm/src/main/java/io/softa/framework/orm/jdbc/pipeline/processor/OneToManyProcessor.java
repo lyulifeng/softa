@@ -8,7 +8,6 @@ import lombok.Getter;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.util.CollectionUtils;
 
-import io.softa.framework.base.enums.AccessType;
 import io.softa.framework.base.enums.Operator;
 import io.softa.framework.base.utils.Assert;
 import io.softa.framework.base.utils.Cast;
@@ -17,7 +16,9 @@ import io.softa.framework.orm.domain.Filters;
 import io.softa.framework.orm.domain.FlexQuery;
 import io.softa.framework.orm.domain.SubQueries;
 import io.softa.framework.orm.domain.SubQuery;
+import io.softa.framework.orm.enums.AccessType;
 import io.softa.framework.orm.enums.ConvertType;
+import io.softa.framework.orm.enums.PatchType;
 import io.softa.framework.orm.meta.MetaField;
 import io.softa.framework.orm.utils.BeanTool;
 import io.softa.framework.orm.utils.IdUtils;
@@ -29,12 +30,17 @@ import io.softa.framework.orm.utils.ReflectTool;
 @Slf4j
 public class OneToManyProcessor extends BaseProcessor {
 
+    private static final Set<PatchType> ONE_TO_MANY_PATCH_TYPES =
+            EnumSet.of(PatchType.CREATE, PatchType.UPDATE, PatchType.DELETE);
+
     private final FlexQuery flexQuery;
 
     private SubQuery subQuery;
 
     @Getter
     private boolean changed = false;
+
+    private record OneToManyPatchValues(List<?> createRows, List<?> updateRows, List<?> deleteIds) {}
 
     /**
      * Constructor of the OneToMany field processor object.
@@ -74,9 +80,16 @@ public class OneToManyProcessor extends BaseProcessor {
         for (Map<String, Object> row : rows) {
             Serializable id = (Serializable) row.get(ModelConstant.ID);
             Object value = row.get(fieldName);
-            if (value instanceof List<?> valueList && !valueList.isEmpty()) {
-                List<Map<String, Object>> subRows = convertAndLinkSubRows(id, valueList);
-                createRows.addAll(subRows);
+            if (value instanceof List<?> valueList) {
+                if (!valueList.isEmpty()) {
+                    List<Map<String, Object>> subRows = convertAndLinkSubRows(id, valueList);
+                    createRows.addAll(subRows);
+                }
+            } else if (value instanceof Map<?, ?> patchMap) {
+                applyOneToManyCreatePatch(id, patchMap, createRows);
+            } else if (value != null) {
+                Assert.isTrue(false, "Model field {0}:{1} expects List or patch object value, but got: {2}",
+                        modelName, fieldName, value.getClass().getSimpleName());
             }
         }
         if (!CollectionUtils.isEmpty(createRows)) {
@@ -99,26 +112,31 @@ public class OneToManyProcessor extends BaseProcessor {
         Map<Serializable, Set<Serializable>> existOneToManyIdsMap = this.getExistOneToManyMap(rows);
         for (Map<String, Object> row : rows) {
             Serializable id = (Serializable) row.get(ModelConstant.ID);
+            Set<Serializable> previousSubIds = existOneToManyIdsMap.getOrDefault(id, Collections.emptySet());
             Object value = row.get(fieldName);
-            if (value == null && row.containsKey(fieldName) && existOneToManyIdsMap.containsKey(id)) {
-                deleteIds.addAll(existOneToManyIdsMap.get(id));
+            if (value instanceof Map<?, ?> patchMap) {
+                applyOneToManyUpdatePatch(id, patchMap, previousSubIds, createRows, updateRows, deleteIds);
+            } else if (value == null && row.containsKey(fieldName) && !previousSubIds.isEmpty()) {
+                deleteIds.addAll(previousSubIds);
             } else if (value instanceof List<?> valueList) {
                 if (valueList.isEmpty()) {
                     // Delete related model rows when set OneToMany field to empty list.
-                    if (existOneToManyIdsMap.containsKey(id)) {
-                        deleteIds.addAll(existOneToManyIdsMap.get(id));
+                    if (!previousSubIds.isEmpty()) {
+                        deleteIds.addAll(previousSubIds);
                     }
                 } else {
                     List<Map<String, Object>> subRows = convertAndLinkSubRows(id, valueList);
-                    if (existOneToManyIdsMap.containsKey(id)) {
+                    if (!previousSubIds.isEmpty()) {
                         // Process related model rows, when update the OneToMany field from old value to a new list.
-                        Set<Serializable> previousSubIds = existOneToManyIdsMap.get(id);
                         processOneToManyUpdate(subRows, previousSubIds, createRows, updateRows, deleteIds);
                     } else {
                         // Create related model rows, when update the OneToMany field from empty to a new list.
                         createRows.addAll(subRows);
                     }
                 }
+            } else if (value != null) {
+                Assert.isTrue(false, "Model field {0}:{1} expects List or patch object value, but got: {2}",
+                        modelName, fieldName, value.getClass().getSimpleName());
             }
         }
         List<?> newIds = ReflectTool.createList(metaField.getRelatedModel(), createRows);
@@ -137,15 +155,94 @@ public class OneToManyProcessor extends BaseProcessor {
      * @return List of related model rows
      */
     private List<Map<String, Object>> convertAndLinkSubRows(Serializable mainId, List<?> valueList) {
-        List<Map<String, Object>> subRows;
-        if (valueList.getFirst() instanceof Map<?, ?>) {
-            subRows = Cast.of(valueList);
-        } else {
-            // Convert the list of objects to a list of maps
-            subRows = BeanTool.objectsToMapList(valueList);
-        }
+        List<Map<String, Object>> subRows = convertSubRows(valueList);
         subRows.forEach(subRow -> subRow.put(metaField.getRelatedField(), mainId));
         return subRows;
+    }
+
+    /**
+     * Convert the related model rows to a list of maps.
+     *
+     * @param valueList Related model rows
+     * @return List of related model rows
+     */
+    private List<Map<String, Object>> convertSubRows(List<?> valueList) {
+        if (valueList.getFirst() instanceof Map<?, ?>) {
+            return Cast.of(valueList);
+        } else {
+            // Convert the list of objects to a list of maps
+            return BeanTool.objectsToMapList(valueList);
+        }
+    }
+
+    /**
+     * Apply OneToMany patch in create scene.
+     */
+    private void applyOneToManyCreatePatch(Serializable mainId, Map<?, ?> patchMap, List<Map<String, Object>> createRows) {
+        OneToManyPatchValues patchValues = parseOneToManyPatchValues(patchMap);
+        Assert.isEmpty(patchValues.updateRows(),
+                "Model field {0}:{1} in create scene does not support patch operation: {2}", modelName, fieldName, PatchType.UPDATE.getType());
+        Assert.isEmpty(patchValues.deleteIds(),
+                "Model field {0}:{1} in create scene does not support patch operation: {2}", modelName, fieldName, PatchType.DELETE.getType());
+        if (!patchValues.createRows().isEmpty()) {
+            createRows.addAll(convertAndLinkSubRows(mainId, patchValues.createRows()));
+        }
+    }
+
+    /**
+     * Apply OneToMany patch in update scene.
+     */
+    private void applyOneToManyUpdatePatch(Serializable mainId, Map<?, ?> patchMap, Set<Serializable> previousSubIds,
+                                           List<Map<String, Object>> createRows, List<Map<String, Object>> updateRows,
+                                           List<Serializable> deleteIds) {
+        OneToManyPatchValues patchValues = parseOneToManyPatchValues(patchMap);
+        if (!patchValues.createRows().isEmpty()) {
+            createRows.addAll(convertAndLinkSubRows(mainId, patchValues.createRows()));
+        }
+        if (!patchValues.updateRows().isEmpty()) {
+            List<Map<String, Object>> patchUpdateRows = convertAndLinkSubRows(mainId, patchValues.updateRows());
+            validatePatchUpdateRows(patchUpdateRows, previousSubIds);
+            updateRows.addAll(patchUpdateRows);
+        }
+        if (!patchValues.deleteIds().isEmpty()) {
+            List<Serializable> patchDeleteIds = IdUtils.formatIds(metaField.getRelatedModel(), patchValues.deleteIds());
+            validatePatchDeleteIds(patchDeleteIds, previousSubIds);
+            deleteIds.addAll(patchDeleteIds);
+        }
+    }
+
+    /**
+     * Parse one-to-many patch value object.
+     */
+    private OneToManyPatchValues parseOneToManyPatchValues(Map<?, ?> patchMap) {
+        Map<PatchType, Object> patchData = parsePatchData(patchMap, ONE_TO_MANY_PATCH_TYPES);
+        return new OneToManyPatchValues(
+                getPatchList(patchData, PatchType.CREATE),
+                getPatchList(patchData, PatchType.UPDATE),
+                getPatchList(patchData, PatchType.DELETE)
+        );
+    }
+
+    /**
+     * Validate update rows in OneToMany patch scene.
+     */
+    private void validatePatchUpdateRows(List<Map<String, Object>> patchUpdateRows, Set<Serializable> previousSubIds) {
+        patchUpdateRows.forEach(updateRow -> {
+            Serializable subId = (Serializable) updateRow.get(ModelConstant.ID);
+            subId = IdUtils.formatId(metaField.getRelatedModel(), subId);
+            Assert.notNull(subId, "Model field {0}:{1} patch update row missing `id`: {2}", modelName, fieldName, updateRow);
+            Assert.isTrue(previousSubIds.contains(subId),
+                    "Model field {0}:{1} patch update id does not belong to current parent: {2}", modelName, fieldName, subId);
+            updateRow.put(ModelConstant.ID, subId);
+        });
+    }
+
+    /**
+     * Validate delete ids in OneToMany patch scene.
+     */
+    private void validatePatchDeleteIds(List<Serializable> patchDeleteIds, Set<Serializable> previousSubIds) {
+        patchDeleteIds.forEach(deleteId -> Assert.isTrue(previousSubIds.contains(deleteId),
+                "Model field {0}:{1} patch delete id does not belong to current parent: {2}", modelName, fieldName, deleteId));
     }
 
     /**
@@ -170,8 +267,8 @@ public class OneToManyProcessor extends BaseProcessor {
      *
      * @param subRows related model rows
      * @param previousSubIds existing OneToMany ids
-     * @param createRows created rows of related model
-     * @param updateRows updated rows of related model
+     * @param createRows created rows of the related model
+     * @param updateRows updated rows of the related model
      * @param deleteIds deleted ids of related models
      */
     private void processOneToManyUpdate(List<Map<String, Object>> subRows, Set<Serializable> previousSubIds,

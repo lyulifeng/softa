@@ -4,8 +4,8 @@ import java.time.LocalDateTime;
 import java.util.Map;
 
 import io.softa.framework.base.constant.EnvConstant;
-import io.softa.framework.base.enums.AccessType;
 import io.softa.framework.base.utils.DateUtils;
+import io.softa.framework.orm.enums.AccessType;
 import io.softa.framework.orm.meta.MetaField;
 
 /**

@@ -1,6 +1,6 @@
 package io.softa.framework.orm.jdbc.pipeline.factory;
 
-import io.softa.framework.base.enums.AccessType;
+import io.softa.framework.orm.enums.AccessType;
 import io.softa.framework.orm.enums.FieldType;
 import io.softa.framework.orm.jdbc.pipeline.processor.*;
 import io.softa.framework.orm.meta.MetaField;

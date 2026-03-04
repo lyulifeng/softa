@@ -12,6 +12,7 @@ import org.springframework.web.bind.annotation.RestController;
 import io.softa.framework.base.utils.Assert;
 import io.softa.framework.orm.meta.MetaOptionItem;
 import io.softa.framework.orm.meta.OptionManager;
+import io.softa.framework.orm.vo.OptionReference;
 import io.softa.framework.web.response.ApiResponse;
 
 /**
@@ -23,16 +24,20 @@ import io.softa.framework.web.response.ApiResponse;
 public class OptionController {
 
     /**
-     * Get the option set items of the specified option set code.
+     * Get the optionItems of the specified option set code.
      *
      * @param optionSetCode optionSet Code
-     * @return option set items
+     * @return optionReference list of the specified option set code
      */
     @GetMapping("/getOptionItems/{optionSetCode}")
     @Operation(summary = "getOptionItems", description = "Get the option set items of the specified option set code.")
     @Parameter(name = "optionSetCode", description = "Option set code", required = true)
-    public ApiResponse<List<MetaOptionItem>> getOptionItems(@PathVariable String optionSetCode) {
+    public ApiResponse<List<OptionReference>> getOptionItems(@PathVariable String optionSetCode) {
         Assert.notBlank(optionSetCode, "Option set code cannot be empty.");
-        return ApiResponse.success(OptionManager.getMetaOptionItems(optionSetCode));
+        List<MetaOptionItem> optionItems = OptionManager.getMetaOptionItems(optionSetCode);
+        List<OptionReference> optionReferences = optionItems.stream()
+                .map(item -> OptionReference.of(item.getItemCode(), item.getItemName(), item.getItemColor()))
+                .toList();
+        return ApiResponse.success(optionReferences);
     }
 }

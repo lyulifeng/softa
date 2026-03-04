@@ -16,7 +16,6 @@ import org.springframework.util.CollectionUtils;
 import io.softa.framework.base.constant.BaseConstant;
 import io.softa.framework.base.constant.StringConstant;
 import io.softa.framework.base.context.ContextHolder;
-import io.softa.framework.base.enums.AccessType;
 import io.softa.framework.base.enums.Operator;
 import io.softa.framework.base.exception.IllegalArgumentException;
 import io.softa.framework.base.exception.SecurityException;
@@ -25,6 +24,7 @@ import io.softa.framework.base.utils.Cast;
 import io.softa.framework.orm.constant.ModelConstant;
 import io.softa.framework.orm.domain.*;
 import io.softa.framework.orm.entity.TimelineSlice;
+import io.softa.framework.orm.enums.AccessType;
 import io.softa.framework.orm.enums.ConvertType;
 import io.softa.framework.orm.jdbc.JdbcService;
 import io.softa.framework.orm.meta.MetaField;
@@ -171,7 +171,7 @@ public class ModelServiceImpl<K extends Serializable> implements ModelService<K>
         List<Map<String, Object>> createDataList = new ArrayList<>();
         List<Map<String, Object>> updateDataList = new ArrayList<>();
 
-        // Step 1: Get the unique key to row map
+        // Step 1: Get the unique key to a row map
         Map<String, Map<String, Object>> rowKeyMap = new HashMap<>();
         Map<String, Set<Object>> uniqueValuesMap = new HashMap<>();
         for (String field : uniqueConstraints) {

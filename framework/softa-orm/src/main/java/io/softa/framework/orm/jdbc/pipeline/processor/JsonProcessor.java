@@ -1,14 +1,14 @@
 package io.softa.framework.orm.jdbc.pipeline.processor;
 
+import java.util.Map;
+import org.apache.commons.lang3.StringUtils;
 import tools.jackson.databind.JsonNode;
-import io.softa.framework.base.enums.AccessType;
+
 import io.softa.framework.base.exception.IllegalArgumentException;
 import io.softa.framework.base.exception.JSONException;
 import io.softa.framework.base.utils.JsonUtils;
+import io.softa.framework.orm.enums.AccessType;
 import io.softa.framework.orm.meta.MetaField;
-import org.apache.commons.lang3.StringUtils;
-
-import java.util.Map;
 
 /**
  * JSON field processor

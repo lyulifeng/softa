@@ -14,10 +14,10 @@ import org.springframework.stereotype.Service;
 import io.softa.framework.base.constant.TimeConstant;
 import io.softa.framework.base.context.Context;
 import io.softa.framework.base.context.ContextHolder;
-import io.softa.framework.base.enums.AccessType;
 import io.softa.framework.orm.changelog.event.TransactionEvent;
 import io.softa.framework.orm.changelog.message.dto.ChangeLog;
 import io.softa.framework.orm.constant.ModelConstant;
+import io.softa.framework.orm.enums.AccessType;
 import io.softa.framework.orm.meta.ModelManager;
 import io.softa.framework.orm.utils.ListUtils;
 

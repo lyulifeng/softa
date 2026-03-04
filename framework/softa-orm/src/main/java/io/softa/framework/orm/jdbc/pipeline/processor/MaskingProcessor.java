@@ -1,14 +1,14 @@
 package io.softa.framework.orm.jdbc.pipeline.processor;
 
-import io.softa.framework.base.constant.StringConstant;
-import io.softa.framework.base.context.ContextHolder;
-import io.softa.framework.base.enums.AccessType;
-import io.softa.framework.orm.enums.MaskingType;
-import io.softa.framework.orm.meta.MetaField;
-import org.apache.commons.lang3.StringUtils;
-
 import java.util.List;
 import java.util.Map;
+import org.apache.commons.lang3.StringUtils;
+
+import io.softa.framework.base.constant.StringConstant;
+import io.softa.framework.base.context.ContextHolder;
+import io.softa.framework.orm.enums.AccessType;
+import io.softa.framework.orm.enums.MaskingType;
+import io.softa.framework.orm.meta.MetaField;
 
 /**
  * Masking field processor

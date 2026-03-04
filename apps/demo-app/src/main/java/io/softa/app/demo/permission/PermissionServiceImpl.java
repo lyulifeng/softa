@@ -1,14 +1,14 @@
 package io.softa.app.demo.permission;
 
-import io.softa.framework.base.enums.AccessType;
-import io.softa.framework.orm.domain.Filters;
-import io.softa.framework.orm.service.PermissionService;
-import org.springframework.stereotype.Service;
-
 import java.io.Serializable;
 import java.util.Collection;
 import java.util.Map;
 import java.util.Set;
+import org.springframework.stereotype.Service;
+
+import io.softa.framework.orm.domain.Filters;
+import io.softa.framework.orm.enums.AccessType;
+import io.softa.framework.orm.service.PermissionService;
 
 @Service
 public class PermissionServiceImpl implements PermissionService {

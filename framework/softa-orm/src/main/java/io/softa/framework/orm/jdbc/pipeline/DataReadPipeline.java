@@ -5,9 +5,9 @@ import java.util.Map;
 import java.util.stream.Collectors;
 import lombok.extern.slf4j.Slf4j;
 
-import io.softa.framework.base.enums.AccessType;
 import io.softa.framework.orm.constant.ModelConstant;
 import io.softa.framework.orm.domain.FlexQuery;
+import io.softa.framework.orm.enums.AccessType;
 import io.softa.framework.orm.enums.ConvertType;
 import io.softa.framework.orm.enums.FieldType;
 import io.softa.framework.orm.enums.IdStrategy;

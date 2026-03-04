@@ -1,7 +1,7 @@
 package io.softa.framework.orm.jdbc.pipeline.factory;
 
-import io.softa.framework.base.enums.AccessType;
 import io.softa.framework.orm.domain.FlexQuery;
+import io.softa.framework.orm.enums.AccessType;
 import io.softa.framework.orm.enums.FieldType;
 import io.softa.framework.orm.jdbc.pipeline.processor.FieldProcessor;
 import io.softa.framework.orm.jdbc.pipeline.processor.ManyToManyProcessor;

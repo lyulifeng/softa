@@ -12,12 +12,12 @@ import java.util.function.Function;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
 import com.fasterxml.jackson.annotation.JsonValue;
-import tools.jackson.databind.JsonNode;
 import com.google.common.collect.Sets;
 import lombok.AllArgsConstructor;
 import lombok.Getter;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.lang3.StringUtils;
+import tools.jackson.databind.JsonNode;
 
 import io.softa.framework.base.constant.EnvConstant;
 import io.softa.framework.base.constant.StringConstant;
@@ -112,11 +112,11 @@ public enum FieldType {
     }
 
     /**
-     * Convert string value to object value according to field type
+     * Convert string value to object value according to fieldType
      *
      * @param fieldType field type
      * @param value     string value
-     * @return object value of field type
+     * @return object value of fieldType
      */
     public static Object convertStringToFieldValue(FieldType fieldType, String value) {
         if (StringUtils.isBlank(value)) {

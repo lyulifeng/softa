@@ -1,15 +1,15 @@
 package io.softa.framework.orm.jdbc.pipeline.processor;
 
-import io.softa.framework.base.enums.AccessType;
-import io.softa.framework.base.exception.IllegalArgumentException;
-import io.softa.framework.orm.enums.ConvertType;
-import io.softa.framework.orm.enums.FieldType;
-import io.softa.framework.orm.meta.MetaField;
-import org.apache.commons.lang3.StringUtils;
-
 import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
+import org.apache.commons.lang3.StringUtils;
+
+import io.softa.framework.base.exception.IllegalArgumentException;
+import io.softa.framework.orm.enums.AccessType;
+import io.softa.framework.orm.enums.ConvertType;
+import io.softa.framework.orm.enums.FieldType;
+import io.softa.framework.orm.meta.MetaField;
 
 /**
  * Processor for multiple string fields. Such as MultiString and MultiOption fields.

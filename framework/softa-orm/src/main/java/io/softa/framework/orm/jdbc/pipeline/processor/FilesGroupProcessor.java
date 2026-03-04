@@ -9,8 +9,8 @@ import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.lang3.StringUtils;
 import org.springframework.util.CollectionUtils;
 
-import io.softa.framework.base.enums.AccessType;
 import io.softa.framework.orm.dto.FileInfo;
+import io.softa.framework.orm.enums.AccessType;
 import io.softa.framework.orm.enums.FieldType;
 import io.softa.framework.orm.meta.MetaField;
 import io.softa.framework.orm.utils.ReflectTool;

@@ -4,7 +4,7 @@ import java.io.Serializable;
 import java.util.Map;
 import lombok.Data;
 
-import io.softa.framework.base.enums.AccessType;
+import io.softa.framework.orm.enums.AccessType;
 
 /**
  * ChangeLog DTO
