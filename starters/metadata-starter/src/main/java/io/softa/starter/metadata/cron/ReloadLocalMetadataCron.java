@@ -2,7 +2,7 @@ package io.softa.starter.metadata.cron;
 
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnExpression;
-import org.springframework.scheduling.annotation.Async;
+import org.springframework.scheduling.annotation.EnableScheduling;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
 
@@ -13,6 +13,7 @@ import io.softa.framework.orm.meta.AppStartup;
  */
 @Component
 @ConditionalOnExpression("'${mq.topics.inner-broadcast.topic:}'.trim().isEmpty()")
+@EnableScheduling
 public class ReloadLocalMetadataCron {
 
     @Autowired
@@ -29,7 +30,6 @@ public class ReloadLocalMetadataCron {
     /**
      * Reload metadata asynchronously on a virtual thread.
      */
-    @Async
     protected void reloadOnVirtualThread() {
         appStartup.reloadMetadata();
     }

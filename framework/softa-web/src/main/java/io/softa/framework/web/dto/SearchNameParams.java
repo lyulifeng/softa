@@ -1,8 +1,8 @@
 package io.softa.framework.web.dto;
 
-import io.swagger.v3.oas.annotations.media.Schema;
 import java.time.LocalDate;
 import java.util.List;
+import io.swagger.v3.oas.annotations.media.Schema;
 import lombok.Data;
 import org.apache.commons.lang3.StringUtils;
 
@@ -44,7 +44,7 @@ public class SearchNameParams {
     private Orders orders;
 
     @Schema(description = "Limit size for search, default 10.", example = "10")
-    private Integer limit = BaseConstant.DEFAULT_NAME_LIST_SIZE;
+    private Integer limitSize = BaseConstant.DEFAULT_NAME_LIST_SIZE;
 
     @Schema(description = "Effective date, default is `Today`.")
     private LocalDate effectiveDate;
@@ -72,7 +72,7 @@ public class SearchNameParams {
         // Set the convert type to REFERENCE.
         flexQuery.setConvertType(ConvertType.REFERENCE);
         // Default limitSize for searchName.
-        Integer limitSize = searchNameParams.getLimit();
+        Integer limitSize = searchNameParams.getLimitSize();
         limitSize = limitSize == null || limitSize < 1 ? BaseConstant.DEFAULT_NAME_LIST_SIZE : limitSize;
         Assert.isTrue(limitSize <= BaseConstant.MAX_BATCH_SIZE,
                 "API `searchName` cannot exceed the maximum limit of {0}.", BaseConstant.MAX_BATCH_SIZE);

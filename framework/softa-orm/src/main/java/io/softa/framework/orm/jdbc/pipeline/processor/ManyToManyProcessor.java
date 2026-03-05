@@ -37,7 +37,7 @@ import io.softa.framework.orm.vo.ModelReference;
  *      field1: Main model id (joinLeft config in ManyToMany field metadata)
  *      field2: Related model id (joinRight config in ManyToMany field metadata)
  * <p>
- * The input parameters of ManyToMany field is the ids of related model, that is: [id1, id2, id3],
+ * The input parameters of ManyToMany field is the ids of the related model, that is: [id1, id2, id3],
  * which implies new mapping and deleted mapping maintained in the join model. The new mapping and deleted mapping
  * are calculated by querying the join model once, and comparing with the input ids.
  */
@@ -140,7 +140,7 @@ public class ManyToManyProcessor extends BaseProcessor {
     }
 
     /**
-     * Get right ids from full-value list and format id type.
+     * Get right ids from a full-value list and format the id type.
      */
     private List<Serializable> getRightIds(List<?> valueList) {
         if (CollectionUtils.isEmpty(valueList)) {
@@ -338,7 +338,7 @@ public class ManyToManyProcessor extends BaseProcessor {
      * @return Join model rows: [{id, joinLeft, joinRight:{}},...]
      */
     private List<Map<String, Object>> getJoinRowsWithRightDisplayName(List<Serializable> mainModelIds) {
-        List<Map<String, Object>> joinRows = getJoinRows(mainModelIds);
+        List<Map<String, Object>> joinRows = this.getJoinRows(mainModelIds);
         String joinRight = metaField.getJoinRight();
         List<Serializable> rightIds = joinRows.stream()
                 .map(value -> (Serializable) value.get(joinRight))
@@ -372,7 +372,7 @@ public class ManyToManyProcessor extends BaseProcessor {
      * @return Join model rows: [{id, joinLeft, joinRight:{}},...]
      */
     private List<Map<String, Object>> getJoinRowsWithRightModelData(List<Serializable> mainModelIds) {
-        List<Map<String, Object>> joinRows = getJoinRows(mainModelIds);
+        List<Map<String, Object>> joinRows = this.getJoinRows(mainModelIds);
         String joinRight = metaField.getJoinRight();
         List<Serializable> rightIds = joinRows.stream()
                 .map(value -> (Serializable) value.get(joinRight))
@@ -396,7 +396,7 @@ public class ManyToManyProcessor extends BaseProcessor {
 
     /**
      * Query the join model according to the mainModelIds.
-     * Since `joinLeft` and `joinRight` are both foreign key fields, this query directly get the id values
+     * Since `joinLeft` and `joinRight` are both foreign key fields, this query directly gets the id values
      * of the two fields in the database.
      *
      * @param mainModelIds Main model ids
@@ -408,6 +408,13 @@ public class ManyToManyProcessor extends BaseProcessor {
         Filters joinFilters = Filters.of(joinLeft, Operator.IN, mainModelIds);
         Set<String> joinModelFields = Sets.newHashSet(joinLeft, joinRight);
         FlexQuery joinModelFlexQuery = new FlexQuery(joinModelFields, joinFilters);
+        if (subQuery.getTopN() != null && subQuery.getTopN() > 0) {
+            // If there exists topN parameter, fetch the top N records for each mainModelId.
+            joinModelFlexQuery.setTopN(subQuery.getTopN());
+        } else if (subQuery.getLimitSize() != null && subQuery.getLimitSize() > 0) {
+            // If there exists limitSize parameter, fetch the limited number of records for each mainModelId.
+            joinModelFlexQuery.setLimitSize(subQuery.getLimitSize());
+        }
         return ReflectTool.searchList(metaField.getJoinModel(), joinModelFlexQuery);
     }
 
@@ -444,7 +451,7 @@ public class ManyToManyProcessor extends BaseProcessor {
      * Group the expanded join model rows by the `joinLeft` attribute of the ManyToMany field,
      * which stores the main model id.
      *
-     * @param expandedJoinRows join model rows, expanded with right model data
+     * @param expandedJoinRows join model rows, expanded with the right model data
      * @return Grouped join model data: {mainModelId: [ModelReference, ...]}
      *      or {mainModelId: [{right row}, ...]
      */

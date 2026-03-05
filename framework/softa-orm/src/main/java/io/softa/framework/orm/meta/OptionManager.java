@@ -5,6 +5,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 import lombok.extern.slf4j.Slf4j;
+import org.apache.commons.lang3.StringUtils;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 
@@ -30,17 +31,19 @@ public class OptionManager {
         META_OPTION_SET_MAP.clear();
         // Select all optionItems from the database, and order by optionItem sequence
         List<MetaOptionItem> metaOptionItems = jdbcService.selectMetaEntityList("SysOptionItem", MetaOptionItem.class, "sequence");
-        metaOptionItems.forEach(item -> {
-            // Update the optionSet cache
-            if (META_OPTION_SET_MAP.containsKey(item.getOptionSetCode())) {
-                META_OPTION_SET_MAP.get(item.getOptionSetCode()).put(item.getItemCode(), item);
-            } else {
-                // Use LinkedHashMap to ensure the order of options
-                Map<String, MetaOptionItem> map = new LinkedHashMap<>();
-                map.put(item.getItemCode(), item);
-                META_OPTION_SET_MAP.put(item.getOptionSetCode(), map);
-            }
-        });
+        metaOptionItems.stream()
+                .filter(item -> StringUtils.isNotBlank(item.getOptionSetCode()))
+                .forEach(item -> {
+                    // Update the optionSet cache
+                    if (META_OPTION_SET_MAP.containsKey(item.getOptionSetCode())) {
+                        META_OPTION_SET_MAP.get(item.getOptionSetCode()).put(item.getItemCode(), item);
+                    } else {
+                        // Use LinkedHashMap to ensure the order of options
+                        Map<String, MetaOptionItem> map = new LinkedHashMap<>();
+                        map.put(item.getItemCode(), item);
+                        META_OPTION_SET_MAP.put(item.getOptionSetCode(), map);
+                    }
+                });
     }
 
     /**

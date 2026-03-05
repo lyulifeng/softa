@@ -1,16 +1,16 @@
 package io.softa.starter.file.vo;
 
+import java.time.LocalDate;
+import java.util.List;
+import io.swagger.v3.oas.annotations.media.Schema;
+import lombok.Data;
+
 import io.softa.framework.base.context.ContextHolder;
 import io.softa.framework.orm.domain.AggFunctions;
 import io.softa.framework.orm.domain.Filters;
 import io.softa.framework.orm.domain.FlexQuery;
 import io.softa.framework.orm.domain.Orders;
 import io.softa.framework.orm.enums.ConvertType;
-import io.swagger.v3.oas.annotations.media.Schema;
-import lombok.Data;
-
-import java.time.LocalDate;
-import java.util.List;
 
 /**
  * General query parameters object specifically designed for API request parameter transmission.
@@ -37,7 +37,7 @@ public class ExportParams {
     private AggFunctions aggFunctions;
 
     @Schema(description = "Limit size for searchList, default 50.", example = "50")
-    private Integer limit;
+    private Integer limitSize;
 
     @Schema(description = "Fields to group by, empty means no grouping.", example = "[]")
     private List<String> groupBy;

@@ -19,8 +19,8 @@ public enum WidgetType {
     // String
     URL("URL", "URL"),
     EMAIL("Email", "Email"),
-    HTML("Html", "HTML"),
     TEXT("Text", "Text"),
+    RICH_TEXT("RichText", "Rich Text"),
     COLOR("Color", "Color picker"),
 
     // Numeric

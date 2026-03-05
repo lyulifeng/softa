@@ -12,7 +12,7 @@ public interface BaseConstant {
     /** Debug parameter in request parameter */
     String DEBUG = "debug";
     /** The default top n value */
-    Integer DEFAULT_TOP_N = 1;
+    Integer DEFAULT_TOP_N = 50;
     Integer DEFAULT_PAGE_NUMBER = 1;
     Integer DEFAULT_PAGE_SIZE = 50;
     Integer DEFAULT_BATCH_SIZE = 1000;

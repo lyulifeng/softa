@@ -1,17 +1,17 @@
 package io.softa.framework.web.dto;
 
+import java.time.LocalDate;
+import java.util.List;
+import java.util.Map;
+import io.swagger.v3.oas.annotations.media.Schema;
+import lombok.Data;
+import org.springframework.util.CollectionUtils;
+
 import io.softa.framework.base.constant.BaseConstant;
 import io.softa.framework.base.context.ContextHolder;
 import io.softa.framework.base.utils.Assert;
 import io.softa.framework.orm.domain.*;
 import io.softa.framework.orm.enums.ConvertType;
-import io.swagger.v3.oas.annotations.media.Schema;
-import lombok.Data;
-import org.springframework.util.CollectionUtils;
-
-import java.time.LocalDate;
-import java.util.List;
-import java.util.Map;
 
 /**
  * SearchListParams for /searchList API.
@@ -36,7 +36,7 @@ public class SearchListParams {
     private AggFunctions aggFunctions;
 
     @Schema(description = "Limit size for searchList, default 50.", example = "50")
-    private Integer limit;
+    private Integer limitSize;
 
     @Schema(description = "Fields to group by, empty means no grouping.", example = "[]")
     private List<String> groupBy;
@@ -67,7 +67,7 @@ public class SearchListParams {
         // Set AggFunction parameters
         flexQuery.setAggFunctions(searchListParams.getAggFunctions());
         // Default limitSize for searchList.
-        Integer limitSize = searchListParams.getLimit();
+        Integer limitSize = searchListParams.getLimitSize();
         limitSize = limitSize == null || limitSize < 1 ? BaseConstant.DEFAULT_PAGE_SIZE : limitSize;
         Assert.isTrue(limitSize <= BaseConstant.MAX_BATCH_SIZE,
                 "API `searchList` cannot exceed the maximum limit of {0}.", BaseConstant.MAX_BATCH_SIZE);

@@ -371,7 +371,7 @@ public class OneToManyProcessor extends BaseProcessor {
         if (subQuery == null) {
             relatedFlexQuery = new FlexQuery(Collections.emptyList(), filters);
         } else {
-            // When there is a subQuery filters, merge them with `AND` logic
+            // When there is a subQuery filters object, merge them with `AND` logic
             filters.and(subQuery.getFilters());
             relatedFlexQuery = new FlexQuery(subQuery.getFields(), filters, subQuery.getOrders());
             if (!CollectionUtils.isEmpty(subQuery.getFields())) {
@@ -388,11 +388,13 @@ public class OneToManyProcessor extends BaseProcessor {
                 // the `relatedField` field as the partition field of the TopN query, without aggregation
                 relatedFlexQuery.setGroupBy(Collections.singletonList(metaField.getRelatedField()));
                 relatedFlexQuery.setAggregate(false);
+            } else if (subQuery.getLimitSize() != null && subQuery.getLimitSize() > 0) {
+                relatedFlexQuery.setLimitSize(subQuery.getLimitSize());
             }
         }
         relatedFlexQuery.setConvertType(flexQuery.getConvertType());
         // When get the related model rows of OneToMany field, the `relatedField` field of the related model is only
-        // needed to obtain the ID for GroupBy, which might be a ManyToOne field defined in the related model.
+        // needed to get the ID for GroupBy, which might be a ManyToOne field defined in the related model.
         relatedFlexQuery.setKeepIdField(metaField.getRelatedField());
         return ReflectTool.searchList(metaField.getRelatedModel(), relatedFlexQuery);
     }
