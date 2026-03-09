@@ -22,13 +22,13 @@
     <modules>
         <module>metadata-starter</module>
         <module>ai-starter</module>
-        <module>billing-starter</module>
         <module>cron-starter</module>
         <module>flow-starter</module>
         <module>es-starter</module>
         <module>file-starter</module>
         <module>designer-starter</module>
         <module>user-starter</module>
+        <module>tenant-starter</module>
     </modules>
 
 </project>
