@@ -1,9 +1,6 @@
 package io.softa.framework.orm.jdbc.pipeline.processor;
 
-import java.util.ArrayList;
-import java.util.List;
-import java.util.Map;
-import java.util.Objects;
+import java.util.*;
 import java.util.stream.Collectors;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.lang3.StringUtils;
@@ -13,6 +10,7 @@ import io.softa.framework.orm.dto.FileInfo;
 import io.softa.framework.orm.enums.AccessType;
 import io.softa.framework.orm.enums.FieldType;
 import io.softa.framework.orm.meta.MetaField;
+import io.softa.framework.orm.utils.IdUtils;
 import io.softa.framework.orm.utils.ReflectTool;
 
 /**
@@ -45,12 +43,31 @@ public class FilesGroupProcessor extends BaseProcessor {
     }
 
     /**
-     * No need to process the input data of the File and MultiFile fields group.
-     *
-     * @param rows Data collection
+     * @param row The single-row data to be created or updated
      */
-    public void batchProcessInputRows(List<Map<String, Object>> rows) {
-        // Processed in the StringProcessor and MultiStringProcessor
+    @Override
+    public void processInputRow(Map<String, Object> row) {
+        for (MetaField fileField : fileFields) {
+            String fieldName = fileField.getFieldName();
+            boolean isContain = row.containsKey(fieldName);
+            checkReadonly(isContain);
+            Object obj = row.get(fieldName);
+            // Check the required field
+            if (AccessType.CREATE.equals(accessType)) {
+                checkRequired(obj);
+                return;
+            } else if (isContain) {
+                // If the field is set to null, check if it is a required field.
+                checkRequired(obj);
+            }
+            if (FieldType.FILE.equals(fileField.getFieldType())) {
+                obj = IdUtils.convertIdToLong(obj);
+                row.put(fieldName, obj);
+            } else if (obj instanceof List<?> listValue) {
+                obj = StringUtils.join(listValue, ",");
+                row.put(fieldName, obj);
+            }
+        }
     }
 
     /**
@@ -59,7 +76,7 @@ public class FilesGroupProcessor extends BaseProcessor {
      * @param rows The list of output data
      */
     public void batchProcessOutputRows(List<Map<String, Object>> rows) {
-        List<Long> fileIds = getFileIds(rows);
+        List<Long> fileIds = processFileIds(rows);
         if (CollectionUtils.isEmpty(fileIds)) {
             return;
         }
@@ -69,8 +86,7 @@ public class FilesGroupProcessor extends BaseProcessor {
         for (Map<String, Object> row : rows) {
             for (MetaField fileField : fileFields) {
                 String fieldName = fileField.getFieldName();
-                if (FieldType.FILE.equals(fileField.getFieldType()) &&
-                        StringUtils.isNotBlank((String) row.get(fieldName))) {
+                if (FieldType.FILE.equals(fileField.getFieldType()) && row.get(fieldName) != null) {
                     row.put(fieldName, fileInfoMap.get((Long) row.get(fieldName)));
                 } else if (FieldType.MULTI_FILE.equals(fileField.getFieldType()) &&
                         row.get(fieldName) instanceof List<?> fileIdList) {
@@ -90,17 +106,28 @@ public class FilesGroupProcessor extends BaseProcessor {
      * @param rows The list of rows
      * @return The list of fileIds
      */
-    private List<Long> getFileIds(List<Map<String, Object>> rows) {
+    private List<Long> processFileIds(List<Map<String, Object>> rows) {
         List<Long> fileIds = new ArrayList<>();
         for (Map<String, Object> row : rows) {
             fileFields.forEach(fileField -> {
-                Object fileId = row.get(fileField.getFieldName());
+                String fieldName = fileField.getFieldName();
+                Object fileId = row.get(fieldName);
                 if (FieldType.FILE.equals(fileField.getFieldType()) &&
                         Objects.nonNull(fileId)) {
-                    fileIds.add((Long) fileId);
-                } else if (FieldType.MULTI_FILE.equals(fileField.getFieldType()) &&
-                        fileId instanceof List<?> fileIdList) {
-                    fileIdList.forEach(id -> fileIds.add((Long) id));
+                    Long id = IdUtils.convertIdToLong(fileId);
+                    fileIds.add(id);
+                    row.put(fieldName, id);
+                } else if (FieldType.MULTI_FILE.equals(fileField.getFieldType())) {
+                    String strIds = (String) fileId;
+                    if (StringUtils.isBlank(strIds)) {
+                        row.put(fieldName, null);
+                    } else {
+                        List<Long> fileIdList = Arrays.stream(StringUtils.split(strIds, ","))
+                                .map(IdUtils::convertIdToLong)
+                                .toList();
+                        fileIds.addAll(fileIdList);
+                        row.put(fieldName, fileIdList);
+                    }
                 }
             });
         }

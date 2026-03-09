@@ -35,7 +35,8 @@ public class StringProcessor extends BaseProcessor {
      */
     @Override
     public void processInputRow(Map<String, Object> row) {
-        checkReadonly(row);
+        boolean isContain = row.containsKey(fieldName);
+        checkReadonly(isContain);
         Object obj = row.get(fieldName);
         String value;
         if (obj instanceof Enum) {
@@ -57,18 +58,18 @@ public class StringProcessor extends BaseProcessor {
                         metaField.getModelName(), metaField.getFieldName());
             }
         } else if (AccessType.CREATE.equals(accessType)) {
-            checkRequired(row);
+            checkRequired(value);
             row.computeIfAbsent(fieldName, k -> metaField.getDefaultValueObject());
             return;
-        } else if (row.containsKey(fieldName)) {
+        } else if (isContain) {
             // If the field is set to null, check if it is a required field.
-            checkRequired(row);
+            checkRequired(value);
         }
         row.put(fieldName, value);
     }
 
     /**
-     * Process a single-row output data.
+     * Process single-row output data.
      *
      * @param row The single-row output data
      */

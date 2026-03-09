@@ -30,9 +30,11 @@ public class TimeProcessor extends BaseProcessor {
      * @param row Single-row data to be created/updated
      */
     public void processInputRow(Map<String, Object> row) {
-        checkReadonly(row);
+        boolean isContain = row.containsKey(fieldName);
+        checkReadonly(isContain);
+        Object value = row.get(fieldName);
         if (AccessType.CREATE.equals(accessType)) {
-            checkRequired(row);
+            checkRequired(value);
             row.computeIfAbsent(fieldName, _ -> {
                 if (EnvConstant.NOW.equalsIgnoreCase(metaField.getDefaultValue())) {
                     // Assign the current time as the default value.
@@ -41,9 +43,9 @@ public class TimeProcessor extends BaseProcessor {
                     return metaField.getDefaultValueObject();
                 }
             });
-        } else if (row.containsKey(fieldName) && row.get(fieldName) == null) {
+        } else if (isContain) {
             // Check if the required field is set to null.
-            checkRequired(row);
+            checkRequired(value);
         }
     }
 

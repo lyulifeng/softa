@@ -21,6 +21,8 @@ public enum WidgetType {
     EMAIL("Email", "Email"),
     TEXT("Text", "Text"),
     RICH_TEXT("RichText", "Rich Text"),
+    MARKDOWN("Markdown", "Markdown"),
+    CODE("Code", "Code"),
     COLOR("Color", "Color picker"),
 
     // Numeric
@@ -28,17 +30,15 @@ public enum WidgetType {
     PERCENTAGE("Percentage", "Percentage"),
     SLIDER("Slider", "Slider"),
 
-    // Boolean, Option fields
+    // Option fields
     RADIO("Radio", "Radio"),
+    // Boolean, MultiOption fields
+    CHECK_BOX("CheckBox", "CheckBox"),
 
     // Option, OneToMany fields
     STATUS_BAR("StatusBar", "Status bar"),
 
     // OneToMany, ManyToMany fields
-    CHECK_BOX("CheckBox", "CheckBox"),
-
-    // Tree structure, such as org structure, category, etc.
-    SELECT_TREE("SelectTree", "Tree Select"),
 
     // Single attachment, file key stored in a String field
     IMAGE("Image", "Single Image"),
@@ -51,6 +51,13 @@ public enum WidgetType {
     MM_DD("MM-dd", "Month-Day picker"),
     HH_MM("HH:mm", "Hour-Minute picker"),
     HH_MM_SS("HH:mm:ss", "Time picker"),
+
+    // Tree structure, such as org structure, category, etc.
+    SELECT_TREE("SelectTree", "Tree Select"),
+
+    // JSON tree to display JSON values in the tree view
+    JSON_TREE("JsonTree", "Json Tree"),
+
     ;
 
     @JsonValue

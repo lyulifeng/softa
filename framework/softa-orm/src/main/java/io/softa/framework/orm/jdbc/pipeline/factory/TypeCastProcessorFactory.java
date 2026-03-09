@@ -10,7 +10,7 @@ import io.softa.framework.orm.meta.MetaField;
 
 /**
  * Type cast processor factory.
- * Process the field type conversion for Option, List, Json, Filter, etc.
+ * Process the field type conversion for Option, List, JSON, Filter, etc.
  * The value can be used in calculation after convert.
  */
 @NoArgsConstructor
@@ -38,11 +38,8 @@ public class TypeCastProcessorFactory implements FieldProcessorFactory {
             return new MultiStringProcessor(metaField, accessType, convertType);
         } else if (FieldType.MULTI_OPTION.equals(fieldType)) {
             // During type conversion for MULTI_OPTION fields, using `MultiStringProcessor` processor
-            // to convert the field value between List and String object.
-            // But in the expand case, using `MultiOptionExpandProcessor` processor to expand the field value.
-            return new MultiStringProcessor(metaField, accessType, convertType);
-        } else if (FieldType.MULTI_FILE.equals(fieldType)) {
-            // Similar to the MULTI_OPTION field
+            // to convert the field value between a List and String object.
+            // But in the expanded case, using `MultiOptionExpandProcessor` processor to expand the field value.
             return new MultiStringProcessor(metaField, accessType, convertType);
         } else if (FieldType.FILTERS.equals(fieldType)) {
             return new FiltersProcessor(metaField, accessType);

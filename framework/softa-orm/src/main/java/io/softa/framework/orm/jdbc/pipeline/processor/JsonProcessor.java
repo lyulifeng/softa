@@ -26,16 +26,17 @@ public class JsonProcessor extends BaseProcessor {
      */
     @Override
     public void processInputRow(Map<String, Object> row) {
-        checkReadonly(row);
+        boolean isContain = row.containsKey(fieldName);
+        checkReadonly(isContain);
         Object value = row.get(fieldName);
         if (value != null) {
             row.put(fieldName, JsonUtils.objectToString(value));
         } else if (AccessType.CREATE.equals(accessType)) {
-            checkRequired(row);
+            checkRequired((Object) null);
             row.computeIfAbsent(fieldName, k -> metaField.getDefaultValueObject());
-        } else if (row.containsKey(fieldName)) {
+        } else if (isContain) {
             // The field is set to null, check if it is a required field.
-            checkRequired(row);
+            checkRequired((Object) null);
         }
     }
 

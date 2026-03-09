@@ -1821,3 +1821,120 @@ CREATE TABLE user_security_policy(
     PRIMARY KEY (id)
 ) ENGINE=InnoDB AUTO_INCREMENT=1 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT = 'User Security Policy';
 
+CREATE TABLE tenant(
+    id BIGINT(32) NOT NULL   COMMENT 'ID' ,
+    name VARCHAR(64)    COMMENT 'Name' ,
+    code VARCHAR(64)    COMMENT 'Code' ,
+    status VARCHAR(64)    COMMENT 'Status' ,
+    lifecycle_stage VARCHAR(64)    COMMENT 'Lifecycle Stage' ,
+    activated_time DATETIME    COMMENT 'Activated Time' ,
+    suspended_time DATETIME    COMMENT 'Suspended Time' ,
+    closed_time DATETIME    COMMENT 'Closed Time' ,
+    default_locale VARCHAR(32)    COMMENT 'Default Locale' ,
+    default_timezone VARCHAR(32)    COMMENT 'Default Timezone' ,
+    default_currency VARCHAR(32)    COMMENT 'Default Currency' ,
+    default_country VARCHAR(32)    COMMENT 'Default Country' ,
+    data_region VARCHAR(32)    COMMENT 'Data Region' ,
+    plan_id BIGINT(32)    COMMENT 'Plan ID' ,
+    subscription_id BIGINT(32)    COMMENT 'Subscription ID' ,
+    created_id BIGINT(32)    COMMENT 'Created ID' ,
+    created_time DATETIME    COMMENT 'Created Time' ,
+    created_by VARCHAR(64)    COMMENT 'Created By' ,
+    updated_id BIGINT(32)    COMMENT 'Updated ID' ,
+    updated_time DATETIME    COMMENT 'Updated Time' ,
+    updated_by VARCHAR(64)    COMMENT 'Updated By' ,
+    deleted TINYINT(1)   DEFAULT 0 COMMENT 'Deleted' ,
+    PRIMARY KEY (id)
+) ENGINE=InnoDB AUTO_INCREMENT=1 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT = 'Tenant';
+
+CREATE TABLE tenant_option_set(
+    id BIGINT(32) NOT NULL   COMMENT 'ID' ,
+    tenant_id BIGINT(32)    COMMENT 'Tenant ID' ,
+    app_id BIGINT(32)    COMMENT 'App ID' ,
+    name VARCHAR(64) NOT NULL  DEFAULT '' COMMENT 'Option Set Name' ,
+    option_set_code VARCHAR(64) NOT NULL  DEFAULT '' COMMENT 'Option Set Code' ,
+    description VARCHAR(256)   DEFAULT '' COMMENT 'Description' ,
+    created_time DATETIME    COMMENT 'Created Time' ,
+    created_id VARCHAR(32)    COMMENT 'Created ID' ,
+    created_by VARCHAR(64)    COMMENT 'Created By' ,
+    updated_time DATETIME    COMMENT 'Updated Time' ,
+    updated_id VARCHAR(32)    COMMENT 'Updated ID' ,
+    updated_by VARCHAR(64)    COMMENT 'Updated By' ,
+    active TINYINT(1)   DEFAULT 1 COMMENT 'Active' ,
+    PRIMARY KEY (id)
+) ENGINE=InnoDB AUTO_INCREMENT=1 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT = 'Tenant Option Set';
+
+
+ALTER TABLE tenant_option_set ADD UNIQUE INDEX unique_tenant_option_item (tenant_id,option_set_code);
+
+CREATE TABLE tenant_option_set_trans(
+    id BIGINT(32) NOT NULL AUTO_INCREMENT  COMMENT 'ID' ,
+    language_code VARCHAR(64) NOT NULL  DEFAULT '' COMMENT 'Language Code' ,
+    row_id BIGINT(32)    COMMENT 'Row ID' ,
+    name VARCHAR(64)    COMMENT 'Option Set Name' ,
+    description VARCHAR(256)    COMMENT 'Description' ,
+    created_time DATETIME    COMMENT 'Created Time' ,
+    created_by VARCHAR(64)    COMMENT 'Created By' ,
+    created_id VARCHAR(32)    COMMENT 'Created ID' ,
+    updated_time DATETIME    COMMENT 'Updated Time' ,
+    updated_id VARCHAR(32)    COMMENT 'Updated ID' ,
+    updated_by VARCHAR(64)    COMMENT 'Updated By' ,
+    PRIMARY KEY (id)
+) ENGINE=InnoDB AUTO_INCREMENT=1 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT = 'Tenant Option Set Translation';
+
+CREATE TABLE tenant_option_item(
+    id BIGINT(32) NOT NULL   COMMENT 'ID' ,
+    tenant_id BIGINT(32)    COMMENT 'Tenant ID' ,
+    app_id BIGINT(32)    COMMENT 'App ID' ,
+    option_set_id BIGINT(32)    COMMENT 'Option Set ID' ,
+    option_set_code VARCHAR(64)   DEFAULT '' COMMENT 'Option Set Code' ,
+    parent_item_id BIGINT(32)    COMMENT 'Parent Item ID' ,
+    sequence INT(11)   DEFAULT 1 COMMENT 'Sequence' ,
+    item_code VARCHAR(64) NOT NULL  DEFAULT '' COMMENT 'Item Code' ,
+    item_name VARCHAR(64) NOT NULL  DEFAULT '' COMMENT 'Item Name' ,
+    item_color VARCHAR(64)   DEFAULT '' COMMENT 'Item Color' ,
+    description VARCHAR(256)   DEFAULT '' COMMENT 'Description' ,
+    created_time DATETIME    COMMENT 'Created Time' ,
+    created_id VARCHAR(32)    COMMENT 'Created ID' ,
+    created_by VARCHAR(64)    COMMENT 'Created By' ,
+    updated_time DATETIME    COMMENT 'Updated Time' ,
+    updated_id VARCHAR(32)    COMMENT 'Updated ID' ,
+    updated_by VARCHAR(64)    COMMENT 'Updated By' ,
+    active TINYINT(1)   DEFAULT 1 COMMENT 'Active' ,
+    PRIMARY KEY (id)
+) ENGINE=InnoDB AUTO_INCREMENT=1 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT = 'Tenant Option Items';
+
+CREATE TABLE tenant_option_item_trans(
+    id BIGINT(32) NOT NULL AUTO_INCREMENT  COMMENT 'ID' ,
+    language_code VARCHAR(64) NOT NULL  DEFAULT '' COMMENT 'Language Code' ,
+    row_id BIGINT(32)    COMMENT 'Row ID' ,
+    item_name VARCHAR(64)    COMMENT 'Item Name' ,
+    description VARCHAR(256)    COMMENT 'Description' ,
+    created_time DATETIME    COMMENT 'Created Time' ,
+    created_by VARCHAR(64)    COMMENT 'Created By' ,
+    created_id VARCHAR(32)    COMMENT 'Created ID' ,
+    updated_time DATETIME    COMMENT 'Updated Time' ,
+    updated_id VARCHAR(32)    COMMENT 'Updated ID' ,
+    updated_by VARCHAR(64)    COMMENT 'Updated By' ,
+    PRIMARY KEY (id)
+) ENGINE=InnoDB AUTO_INCREMENT=1 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT = 'Tenant Option Items Translation';
+
+CREATE TABLE tenant_config(
+    id BIGINT(32) NOT NULL   COMMENT 'ID' ,
+    tenant_id BIGINT(32)    COMMENT 'Tenant ID' ,
+    app_id BIGINT(32)   DEFAULT 0 COMMENT 'App ID' ,
+    name VARCHAR(64) NOT NULL  DEFAULT '' COMMENT 'Name' ,
+    code VARCHAR(64) NOT NULL  DEFAULT '' COMMENT 'Code' ,
+    value TEXT NOT NULL   COMMENT 'Value' ,
+    value_type VARCHAR(64)   DEFAULT '' COMMENT 'Value Data Type' ,
+    description VARCHAR(256)   DEFAULT '' COMMENT 'Description' ,
+    created_time DATETIME    COMMENT 'Created Time' ,
+    created_id VARCHAR(32)    COMMENT 'Created ID' ,
+    created_by VARCHAR(64)    COMMENT 'Created By' ,
+    updated_time DATETIME    COMMENT 'Updated Time' ,
+    updated_id VARCHAR(32)    COMMENT 'Updated ID' ,
+    updated_by VARCHAR(64)    COMMENT 'Updated By' ,
+    active TINYINT(1)   DEFAULT 1 COMMENT 'Active' ,
+    PRIMARY KEY (id)
+) ENGINE=InnoDB AUTO_INCREMENT=1 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT = 'Tenant Config';
+

@@ -29,8 +29,6 @@ public class NormalProcessorFactory implements FieldProcessorFactory {
             // In normal processing, OPTION field is processed as a string with default values,
             // and the `OptionExpandProcessor` processor is used for expand cases.
             return new StringProcessor(metaField, accessType);
-        } else if (FieldType.FILE.equals(fieldType)) {
-            return new StringProcessor(metaField, accessType);
         } else if (FieldType.NUMERIC_TYPES.contains(fieldType)) {
             // Long, Integer, Double, BigDecimal
             return new NumericProcessor(metaField, accessType);

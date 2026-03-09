@@ -777,3 +777,28 @@ INSERT INTO sys_option_item(option_set_code,item_code,item_name,sequence,parent_
 INSERT INTO sys_option_item(option_set_code,item_code,item_name,sequence,parent_item_code,item_color,description) VALUES('LoginStatus','Invalid','Invalid',0,'','','');
 INSERT INTO sys_option_item(option_set_code,item_code,item_name,sequence,parent_item_code,item_color,description) VALUES('LoginStatus','NotFound','Not Found',0,'','','');
 
+-- Option Set: TenantStatus
+-- Clean up historical data
+DELETE FROM sys_option_set WHERE option_set_code='TenantStatus';
+DELETE FROM sys_option_item WHERE option_set_code='TenantStatus';
+-- Insert option set
+INSERT INTO sys_option_set(option_set_code,name,description) VALUES('TenantStatus','Tenant Status','');
+-- Insert option set items
+INSERT INTO sys_option_item(option_set_code,item_code,item_name,sequence,parent_item_code,item_color,description) VALUES('TenantStatus','Draft','Draft',1,'','orange','');
+INSERT INTO sys_option_item(option_set_code,item_code,item_name,sequence,parent_item_code,item_color,description) VALUES('TenantStatus','Active','Active',2,'','green','');
+INSERT INTO sys_option_item(option_set_code,item_code,item_name,sequence,parent_item_code,item_color,description) VALUES('TenantStatus','Suspended','Suspended',3,'','orange','');
+INSERT INTO sys_option_item(option_set_code,item_code,item_name,sequence,parent_item_code,item_color,description) VALUES('TenantStatus','Closed','Closed',4,'','red','');
+
+-- Option Set: TenantLifecycleStage
+-- Clean up historical data
+DELETE FROM sys_option_set WHERE option_set_code='TenantLifecycleStage';
+DELETE FROM sys_option_item WHERE option_set_code='TenantLifecycleStage';
+-- Insert option set
+INSERT INTO sys_option_set(option_set_code,name,description) VALUES('TenantLifecycleStage','Tenant Lifecycle Stage','');
+-- Insert option set items
+INSERT INTO sys_option_item(option_set_code,item_code,item_name,sequence,parent_item_code,item_color,description) VALUES('TenantLifecycleStage','Trial','Trial',0,'','','');
+INSERT INTO sys_option_item(option_set_code,item_code,item_name,sequence,parent_item_code,item_color,description) VALUES('TenantLifecycleStage','Subscribed','Subscribed',0,'','','');
+INSERT INTO sys_option_item(option_set_code,item_code,item_name,sequence,parent_item_code,item_color,description) VALUES('TenantLifecycleStage','GracePeriod','Grace Period',0,'','','');
+INSERT INTO sys_option_item(option_set_code,item_code,item_name,sequence,parent_item_code,item_color,description) VALUES('TenantLifecycleStage','Offboarding','Offboarding',0,'','','');
+INSERT INTO sys_option_item(option_set_code,item_code,item_name,sequence,parent_item_code,item_color,description) VALUES('TenantLifecycleStage','Archived','Archived',0,'','','');
+

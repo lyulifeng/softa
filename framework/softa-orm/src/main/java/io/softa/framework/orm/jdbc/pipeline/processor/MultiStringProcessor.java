@@ -5,7 +5,6 @@ import java.util.List;
 import java.util.Map;
 import org.apache.commons.lang3.StringUtils;
 
-import io.softa.framework.base.exception.IllegalArgumentException;
 import io.softa.framework.orm.enums.AccessType;
 import io.softa.framework.orm.enums.ConvertType;
 import io.softa.framework.orm.enums.FieldType;
@@ -24,36 +23,27 @@ public class MultiStringProcessor extends BaseProcessor {
     }
 
     /**
-     * Check if the required field is set to null or empty.
-     */
-    @Override
-    protected void checkRequired(Map<String, Object> row) {
-        if (metaField.isRequired() && StringUtils.isBlank((String) row.get(fieldName))) {
-            throw new IllegalArgumentException("Model required field {0}:{1} cannot be empty!", metaField.getModelName(), fieldName);
-        }
-    }
-
-    /**
      * Convert the multiple value to a string for storage.
      *
      * @param row Single-row data to be updated
      */
     @Override
     public void processInputRow(Map<String, Object> row) {
-        checkReadonly(row);
+        boolean isContain = row.containsKey(fieldName);
+        checkReadonly(isContain);
         Object value = row.get(fieldName);
         if (value instanceof List<?> listValue) {
             row.put(fieldName, StringUtils.join(listValue, ","));
         } else if (value instanceof String) {
             row.put(fieldName, value);
         } else if (AccessType.CREATE.equals(accessType)) {
-            checkRequired(row);
+            checkNotBlank(value);
             row.computeIfAbsent(fieldName, k -> metaField.getDefaultValueObject());
         }
     }
 
     /**
-     * Convert the string value of MultiString field to a list.
+     * Convert the string value of the MultiString field to a list.
      *
      * @param row Single-row output data
      */
@@ -61,9 +51,7 @@ public class MultiStringProcessor extends BaseProcessor {
     public void processOutputRow(Map<String, Object> row) {
         if (!row.containsKey(fieldName)) {
             return;
-        } else if (ConvertType.DISPLAY.equals(convertType) &&
-                (FieldType.MULTI_STRING.equals(metaField.getFieldType()) ||
-                        FieldType.MULTI_FILE.equals(metaField.getFieldType()))) {
+        } else if (ConvertType.DISPLAY.equals(convertType) && FieldType.MULTI_STRING.equals(metaField.getFieldType())) {
             return;
         }
         String value = (String) row.get(fieldName);

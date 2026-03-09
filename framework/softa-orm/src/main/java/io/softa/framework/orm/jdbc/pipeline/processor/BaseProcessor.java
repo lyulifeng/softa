@@ -1,10 +1,6 @@
 package io.softa.framework.orm.jdbc.pipeline.processor;
 
-import java.util.Collections;
-import java.util.EnumMap;
-import java.util.List;
-import java.util.Map;
-import java.util.Set;
+import java.util.*;
 import org.apache.commons.lang3.StringUtils;
 
 import io.softa.framework.base.exception.IllegalArgumentException;
@@ -39,9 +35,9 @@ public abstract class BaseProcessor implements FieldProcessor {
     /**
      * The readonly field cannot be assigned a value.
      */
-    protected void checkReadonly(Map<String, Object> row) {
+    protected void checkReadonly(boolean isContain) {
         if (metaField.isReadonly()
-                && row.containsKey(fieldName)
+                && isContain
                 && !metaField.isComputed()
                 && StringUtils.isBlank(metaField.getCascadedField())) {
             throw new IllegalArgumentException("Model field {0}:{1} is a readonly field and cannot be assigned!",
@@ -52,27 +48,38 @@ public abstract class BaseProcessor implements FieldProcessor {
     /**
      * The required field cannot be assigned a null value.
      */
-    protected void checkRequired(Map<String, Object> row) {
-        if (metaField.isRequired() && row.get(fieldName) == null) {
+    protected void checkRequired(Object value) {
+        if (metaField.isRequired() && value == null) {
             throw new IllegalArgumentException("Model field {0}:{1} is a required field and cannot be null!",
                     metaField.getModelName(), fieldName);
         }
     }
 
     /**
-     * Process a single-row input data.
+     * Check if the required field is set to null or empty.
+     */
+    protected void checkNotBlank(Object value) {
+        if (metaField.isRequired() && (value == null || StringUtils.isBlank(value.toString()))) {
+            throw new IllegalArgumentException("Model required field {0}:{1} cannot be empty!", metaField.getModelName(), fieldName);
+        }
+    }
+
+    /**
+     * Process single-row input data.
      *
      * @param row The single-row data to be created or updated
      */
     @Override
     public void processInputRow(Map<String, Object> row) {
-        checkReadonly(row);
+        boolean isContain = row.containsKey(fieldName);
+        checkReadonly(isContain);
+        Object value = row.get(fieldName);
         if (AccessType.CREATE.equals(accessType)) {
-            checkRequired(row);
+            checkRequired(value);
             row.computeIfAbsent(fieldName, k -> metaField.getDefaultValueObject());
-        } else if (row.containsKey(fieldName) && row.get(fieldName) == null) {
+        } else if (isContain) {
             // Check if the required field is set to null.
-            checkRequired(row);
+            checkRequired(value);
         }
     }
 
@@ -87,7 +94,7 @@ public abstract class BaseProcessor implements FieldProcessor {
     }
 
     /**
-     * Process a single-row output data.
+     * Process single-row output data.
      *
      * @param row The single-row output data
      */

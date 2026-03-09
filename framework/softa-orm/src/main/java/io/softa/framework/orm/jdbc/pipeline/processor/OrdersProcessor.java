@@ -3,7 +3,6 @@ package io.softa.framework.orm.jdbc.pipeline.processor;
 import java.util.Map;
 import org.apache.commons.lang3.StringUtils;
 
-import io.softa.framework.base.exception.IllegalArgumentException;
 import io.softa.framework.orm.domain.Orders;
 import io.softa.framework.orm.enums.AccessType;
 import io.softa.framework.orm.meta.MetaField;
@@ -18,30 +17,21 @@ public class OrdersProcessor extends BaseProcessor {
     }
 
     /**
-     * Check if the required field is assigned and is a non-empty string, non-null
-     */
-    @Override
-    protected void checkRequired(Map<String, Object> row) {
-        if (metaField.isRequired() && StringUtils.isBlank((String) row.get(fieldName))) {
-            throw new IllegalArgumentException("Model field {0}:{1} value cannot be empty!", metaField.getModelName(), fieldName);
-        }
-    }
-
-    /**
      * Convert the Orders object to a string and store it in the database.
      *
      * @param row Single-row data to be created/updated
      */
     @Override
     public void processInputRow(Map<String, Object> row) {
-        checkReadonly(row);
+        boolean isContain = row.containsKey(fieldName);
+        checkReadonly(isContain);
         Object value = row.get(fieldName);
         if (value instanceof Orders) {
             row.put(fieldName, value.toString());
         } else if (value instanceof String) {
             row.put(fieldName, value);
         } else if (AccessType.CREATE.equals(accessType)) {
-            checkRequired(row);
+            checkNotBlank(value);
             row.computeIfAbsent(fieldName, k -> metaField.getDefaultValueObject());
         }
     }

@@ -59,14 +59,16 @@ public class XToOneProcessor extends BaseProcessor {
      */
     @Override
     public void processInputRow(Map<String, Object> row) {
-        checkReadonly(row);
-        if (row.containsKey(fieldName) && row.get(fieldName) != null) {
+        boolean isContain = row.containsKey(fieldName);
+        checkReadonly(isContain);
+        Object value = row.get(fieldName);
+        if (isContain && value != null) {
             row.compute(fieldName, (k, id) -> IdUtils.formatId(metaField.getRelatedModel(), (Serializable) id));
         } else if (AccessType.CREATE.equals(accessType)) {
-            checkRequired(row);
+            checkRequired(value);
             row.computeIfAbsent(fieldName, k -> metaField.getDefaultValueObject());
-        } else if (row.containsKey(fieldName)) {
-            checkRequired(row);
+        } else if (isContain) {
+            checkRequired((Object) null);
         }
     }
 
