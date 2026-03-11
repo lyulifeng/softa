@@ -12,6 +12,7 @@ import io.softa.framework.base.constant.StringConstant;
 import io.softa.framework.orm.constant.ModelConstant;
 import io.softa.framework.orm.domain.FlexQuery;
 import io.softa.framework.orm.domain.SubQuery;
+import io.softa.framework.orm.entity.AbstractModel;
 import io.softa.framework.orm.enums.AccessType;
 import io.softa.framework.orm.enums.ConvertType;
 import io.softa.framework.orm.meta.MetaField;
@@ -63,12 +64,20 @@ public class XToOneProcessor extends BaseProcessor {
         checkReadonly(isContain);
         Object value = row.get(fieldName);
         if (isContain && value != null) {
-            row.compute(fieldName, (k, id) -> IdUtils.formatId(metaField.getRelatedModel(), (Serializable) id));
+            Object id;
+            if (value instanceof Map<?, ?> mapValue && mapValue.containsKey(ModelConstant.ID)) {
+                id = mapValue.get(ModelConstant.ID);
+            } else if (value instanceof AbstractModel entity) {
+                id = entity.getId();
+            } else {
+                id = row.get(fieldName);
+            }
+            row.put(fieldName, IdUtils.formatId(metaField.getRelatedModel(), (Serializable) id));
         } else if (AccessType.CREATE.equals(accessType)) {
             checkRequired(value);
             row.computeIfAbsent(fieldName, k -> metaField.getDefaultValueObject());
         } else if (isContain) {
-            checkRequired((Object) null);
+            checkRequired(null);
         }
     }
 
