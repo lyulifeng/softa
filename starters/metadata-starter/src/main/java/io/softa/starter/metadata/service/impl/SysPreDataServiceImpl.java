@@ -1,6 +1,7 @@
 package io.softa.starter.metadata.service.impl;
 
 import java.io.IOException;
+import java.io.InputStream;
 import java.io.Serializable;
 import java.io.StringReader;
 import java.util.*;
@@ -9,7 +10,11 @@ import org.apache.commons.csv.CSVFormat;
 import org.apache.commons.csv.CSVParser;
 import org.apache.commons.csv.CSVRecord;
 import org.apache.commons.lang3.StringUtils;
+import org.apache.fesod.sheet.FesodSheet;
+import org.apache.fesod.sheet.context.AnalysisContext;
+import org.apache.fesod.sheet.event.AnalysisEventListener;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.core.io.ClassPathResource;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.util.CollectionUtils;
@@ -25,8 +30,8 @@ import io.softa.framework.base.utils.Assert;
 import io.softa.framework.base.utils.Cast;
 import io.softa.framework.base.utils.JsonUtils;
 import io.softa.framework.base.utils.LambdaUtils;
-import io.softa.framework.orm.constant.ModelConstant;
 import io.softa.framework.orm.domain.FileObject;
+import io.softa.framework.orm.constant.ModelConstant;
 import io.softa.framework.orm.domain.Filters;
 import io.softa.framework.orm.domain.FlexQuery;
 import io.softa.framework.orm.enums.FieldType;
@@ -38,6 +43,10 @@ import io.softa.framework.orm.service.impl.EntityServiceImpl;
 import io.softa.framework.orm.utils.FileUtils;
 import io.softa.framework.orm.utils.IdUtils;
 import io.softa.starter.metadata.entity.SysPreData;
+import io.softa.starter.metadata.entity.TenantOptionItem;
+import io.softa.starter.metadata.entity.TenantOptionSet;
+import io.softa.starter.metadata.service.TenantOptionItemService;
+import io.softa.starter.metadata.service.TenantOptionSetService;
 import io.softa.starter.metadata.service.SysPreDataService;
 
 import static io.softa.framework.orm.constant.ModelConstant.ID;
@@ -54,6 +63,21 @@ public class SysPreDataServiceImpl extends EntityServiceImpl<SysPreData, Long> i
 
     @Autowired
     protected ModelService<Serializable> modelService;
+
+    @Autowired
+    private TenantOptionSetService tenantOptionSetService;
+
+    @Autowired
+    private TenantOptionItemService tenantOptionItemService;
+
+    private static final String OPTION_SET_NAME = "option_set_name";
+    private static final String OPTION_SET_CODE = "option_set_code";
+    private static final String OPTION_SET_ITEM_NAME = "option_set_item_name";
+    private static final String OPTION_SET_ITEM_CODE = "option_set_item_code";
+    private static final String PARENT_OPTION_SET_CODE = "parent_option_set_code";
+    private static final String PARENT_OPTION_SET_ITEM_CODE = "parent_option_set_item_code";
+    private static final String PARENT_ITEM_ID = "parentItemId";
+    private static final String TENANT_OPTION_SET_FILE_NAME = "option_set";
 
     /**
      * Load the specified list of predefined data files from the root directory: resources/data.
@@ -90,6 +114,14 @@ public class SysPreDataServiceImpl extends EntityServiceImpl<SysPreData, Long> i
         tenantContext.setTenantId(tenantId);
         ContextHolder.runWith(tenantContext, () -> {
             for (String fileName : fileNames) {
+                FileType fileType = getFileTypeByName(fileName);
+                if (FileType.XLS.equals(fileType) || FileType.XLSX.equals(fileType)) {
+                    if (!isTenantOptionSetExcel(fileName)) {
+                        continue;
+                    }
+                    loadTenantOptionSetExcel(dataDir, fileName);
+                    continue;
+                }
                 FileObject fileObject = FileUtils.getFileObjectByPath(dataDir, fileName);
                 loadFileObject(fileObject);
             }
@@ -134,6 +166,173 @@ public class SysPreDataServiceImpl extends EntityServiceImpl<SysPreData, Long> i
         } else {
             throw new IllegalArgumentException("Unsupported file type for predefined data: {0}", fileObject.getFileType());
         }
+    }
+
+    private FileType getFileTypeByName(String fileName) {
+        int dotIndex = fileName.lastIndexOf('.');
+        Assert.isTrue(dotIndex > -1, "The file {0} has no extension!", fileName);
+        String extension = fileName.substring(dotIndex + 1).toLowerCase(Locale.ROOT);
+        return FileType.ofExtension(extension)
+                .orElseThrow(() -> new IllegalArgumentException("Unsupported file type for predefined data: {0}", extension));
+    }
+
+    private boolean isTenantOptionSetExcel(String fileName) {
+        int dotIndex = fileName.lastIndexOf('.');
+        String shortFileName = dotIndex > -1 ? fileName.substring(0, dotIndex) : fileName;
+        int slashIndex = Math.max(shortFileName.lastIndexOf('/'), shortFileName.lastIndexOf('\\'));
+        String pureFileName = slashIndex > -1 ? shortFileName.substring(slashIndex + 1) : shortFileName;
+        return TENANT_OPTION_SET_FILE_NAME.equalsIgnoreCase(pureFileName);
+    }
+
+    private void loadTenantOptionSetExcel(String dataDir, String fileName) {
+        String fullName = dataDir + fileName;
+        ClassPathResource resource = new ClassPathResource(fullName);
+        Assert.isTrue(resource.exists(), "File does not exist: {0}", fullName);
+        try (InputStream inputStream = resource.getInputStream()) {
+            importTenantOptionSetRows(readTenantOptionSetExcel(inputStream));
+        } catch (IOException e) {
+            throw new SystemException("Failed to read Excel file: {0}", fileName, e);
+        }
+    }
+
+    private List<TenantOptionExcelRow> readTenantOptionSetExcel(InputStream inputStream) {
+        List<TenantOptionExcelRow> rows = new ArrayList<>();
+        FesodSheet.read(inputStream, new AnalysisEventListener<Map<Integer, String>>() {
+            private Map<Integer, String> headerMap = new HashMap<>();
+
+            @Override
+            public void invoke(Map<Integer, String> rowData, AnalysisContext context) {
+                TenantOptionExcelRow row = new TenantOptionExcelRow();
+                rowData.forEach((columnIndex, value) -> {
+                    String header = headerMap.get(columnIndex);
+                    if (header == null) {
+                        return;
+                    }
+                    String normalizedValue = StringUtils.trimToEmpty(value);
+                    switch (header.trim()) {
+                        case OPTION_SET_NAME -> row.setOptionSetName(normalizedValue);
+                        case OPTION_SET_CODE -> row.setOptionSetCode(normalizedValue);
+                        case OPTION_SET_ITEM_NAME -> row.setOptionSetItemName(normalizedValue);
+                        case OPTION_SET_ITEM_CODE -> row.setOptionSetItemCode(normalizedValue);
+                        case PARENT_OPTION_SET_CODE -> row.setParentOptionSetCode(normalizedValue);
+                        case PARENT_OPTION_SET_ITEM_CODE -> row.setParentOptionSetItemCode(normalizedValue);
+                        default -> {
+                        }
+                    }
+                });
+                if (!row.isEmpty()) {
+                    rows.add(row);
+                }
+            }
+
+            @Override
+            public void invokeHeadMap(Map<Integer, String> headMap, AnalysisContext context) {
+                this.headerMap = headMap;
+                validateTenantOptionExcelHeader(headMap.values());
+            }
+
+            @Override
+            public void doAfterAllAnalysed(AnalysisContext context) {
+            }
+        }).sheet(0).doRead();
+        Assert.notEmpty(rows, "No data exists in the excel file!");
+        return rows;
+    }
+
+    private void validateTenantOptionExcelHeader(Collection<String> headers) {
+        Set<String> actualHeaders = headers.stream()
+                .filter(Objects::nonNull)
+                .map(String::trim)
+                .collect(Collectors.toSet());
+        List<String> requiredHeaders = List.of(
+                OPTION_SET_NAME,
+                OPTION_SET_CODE,
+                OPTION_SET_ITEM_NAME,
+                OPTION_SET_ITEM_CODE,
+                PARENT_OPTION_SET_CODE,
+                PARENT_OPTION_SET_ITEM_CODE
+        );
+        requiredHeaders.forEach(header ->
+                Assert.isTrue(actualHeaders.contains(header), "The Excel header `{0}` is required!", header));
+    }
+
+    private void importTenantOptionSetRows(List<TenantOptionExcelRow> rows) {
+        Map<String, Long> optionSetIdMap = new LinkedHashMap<>();
+        for (TenantOptionExcelRow row : rows) {
+            row.validate();
+            Long optionSetId = upsertOptionSet(row);
+            optionSetIdMap.put(row.getOptionSetCode(), optionSetId);
+        }
+        Map<String, Long> itemIdMap = new HashMap<>();
+        for (TenantOptionExcelRow row : rows) {
+            Long itemId = upsertOptionItem(row, optionSetIdMap.get(row.getOptionSetCode()));
+            itemIdMap.put(buildItemKey(row.getOptionSetCode(), row.getOptionSetItemCode()), itemId);
+        }
+        for (TenantOptionExcelRow row : rows) {
+            updateParentItemId(row, itemIdMap);
+        }
+    }
+
+    private Long upsertOptionSet(TenantOptionExcelRow row) {
+        Filters filters = new Filters().eq(TenantOptionSet::getOptionSetCode, row.getOptionSetCode());
+        Optional<TenantOptionSet> existing = tenantOptionSetService.searchOne(new FlexQuery(filters));
+        if (existing.isPresent()) {
+            TenantOptionSet optionSet = existing.get();
+            optionSet.setName(row.getOptionSetName());
+            tenantOptionSetService.updateOne(optionSet);
+            return optionSet.getId();
+        }
+        TenantOptionSet optionSet = new TenantOptionSet();
+        optionSet.setName(row.getOptionSetName());
+        optionSet.setOptionSetCode(row.getOptionSetCode());
+        return tenantOptionSetService.createOne(optionSet);
+    }
+
+    private Long upsertOptionItem(TenantOptionExcelRow row, Long optionSetId) {
+        Filters filters = new Filters()
+                .eq(TenantOptionItem::getOptionSetCode, row.getOptionSetCode())
+                .eq(TenantOptionItem::getItemCode, row.getOptionSetItemCode());
+        Optional<TenantOptionItem> existing = tenantOptionItemService.searchOne(new FlexQuery(filters));
+        Map<String, Object> itemRow = new HashMap<>();
+        itemRow.put("optionSetId", optionSetId);
+        itemRow.put("optionSetCode", row.getOptionSetCode());
+        itemRow.put("itemCode", row.getOptionSetItemCode());
+        itemRow.put("itemName", row.getOptionSetItemName());
+        if (existing.isPresent()) {
+            itemRow.put(ID, existing.get().getId());
+            modelService.updateOne(TenantOptionItem.class.getSimpleName(), itemRow);
+            return existing.get().getId();
+        }
+        return Cast.of(modelService.createOne(TenantOptionItem.class.getSimpleName(), itemRow));
+    }
+
+    private void updateParentItemId(TenantOptionExcelRow row, Map<String, Long> itemIdMap) {
+        Long itemId = itemIdMap.get(buildItemKey(row.getOptionSetCode(), row.getOptionSetItemCode()));
+        Assert.notNull(itemId, "Option item `{0}` in option set `{1}` was not created successfully!",
+                row.getOptionSetItemCode(), row.getOptionSetCode());
+        Long parentItemId = null;
+        if (StringUtils.isNotBlank(row.getParentOptionSetItemCode())) {
+            String parentOptionSetCode = row.getResolvedParentOptionSetCode();
+            parentItemId = itemIdMap.get(buildItemKey(parentOptionSetCode, row.getParentOptionSetItemCode()));
+            if (parentItemId == null) {
+                Filters filters = new Filters()
+                        .eq(TenantOptionItem::getOptionSetCode, parentOptionSetCode)
+                        .eq(TenantOptionItem::getItemCode, row.getParentOptionSetItemCode());
+                parentItemId = tenantOptionItemService.searchOne(new FlexQuery(filters))
+                        .map(TenantOptionItem::getId)
+                        .orElseThrow(() -> new IllegalArgumentException(
+                                "Parent option item code `{0}` does not exist in option set `{1}`!",
+                                row.getParentOptionSetItemCode(), parentOptionSetCode));
+            }
+        }
+        Map<String, Object> updateRow = new HashMap<>();
+        updateRow.put(ID, itemId);
+        updateRow.put(PARENT_ITEM_ID, parentItemId);
+        modelService.updateOne(TenantOptionItem.class.getSimpleName(), updateRow);
+    }
+
+    private String buildItemKey(String optionSetCode, String itemCode) {
+        return optionSetCode + "::" + itemCode;
     }
 
     /**
@@ -423,5 +622,84 @@ public class SysPreDataServiceImpl extends EntityServiceImpl<SysPreData, Long> i
         preData.setPreId(preId);
         preData.setRowId(rowId.toString());
         this.createOne(preData);
+    }
+
+    private static class TenantOptionExcelRow {
+        private String optionSetName;
+        private String optionSetCode;
+        private String optionSetItemName;
+        private String optionSetItemCode;
+        private String parentOptionSetCode;
+        private String parentOptionSetItemCode;
+
+        boolean isEmpty() {
+            return StringUtils.isAllBlank(optionSetName, optionSetCode, optionSetItemName, optionSetItemCode,
+                    parentOptionSetCode, parentOptionSetItemCode);
+        }
+
+        void validate() {
+            Assert.notBlank(optionSetName, "The Excel field `{0}` cannot be empty!", OPTION_SET_NAME);
+            Assert.notBlank(optionSetCode, "The Excel field `{0}` cannot be empty!", OPTION_SET_CODE);
+            Assert.notBlank(optionSetItemName, "The Excel field `{0}` cannot be empty!", OPTION_SET_ITEM_NAME);
+            Assert.notBlank(optionSetItemCode, "The Excel field `{0}` cannot be empty!", OPTION_SET_ITEM_CODE);
+            boolean hasParentOptionSetCode = StringUtils.isNotBlank(parentOptionSetCode);
+            boolean hasParentOptionSetItemCode = StringUtils.isNotBlank(parentOptionSetItemCode);
+            Assert.isTrue(hasParentOptionSetCode == hasParentOptionSetItemCode,
+                    "The Excel fields `{0}` and `{1}` must both be filled or both be empty!",
+                    PARENT_OPTION_SET_CODE, PARENT_OPTION_SET_ITEM_CODE);
+        }
+
+        String getResolvedParentOptionSetCode() {
+            return StringUtils.defaultIfBlank(parentOptionSetCode, optionSetCode);
+        }
+
+
+        public String getOptionSetName() {
+            return optionSetName;
+        }
+
+        public void setOptionSetName(String optionSetName) {
+            this.optionSetName = optionSetName;
+        }
+
+        public String getOptionSetCode() {
+            return optionSetCode;
+        }
+
+        public void setOptionSetCode(String optionSetCode) {
+            this.optionSetCode = optionSetCode;
+        }
+
+        public String getOptionSetItemName() {
+            return optionSetItemName;
+        }
+
+        public void setOptionSetItemName(String optionSetItemName) {
+            this.optionSetItemName = optionSetItemName;
+        }
+
+        public String getOptionSetItemCode() {
+            return optionSetItemCode;
+        }
+
+        public void setOptionSetItemCode(String optionSetItemCode) {
+            this.optionSetItemCode = optionSetItemCode;
+        }
+
+        public String getParentOptionSetItemCode() {
+            return parentOptionSetItemCode;
+        }
+
+        public void setParentOptionSetItemCode(String parentOptionSetItemCode) {
+            this.parentOptionSetItemCode = parentOptionSetItemCode;
+        }
+
+        public String getParentOptionSetCode() {
+            return parentOptionSetCode;
+        }
+
+        public void setParentOptionSetCode(String parentOptionSetCode) {
+            this.parentOptionSetCode = parentOptionSetCode;
+        }
     }
 }

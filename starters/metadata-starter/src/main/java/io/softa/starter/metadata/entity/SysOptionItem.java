@@ -39,6 +39,9 @@ public class SysOptionItem extends AuditableModel {
     @Schema(description = "Item Name")
     private String itemName;
 
+    @Schema(description = "Parent Item ID")
+    private Long parentItemId;
+
     @Schema(description = "Parent Item Code")
     private String parentItemCode;
 

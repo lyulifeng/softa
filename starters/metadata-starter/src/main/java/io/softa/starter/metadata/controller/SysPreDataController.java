@@ -36,7 +36,7 @@ public class SysPreDataController extends EntityController<SysPreDataService, Sy
 
     @Operation(summary = "loadPreTenantData", description = """
             Load the predefined tenant data from resources/data-tenant for the current tenant.
-            supporting data files in JSON, XML, and CSV formats.
+            supporting data files in JSON, XML, CSV, XLS, and XLSX formats.
             """)
     @PostMapping("/loadPreTenantData")
     public ApiResponse<Boolean> loadPreTenantData(@RequestBody List<String> fileNames) {
