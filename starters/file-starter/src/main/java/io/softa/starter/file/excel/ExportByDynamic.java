@@ -21,8 +21,6 @@ import io.softa.framework.orm.meta.MetaField;
 import io.softa.framework.orm.meta.ModelManager;
 import io.softa.starter.file.dto.ExcelDataDTO;
 import io.softa.starter.file.dto.SheetInfo;
-import io.softa.starter.file.excel.handler.CommonFontStyleHandler;
-import io.softa.starter.file.excel.handler.CommonSheetStyleHandler;
 
 /**
  * Export by dynamic parameters
@@ -85,11 +83,7 @@ public class ExportByDynamic extends CommonExport {
                 List<List<String>> headerList = headers.stream().map(Collections::singletonList).toList();
                 String sheetName = StringUtils.isNotBlank(sheetInfo.getSheetName()) ? sheetInfo.getSheetName()
                         : sheetInfo.getModelName();
-                WriteSheet writeSheet = FesodSheet.writerSheet(i, sheetName)
-                        .head(headerList)
-                        .registerWriteHandler(new CommonSheetStyleHandler())
-                        .registerWriteHandler(new CommonFontStyleHandler())
-                        .build();
+                WriteSheet writeSheet = this.createSheetBuilder(i, sheetName, headerList).build();
                 excelWriter.write(rowsTable, writeSheet);
             }
             excelWriter.finish();

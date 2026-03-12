@@ -8,6 +8,7 @@ import io.softa.framework.base.context.ContextHolder;
 import io.softa.framework.orm.domain.Filters;
 import io.softa.framework.orm.domain.FlexQuery;
 import io.softa.framework.orm.domain.Orders;
+import io.softa.framework.orm.enums.ConvertType;
 import io.softa.framework.orm.service.impl.EntityServiceImpl;
 import io.softa.starter.file.entity.ExportHistory;
 import io.softa.starter.file.service.ExportHistoryService;
@@ -21,10 +22,12 @@ public class ExportHistoryServiceImpl extends EntityServiceImpl<ExportHistory, L
     @Override
     public List<Map<String, Object>> listMyExportHistory(String modelName) {
         Long userId = ContextHolder.getContext().getUserId();
-        Filters filters = new Filters()
-                .eq(ExportHistory::getCreatedId, userId)
-                .eq(ExportHistory::getModelName, modelName);
-        Orders orders = Orders.ofDesc(ExportHistory::getCreatedTime);
-        return this.modelService.searchList(this.modelName, new FlexQuery(filters, orders));
+        FlexQuery flexQuery = new FlexQuery()
+                .where(new Filters()
+                        .eq(ExportHistory::getCreatedId, userId)
+                        .eq(ExportHistory::getModelName, modelName))
+                .orderBy(Orders.ofDesc(ExportHistory::getCreatedTime))
+                .setConvertType(ConvertType.REFERENCE);
+        return this.modelService.searchList(this.modelName, flexQuery);
     }
 }

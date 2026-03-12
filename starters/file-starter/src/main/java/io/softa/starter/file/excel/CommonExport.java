@@ -42,6 +42,7 @@ import io.softa.starter.file.entity.ExportHistory;
 import io.softa.starter.file.entity.ExportTemplate;
 import io.softa.starter.file.entity.ExportTemplateField;
 import io.softa.starter.file.excel.handler.CommonFontStyleHandler;
+import io.softa.starter.file.excel.handler.CommonHeadStyleHandler;
 import io.softa.starter.file.excel.handler.CommonSheetStyleHandler;
 import io.softa.starter.file.excel.handler.CustomExportHandler;
 import io.softa.starter.file.service.ExportHistoryService;
@@ -159,6 +160,34 @@ public class CommonExport {
     }
 
     /**
+     * Create a sheet builder with all common export style handlers registered.
+     *
+     * @param sheetNo sheet index, nullable
+     * @param sheetName sheet name
+     * @param headersList header rows
+     * @param handlers additional write handlers
+     * @return sheet builder
+     */
+    protected ExcelWriterSheetBuilder createSheetBuilder(Integer sheetNo, String sheetName,
+                                                         List<List<String>> headersList, WriteHandler... handlers) {
+        ExcelWriterSheetBuilder builder = sheetNo == null
+                ? FesodSheet.writerSheet(sheetName).head(headersList)
+                : FesodSheet.writerSheet(sheetNo, sheetName).head(headersList);
+        builder = builder.registerWriteHandler(new CommonSheetStyleHandler());
+        builder = builder.registerWriteHandler(new CommonFontStyleHandler());
+        builder = builder.registerWriteHandler(new CommonHeadStyleHandler());
+        if (handlers == null) {
+            return builder;
+        }
+        for (WriteHandler handler : handlers) {
+            if (handler != null) {
+                builder = builder.registerWriteHandler(handler);
+            }
+        }
+        return builder;
+    }
+
+    /**
      * Generate the Excel file and upload it to the file storage.
      *
      * @param modelName the model name
@@ -185,12 +214,7 @@ public class CommonExport {
              ExcelWriter excelWriter = FesodSheet.write(outputStream).build()) {
             // Write the header and data, FesodSheet requires the header to be a list of lists
             List<List<String>> headersList = excelDataDTO.getHeaders().stream().map(Collections::singletonList).toList();
-            ExcelWriterSheetBuilder builder = FesodSheet.writerSheet(excelDataDTO.getSheetName()).head(headersList);
-
-            // Normalize generated head style before applying any export-specific customizations.
-            builder = builder.registerWriteHandler(new CommonSheetStyleHandler());
-            builder = builder.registerWriteHandler(new CommonFontStyleHandler());
-            builder = handler == null ? builder : builder.registerWriteHandler(handler);
+            ExcelWriterSheetBuilder builder = this.createSheetBuilder(null, excelDataDTO.getSheetName(), headersList, handler);
 
             excelWriter.write(excelDataDTO.getRowsTable(), builder.build());
             excelWriter.finish();

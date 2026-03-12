@@ -334,4 +334,9 @@ public class FlexQuery implements Serializable {
         }
         return this;
     }
+
+    public FlexQuery setConvertType(ConvertType convertType) {
+        this.convertType = convertType;
+        return this;
+    }
 }

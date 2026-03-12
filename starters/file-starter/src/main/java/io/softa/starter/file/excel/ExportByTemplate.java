@@ -19,7 +19,6 @@ import io.softa.framework.orm.dto.FileInfo;
 import io.softa.framework.orm.enums.ConvertType;
 import io.softa.starter.file.dto.ExcelDataDTO;
 import io.softa.starter.file.entity.ExportTemplate;
-import io.softa.starter.file.excel.handler.CommonFontStyleHandler;
 import io.softa.starter.file.excel.handler.CustomExportStyleHandler;
 
 /**
@@ -97,11 +96,7 @@ public class ExportByTemplate extends CommonExport {
 
                 // Write the header and data
                 List<List<String>> headerList = excelDataDTO.getHeaders().stream().map(Collections::singletonList).toList();
-                WriteSheet writeSheet = FesodSheet.writerSheet(i, sheetName)
-                        .head(headerList)
-                        .registerWriteHandler(new CommonFontStyleHandler())
-                        .registerWriteHandler(new CustomExportStyleHandler())
-                        .build();
+                WriteSheet writeSheet = this.createSheetBuilder(i, sheetName, headerList, new CustomExportStyleHandler()).build();
                 excelWriter.write(excelDataDTO.getRowsTable(), writeSheet);
             }
             excelWriter.finish();
