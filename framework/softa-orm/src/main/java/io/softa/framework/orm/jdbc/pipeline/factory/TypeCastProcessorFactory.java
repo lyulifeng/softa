@@ -32,6 +32,10 @@ public class TypeCastProcessorFactory implements FieldProcessorFactory {
     @Override
     public FieldProcessor createProcessor(MetaField metaField, AccessType accessType) {
         FieldType fieldType = metaField.getFieldType();
+        if (ConvertType.DISPLAY.equals(convertType)) {
+            // Display mode: return the original string value stored in database for fields need typecase.
+            return null;
+        }
         if (FieldType.JSON.equals(fieldType) || FieldType.DTO.equals(fieldType)) {
             return new JsonProcessor(metaField, accessType);
         } else if (FieldType.MULTI_STRING.equals(fieldType)) {

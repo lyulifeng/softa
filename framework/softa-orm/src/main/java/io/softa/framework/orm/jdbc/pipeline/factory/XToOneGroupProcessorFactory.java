@@ -49,7 +49,8 @@ public class XToOneGroupProcessorFactory implements FieldProcessorFactory {
             } else if (FieldType.TO_ONE_TYPES.contains(fieldType)) {
                 if (!metaField.getFieldName().equals(flexQuery.getKeepIdField())) {
                     // Create the XToOneGroupProcessor when the field group is not created by the cascaded field.
-                    if (ConvertType.EXPAND_TYPES.contains(flexQuery.getConvertType()) || flexQuery.getSubQueries().contains(metaField.getFieldName())) {
+                    if (ConvertType.EXPAND_TYPES.contains(flexQuery.getConvertType()) ||
+                            (flexQuery.getSubQueries() != null && flexQuery.getSubQueries().contains(metaField.getFieldName()))) {
                         return this.newXToOneGroupProcessor(metaField, accessType);
                     }
                 } else {

@@ -75,10 +75,10 @@ public class Page<T> implements Serializable {
     private boolean count;
 
     // Total number of pages, calculated by (total + pageSize - 1) / pageSize
-    private long totalPages;
+    private int totalPages;
 
     // Total number of rows
-    private long totalCount;
+    private int totalCount;
 
     private List<T> rows = Collections.emptyList();
 
@@ -164,10 +164,10 @@ public class Page<T> implements Serializable {
     /**
      * When setting the total, calculate the total number of pages at the same time.
      *
-     * @param totalCount Total number of rows
+     * @param count Total number of rows
      */
-    public void setTotalCount(long totalCount) {
-        this.totalCount = totalCount;
+    public void setTotalCount(long count) {
+        this.totalCount = Math.toIntExact(count);
         this.totalPages = (totalCount + pageSize - 1) / pageSize;
     }
 

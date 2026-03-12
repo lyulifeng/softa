@@ -1,8 +1,10 @@
 package io.softa.framework.orm.jdbc.pipeline.processor;
 
+import java.util.List;
 import java.util.Map;
 import org.apache.commons.lang3.StringUtils;
 
+import io.softa.framework.base.utils.JsonUtils;
 import io.softa.framework.orm.domain.Orders;
 import io.softa.framework.orm.enums.AccessType;
 import io.softa.framework.orm.meta.MetaField;
@@ -30,6 +32,8 @@ public class OrdersProcessor extends BaseProcessor {
             row.put(fieldName, value.toString());
         } else if (value instanceof String) {
             row.put(fieldName, value);
+        } else if (value instanceof List<?> listValue) {
+            row.put(fieldName, JsonUtils.objectToString(listValue));
         } else if (AccessType.CREATE.equals(accessType)) {
             checkNotBlank(value);
             row.computeIfAbsent(fieldName, k -> metaField.getDefaultValueObject());

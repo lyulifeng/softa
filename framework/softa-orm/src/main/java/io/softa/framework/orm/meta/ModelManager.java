@@ -1,7 +1,7 @@
 package io.softa.framework.orm.meta;
 
 import java.util.*;
-import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.locks.ReentrantLock;
 import java.util.stream.Collectors;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.lang3.StringUtils;
@@ -29,32 +29,71 @@ import io.softa.framework.orm.jdbc.JdbcService;
 @Slf4j
 public class ModelManager {
 
-    private static final Map<String, MetaModel> MODEL_MAP = new ConcurrentHashMap<>(200);
-    private static final Map<String, Map<String, MetaField>> MODEL_FIELDS = new ConcurrentHashMap<>(200);
+    private static volatile MetadataSnapshot snapshot = MetadataSnapshot.empty();
+    private static final ThreadLocal<MetadataSnapshot> BUILDING_SNAPSHOT = new ThreadLocal<>();
+
+    private final ReentrantLock initLock = new ReentrantLock();
 
     @Autowired
     private JdbcService<?> jdbcService;
+
+    private record MetadataSnapshot(Map<String, MetaModel> modelMap, Map<String, Map<String, MetaField>> modelFields) {
+        private static MetadataSnapshot empty() {
+            return new MetadataSnapshot(Map.of(), Map.of());
+        }
+    }
+
+    private static MetadataSnapshot currentSnapshot() {
+        MetadataSnapshot buildingSnapshot = BUILDING_SNAPSHOT.get();
+        return buildingSnapshot != null ? buildingSnapshot : snapshot;
+    }
+
+    private static Map<String, MetaModel> modelMap() {
+        return currentSnapshot().modelMap();
+    }
+
+    private static Map<String, Map<String, MetaField>> modelFields() {
+        return currentSnapshot().modelFields();
+    }
+
+    private static MetadataSnapshot createMutableSnapshot() {
+        return new MetadataSnapshot(new HashMap<>(200), new HashMap<>(200));
+    }
+
+    private static MetadataSnapshot freezeSnapshot(MetadataSnapshot draft) {
+        Map<String, MetaModel> frozenModelMap = Collections.unmodifiableMap(new HashMap<>(draft.modelMap()));
+        Map<String, Map<String, MetaField>> frozenModelFields = draft.modelFields().entrySet().stream()
+                .collect(Collectors.toUnmodifiableMap(Map.Entry::getKey, entry -> Map.copyOf(entry.getValue())));
+        return new MetadataSnapshot(frozenModelMap, frozenModelFields);
+    }
 
     /**
      * Initialize ModelManager, load MetaModel and MetaField data from the database
      */
     public void init() {
-        MODEL_MAP.clear();
-        MODEL_FIELDS.clear();
-        List<MetaModel> models = jdbcService.selectMetaEntityList("SysModel", MetaModel.class, null);
-        List<MetaField> fields = jdbcService.selectMetaEntityList("SysField", MetaField.class, null);
-        if (ListUtils.allNotNull(models, fields)) {
-            this.initModels(models);
-            // Initialize basic field information
-            this.initBasicFields(fields);
-            // Validate model attributes
-            this.validateModelAttributes(models);
-            // Validate field attributes
-            this.validateFieldAttributes(fields);
-            // Identify the audit fields of the models.
-            this.identifyAuditFields(models);
-            // Seal the model attributes to make them immutable after initialization
-            this.sealModelAttributes(models);
+        initLock.lock();
+        try {
+            MetadataSnapshot draft = createMutableSnapshot();
+            BUILDING_SNAPSHOT.set(draft);
+            List<MetaModel> models = jdbcService.selectMetaEntityList("SysModel", MetaModel.class, null);
+            List<MetaField> fields = jdbcService.selectMetaEntityList("SysField", MetaField.class, null);
+            if (ListUtils.allNotNull(models, fields)) {
+                this.initModels(models);
+                // Initialize basic field information
+                this.initBasicFields(fields);
+                // Validate model attributes
+                this.validateModelAttributes(models);
+                // Validate field attributes
+                this.validateFieldAttributes(fields);
+                // Identify the audit fields of the models.
+                this.identifyAuditFields(models);
+                // Seal the model attributes to make them immutable after initialization
+                this.sealModelAttributes(models);
+                snapshot = freezeSnapshot(draft);
+            }
+        } finally {
+            BUILDING_SNAPSHOT.remove();
+            initLock.unlock();
         }
     }
 
@@ -65,8 +104,8 @@ public class ModelManager {
      */
     private void initModels(List<MetaModel> models) {
         models.forEach(model -> {
-            MODEL_MAP.put(model.getModelName(), model);
-            MODEL_FIELDS.put(model.getModelName(), new HashMap<>(4));
+            modelMap().put(model.getModelName(), model);
+            modelFields().put(model.getModelName(), new HashMap<>(4));
         });
     }
 
@@ -77,11 +116,11 @@ public class ModelManager {
     private void initBasicFields(List<MetaField> fields) {
         fields.forEach(field -> {
             Assert.notNull(field.getFieldType(), "The fieldType of field metadata is not supported: {0}", field);
-            Assert.isTrue(MODEL_MAP.containsKey(field.getModelName()),
+            Assert.isTrue(modelMap().containsKey(field.getModelName()),
                     "Model for field does not exist in model metadata: {0}", field);
             // Convert the string default value to the default value object
             field.setDefaultValueObject(FieldType.convertStringToFieldValue(field.getFieldType(), field.getDefaultValue()));
-            MODEL_FIELDS.get(field.getModelName()).put(field.getFieldName(), field);
+            modelFields().get(field.getModelName()).put(field.getFieldName(), field);
         });
     }
 
@@ -164,22 +203,22 @@ public class ModelManager {
      */
     private void identifyAuditFields(List<MetaModel> metaModels) {
         for (MetaModel metaModel : metaModels) {
-            if (MODEL_FIELDS.get(metaModel.getModelName()).containsKey(ModelConstant.CREATED_ID)) {
+            if (modelFields().get(metaModel.getModelName()).containsKey(ModelConstant.CREATED_ID)) {
                 metaModel.addAuditCreateField(ModelConstant.CREATED_ID);
             }
-            if (MODEL_FIELDS.get(metaModel.getModelName()).containsKey(ModelConstant.UPDATED_ID)) {
+            if (modelFields().get(metaModel.getModelName()).containsKey(ModelConstant.UPDATED_ID)) {
                 metaModel.addAuditUpdateField(ModelConstant.UPDATED_ID);
             }
-            if (MODEL_FIELDS.get(metaModel.getModelName()).containsKey(ModelConstant.CREATED_BY)) {
+            if (modelFields().get(metaModel.getModelName()).containsKey(ModelConstant.CREATED_BY)) {
                 metaModel.addAuditCreateField(ModelConstant.CREATED_BY);
             }
-            if (MODEL_FIELDS.get(metaModel.getModelName()).containsKey(ModelConstant.UPDATED_BY)) {
+            if (modelFields().get(metaModel.getModelName()).containsKey(ModelConstant.UPDATED_BY)) {
                 metaModel.addAuditUpdateField(ModelConstant.UPDATED_BY);
             }
-            if (MODEL_FIELDS.get(metaModel.getModelName()).containsKey(ModelConstant.CREATED_TIME)) {
+            if (modelFields().get(metaModel.getModelName()).containsKey(ModelConstant.CREATED_TIME)) {
                 metaModel.addAuditCreateField(ModelConstant.CREATED_TIME);
             }
-            if (MODEL_FIELDS.get(metaModel.getModelName()).containsKey(ModelConstant.UPDATED_TIME)) {
+            if (modelFields().get(metaModel.getModelName()).containsKey(ModelConstant.UPDATED_TIME)) {
                 metaModel.addAuditUpdateField(ModelConstant.UPDATED_TIME);
             }
         }
@@ -213,7 +252,7 @@ public class ModelManager {
             } else {
                 softDeleteField = metaModel.getSoftDeleteField();
             }
-            MetaField deletedField = MODEL_FIELDS.get(metaModel.getModelName()).get(softDeleteField);
+            MetaField deletedField = modelFields().get(metaModel.getModelName()).get(softDeleteField);
             Assert.notNull(deletedField, "`{0}` model enable soft delete, but not exist `{1}` field!",
                     metaModel.getModelName(), softDeleteField);
             deletedField.setDefaultValueObject(false);
@@ -229,7 +268,7 @@ public class ModelManager {
      */
     private static void validateActiveControl(MetaModel metaModel) {
         if (metaModel.isActiveControl()) {
-            MetaField activeField = MODEL_FIELDS.get(metaModel.getModelName()).get(ModelConstant.ACTIVE_CONTROL_FIELD);
+            MetaField activeField = modelFields().get(metaModel.getModelName()).get(ModelConstant.ACTIVE_CONTROL_FIELD);
             Assert.notNull(activeField, "`{0}` model enable active control, but not exist `{1}` field!",
                     metaModel.getModelName(), ModelConstant.ACTIVE_CONTROL_FIELD);
             activeField.setDefaultValueObject(true);
@@ -288,9 +327,9 @@ public class ModelManager {
      */
     private static void validateTimelineFields(String modelName) {
         if (isTimelineModel(modelName)) {
-            Set<String> modelFields = MODEL_FIELDS.get(modelName).keySet();
+            Set<String> currentModelFields = modelFields().get(modelName).keySet();
             Set<String> subFields = new HashSet<>(ModelConstant.TIMELINE_FIELDS);
-            subFields.removeAll(modelFields);
+            subFields.removeAll(currentModelFields);
             Assert.isTrue(subFields.isEmpty(), "Timeline model {0} must contain the required fields {1}!", modelName, subFields);
         }
     }
@@ -302,7 +341,7 @@ public class ModelManager {
      */
     private static void validateMultiTenant(MetaModel metaModel) {
         if (metaModel.isMultiTenant()) {
-            Assert.isTrue(MODEL_FIELDS.get(metaModel.getModelName()).containsKey(ModelConstant.TENANT_ID),
+            Assert.isTrue(modelFields().get(metaModel.getModelName()).containsKey(ModelConstant.TENANT_ID),
                     "The multi-tenant model {0} must contain the `tenantId` field!", metaModel.getModelName());
         }
     }
@@ -314,7 +353,7 @@ public class ModelManager {
      */
     private static void validateVersionField(MetaModel metaModel) {
         if (metaModel.isVersionLock()) {
-            Assert.isTrue(MODEL_FIELDS.get(metaModel.getModelName()).containsKey(ModelConstant.VERSION),
+            Assert.isTrue(modelFields().get(metaModel.getModelName()).containsKey(ModelConstant.VERSION),
                     "The model {0} must contain the `version` field when using optimistic lock control!",
                     metaModel.getModelName());
         }
@@ -375,7 +414,7 @@ public class ModelManager {
         Assert.isTrue(StringUtils.isNotBlank(relatedModel),
                 "{0}:{1} field, the `relatedModel` cannot be empty!",
                 metaField.getModelName(), metaField.getFieldName());
-        Assert.isTrue(MODEL_MAP.containsKey(relatedModel),
+        Assert.isTrue(modelMap().containsKey(relatedModel),
                 "{0}:{1} field, the relatedModel `{2}` does not exist in the model metadata!",
                 metaField.getModelName(), metaField.getFieldName(), relatedModel);
         if ((FieldType.TO_ONE_TYPES.contains(metaField.getFieldType()))) {
@@ -388,26 +427,26 @@ public class ModelManager {
             Assert.notEqual(metaField.getRelatedField(), ModelConstant.ID,
                     "{0}:{1} field, the `relatedField` cannot be `id`!",
                     metaField.getModelName(), metaField.getFieldName());
-            Assert.isTrue(MODEL_FIELDS.get(relatedModel).containsKey(metaField.getRelatedField()),
+            Assert.isTrue(modelFields().get(relatedModel).containsKey(metaField.getRelatedField()),
                     "{0}:{1} is a OneToMany field, the relatedModel `{2}` does not contain the related field `{3}`!",
                     metaField.getModelName(), metaField.getFieldName(), relatedModel, metaField.getRelatedField());
         } else if (FieldType.MANY_TO_MANY.equals(metaField.getFieldType())) {
             Assert.notBlank(metaField.getJoinModel(),
                     "{0}:{1} is a ManyToMany field, the `joinModel` cannot be empty!",
                     metaField.getModelName(), metaField.getFieldName());
-            Assert.isTrue(MODEL_MAP.containsKey(metaField.getJoinModel()),
+            Assert.isTrue(modelMap().containsKey(metaField.getJoinModel()),
                     "{0}:{1} is a ManyToMany field, the joinModel `{2}` does not exist in the model metadata!",
                     metaField.getModelName(), metaField.getFieldName(), metaField.getJoinModel());
             Assert.notBlank(metaField.getJoinLeft(),
                     "{0}:{1} is a ManyToMany field, the `joinLeft` cannot be empty!",
                     metaField.getModelName(), metaField.getFieldName());
-            Assert.isTrue(MODEL_FIELDS.get(metaField.getJoinModel()).containsKey(metaField.getJoinLeft()),
+            Assert.isTrue(modelFields().get(metaField.getJoinModel()).containsKey(metaField.getJoinLeft()),
                     "{0}:{1} is a ManyToMany field, the joinModel `{2}` does not contain the joinLeft field `{3}`!",
                     metaField.getModelName(), metaField.getFieldName(), metaField.getJoinModel(), metaField.getJoinLeft());
             Assert.notBlank(metaField.getJoinRight(),
                     "{0}:{1} is a ManyToMany field, the `joinRight` cannot be empty!",
                     metaField.getModelName(), metaField.getFieldName());
-            Assert.isTrue(MODEL_FIELDS.get(metaField.getJoinModel()).containsKey(metaField.getJoinRight()),
+            Assert.isTrue(modelFields().get(metaField.getJoinModel()).containsKey(metaField.getJoinRight()),
                     "{0}:{1} is a ManyToMany field, the joinModel `{2}` does not contain the joinRight field `{3}`!",
                     metaField.getModelName(), metaField.getFieldName(), metaField.getJoinModel(), metaField.getJoinRight());
         }
@@ -432,7 +471,7 @@ public class ModelManager {
                 "The `cascadedField` {0} of model {1} field {2} does not valid! Only `fieldA.fieldB` format is allowed.",
                 metaField.getCascadedField(), modelName, fieldName);
         MetaField leftField = getModelField(modelName, cascadedFields[0]);
-        Set<String> modelAllFields = MODEL_FIELDS.get(modelName).keySet();
+        Set<String> modelAllFields = modelFields().get(modelName).keySet();
         Assert.isTrue(modelAllFields.contains(cascadedFields[0]) && FieldType.TO_ONE_TYPES.contains(leftField.getFieldType()),
                 "The `cascadedField` {0} of model {1} field {2} does not valid! The field `{3}` is not a ManyToOne/OneToOne field of current model.",
                 metaField.getCascadedField(), modelName, fieldName, cascadedFields[0]);
@@ -442,7 +481,7 @@ public class ModelManager {
         metaField.setDependentFields(Arrays.asList(cascadedFields));
         if (!metaField.isDynamic()) {
             // Update the stored cascaded fields cache of the model
-            MetaModel metaModel = MODEL_MAP.get(modelName);
+            MetaModel metaModel = modelMap().get(modelName);
             metaModel.addStoredCascadedField(metaField);
         }
     }
@@ -475,7 +514,7 @@ public class ModelManager {
             // Stored computed field, must depend on stored fields.
             validateStoredFields(metaField.getModelName(), metaField.getDependentFields());
             // Update the stored computed fields cache of the model
-            MetaModel metaModel = MODEL_MAP.get(metaField.getModelName());
+            MetaModel metaModel = modelMap().get(metaField.getModelName());
             metaModel.addStoredComputedField(metaField);
         }
     }
@@ -512,14 +551,14 @@ public class ModelManager {
             metaField.setReadonly(true);
         } else if (SystemConfig.env.isEnableMultiTenancy() && ModelConstant.TENANT_ID.equals(metaField.getFieldName())) {
             metaField.setReadonly(true);
-        } else if (MODEL_MAP.get(model).isVersionLock() && ModelConstant.VERSION.equals(metaField.getFieldName())) {
+        } else if (modelMap().get(model).isVersionLock() && ModelConstant.VERSION.equals(metaField.getFieldName())) {
             metaField.setReadonly(true);
-        } else if (MODEL_MAP.get(model).isTimeline() && ModelConstant.SLICE_ID.equals(metaField.getFieldName())) {
+        } else if (modelMap().get(model).isTimeline() && ModelConstant.SLICE_ID.equals(metaField.getFieldName())) {
             metaField.setReadonly(true);
         } else if (metaField.isComputed() || StringUtils.isNotBlank(metaField.getCascadedField())) {
             metaField.setReadonly(true);
         } else if (ModelConstant.ID.equals(metaField.getFieldName())
-                && !IdStrategy.EXTERNAL_ID.equals(MODEL_MAP.get(model).getIdStrategy())) {
+                && !IdStrategy.EXTERNAL_ID.equals(modelMap().get(model).getIdStrategy())) {
             metaField.setReadonly(true);
         }
     }
@@ -543,7 +582,7 @@ public class ModelManager {
      * @return true or false
      */
     public static boolean existModel(String modelName) {
-        return MODEL_MAP.containsKey(modelName);
+        return modelMap().containsKey(modelName);
     }
 
     /**
@@ -564,7 +603,7 @@ public class ModelManager {
      */
     public static void validateModelField(String modelName, String fieldName) {
         validateModel(modelName);
-        Assert.isTrue(MODEL_FIELDS.get(modelName).containsKey(fieldName),
+        Assert.isTrue(modelFields().get(modelName).containsKey(fieldName),
                 "Model {0} does not exist field {1}!", modelName, fieldName);
     }
 
@@ -580,7 +619,7 @@ public class ModelManager {
             return;
         }
         Set<String> accessFields = new HashSet<>(fields);
-        accessFields.removeAll(MODEL_FIELDS.get(modelName).keySet());
+        accessFields.removeAll(modelFields().get(modelName).keySet());
         Assert.isTrue(accessFields.isEmpty(), "Model {0} does not exist fields {1}!", modelName, accessFields);
     }
 
@@ -592,7 +631,7 @@ public class ModelManager {
      */
     public static MetaModel getModel(String modelName) {
         validateModel(modelName);
-        return MODEL_MAP.get(modelName);
+        return modelMap().get(modelName);
     }
 
     /**
@@ -624,7 +663,7 @@ public class ModelManager {
      * @return primary key field object
      */
     public static MetaField getModelPrimaryKeyField(String modelName) {
-        return MODEL_FIELDS.get(modelName).get(isTimelineModel(modelName) ?
+        return modelFields().get(modelName).get(isTimelineModel(modelName) ?
                 ModelConstant.SLICE_ID : ModelConstant.ID);
     }
 
@@ -636,7 +675,7 @@ public class ModelManager {
      */
     public static List<MetaField> getModelFields(String modelName) {
         validateModel(modelName);
-        return List.copyOf(MODEL_FIELDS.get(modelName).values());
+        return List.copyOf(modelFields().get(modelName).values());
     }
 
     /**
@@ -646,7 +685,7 @@ public class ModelManager {
      * @return copyable fields
      */
     public static List<String> getModelCopyableFields(String modelName) {
-        return MODEL_FIELDS.get(modelName).keySet().stream()
+        return modelFields().get(modelName).keySet().stream()
                 .filter(fieldName -> {
                     if (ModelConstant.AUDIT_FIELDS.contains(fieldName)) {
                         return false;
@@ -668,7 +707,7 @@ public class ModelManager {
      */
     public static MetaField getModelField(String modelName, String fieldName) {
         validateModelField(modelName, fieldName);
-        return MODEL_FIELDS.get(modelName).get(fieldName);
+        return modelFields().get(modelName).get(fieldName);
     }
 
     /**
@@ -680,7 +719,7 @@ public class ModelManager {
      */
     public static String getModelFieldColumn(String modelName, String fieldName) {
         validateModelField(modelName, fieldName);
-        return MODEL_FIELDS.get(modelName).get(fieldName).getColumnName();
+        return modelFields().get(modelName).get(fieldName).getColumnName();
     }
 
     /**
@@ -715,7 +754,7 @@ public class ModelManager {
      * @return encrypted fields
      */
     public static Set<String> getModelEncryptedFields(String modelName) {
-        return MODEL_FIELDS.get(modelName).values().stream()
+        return modelFields().get(modelName).values().stream()
                 .filter(metaField -> metaField.isEncrypted() && metaField.getFieldType().equals(FieldType.STRING))
                 .map(MetaField::getFieldName).collect(Collectors.toSet());
     }
@@ -728,7 +767,7 @@ public class ModelManager {
      * @return masking fields
      */
     public static Set<MetaField> getModelMaskingFields(String modelName) {
-        return MODEL_FIELDS.get(modelName).values().stream()
+        return modelFields().get(modelName).values().stream()
                 .filter(metaField -> metaField.getMaskingType() != null
                         && metaField.getFieldType().equals(FieldType.STRING))
                 .collect(Collectors.toSet());
@@ -742,7 +781,7 @@ public class ModelManager {
      */
     public static Set<String> getModelFieldsWithoutXToMany(String modelName) {
         validateModel(modelName);
-        return MODEL_FIELDS.get(modelName).values().stream()
+        return modelFields().get(modelName).values().stream()
                 .filter(metaField -> !FieldType.TO_MANY_TYPES.contains(metaField.getFieldType()))
                 .map(MetaField::getFieldName).collect(Collectors.toSet());
     }
@@ -769,7 +808,7 @@ public class ModelManager {
      */
     public static Set<String> getModelUpdatableFields(String modelName) {
         validateModel(modelName);
-        return MODEL_FIELDS.get(modelName).values().stream()
+        return modelFields().get(modelName).values().stream()
                 .filter(metaField -> !metaField.isReadonly())
                 .map(MetaField::getFieldName).collect(Collectors.toSet());
     }
@@ -783,7 +822,7 @@ public class ModelManager {
      */
     public static List<String> getModelStoredFields(String modelName) {
         validateModel(modelName);
-        return MODEL_FIELDS.get(modelName).values().stream()
+        return modelFields().get(modelName).values().stream()
                 .filter(metaField -> !metaField.isDynamic())
                 .map(MetaField::getFieldName).collect(Collectors.toList());
     }
@@ -797,7 +836,7 @@ public class ModelManager {
      */
     public static Set<MetaField> getModelFieldsWithType(String modelName, FieldType fieldType) {
         validateModel(modelName);
-        return MODEL_FIELDS.get(modelName).values().stream()
+        return modelFields().get(modelName).values().stream()
                 .filter(field -> fieldType.equals(field.getFieldType()))
                 .collect(Collectors.toSet());
     }
@@ -821,7 +860,7 @@ public class ModelManager {
      */
     public static Set<String> getModelNumericFields(String modelName) {
         validateModel(modelName);
-        return MODEL_FIELDS.get(modelName).values().stream()
+        return modelFields().get(modelName).values().stream()
                 .filter(f -> FieldType.NUMERIC_TYPES.contains(f.getFieldType())
                         && !ModelConstant.RESERVED_KEYWORD.contains(f.getFieldName()))
                 .map(MetaField::getFieldName).collect(Collectors.toSet());
@@ -835,7 +874,7 @@ public class ModelManager {
      */
     public static Set<String> getModelStoredNumericFields(String modelName) {
         validateModel(modelName);
-        return MODEL_FIELDS.get(modelName).values().stream()
+        return modelFields().get(modelName).values().stream()
                 .filter(f -> FieldType.NUMERIC_TYPES.contains(f.getFieldType())
                         && !f.isDynamic()
                         && !ModelConstant.ID.equals(f.getFieldName())
@@ -882,7 +921,7 @@ public class ModelManager {
      */
     public static boolean existField(String modelName, String fieldName) {
         validateModel(modelName);
-        return MODEL_FIELDS.get(modelName).containsKey(fieldName);
+        return modelFields().get(modelName).containsKey(fieldName);
     }
 
     /**
@@ -895,7 +934,7 @@ public class ModelManager {
      */
     public static boolean isStored(String modelName, String fieldName) {
         validateModelField(modelName, fieldName);
-        MetaField metaField = MODEL_FIELDS.get(modelName).get(fieldName);
+        MetaField metaField = modelFields().get(modelName).get(fieldName);
         return !metaField.isDynamic();
     }
 
@@ -907,7 +946,7 @@ public class ModelManager {
      */
     public static boolean isTimelineModel(String modelName) {
         validateModel(modelName);
-        return MODEL_MAP.get(modelName).isTimeline();
+        return modelMap().get(modelName).isTimeline();
     }
 
     /**
@@ -967,7 +1006,7 @@ public class ModelManager {
     }
 
     public static Optional<MetaField> getFieldByColumnName(String modelName, String columnName) {
-        return MODEL_FIELDS.get(modelName).values().stream()
+        return modelFields().get(modelName).values().stream()
                 .filter(f -> f.getColumnName().equals(columnName))
                 .findFirst();
     }
