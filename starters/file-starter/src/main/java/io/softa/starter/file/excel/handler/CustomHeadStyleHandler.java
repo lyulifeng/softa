@@ -5,8 +5,9 @@ import org.apache.fesod.sheet.write.handler.CellWriteHandler;
 import org.apache.fesod.sheet.write.handler.context.CellWriteHandlerContext;
 import org.apache.fesod.sheet.write.metadata.style.WriteCellStyle;
 import org.apache.fesod.sheet.write.metadata.style.WriteFont;
-import org.apache.poi.ss.usermodel.IndexedColors;
 import org.springframework.util.CollectionUtils;
+
+import io.softa.starter.file.constant.FileConstant;
 
 /**
  * Custom header style
@@ -28,7 +29,7 @@ public class CustomHeadStyleHandler implements CellWriteHandler {
                 // Merges existing cell styles
                 WriteFont customFont = new WriteFont();
                 WriteFont.merge(writeCellStyle.getWriteFont(), customFont);
-                customFont.setColor(IndexedColors.RED.getIndex());
+                customFont.setColor(FileConstant.REQUIRED_EXCEL_HEAD_FONT_COLOR);
                 writeCellStyle.setWriteFont(customFont);
             }
         }

@@ -57,13 +57,4 @@ public interface ExportService {
 
     FileInfo dynamicExportByMultiTemplate(String fileName, List<ExportTemplateDTO> dtoList);
 
-    /**
-     * Export one or multiple rows of data by file template.
-     * The file template is a template file that contains the variables to be filled in.
-     *
-     * @param exportTemplateId the ID of the export template
-     * @param flexQuery the flexQuery of the exported conditions
-     * @return fileInfo object with download URL
-     */
-    FileInfo exportByFileTemplate(Long exportTemplateId, FlexQuery flexQuery);
 }

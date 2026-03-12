@@ -62,10 +62,10 @@ public class ImportController {
      * @param importWizard the import wizard containing the file and import settings
      * @return the import result
      */
-    @Operation(description = "Import data from the uploaded file")
+    @Operation(description = "Dynamic import from the uploaded file")
     @Parameter(name = "importWizard", description = "Form-data containing the file object.", required = true)
     @PostMapping(value = "/dynamicImport")
-    public ApiResponse<ImportHistory> importWithoutTemplate(@ModelAttribute ImportWizard importWizard) {
+    public ApiResponse<ImportHistory> dynamicImport(@ModelAttribute ImportWizard importWizard) {
         Assert.isTrue(StringUtils.isNotBlank(importWizard.getFileName()), "File name cannot be empty!");
         Assert.notNull(importWizard.getFile(), "File cannot be empty!");
         Assert.notNull(importWizard.getImportRule(), "ImportRule cannot be null.");

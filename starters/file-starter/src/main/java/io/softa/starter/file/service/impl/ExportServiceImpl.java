@@ -100,7 +100,12 @@ public class ExportServiceImpl implements ExportService {
         ExportTemplate exportTemplate = exportTemplateService.getById(exportTemplateId)
                 .orElseThrow(() -> new IllegalArgumentException("The export template does not exist."));
         this.validateExportTemplate(exportTemplate);
-        return exportByTemplate.export(exportTemplate, flexQuery);
+        if (Boolean.TRUE.equals(exportTemplate.getCustomFileTemplate())) {
+            Assert.notNull(exportTemplate.getFileId(), "The export template does not have a custom file template.");
+            return exportByFileTemplate.export(exportTemplate, flexQuery);
+        } else {
+            return exportByTemplate.export(exportTemplate, flexQuery);
+        }
     }
 
     /**
@@ -135,21 +140,5 @@ public class ExportServiceImpl implements ExportService {
         Assert.isTrue(sheetNames.size() == new HashSet<>(sheetNames).size(),
                 "The excel sheet name must be unique! {0}", sheetNames);
         return exportTemplates;
-    }
-
-    /**
-     * Export one or multiple rows of data by file template.
-     * The file template is a template file that contains the variables to be filled in.
-     *
-     * @param exportTemplateId the ID of the export template
-     * @param flexQuery the flexQuery of the exported conditions
-     * @return fileInfo object with download URL
-     */
-    public FileInfo exportByFileTemplate(Long exportTemplateId, FlexQuery flexQuery) {
-        ExportTemplate exportTemplate = exportTemplateService.getById(exportTemplateId)
-                .orElseThrow(() -> new IllegalArgumentException("The export template does not exist."));
-        this.validateExportTemplate(exportTemplate);
-        Assert.notNull(exportTemplate.getFileId(), "The export template does not have a file template.");
-        return exportByFileTemplate.export(exportTemplate, flexQuery);
     }
 }

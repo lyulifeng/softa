@@ -21,6 +21,7 @@ import org.springframework.stereotype.Component;
 import io.softa.framework.base.constant.BaseConstant;
 import io.softa.framework.base.exception.BusinessException;
 import io.softa.framework.base.exception.IllegalArgumentException;
+import io.softa.framework.base.utils.Assert;
 import io.softa.framework.base.utils.ListUtils;
 import io.softa.framework.base.utils.SpringContextUtils;
 import io.softa.framework.base.utils.StringTools;
@@ -40,6 +41,8 @@ import io.softa.starter.file.dto.ExcelDataDTO;
 import io.softa.starter.file.entity.ExportHistory;
 import io.softa.starter.file.entity.ExportTemplate;
 import io.softa.starter.file.entity.ExportTemplateField;
+import io.softa.starter.file.excel.handler.CommonFontStyleHandler;
+import io.softa.starter.file.excel.handler.CommonSheetStyleHandler;
 import io.softa.starter.file.excel.handler.CustomExportHandler;
 import io.softa.starter.file.service.ExportHistoryService;
 import io.softa.starter.file.service.ExportTemplateFieldService;
@@ -76,6 +79,7 @@ public class CommonExport {
         Filters filters = new Filters().eq(ExportTemplateField::getTemplateId, exportTemplate.getId());
         Orders orders = Orders.ofAsc(ExportTemplateField::getSequence);
         List<ExportTemplateField> exportFields = exportTemplateFieldService.searchList(new FlexQuery(filters, orders));
+        Assert.notEmpty(exportFields, "The export template must have at least one field.");
         exportFields.forEach(exportField -> {
             fieldNames.add(exportField.getFieldName());
             // If the field is ignored, add it to the ignore list, otherwise add to the headers list
@@ -183,7 +187,9 @@ public class CommonExport {
             List<List<String>> headersList = excelDataDTO.getHeaders().stream().map(Collections::singletonList).toList();
             ExcelWriterSheetBuilder builder = FesodSheet.writerSheet(excelDataDTO.getSheetName()).head(headersList);
 
-            // Add custom cells and sheet handler
+            // Normalize generated head style before applying any export-specific customizations.
+            builder = builder.registerWriteHandler(new CommonSheetStyleHandler());
+            builder = builder.registerWriteHandler(new CommonFontStyleHandler());
             builder = handler == null ? builder : builder.registerWriteHandler(handler);
 
             excelWriter.write(excelDataDTO.getRowsTable(), builder.build());

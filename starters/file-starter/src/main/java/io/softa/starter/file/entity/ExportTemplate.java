@@ -1,6 +1,7 @@
 package io.softa.starter.file.entity;
 
 import java.io.Serial;
+import java.util.List;
 import io.swagger.v3.oas.annotations.media.Schema;
 import lombok.Data;
 import lombok.EqualsAndHashCode;
@@ -35,6 +36,9 @@ public class ExportTemplate extends AuditableModel {
     @Schema(description = "Model Name")
     private String modelName;
 
+    @Schema(description = "Custom File Template")
+    private Boolean customFileTemplate;
+
     @Schema(description = "File Template ID")
     private Long fileId;
 
@@ -49,4 +53,7 @@ public class ExportTemplate extends AuditableModel {
 
     @Schema(description = "Enable Transpose")
     private Boolean enableTranspose;
+
+    @Schema(description = "Export Fields")
+    private List<ExportTemplateField> exportFields;
 }
