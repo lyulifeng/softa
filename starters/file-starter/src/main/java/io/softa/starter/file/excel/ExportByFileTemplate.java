@@ -34,6 +34,9 @@ import io.softa.starter.file.entity.ExportTemplate;
 @Component
 public class ExportByFileTemplate extends CommonExport {
 
+    // ${variable} or ${  variable  } or ${variable.subField}
+    private static final Pattern VARIABLE_PATTERN = Pattern.compile("(?<!\\\\)\\{\\s*([a-zA-Z0-9_.]+)\\s*}");
+
     @Autowired
     private FileService fileService;
 
@@ -124,10 +127,9 @@ public class ExportByFileTemplate extends CommonExport {
                     if(cell.getCellType() == CellType.STRING) {
                         String cellValue = cell.getStringCellValue();
                         // Use regular expressions to match the variable format ${variable}
-                        Pattern pattern = Pattern.compile("\\{\\s*([a-zA-Z0-9_.]+)\\s*}");
-                        Matcher matcher = pattern.matcher(cellValue);
+                        Matcher matcher = VARIABLE_PATTERN.matcher(cellValue);
                         while(matcher.find()) {
-                            variables.add(matcher.group());
+                            variables.add(matcher.group(1));
                         }
                     }
                 }

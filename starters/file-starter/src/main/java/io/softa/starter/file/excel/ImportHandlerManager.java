@@ -75,6 +75,7 @@ public class ImportHandlerManager {
             case BOOLEAN -> new BooleanHandler(metaField, importFieldDTO);
             case DATE -> new DateHandler(metaField, importFieldDTO);
             case DATE_TIME -> new DateTimeHandler(metaField, importFieldDTO);
+            case TIME -> new TimeHandler(metaField, importFieldDTO);
             case MULTI_OPTION -> new MultiOptionHandler(metaField, importFieldDTO);
             case OPTION -> new OptionHandler(metaField, importFieldDTO);
             default -> new DefaultHandler(metaField, importFieldDTO);
