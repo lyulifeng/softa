@@ -7,6 +7,14 @@ File Starter provides three core capabilities for developers:
 
 This document focuses on developer usage and API-level examples.
 
+## Code Structure
+The Excel module is organized by responsibility:
+
+- `excel/export/strategy`: export strategy selection and concrete export implementations
+- `excel/export/support`: shared export support components such as data fetch, template resolve, writer, upload, and custom export hooks
+- `excel/imports`: import pipeline, handler factory, failure collection, persistence, and custom import hook
+- `excel/style`: shared Excel style handlers
+
 ## Dependency
 ```xml
 <dependency>
@@ -162,6 +170,8 @@ You can register a Spring bean implementing `CustomImportHandler` and reference 
 `ImportTemplate.customHandler` or `ImportWizard.customHandler`.
 
 ```java
+import io.softa.starter.file.excel.imports.CustomImportHandler;
+
 @Component("productImportHandler")
 public class ProductImportHandler implements CustomImportHandler {
     @Override
@@ -170,6 +180,11 @@ public class ProductImportHandler implements CustomImportHandler {
     }
 }
 ```
+
+Contract:
+- You may update row values in place.
+- You may mark a row failed by writing `FileConstant.FAILED_REASON`.
+- Do not add, remove, reorder, or replace row objects.
 
 ## B. Data Export
 File Starter supports three export modes:
@@ -282,6 +297,8 @@ You can register a Spring bean implementing `CustomExportHandler` and reference 
 `ExportTemplate.customHandler`.
 
 ```java
+import io.softa.starter.file.excel.export.support.CustomExportHandler;
+
 @Component("productExportHandler")
 public class ProductExportHandler implements CustomExportHandler {
     @Override
@@ -290,6 +307,10 @@ public class ProductExportHandler implements CustomExportHandler {
     }
 }
 ```
+
+Contract:
+- You may update row values in place.
+- You should not replace row map objects.
 
 ## C. Document Export (Word/PDF)
 Document templates are stored in `DocumentTemplate` and rendered as Word or PDF.

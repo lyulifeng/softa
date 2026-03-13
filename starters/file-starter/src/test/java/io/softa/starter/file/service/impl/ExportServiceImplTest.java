@@ -17,9 +17,10 @@ import io.softa.starter.file.dto.ExportTemplateDTO;
 import io.softa.starter.file.dto.SheetInfo;
 import io.softa.starter.file.entity.ExportHistory;
 import io.softa.starter.file.entity.ExportTemplate;
-import io.softa.starter.file.excel.ExportByDynamic;
-import io.softa.starter.file.excel.ExportByFileTemplate;
-import io.softa.starter.file.excel.ExportByTemplate;
+import io.softa.starter.file.excel.export.strategy.ExportByDynamic;
+import io.softa.starter.file.excel.export.strategy.ExportByFieldTemplate;
+import io.softa.starter.file.excel.export.strategy.ExportByFileTemplate;
+import io.softa.starter.file.excel.export.strategy.ExportStrategyFactory;
 import io.softa.starter.file.service.ExportHistoryService;
 import io.softa.starter.file.service.ExportTemplateService;
 
@@ -33,7 +34,7 @@ class ExportServiceImplTest {
         StubExportByDynamic exportByDynamic = new StubExportByDynamic();
         exportByDynamic.singleResult = exportResult(101L, 3);
 
-        ExportServiceImpl exportService = createService(exportByDynamic, new StubExportByTemplate(),
+        ExportServiceImpl exportService = createService(exportByDynamic, new StubExportByFieldTemplate(),
                 new StubExportByFileTemplate(), templateService(Map.of(), Map.of()), historyService.proxy());
 
         exportService.dynamicExport("demo.model", new FlexQuery());
@@ -49,7 +50,7 @@ class ExportServiceImplTest {
     @Test
     void exportByTemplateCreatesHistoryForConfiguredTemplate() {
         RecordingExportHistoryService historyService = new RecordingExportHistoryService();
-        StubExportByTemplate exportByTemplate = new StubExportByTemplate();
+        StubExportByFieldTemplate exportByTemplate = new StubExportByFieldTemplate();
         exportByTemplate.singleResult = exportResult(202L, 5);
         ExportTemplate exportTemplateEntity = exportTemplate(11L, "order", false, null, "report", "Sheet1");
 
@@ -74,7 +75,7 @@ class ExportServiceImplTest {
         exportByFileTemplate.singleResult = exportResult(303L, 2);
         ExportTemplate exportTemplateEntity = exportTemplate(12L, "invoice", true, 88L, "invoice", "Invoice");
 
-        ExportServiceImpl exportService = createService(new StubExportByDynamic(), new StubExportByTemplate(),
+        ExportServiceImpl exportService = createService(new StubExportByDynamic(), new StubExportByFieldTemplate(),
                 exportByFileTemplate, templateService(Map.of(12L, exportTemplateEntity), Map.of()),
                 historyService.proxy());
 
@@ -93,7 +94,7 @@ class ExportServiceImplTest {
         RecordingExportHistoryService historyService = new RecordingExportHistoryService();
         StubExportByDynamic exportByDynamic = new StubExportByDynamic();
         exportByDynamic.multiResult = new FileInfo();
-        ExportServiceImpl exportService = createService(exportByDynamic, new StubExportByTemplate(),
+        ExportServiceImpl exportService = createService(exportByDynamic, new StubExportByFieldTemplate(),
                 new StubExportByFileTemplate(), templateService(Map.of(), Map.of()), historyService.proxy());
 
         SheetInfo sheetInfo = new SheetInfo();
@@ -108,7 +109,7 @@ class ExportServiceImplTest {
     @Test
     void exportByMultiTemplateDoesNotCreateHistory() {
         RecordingExportHistoryService historyService = new RecordingExportHistoryService();
-        StubExportByTemplate exportByTemplate = new StubExportByTemplate();
+        StubExportByFieldTemplate exportByTemplate = new StubExportByFieldTemplate();
         exportByTemplate.multiResult = new FileInfo();
         ExportTemplate exportTemplateEntity = exportTemplate(21L, "demo.model", false, null, "report", "Sheet1");
 
@@ -124,7 +125,7 @@ class ExportServiceImplTest {
     @Test
     void dynamicExportByMultiTemplateDoesNotCreateHistory() {
         RecordingExportHistoryService historyService = new RecordingExportHistoryService();
-        StubExportByTemplate exportByTemplate = new StubExportByTemplate();
+        StubExportByFieldTemplate exportByTemplate = new StubExportByFieldTemplate();
         exportByTemplate.dynamicMultiResult = new FileInfo();
         ExportTemplate exportTemplateEntity = exportTemplate(31L, "demo.model", false, null, "report", "Sheet1");
 
@@ -140,14 +141,17 @@ class ExportServiceImplTest {
         assertTrue(historyService.histories.isEmpty());
     }
 
-    private ExportServiceImpl createService(ExportByDynamic exportByDynamic, ExportByTemplate exportByTemplate,
+    private ExportServiceImpl createService(ExportByDynamic exportByDynamic, ExportByFieldTemplate exportByFieldTemplate,
                                             ExportByFileTemplate exportByFileTemplate,
                                             ExportTemplateService exportTemplateService,
                                             ExportHistoryService exportHistoryService) {
         ExportServiceImpl exportService = new ExportServiceImpl();
         ReflectionTestUtils.setField(exportService, "exportByDynamic", exportByDynamic);
-        ReflectionTestUtils.setField(exportService, "exportByTemplate", exportByTemplate);
-        ReflectionTestUtils.setField(exportService, "exportByFileTemplate", exportByFileTemplate);
+        ReflectionTestUtils.setField(exportService, "exportByTemplate", exportByFieldTemplate);
+        ExportStrategyFactory exportStrategyFactory = new ExportStrategyFactory();
+        ReflectionTestUtils.setField(exportStrategyFactory, "exportStrategies",
+                List.of(exportByDynamic, exportByFieldTemplate, exportByFileTemplate));
+        ReflectionTestUtils.setField(exportService, "exportStrategyFactory", exportStrategyFactory);
         ReflectionTestUtils.setField(exportService, "exportTemplateService", exportTemplateService);
         ReflectionTestUtils.setField(exportService, "exportHistoryService", exportHistoryService);
         return exportService;
@@ -285,7 +289,7 @@ class ExportServiceImplTest {
         }
     }
 
-    private static class StubExportByTemplate extends ExportByTemplate {
+    private static class StubExportByFieldTemplate extends ExportByFieldTemplate {
         private ExportResult singleResult;
         private FileInfo multiResult;
         private FileInfo dynamicMultiResult;

@@ -3,7 +3,6 @@ package io.softa.starter.file.service.impl;
 import java.io.IOException;
 import java.io.InputStream;
 import java.util.*;
-import java.util.concurrent.TimeUnit;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.lang3.StringUtils;
 import org.apache.fesod.sheet.FesodSheet;
@@ -19,6 +18,7 @@ import io.softa.framework.base.exception.BusinessException;
 import io.softa.framework.base.exception.IllegalArgumentException;
 import io.softa.framework.base.i18n.I18n;
 import io.softa.framework.base.utils.Assert;
+import io.softa.framework.base.utils.DateUtils;
 import io.softa.framework.base.utils.ListUtils;
 import io.softa.framework.base.utils.StringTools;
 import io.softa.framework.orm.constant.FileConstant;
@@ -32,7 +32,6 @@ import io.softa.framework.orm.meta.MetaField;
 import io.softa.framework.orm.meta.ModelManager;
 import io.softa.framework.orm.service.FileService;
 import io.softa.framework.orm.utils.FileUtils;
-import io.softa.starter.file.dto.ExcelDataDTO;
 import io.softa.starter.file.dto.ImportDataDTO;
 import io.softa.starter.file.dto.ImportFieldDTO;
 import io.softa.starter.file.dto.ImportTemplateDTO;
@@ -40,9 +39,10 @@ import io.softa.starter.file.entity.ImportHistory;
 import io.softa.starter.file.entity.ImportTemplate;
 import io.softa.starter.file.entity.ImportTemplateField;
 import io.softa.starter.file.enums.ImportStatus;
-import io.softa.starter.file.excel.CommonExport;
-import io.softa.starter.file.excel.ImportHandlerManager;
-import io.softa.starter.file.excel.handler.CustomHeadStyleHandler;
+import io.softa.starter.file.excel.export.ExcelSheetData;
+import io.softa.starter.file.excel.export.support.ExcelUploadService;
+import io.softa.starter.file.excel.imports.ImportRowPipeline;
+import io.softa.starter.file.excel.style.CustomHeadStyleHandler;
 import io.softa.starter.file.message.AsyncImportProducer;
 import io.softa.starter.file.service.ImportHistoryService;
 import io.softa.starter.file.service.ImportService;
@@ -64,13 +64,13 @@ public class ImportServiceImpl implements ImportService {
     private ImportTemplateFieldService importTemplateFieldService;
 
     @Autowired
-    private CommonExport commonExport;
+    private ExcelUploadService excelUploadService;
 
     @Autowired
     private ImportHistoryService importHistoryService;
 
     @Autowired
-    private ImportHandlerManager dataHandler;
+    private ImportRowPipeline importRowPipeline;
 
     @Autowired
     private AsyncImportProducer asyncImportProducer;
@@ -103,14 +103,10 @@ public class ImportServiceImpl implements ImportService {
                 .map(ImportFieldDTO::getHeader).toList();
         List<String> requiredHeaderList = importTemplateDTO.getImportFields().stream()
                 .filter(ImportFieldDTO::getRequired).map(ImportFieldDTO::getHeader).toList();
-        // Generate the Excel file
-        ExcelDataDTO excelDataDTO = new ExcelDataDTO();
-        excelDataDTO.setFileName(importTemplate.getName());
-        excelDataDTO.setSheetName(importTemplate.getName());
-        excelDataDTO.setHeaders(headers);
-        excelDataDTO.setRowsTable(Collections.emptyList());
         CustomHeadStyleHandler headStyleHandler = new CustomHeadStyleHandler(requiredHeaderList);
-        return commonExport.generateFileAndUpload(importTemplate.getModelName(), excelDataDTO, headStyleHandler);
+        ExcelSheetData sheetData = new ExcelSheetData(importTemplate.getName(), headers, Collections.emptyList(),
+                new CustomHeadStyleHandler[]{headStyleHandler});
+        return excelUploadService.generateFileAndUpload(importTemplate.getModelName(), importTemplate.getName(), sheetData);
     }
 
     /**
@@ -161,7 +157,7 @@ public class ImportServiceImpl implements ImportService {
         RuntimeException importException = null;
         try {
             ImportDataDTO importDataDTO = this.generateImportDataDTO(importTemplateDTO, inputStream);
-            dataHandler.importData(importTemplateDTO, importDataDTO);
+            importRowPipeline.importData(importTemplateDTO, importDataDTO);
             if (!CollectionUtils.isEmpty(importDataDTO.getFailedRows())) {
                 Long failedFileId = this.generateFailedExcel(importTemplateDTO.getFileName(), importTemplateDTO, importDataDTO);
                 importHistory.setFailedFileId(failedFileId);
@@ -177,14 +173,9 @@ public class ImportServiceImpl implements ImportService {
             importException = e;
             throw e;
         } finally {
-            importHistory.setDuration(this.calculateDurationInSeconds(startNanos));
+            importHistory.setDuration(DateUtils.elapsedSeconds(startNanos));
             this.updateImportHistory(importHistory, importException);
         }
-    }
-
-    private Integer calculateDurationInSeconds(long startNanos) {
-        long elapsedSeconds = TimeUnit.NANOSECONDS.toSeconds(System.nanoTime() - startNanos);
-        return Math.toIntExact(elapsedSeconds);
     }
 
     private void updateImportHistory(ImportHistory importHistory, RuntimeException importException) {
@@ -435,13 +426,8 @@ public class ImportServiceImpl implements ImportService {
         headers.add(I18n.get(FileConstant.FAILED_REASON));
         // Get the data to be exported
         List<List<Object>> rowsTable = ListUtils.convertToTableData(fields, importDataDTO.getFailedRows());
-        // Excel data DTO
-        ExcelDataDTO excelDataDTO = new ExcelDataDTO();
-        excelDataDTO.setFileName(fileName);
-        excelDataDTO.setSheetName(FileConstant.FAILED_DATA);
-        excelDataDTO.setHeaders(headers);
-        excelDataDTO.setRowsTable(rowsTable);
-        FileInfo fileInfo = commonExport.generateFileAndUpload(importTemplateDTO.getModelName(), excelDataDTO);
+        ExcelSheetData sheetData = new ExcelSheetData(FileConstant.FAILED_DATA, headers, rowsTable, null);
+        FileInfo fileInfo = excelUploadService.generateFileAndUpload(importTemplateDTO.getModelName(), fileName, sheetData);
         return fileInfo.getFileId();
     }
 

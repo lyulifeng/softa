@@ -1,11 +1,11 @@
 package io.softa.framework.orm.dto;
 
-import io.softa.framework.orm.enums.FileType;
-import io.softa.framework.orm.enums.FileSource;
-import lombok.Data;
-
 import java.io.InputStream;
 import java.io.Serializable;
+import lombok.Data;
+
+import io.softa.framework.orm.enums.FileSource;
+import io.softa.framework.orm.enums.FileType;
 
 /**
  * The DTO of upload file.
@@ -23,7 +23,7 @@ public class UploadFileDTO {
     private FileType fileType;
 
     // The file size in KB
-    private int fileSize;
+    private Integer fileSize;
 
     private FileSource fileSource;
 

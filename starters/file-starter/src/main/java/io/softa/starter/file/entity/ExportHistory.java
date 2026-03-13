@@ -37,7 +37,7 @@ public class ExportHistory extends AuditableModel {
     private Integer totalRows;
 
     @Schema(description = "Duration in seconds")
-    private Integer duration;
+    private Double duration;
 
     @Schema(description = "Deleted")
     private Boolean deleted;

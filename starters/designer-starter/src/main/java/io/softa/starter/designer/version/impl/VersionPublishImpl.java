@@ -2,13 +2,13 @@ package io.softa.starter.designer.version.impl;
 
 import java.time.LocalDateTime;
 import java.util.*;
-import java.util.concurrent.TimeUnit;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.core.env.Environment;
 import org.springframework.stereotype.Component;
 import org.springframework.util.CollectionUtils;
 
 import io.softa.framework.base.config.SystemConfig;
+import io.softa.framework.base.utils.DateUtils;
 import io.softa.framework.base.utils.MapUtils;
 import io.softa.framework.orm.constant.ModelConstant;
 import io.softa.framework.orm.service.ModelService;
@@ -167,7 +167,7 @@ public class VersionPublishImpl implements VersionPublish {
     }
 
     private Double calculateDurationInSeconds(long startNanos) {
-        return (System.nanoTime() - startNanos) / (double) TimeUnit.SECONDS.toNanos(1);
+        return DateUtils.elapsedSeconds(startNanos);
     }
 
     /**

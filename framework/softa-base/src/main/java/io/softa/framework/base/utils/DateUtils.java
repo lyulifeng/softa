@@ -1,5 +1,7 @@
 package io.softa.framework.base.utils;
 
+import java.math.BigDecimal;
+import java.math.RoundingMode;
 import java.time.*;
 import java.time.format.DateTimeFormatter;
 import java.time.format.DateTimeParseException;
@@ -90,6 +92,19 @@ public abstract class DateUtils {
      */
     public static long getCurrentSeconds() {
         return Instant.now().getEpochSecond();
+    }
+
+    /**
+     * Calculate elapsed seconds from a nanoTime start point and round to 3 decimal places.
+     *
+     * @param startNanos the start time captured by {@link System#nanoTime()}
+     * @return elapsed seconds rounded to 3 decimal places
+     */
+    public static Double elapsedSeconds(long startNanos) {
+        double elapsedSeconds = (System.nanoTime() - startNanos) / 1_000_000_000d;
+        return BigDecimal.valueOf(elapsedSeconds)
+                .setScale(3, RoundingMode.HALF_UP)
+                .doubleValue();
     }
 
     /** Instant to LocalDate */
@@ -229,20 +244,25 @@ public abstract class DateUtils {
      * @return LocalDateTime object
      */
     public static LocalDateTime dateToLocalDateTime(Object dateTime, boolean keepNano) {
-        if (dateTime == null) {
-            return null;
-        } else if (dateTime instanceof Date javaDate) {
-            LocalDateTime localDateTime = javaDate.toInstant().atZone(ZoneId.systemDefault()).toLocalDateTime();
-            return keepNano ? localDateTime : localDateTime.withNano(0);
-        } else if (dateTime instanceof String stringDateTime) {
-            try {
-                return LocalDateTime.parse(stringDateTime, TimeConstant.DATETIME_FORMATTER);
-            } catch (DateTimeParseException e) {
-                // Treat the string as ISO-8601 format
-                return LocalDateTime.parse(stringDateTime);
+        switch (dateTime) {
+            case null -> {
+                return null;
             }
-        } else {
-            return (LocalDateTime) dateTime;
+            case Date javaDate -> {
+                LocalDateTime localDateTime = javaDate.toInstant().atZone(ZoneId.systemDefault()).toLocalDateTime();
+                return keepNano ? localDateTime : localDateTime.withNano(0);
+            }
+            case String stringDateTime -> {
+                try {
+                    return LocalDateTime.parse(stringDateTime, TimeConstant.DATETIME_FORMATTER);
+                } catch (DateTimeParseException e) {
+                    // Treat the string as ISO-8601 format
+                    return LocalDateTime.parse(stringDateTime);
+                }
+            }
+            default -> {
+                return (LocalDateTime) dateTime;
+            }
         }
     }
 

@@ -4,7 +4,6 @@ import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
-import java.util.concurrent.TimeUnit;
 import java.util.stream.Collectors;
 import org.apache.commons.lang3.StringUtils;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -12,6 +11,7 @@ import org.springframework.stereotype.Service;
 
 import io.softa.framework.base.exception.IllegalArgumentException;
 import io.softa.framework.base.utils.Assert;
+import io.softa.framework.base.utils.DateUtils;
 import io.softa.framework.orm.domain.Filters;
 import io.softa.framework.orm.domain.FlexQuery;
 import io.softa.framework.orm.dto.FileInfo;
@@ -20,9 +20,10 @@ import io.softa.starter.file.dto.ExportTemplateDTO;
 import io.softa.starter.file.dto.SheetInfo;
 import io.softa.starter.file.entity.ExportHistory;
 import io.softa.starter.file.entity.ExportTemplate;
-import io.softa.starter.file.excel.ExportByDynamic;
-import io.softa.starter.file.excel.ExportByFileTemplate;
-import io.softa.starter.file.excel.ExportByTemplate;
+import io.softa.starter.file.excel.export.strategy.ExportByDynamic;
+import io.softa.starter.file.excel.export.strategy.ExportByFieldTemplate;
+import io.softa.starter.file.excel.export.strategy.ExportContext;
+import io.softa.starter.file.excel.export.strategy.ExportStrategyFactory;
 import io.softa.starter.file.service.ExportHistoryService;
 import io.softa.starter.file.service.ExportService;
 import io.softa.starter.file.service.ExportTemplateService;
@@ -34,10 +35,10 @@ public class ExportServiceImpl implements ExportService {
     private ExportByDynamic exportByDynamic;
 
     @Autowired
-    private ExportByTemplate exportByTemplate;
+    private ExportByFieldTemplate exportByFieldTemplate;
 
     @Autowired
-    private ExportByFileTemplate exportByFileTemplate;
+    private ExportStrategyFactory exportStrategyFactory;
 
     @Autowired
     private ExportTemplateService exportTemplateService;
@@ -66,7 +67,8 @@ public class ExportServiceImpl implements ExportService {
      */
     public FileInfo dynamicExport(String modelName, FlexQuery flexQuery) {
         long startNanos = System.nanoTime();
-        ExportResult exportResult = exportByDynamic.export(modelName, flexQuery);
+        ExportResult exportResult = exportStrategyFactory.getStrategy(ExportContext.dynamic(modelName, flexQuery))
+                .export(ExportContext.dynamic(modelName, flexQuery));
         this.generateExportHistory(null, modelName, exportResult, startNanos);
         return exportResult.getFileInfo();
     }
@@ -109,13 +111,11 @@ public class ExportServiceImpl implements ExportService {
                 .orElseThrow(() -> new IllegalArgumentException("The export template does not exist."));
         this.validateExportTemplate(exportTemplate);
         long startNanos = System.nanoTime();
-        ExportResult exportResult;
         if (Boolean.TRUE.equals(exportTemplate.getCustomFileTemplate())) {
             Assert.notNull(exportTemplate.getFileId(), "The export template does not have a custom file template.");
-            exportResult = exportByFileTemplate.export(exportTemplate, flexQuery);
-        } else {
-            exportResult = exportByTemplate.export(exportTemplate, flexQuery);
         }
+        ExportContext exportContext = ExportContext.template(exportTemplate, flexQuery);
+        ExportResult exportResult = exportStrategyFactory.getStrategy(exportContext).export(exportContext);
         this.generateExportHistory(exportTemplate.getId(), exportTemplate.getModelName(), exportResult, startNanos);
         return exportResult.getFileInfo();
     }
@@ -131,13 +131,13 @@ public class ExportServiceImpl implements ExportService {
      */
     public FileInfo exportByMultiTemplate(String fileName, List<Long> ids) {
         List<ExportTemplate> exportTemplates = this.getExportTemplates(ids);
-        return exportByTemplate.exportMultiSheet(fileName, exportTemplates);
+        return exportByFieldTemplate.exportMultiSheet(fileName, exportTemplates);
     }
 
     public FileInfo dynamicExportByMultiTemplate(String fileName, List<ExportTemplateDTO> dtoList) {
         Map<Long, Filters> dynamicTemplateMap = dtoList.stream().collect(Collectors.toMap(ExportTemplateDTO::getTemplateId, ExportTemplateDTO::getFilters));
         List<ExportTemplate> exportTemplates = this.getExportTemplates(new ArrayList<>(dynamicTemplateMap.keySet()));
-        return exportByTemplate.dynamicExportMultiSheet(fileName, exportTemplates, dynamicTemplateMap);
+        return exportByFieldTemplate.dynamicExportMultiSheet(fileName, exportTemplates, dynamicTemplateMap);
     }
 
     private List<ExportTemplate> getExportTemplates(List<Long> ids) {
@@ -160,12 +160,7 @@ public class ExportServiceImpl implements ExportService {
         exportHistory.setModelName(modelName);
         exportHistory.setExportedFileId(exportResult.getFileInfo().getFileId());
         exportHistory.setTotalRows(exportResult.getTotalRows());
-        exportHistory.setDuration(calculateDurationInSeconds(startNanos));
+        exportHistory.setDuration(DateUtils.elapsedSeconds(startNanos));
         exportHistoryService.createOne(exportHistory);
-    }
-
-    private Integer calculateDurationInSeconds(long startNanos) {
-        long elapsedSeconds = TimeUnit.NANOSECONDS.toSeconds(System.nanoTime() - startNanos);
-        return Math.toIntExact(elapsedSeconds);
     }
 }

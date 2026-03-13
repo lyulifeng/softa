@@ -1,0 +1,101 @@
+package io.softa.starter.file.excel.export.strategy;
+
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Map;
+import lombok.extern.slf4j.Slf4j;
+import org.apache.commons.lang3.StringUtils;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.stereotype.Component;
+
+import io.softa.framework.base.utils.ListUtils;
+import io.softa.framework.orm.domain.FlexQuery;
+import io.softa.framework.orm.dto.FileInfo;
+import io.softa.framework.orm.meta.MetaField;
+import io.softa.framework.orm.meta.ModelManager;
+import io.softa.starter.file.dto.ExportResult;
+import io.softa.starter.file.dto.SheetInfo;
+import io.softa.starter.file.excel.export.ExcelSheetData;
+import io.softa.starter.file.excel.export.support.ExcelUploadService;
+import io.softa.starter.file.excel.export.support.ExportDataFetcher;
+
+/**
+ * Export by dynamic parameters
+ */
+@Slf4j
+@Component
+public class ExportByDynamic implements ExportStrategy {
+
+    @Autowired
+    private ExportDataFetcher exportDataFetcher;
+
+    @Autowired
+    private ExcelUploadService excelUploadService;
+
+    /**
+     * Export data by dynamic fields and QueryParams, without export template.
+     * The convertType should be set to DISPLAY to get the display values of the fields.
+     * Such as displayName for ManyToOne/OneToOne fields, and itemName for Option fields.
+     *
+     * @param modelName the model name to be exported
+     * @param flexQuery the flex query to be used for data retrieval
+     * @return fileInfo object with download URL
+     */
+    public ExportResult export(String modelName, FlexQuery flexQuery) {
+        List<String> headers = new ArrayList<>();
+        List<List<Object>> rowsTable = this.extractDataTableFromDB(modelName, flexQuery, headers);
+        String modelLabel = ModelManager.getModel(modelName).getLabelName();
+        ExcelSheetData sheetData = new ExcelSheetData(modelLabel, headers, rowsTable, null);
+        FileInfo fileInfo = excelUploadService.generateFileAndUpload(modelName, modelLabel, sheetData);
+        return new ExportResult(fileInfo, rowsTable.size());
+    }
+
+    @Override
+    public ExportMode getMode() {
+        return ExportMode.DYNAMIC;
+    }
+
+    @Override
+    public ExportResult export(ExportContext exportContext) {
+        return export(exportContext.getModelName(), exportContext.getFlexQuery());
+    }
+
+    /**
+     * Export multiple sheets of data by dynamic fields and QueryParams, without export template.
+     * The convertType should be set to DISPLAY to get the display values of the fields.
+     * Such as displayName for ManyToOne/OneToOne fields, and itemName for Option fields.
+     *
+     * @param fileName the name of the Excel file to be exported
+     * @param sheetInfoList the list of sheetInfo objects
+     * @return fileInfo object with download URL
+     */
+    public FileInfo exportMultiSheet(String fileName, List<SheetInfo> sheetInfoList) {
+        List<ExcelSheetData> sheetDataList = new ArrayList<>();
+        for (SheetInfo sheetInfo : sheetInfoList) {
+            List<String> headers = new ArrayList<>();
+            List<List<Object>> rowsTable = this.extractDataTableFromDB(sheetInfo.getModelName(), sheetInfo.getFlexQuery(), headers);
+            String sheetName = StringUtils.isNotBlank(sheetInfo.getSheetName()) ? sheetInfo.getSheetName()
+                    : sheetInfo.getModelName();
+            sheetDataList.add(new ExcelSheetData(sheetName, headers, rowsTable, null));
+        }
+        return excelUploadService.generateFileAndUpload("", fileName, sheetDataList);
+    }
+
+    /**
+     * Extract the data table from the database by the given model name and flexQuery.
+     * And extract the header list from the model fields.
+     *
+     * @param modelName the model name to be exported
+     * @param flexQuery the flexQuery object
+     * @param headers the list of header label
+     */
+    private List<List<Object>> extractDataTableFromDB(String modelName, FlexQuery flexQuery, List<String> headers) {
+        List<Map<String, Object>> rows = exportDataFetcher.fetchRows(modelName, null, flexQuery);
+        List<String> fieldNames = flexQuery.getFields();
+        fieldNames.forEach(fieldName -> {
+            MetaField lastField = ModelManager.getLastFieldOfCascaded(modelName, fieldName);
+            headers.add(lastField.getLabelName());
+        });
+        return ListUtils.convertToTableData(fieldNames, rows);
+    }
+}
