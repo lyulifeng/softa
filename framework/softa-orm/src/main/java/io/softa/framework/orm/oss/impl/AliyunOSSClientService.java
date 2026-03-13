@@ -1,21 +1,23 @@
 package io.softa.framework.orm.oss.impl;
 
+import java.io.InputStream;
+import java.net.URL;
+import java.util.Date;
 import com.aliyun.oss.ClientException;
 import com.aliyun.oss.OSS;
 import com.aliyun.oss.OSSException;
+import com.aliyun.oss.model.GeneratePresignedUrlRequest;
 import com.aliyun.oss.model.OSSObject;
 import com.aliyun.oss.model.PutObjectResult;
+import com.aliyun.oss.model.ResponseHeaderOverrides;
+import lombok.AllArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
+
 import io.softa.framework.base.exception.ExternalException;
 import io.softa.framework.base.exception.SystemException;
 import io.softa.framework.orm.constant.FileConstant;
 import io.softa.framework.orm.oss.OSSProperties;
 import io.softa.framework.orm.oss.OssClientService;
-import lombok.AllArgsConstructor;
-import lombok.extern.slf4j.Slf4j;
-
-import java.io.InputStream;
-import java.net.URL;
-import java.util.Date;
 
 /**
  * Aliyun OSS Client Service Implementation
@@ -23,6 +25,8 @@ import java.util.Date;
 @Slf4j
 @AllArgsConstructor
 public class AliyunOSSClientService implements OssClientService {
+
+    private static final String ATTACHMENT_VALUE = "attachment;";
 
     private OSS ossClient;
 
@@ -87,6 +91,29 @@ public class AliyunOSSClientService implements OssClientService {
             return url.toString();
         } catch (Exception e) {
             throw new ExternalException("Error while generating the file URL {0}", fileName, e);
+        }
+    }
+
+    @Override
+    public String getDownloadUrl(String ossKey, String fileName) {
+        int expirationInSeconds = ossProperties.getUrlExpireSeconds() == null ?
+                FileConstant.DEFAULT_DOWNLOAD_URL_EXPIRE : ossProperties.getUrlExpireSeconds();
+        return getDownloadUrl(ossKey, expirationInSeconds, fileName);
+    }
+
+    @Override
+    public String getDownloadUrl(String ossKey, int expirationInSeconds, String fileName) {
+        try {
+            Date expiration = new Date(System.currentTimeMillis() + expirationInSeconds * 1000L);
+            GeneratePresignedUrlRequest request = new GeneratePresignedUrlRequest(getBucketName(), ossKey);
+            request.setExpiration(expiration);
+            ResponseHeaderOverrides responseHeaders = new ResponseHeaderOverrides();
+            responseHeaders.setContentDisposition(ATTACHMENT_VALUE);
+            request.setResponseHeaders(responseHeaders);
+            URL url = ossClient.generatePresignedUrl(request);
+            return url.toString();
+        } catch (Exception e) {
+            throw new ExternalException("Error while generating the download URL {0}", fileName, e);
         }
     }
 

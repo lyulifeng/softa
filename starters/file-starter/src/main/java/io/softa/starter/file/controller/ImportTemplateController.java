@@ -7,6 +7,7 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.web.bind.annotation.*;
 
 import io.softa.framework.orm.domain.Filters;
+import io.softa.framework.orm.domain.FlexQuery;
 import io.softa.framework.orm.dto.FileInfo;
 import io.softa.framework.web.controller.EntityController;
 import io.softa.framework.web.response.ApiResponse;
@@ -36,7 +37,8 @@ public class ImportTemplateController extends EntityController<ImportTemplateSer
     @PostMapping(value = "/listByModel")
     public ApiResponse<List<ImportTemplate>> listByModel(@RequestParam String modelName) {
         Filters filters = new Filters().eq(ExportTemplate::getModelName, modelName);
-        List<ImportTemplate> templates = service.searchList(filters);
+        FlexQuery flexQuery = new FlexQuery(filters).expandSubQuery(ImportTemplate::getImportFields);
+        List<ImportTemplate> templates = service.searchList(flexQuery);
         return ApiResponse.success(templates);
     }
 

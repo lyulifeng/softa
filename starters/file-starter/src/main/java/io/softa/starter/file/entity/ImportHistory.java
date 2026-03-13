@@ -49,6 +49,9 @@ public class ImportHistory extends AuditableModel {
     @Schema(description = "Failed Rows")
     private Integer failedRows;
 
+    @Schema(description = "Duration in seconds")
+    private Integer duration;
+
     @Schema(description = "Deleted")
     private Boolean deleted;
 }

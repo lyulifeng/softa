@@ -15,12 +15,10 @@ public interface ExportService {
      * Such as displayName for ManyToOne/OneToOne fields, and itemName for Option fields.
      *
      * @param modelName the model name to be exported
-     * @param fileName the name of the Excel file to be generated
-     * @param sheetName the name of the sheet in the Excel file
      * @param flexQuery the flex query to be used for data retrieval
      * @return fileInfo object with download URL
      */
-    FileInfo dynamicExport(String modelName, String fileName, String sheetName, FlexQuery flexQuery);
+    FileInfo dynamicExport(String modelName, FlexQuery flexQuery);
 
     /**
      * Export multiple sheets of data by dynamic fields and ExportParams, without export template.

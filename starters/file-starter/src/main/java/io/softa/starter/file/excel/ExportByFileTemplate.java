@@ -23,6 +23,7 @@ import io.softa.framework.base.exception.BusinessException;
 import io.softa.framework.orm.domain.FlexQuery;
 import io.softa.framework.orm.dto.FileInfo;
 import io.softa.framework.orm.service.FileService;
+import io.softa.starter.file.dto.ExportResult;
 import io.softa.starter.file.entity.ExportTemplate;
 
 /**
@@ -44,7 +45,7 @@ public class ExportByFileTemplate extends CommonExport {
      * @param flexQuery the flexQuery of the exported conditions
      * @return fileInfo object with download URL
      */
-    public FileInfo export(ExportTemplate exportTemplate, FlexQuery flexQuery) {
+    public ExportResult export(ExportTemplate exportTemplate, FlexQuery flexQuery) {
         // TODO: cache the extracted fields in the exportTemplate
         Set<String> fields = extractVariablesOfFileTemplate(exportTemplate.getFileId());
         flexQuery.setFields(fields);
@@ -52,9 +53,7 @@ public class ExportByFileTemplate extends CommonExport {
                 exportTemplate.getCustomHandler(), flexQuery);
         // Fill in the data into the file template
         FileInfo fileInfo = this.generateByFileTemplateAndUpload(exportTemplate, rows);
-        // Generate export history
-        this.generateExportHistory(exportTemplate.getId(), exportTemplate.getModelName(), fileInfo.getFileId());
-        return fileInfo;
+        return new ExportResult(fileInfo, rows.size());
     }
 
     /**

@@ -29,19 +29,15 @@ public class ExportController {
      * Such as displayName for ManyToOne/OneToOne fields, and itemName for Option fields.
      *
      * @param modelName the model name to be exported
-     * @param fileName the name of the Excel file to be generated
-     * @param sheetName the name of the sheet in the Excel file
      * @param exportParams the export parameters of the data to be exported
      * @return fileInfo object with download URL
      */
     @Operation(description = "Export data by dynamic fields and ExportParams, without export template.")
     @PostMapping(value = "/dynamicExport")
     public ApiResponse<FileInfo> dynamicExport(@RequestParam String modelName,
-                                               @RequestParam(required = false) String fileName,
-                                               @RequestParam(required = false) String sheetName,
                                                @RequestBody ExportParams exportParams) {
         FlexQuery flexQuery = ExportParams.convertParamsToFlexQuery(exportParams);
-        return ApiResponse.success(exportService.dynamicExport(modelName, fileName, sheetName, flexQuery));
+        return ApiResponse.success(exportService.dynamicExport(modelName, flexQuery));
     }
 
     /**

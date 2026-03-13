@@ -33,6 +33,12 @@ public class ExportHistory extends AuditableModel {
     @Schema(description = "Exported File ID")
     private Long exportedFileId;
 
+    @Schema(description = "Total Rows")
+    private Integer totalRows;
+
+    @Schema(description = "Duration in seconds")
+    private Integer duration;
+
     @Schema(description = "Deleted")
     private Boolean deleted;
 }

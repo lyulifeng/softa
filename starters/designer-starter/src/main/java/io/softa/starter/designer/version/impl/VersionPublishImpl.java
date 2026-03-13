@@ -1,8 +1,8 @@
 package io.softa.starter.designer.version.impl;
 
-import java.time.Duration;
 import java.time.LocalDateTime;
 import java.util.*;
+import java.util.concurrent.TimeUnit;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.core.env.Environment;
 import org.springframework.stereotype.Component;
@@ -97,15 +97,26 @@ public class VersionPublishImpl implements VersionPublish {
         // Create published record
         DesignAppVersionPublished appVersionPublished = this.createPublishHistory(appVersion);
         List<MetadataUpgradePackage> upgradeModelPackages = this.convertDTOToModelPackage(modelChangesDTOList);
-        if (Boolean.TRUE.equals(appEnv.getAsyncUpgrade())) {
-            // Asynchronous upgrade
-            this.asyncUpgrade(appEnv, upgradeModelPackages);
-        } else {
-            LocalDateTime startTime = LocalDateTime.now();
-            // Synchronous upgrade
-            this.syncUpgrade(appEnv, upgradeModelPackages);
-            // After the synchronous publishing is completed, update the published status
-            this.updatePublishStatus(appVersionPublished, startTime);
+        LocalDateTime publishTime = LocalDateTime.now();
+        long startNanos = System.nanoTime();
+        try {
+            if (Boolean.TRUE.equals(appEnv.getAsyncUpgrade())) {
+                // Asynchronous upgrade
+                this.asyncUpgrade(appEnv, upgradeModelPackages);
+            } else {
+                // Synchronous upgrade
+                this.syncUpgrade(appEnv, upgradeModelPackages);
+            }
+            // After the publishing is completed, update the published status
+            this.updatePublishSuccessStatus(appVersionPublished, publishTime, startNanos);
+        } catch (RuntimeException e) {
+            // Persist failure status without overriding the original publish exception.
+            try {
+                this.updatePublishFailureStatus(appVersionPublished, startNanos);
+            } catch (RuntimeException updateException) {
+                e.addSuppressed(updateException);
+            }
+            throw e;
         }
     }
 
@@ -128,25 +139,35 @@ public class VersionPublishImpl implements VersionPublish {
      * After the publishing is completed, record the publishing duration and update the status.
      *
      * @param appVersionPublished Published record
-     * @param startTime Publishing start time
+     * @param publishTime Publishing time
+     * @param startNanos Publishing start monotonic time
      */
-    private void updatePublishStatus(DesignAppVersionPublished appVersionPublished, LocalDateTime startTime) {
+    private void updatePublishSuccessStatus(DesignAppVersionPublished appVersionPublished, LocalDateTime publishTime, long startNanos) {
         // Update the published status and duration statistics of DesignAppVersionPublished
-        Double seconds = Duration.between(startTime, LocalDateTime.now()).toMillis() / 1000.0;
-        appVersionPublished.setPublishDuration(seconds);
+        appVersionPublished.setPublishDuration(this.calculateDurationInSeconds(startNanos));
         appVersionPublished.setPublishStatus(PublishStatus.PUBLISHED);
         designAppVersionPublishedService.updateOne(appVersionPublished);
         // Update the published status of DesignAppVersion
         Map<String, Object> appVersionMap = MapUtils.strObj()
                 .put(ModelConstant.ID, appVersionPublished.getVersionId())
                 .put(DesignAppVersion::getPublished, true)
-                .put(DesignAppVersion::getLastPublishTime, startTime).build();
+                .put(DesignAppVersion::getLastPublishTime, publishTime).build();
         modelService.updateOne(DesignAppVersion.class.getSimpleName(), appVersionMap);
         // Update the published time of the AppEnv
         Map<String, Object> appEnvMap = MapUtils.strObj()
                 .put(ModelConstant.ID, appVersionPublished.getEnvId())
-                .put(DesignAppEnv::getLastPublishTime, startTime).build();
+                .put(DesignAppEnv::getLastPublishTime, publishTime).build();
         modelService.updateOne(DesignAppEnv.class.getSimpleName(), appEnvMap);
+    }
+
+    private void updatePublishFailureStatus(DesignAppVersionPublished appVersionPublished, long startNanos) {
+        appVersionPublished.setPublishDuration(this.calculateDurationInSeconds(startNanos));
+        appVersionPublished.setPublishStatus(PublishStatus.FAILURE);
+        designAppVersionPublishedService.updateOne(appVersionPublished);
+    }
+
+    private Double calculateDurationInSeconds(long startNanos) {
+        return (System.nanoTime() - startNanos) / (double) TimeUnit.SECONDS.toNanos(1);
     }
 
     /**

@@ -6,6 +6,7 @@ import io.swagger.v3.oas.annotations.Parameter;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import org.apache.commons.lang3.StringUtils;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.http.MediaType;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.multipart.MultipartFile;
 import tools.jackson.core.type.TypeReference;
@@ -57,18 +58,22 @@ public class ImportController {
 
     /**
      * Import data from the uploaded file and dynamic import settings
-     * Using ModelAttribute to receive the file object
+     * Using RequestPart to receive the file object and JSON payload
      *
-     * @param importWizard the import wizard containing the file and import settings
+     * @param file         the uploaded file
+     * @param importWizard the import wizard JSON payload
      * @return the import result
      */
     @Operation(description = "Dynamic import from the uploaded file")
-    @Parameter(name = "importWizard", description = "Form-data containing the file object.", required = true)
-    @PostMapping(value = "/dynamicImport")
-    public ApiResponse<ImportHistory> dynamicImport(@ModelAttribute ImportWizard importWizard) {
-        Assert.isTrue(StringUtils.isNotBlank(importWizard.getFileName()), "File name cannot be empty!");
+    @Parameter(name = "file", description = "Uploaded file part.", required = true)
+    @Parameter(name = "wizard", description = "JSON part containing import settings.", required = true)
+    @PostMapping(value = "/dynamicImport", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
+    public ApiResponse<ImportHistory> dynamicImport(@RequestPart("file") MultipartFile file,
+                                                    @RequestPart("wizard") ImportWizard importWizard) {
+        importWizard.setFile(file);
         Assert.notNull(importWizard.getFile(), "File cannot be empty!");
         Assert.notNull(importWizard.getImportRule(), "ImportRule cannot be null.");
+        Assert.notEmpty(importWizard.getImportFieldDTOList(), "Import fields cannot be empty.");
         return ApiResponse.success(importService.importByDynamic(importWizard));
     }
 

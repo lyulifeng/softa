@@ -18,6 +18,7 @@ import io.softa.framework.orm.domain.FlexQuery;
 import io.softa.framework.orm.dto.FileInfo;
 import io.softa.framework.orm.enums.ConvertType;
 import io.softa.starter.file.dto.ExcelDataDTO;
+import io.softa.starter.file.dto.ExportResult;
 import io.softa.starter.file.entity.ExportTemplate;
 import io.softa.starter.file.excel.handler.CustomExportStyleHandler;
 
@@ -37,7 +38,7 @@ public class ExportByTemplate extends CommonExport {
      * @param flexQuery the flex query to be used for data retrieval
      * @return fileInfo object with download URL
      */
-    public FileInfo export(ExportTemplate exportTemplate, FlexQuery flexQuery) {
+    public ExportResult export(ExportTemplate exportTemplate, FlexQuery flexQuery) {
         String fileName = exportTemplate.getFileName();
         String sheetName = exportTemplate.getSheetName();
         // Excel data DTO
@@ -50,9 +51,7 @@ public class ExportByTemplate extends CommonExport {
         // Generate the Excel file
         FileInfo fileInfo = this.generateFileAndUpload(exportTemplate.getModelName(), excelDataDTO,
                 new CustomExportStyleHandler());
-        // Generate an export history record
-        this.generateExportHistory(exportTemplate.getId(), exportTemplate.getModelName(), fileInfo.getFileId());
-        return fileInfo;
+        return new ExportResult(fileInfo, excelDataDTO.getRowsTable().size());
     }
 
     /**
@@ -106,8 +105,6 @@ public class ExportByTemplate extends CommonExport {
         } catch (Exception e) {
             throw new BusinessException("Error generating Excel {0} with the provided data.", fileName, e);
         }
-        // Generate an export history record
-        this.generateExportHistory(null, exportTemplates.getFirst().getModelName(), fileInfo.getFileId());
         return fileInfo;
     }
 

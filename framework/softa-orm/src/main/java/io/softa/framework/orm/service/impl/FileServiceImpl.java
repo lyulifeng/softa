@@ -132,7 +132,7 @@ public class FileServiceImpl extends EntityServiceImpl<FileRecord, Long> impleme
     public FileInfo uploadFromStream(UploadFileDTO uploadFileDTO) {
         uploadFileDTO.setFileSource(FileSource.DOWNLOAD);
         FileRecord fileRecord = this.uploadFileWithDTO(uploadFileDTO);
-        return convertToFileInfo(fileRecord);
+        return convertToFileInfo(fileRecord, FileConstant.DEFAULT_DOWNLOAD_URL_EXPIRE, true);
     }
 
     /**
@@ -178,12 +178,12 @@ public class FileServiceImpl extends EntityServiceImpl<FileRecord, Long> impleme
      *
      * @param modelName the name of the corresponding business model
      * @param file the file to be uploaded
-     * @return fileRecord object
+     * @return fileId
      */
     @Override
-    public FileInfo uploadFile(String modelName, MultipartFile file) {
+    public Long uploadFile(String modelName, MultipartFile file) {
         FileRecord fileRecord = this.uploadFileToField(modelName, null, null, file);
-        return this.convertToFileInfo(fileRecord);
+        return fileRecord.getId();
     }
 
     /**
@@ -243,7 +243,7 @@ public class FileServiceImpl extends EntityServiceImpl<FileRecord, Long> impleme
             Long id = this.createOne(fileRecord);
             fileRecord.setId(id);
 
-            return this.convertToFileInfo(fileRecord, expireSeconds);
+            return this.convertToFileInfo(fileRecord, expireSeconds, false);
 
         } finally {
             if (downloadResult != null) {
@@ -259,7 +259,7 @@ public class FileServiceImpl extends EntityServiceImpl<FileRecord, Long> impleme
      * @return fileInfo object
      */
     private FileInfo convertToFileInfo(FileRecord fileRecord) {
-        return this.convertToFileInfo(fileRecord, FileConstant.DEFAULT_DOWNLOAD_URL_EXPIRE);
+        return this.convertToFileInfo(fileRecord, FileConstant.DEFAULT_DOWNLOAD_URL_EXPIRE, false);
     }
 
     /**
@@ -267,9 +267,10 @@ public class FileServiceImpl extends EntityServiceImpl<FileRecord, Long> impleme
      *
      * @param fileRecord fileRecord object
      * @param expireSeconds the expiration time in seconds
+     * @param download whether to generate a download URL or a pre-signed URL
      * @return fileInfo object
      */
-    private FileInfo convertToFileInfo(FileRecord fileRecord, int expireSeconds) {
+    private FileInfo convertToFileInfo(FileRecord fileRecord, int expireSeconds, boolean download) {
         if (fileRecord == null) {
             return null;
         }
@@ -277,8 +278,12 @@ public class FileServiceImpl extends EntityServiceImpl<FileRecord, Long> impleme
         fileInfo.setFileId(fileRecord.getId());
         fileInfo.setFileName(fileRecord.getFileName());
         fileInfo.setFileType(fileRecord.getFileType());
-        String ossUrl = ossClientService.getPreSignedUrl(fileRecord.getOssKey(), expireSeconds,
-                fileRecord.getFileName());
+        String ossUrl;
+        if (download) {
+            ossUrl = ossClientService.getDownloadUrl(fileRecord.getOssKey(), expireSeconds, fileRecord.getFileName());
+        } else {
+            ossUrl = ossClientService.getPreSignedUrl(fileRecord.getOssKey(), expireSeconds, fileRecord.getFileName());
+        }
         fileInfo.setUrl(ossUrl);
         fileInfo.setSize(fileRecord.getFileSize());
         fileInfo.setChecksum(fileRecord.getChecksum());
@@ -320,7 +325,7 @@ public class FileServiceImpl extends EntityServiceImpl<FileRecord, Long> impleme
     @Override
     public Optional<FileInfo> getByFileId(Long fileId, int expireSeconds) {
         Optional<FileRecord> fileRecordOpt = this.getById(fileId);
-        return fileRecordOpt.map(record -> this.convertToFileInfo(record, expireSeconds));
+        return fileRecordOpt.map(record -> this.convertToFileInfo(record, expireSeconds, false));
     }
 
     /**

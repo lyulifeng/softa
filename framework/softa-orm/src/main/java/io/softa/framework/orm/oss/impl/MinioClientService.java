@@ -1,10 +1,7 @@
 package io.softa.framework.orm.oss.impl;
 
-import io.softa.framework.base.exception.ExternalException;
-import io.softa.framework.base.exception.SystemException;
-import io.softa.framework.orm.constant.FileConstant;
-import io.softa.framework.orm.oss.OSSProperties;
-import io.softa.framework.orm.oss.OssClientService;
+import java.io.InputStream;
+import java.util.Map;
 import io.minio.*;
 import io.minio.errors.InternalException;
 import io.minio.errors.MinioException;
@@ -13,7 +10,11 @@ import io.minio.http.Method;
 import lombok.AllArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 
-import java.io.InputStream;
+import io.softa.framework.base.exception.ExternalException;
+import io.softa.framework.base.exception.SystemException;
+import io.softa.framework.orm.constant.FileConstant;
+import io.softa.framework.orm.oss.OSSProperties;
+import io.softa.framework.orm.oss.OssClientService;
 
 /**
  * Minio OSS Client Service Implementation
@@ -21,6 +22,10 @@ import java.io.InputStream;
 @Slf4j
 @AllArgsConstructor
 public class MinioClientService implements OssClientService {
+
+    private static final String CONTENT_DISPOSITION = "response-content-disposition";
+
+    private static final String ATTACHMENT_VALUE = "attachment;";
 
     private MinioClient ossClient;
 
@@ -105,6 +110,30 @@ public class MinioClientService implements OssClientService {
             );
         } catch (Exception e) {
             throw new ExternalException("Error while generating the file URL {0}", fileName, e);
+        }
+    }
+
+    @Override
+    public String getDownloadUrl(String ossKey, String fileName) {
+        int expirationInSeconds = ossProperties.getUrlExpireSeconds() == null ?
+                FileConstant.DEFAULT_DOWNLOAD_URL_EXPIRE : ossProperties.getUrlExpireSeconds();
+        return getDownloadUrl(ossKey, expirationInSeconds, fileName);
+    }
+
+    @Override
+    public String getDownloadUrl(String ossKey, int expirationInSeconds, String fileName) {
+        try {
+            return ossClient.getPresignedObjectUrl(
+                    GetPresignedObjectUrlArgs.builder()
+                            .method(Method.GET)
+                            .bucket(getBucketName())
+                            .object(ossKey)
+                            .expiry(expirationInSeconds)
+                            .extraQueryParams(Map.of(CONTENT_DISPOSITION, ATTACHMENT_VALUE))
+                            .build()
+            );
+        } catch (Exception e) {
+            throw new ExternalException("Error while generating the download URL {0}", fileName, e);
         }
     }
 

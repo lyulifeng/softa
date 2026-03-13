@@ -4,6 +4,7 @@ import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.TimeUnit;
 import java.util.stream.Collectors;
 import org.apache.commons.lang3.StringUtils;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -14,12 +15,15 @@ import io.softa.framework.base.utils.Assert;
 import io.softa.framework.orm.domain.Filters;
 import io.softa.framework.orm.domain.FlexQuery;
 import io.softa.framework.orm.dto.FileInfo;
+import io.softa.starter.file.dto.ExportResult;
 import io.softa.starter.file.dto.ExportTemplateDTO;
 import io.softa.starter.file.dto.SheetInfo;
+import io.softa.starter.file.entity.ExportHistory;
 import io.softa.starter.file.entity.ExportTemplate;
 import io.softa.starter.file.excel.ExportByDynamic;
 import io.softa.starter.file.excel.ExportByFileTemplate;
 import io.softa.starter.file.excel.ExportByTemplate;
+import io.softa.starter.file.service.ExportHistoryService;
 import io.softa.starter.file.service.ExportService;
 import io.softa.starter.file.service.ExportTemplateService;
 
@@ -38,6 +42,9 @@ public class ExportServiceImpl implements ExportService {
     @Autowired
     private ExportTemplateService exportTemplateService;
 
+    @Autowired
+    private ExportHistoryService exportHistoryService;
+
     /**
      * Validate the exported by file template configuration.
      *
@@ -54,13 +61,14 @@ public class ExportServiceImpl implements ExportService {
      * Such as displayName for ManyToOne/OneToOne fields, and itemName for Option fields.
      *
      * @param modelName the model name to be exported
-     * @param fileName the name of the Excel file to be generated
-     * @param sheetName the name of the sheet in the Excel file
      * @param flexQuery the flex query to be used for data retrieval
      * @return fileInfo object with download URL
      */
-    public FileInfo dynamicExport(String modelName, String fileName, String sheetName, FlexQuery flexQuery) {
-        return exportByDynamic.export(modelName, fileName, sheetName, flexQuery);
+    public FileInfo dynamicExport(String modelName, FlexQuery flexQuery) {
+        long startNanos = System.nanoTime();
+        ExportResult exportResult = exportByDynamic.export(modelName, flexQuery);
+        this.generateExportHistory(null, modelName, exportResult, startNanos);
+        return exportResult.getFileInfo();
     }
 
     /**
@@ -100,12 +108,16 @@ public class ExportServiceImpl implements ExportService {
         ExportTemplate exportTemplate = exportTemplateService.getById(exportTemplateId)
                 .orElseThrow(() -> new IllegalArgumentException("The export template does not exist."));
         this.validateExportTemplate(exportTemplate);
+        long startNanos = System.nanoTime();
+        ExportResult exportResult;
         if (Boolean.TRUE.equals(exportTemplate.getCustomFileTemplate())) {
             Assert.notNull(exportTemplate.getFileId(), "The export template does not have a custom file template.");
-            return exportByFileTemplate.export(exportTemplate, flexQuery);
+            exportResult = exportByFileTemplate.export(exportTemplate, flexQuery);
         } else {
-            return exportByTemplate.export(exportTemplate, flexQuery);
+            exportResult = exportByTemplate.export(exportTemplate, flexQuery);
         }
+        this.generateExportHistory(exportTemplate.getId(), exportTemplate.getModelName(), exportResult, startNanos);
+        return exportResult.getFileInfo();
     }
 
     /**
@@ -140,5 +152,20 @@ public class ExportServiceImpl implements ExportService {
         Assert.isTrue(sheetNames.size() == new HashSet<>(sheetNames).size(),
                 "The excel sheet name must be unique! {0}", sheetNames);
         return exportTemplates;
+    }
+
+    private void generateExportHistory(Long exportTemplateId, String modelName, ExportResult exportResult, long startNanos) {
+        ExportHistory exportHistory = new ExportHistory();
+        exportHistory.setTemplateId(exportTemplateId);
+        exportHistory.setModelName(modelName);
+        exportHistory.setExportedFileId(exportResult.getFileInfo().getFileId());
+        exportHistory.setTotalRows(exportResult.getTotalRows());
+        exportHistory.setDuration(calculateDurationInSeconds(startNanos));
+        exportHistoryService.createOne(exportHistory);
+    }
+
+    private Integer calculateDurationInSeconds(long startNanos) {
+        long elapsedSeconds = TimeUnit.NANOSECONDS.toSeconds(System.nanoTime() - startNanos);
+        return Math.toIntExact(elapsedSeconds);
     }
 }

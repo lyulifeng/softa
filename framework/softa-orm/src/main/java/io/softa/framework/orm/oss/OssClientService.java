@@ -34,6 +34,25 @@ public interface OssClientService {
     String getPreSignedUrl(String ossKey, int expirationInSeconds, String fileName);
 
     /**
+     * Generates a pre-signed URL for forced download.
+     *
+     * @param ossKey the key of the file stored in the OSS bucket
+     * @param fileName file name
+     * @return the pre-signed URL
+     */
+    String getDownloadUrl(String ossKey, String fileName);
+
+    /**
+     * Generates a pre-signed URL for forced download.
+     *
+     * @param ossKey the key of the file stored in the OSS bucket
+     * @param expirationInSeconds the duration for which the URL is valid
+     * @param fileName file name
+     * @return the pre-signed URL
+     */
+    String getDownloadUrl(String ossKey, int expirationInSeconds, String fileName);
+
+    /**
      * Downloads the file from the OSS bucket and returns the InputStream
      *
      * @param ossKey the key of the file stored in the OSS bucket

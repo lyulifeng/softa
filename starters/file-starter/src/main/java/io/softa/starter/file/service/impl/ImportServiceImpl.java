@@ -3,6 +3,7 @@ package io.softa.starter.file.service.impl;
 import java.io.IOException;
 import java.io.InputStream;
 import java.util.*;
+import java.util.concurrent.TimeUnit;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.lang3.StringUtils;
 import org.apache.fesod.sheet.FesodSheet;
@@ -126,13 +127,13 @@ public class ImportServiceImpl implements ImportService {
         ImportTemplate importTemplate = importTemplateService.getById(templateId, subQueries)
                 .orElseThrow(() -> new IllegalArgumentException("Import template not found by ID: {0}", templateId));
         this.validateImportTemplate(importTemplate);
-        String fileName = FileUtils.getShortFileName(file);
-        FileInfo fileInfo = fileService.uploadFile(importTemplate.getModelName(), file);
+        Long fileId = fileService.uploadFile(importTemplate.getModelName(), file);
         // Generate an export history record
-        ImportHistory importHistory = this.generateImportHistory(fileName, templateId, fileInfo.getFileId());
+        ImportHistory importHistory = this.generateImportHistory(importTemplate.getModelName(), templateId, fileId);
         // generate the ImportDataDTO object and ImportTemplateDTO object
+        String fileName = FileUtils.getShortFileName(file);
         ImportTemplateDTO importTemplateDTO = this.getImportTemplateDTO(importTemplate, env);
-        importTemplateDTO.setFileId(fileInfo.getFileId());
+        importTemplateDTO.setFileId(fileId);
         importTemplateDTO.setHistoryId(importHistory.getId());
         importTemplateDTO.setFileName(fileName);
         if (Boolean.TRUE.equals(importTemplate.getSyncImport())) {
@@ -156,19 +157,46 @@ public class ImportServiceImpl implements ImportService {
      * @return the import history object
      */
     public ImportHistory syncImport(ImportTemplateDTO importTemplateDTO, InputStream inputStream, ImportHistory importHistory) {
-        ImportDataDTO importDataDTO = this.generateImportDataDTO(importTemplateDTO, inputStream);
-        dataHandler.importData(importTemplateDTO, importDataDTO);
-        if (!CollectionUtils.isEmpty(importDataDTO.getFailedRows())) {
-            Long failedFileId = this.generateFailedExcel(importTemplateDTO.getFileName(), importTemplateDTO, importDataDTO);
-            importHistory.setFailedFileId(failedFileId);
-            ImportStatus status = CollectionUtils.isEmpty(importDataDTO.getRows()) ?
-                    ImportStatus.FAILURE : ImportStatus.PARTIAL_FAILURE;
-            importHistory.setStatus(status);
-        } else {
-            importHistory.setStatus(ImportStatus.SUCCESS);
+        long startNanos = System.nanoTime();
+        RuntimeException importException = null;
+        try {
+            ImportDataDTO importDataDTO = this.generateImportDataDTO(importTemplateDTO, inputStream);
+            dataHandler.importData(importTemplateDTO, importDataDTO);
+            if (!CollectionUtils.isEmpty(importDataDTO.getFailedRows())) {
+                Long failedFileId = this.generateFailedExcel(importTemplateDTO.getFileName(), importTemplateDTO, importDataDTO);
+                importHistory.setFailedFileId(failedFileId);
+                ImportStatus status = CollectionUtils.isEmpty(importDataDTO.getRows()) ?
+                        ImportStatus.FAILURE : ImportStatus.PARTIAL_FAILURE;
+                importHistory.setStatus(status);
+            } else {
+                importHistory.setStatus(ImportStatus.SUCCESS);
+            }
+            return importHistory;
+        } catch (RuntimeException e) {
+            importHistory.setStatus(ImportStatus.FAILURE);
+            importException = e;
+            throw e;
+        } finally {
+            importHistory.setDuration(this.calculateDurationInSeconds(startNanos));
+            this.updateImportHistory(importHistory, importException);
         }
-        importHistoryService.updateOne(importHistory);
-        return importHistory;
+    }
+
+    private Integer calculateDurationInSeconds(long startNanos) {
+        long elapsedSeconds = TimeUnit.NANOSECONDS.toSeconds(System.nanoTime() - startNanos);
+        return Math.toIntExact(elapsedSeconds);
+    }
+
+    private void updateImportHistory(ImportHistory importHistory, RuntimeException importException) {
+        try {
+            importHistoryService.updateOne(importHistory);
+        } catch (RuntimeException updateException) {
+            if (importException != null) {
+                log.error("Failed to update import history `{}` after import exception.", importHistory.getId(), updateException);
+                return;
+            }
+            throw updateException;
+        }
     }
 
     /**
@@ -179,12 +207,12 @@ public class ImportServiceImpl implements ImportService {
     @Override
     public ImportHistory importByDynamic(ImportWizard importWizard) {
         String fileName = importWizard.getFileName();
-        FileInfo fileInfo = fileService.uploadFile(importWizard.getModelName(), importWizard.getFile());
+        Long fileId = fileService.uploadFile(importWizard.getModelName(), importWizard.getFile());
         // Generate an export history record
-        ImportHistory importHistory = this.generateImportHistory(fileName, null, fileInfo.getFileId());
+        ImportHistory importHistory = this.generateImportHistory(importWizard.getModelName(), null, fileId);
         // generate the ImportDataDTO object and ImportTemplateDTO object
         ImportTemplateDTO importTemplateDTO = this.convertToImportTemplateDTO(importWizard);
-        importTemplateDTO.setFileId(fileInfo.getFileId());
+        importTemplateDTO.setFileId(fileId);
         importTemplateDTO.setHistoryId(importHistory.getId());
         importTemplateDTO.setFileName(fileName);
         if (Boolean.TRUE.equals(importWizard.getSyncImport())) {
@@ -371,13 +399,14 @@ public class ImportServiceImpl implements ImportService {
     /**
      * Generate an import history record.
      *
-     * @param importTemplateId the ID of the import template
+     * @param importTemplateId the id of the import template
      * @param fileId the fileId of the exported file in FileRecord model
      * @return the generated importHistory object
      */
-    protected ImportHistory generateImportHistory(String fileName, Long importTemplateId, Long fileId) {
+    protected ImportHistory generateImportHistory(String modelName, Long importTemplateId, Long fileId) {
         ImportHistory importHistory = new ImportHistory();
         importHistory.setTemplateId(importTemplateId);
+        importHistory.setModelName(modelName);
         importHistory.setOriginalFileId(fileId);
         importHistory.setStatus(ImportStatus.PROCESSING);
         Long id = importHistoryService.createOne(importHistory);

@@ -20,6 +20,7 @@ import io.softa.framework.orm.dto.FileInfo;
 import io.softa.framework.orm.meta.MetaField;
 import io.softa.framework.orm.meta.ModelManager;
 import io.softa.starter.file.dto.ExcelDataDTO;
+import io.softa.starter.file.dto.ExportResult;
 import io.softa.starter.file.dto.SheetInfo;
 
 /**
@@ -35,29 +36,23 @@ public class ExportByDynamic extends CommonExport {
      * Such as displayName for ManyToOne/OneToOne fields, and itemName for Option fields.
      *
      * @param modelName the model name to be exported
-     * @param fileName the name of the Excel file to be generated
-     * @param sheetName the name of the sheet in the Excel file
      * @param flexQuery the flex query to be used for data retrieval
      * @return fileInfo object with download URL
      */
-    public FileInfo export(String modelName, String fileName, String sheetName, FlexQuery flexQuery) {
+    public ExportResult export(String modelName, FlexQuery flexQuery) {
         // Get the data to be exported
         List<String> headers = new ArrayList<>();
         List<List<Object>> rowsTable = this.extractDataTableFromDB(modelName, flexQuery, headers);
         // Generate the Excel file
         String modelLabel = ModelManager.getModel(modelName).getLabelName();
-        fileName = StringUtils.isNotBlank(fileName) ? fileName : modelLabel;
-        sheetName = StringUtils.isNotBlank(sheetName) ? sheetName : fileName;
         // Excel data DTO
         ExcelDataDTO excelDataDTO = new ExcelDataDTO();
-        excelDataDTO.setFileName(fileName);
-        excelDataDTO.setSheetName(sheetName);
+        excelDataDTO.setFileName(modelLabel);
+        excelDataDTO.setSheetName(modelLabel);
         excelDataDTO.setHeaders(headers);
         excelDataDTO.setRowsTable(rowsTable);
         FileInfo fileInfo = this.generateFileAndUpload(modelName, excelDataDTO);
-        // Generate an export history record
-        this.generateExportHistory(null, modelName, fileInfo.getFileId());
-        return fileInfo;
+        return new ExportResult(fileInfo, rowsTable.size());
     }
 
     /**
@@ -93,8 +88,6 @@ public class ExportByDynamic extends CommonExport {
         } catch (Exception e) {
             throw new BusinessException("Error generating Excel {0} with the provided data.", fileName, e);
         }
-        // Generate an export history record
-        this.generateExportHistory(null, sheetInfoList.getFirst().getModelName(), fileInfo.getFileId());
         return fileInfo;
     }
 

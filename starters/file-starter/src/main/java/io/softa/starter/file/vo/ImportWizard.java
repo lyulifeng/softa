@@ -1,8 +1,5 @@
 package io.softa.starter.file.vo;
 
-import tools.jackson.core.type.TypeReference;
-import io.softa.framework.base.exception.IllegalArgumentException;
-import io.softa.framework.base.utils.JsonUtils;
 import io.softa.framework.orm.utils.FileUtils;
 import io.softa.starter.file.dto.ImportFieldDTO;
 import io.softa.starter.file.enums.ImportRule;
@@ -35,12 +32,9 @@ public class ImportWizard {
     private String uniqueConstraints;
 
     @Schema(description = """
-            JSON string of the import fields info. e.g.
+            Import fields info. e.g.
                 [{"header": "Product Code", "fieldName": "productCode", "required": true},
                  {"header": "Product Name", "fieldName": "productName", "required": true}]""")
-    private String importFieldStr;
-
-    @Schema(hidden = true)
     private List<ImportFieldDTO> importFieldDTOList;
 
     @Schema(description = "Whether to ignore empty values")
@@ -63,20 +57,5 @@ public class ImportWizard {
     public void setFile(MultipartFile file) {
         this.file = file;
         this.fileName = FileUtils.getShortFileName(file);
-    }
-
-    /**
-     * Set the importFieldStr and parse it into a list of ImportFieldDTO.
-     *
-     * @param importFieldStr the JSON string of the ImportFieldDTO list
-     */
-    public void setImportFieldStr(String importFieldStr) {
-        this.importFieldStr = importFieldStr;
-        try {
-            TypeReference<List<ImportFieldDTO>> typeRef = new TypeReference<>() {};
-            this.importFieldDTOList = JsonUtils.stringToObject(importFieldStr, typeRef);
-        } catch (Exception e) {
-            throw new IllegalArgumentException("The JSON string of the import fields must be in JSON format: {0}", importFieldStr, e);
-        }
     }
 }

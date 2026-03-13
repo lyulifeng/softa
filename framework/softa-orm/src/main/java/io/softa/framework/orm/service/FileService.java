@@ -17,9 +17,9 @@ public interface FileService {
      *
      * @param modelName the name of the corresponding business model
      * @param file      the file to be uploaded
-     * @return fileInfo object
+     * @return fileId
      */
-    FileInfo uploadFile(String modelName, MultipartFile file);
+    Long uploadFile(String modelName, MultipartFile file);
 
     /**
      * Upload a file to the OSS and create a corresponding FileRecord to associate
