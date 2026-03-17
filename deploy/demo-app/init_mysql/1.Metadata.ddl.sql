@@ -792,6 +792,7 @@ CREATE TABLE sys_pre_data(
     pre_id VARCHAR(64) NOT NULL  DEFAULT '' COMMENT 'Predefined ID' ,
     row_id BIGINT(32)    COMMENT 'Row Data ID' ,
     frozen TINYINT(1)    COMMENT 'Frozen' ,
+    tenant_id BIGINT(32)    COMMENT 'Tenant ID' ,
     created_time DATETIME    COMMENT 'Created Time' ,
     created_id BIGINT(32)    COMMENT 'Created ID' ,
     created_by VARCHAR(32)    COMMENT 'Created By' ,
