@@ -58,6 +58,7 @@ public enum WidgetType {
     // JSON tree to display JSON values in the tree view
     JSON_TREE("JsonTree", "Json Tree"),
 
+    TAG_LIST("TagList", "Tag List"),
     ;
 
     @JsonValue

@@ -1825,6 +1825,35 @@ CREATE TABLE user_security_policy(
     PRIMARY KEY (id)
 ) ENGINE=InnoDB AUTO_INCREMENT=1 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT = 'User Security Policy';
 
+CREATE TABLE user_role(
+    id BIGINT(32) NOT NULL   COMMENT 'ID' ,
+    tenant_id BIGINT(32)    COMMENT 'Tenant ID' ,
+    name VARCHAR(64) NOT NULL  DEFAULT '' COMMENT 'Name' ,
+    code VARCHAR(64)    COMMENT 'Code' ,
+    description VARCHAR(256)    COMMENT 'Description' ,
+    active TINYINT(1)   DEFAULT 1 COMMENT 'Active' ,
+    created_id BIGINT(32)    COMMENT 'Created ID' ,
+    created_time DATETIME    COMMENT 'Created Time' ,
+    created_by VARCHAR(64)    COMMENT 'Created By' ,
+    updated_id BIGINT(32)    COMMENT 'Updated ID' ,
+    updated_time DATETIME    COMMENT 'Updated Time' ,
+    updated_by VARCHAR(64)    COMMENT 'Updated By' ,
+    PRIMARY KEY (id)
+) ENGINE=InnoDB AUTO_INCREMENT=1 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT = 'User Role';
+
+CREATE TABLE user_role_rel(
+    id BIGINT(32) NOT NULL AUTO_INCREMENT  COMMENT 'ID' ,
+    user_id BIGINT(32) NOT NULL   COMMENT 'User ID' ,
+    role_id BIGINT(32) NOT NULL   COMMENT 'Role ID' ,
+    created_id BIGINT(32)    COMMENT 'Created ID' ,
+    created_time DATETIME    COMMENT 'Created Time' ,
+    created_by VARCHAR(32)    COMMENT 'Created By' ,
+    updated_id BIGINT(32)    COMMENT 'Updated ID' ,
+    updated_by VARCHAR(32)    COMMENT 'Updated By' ,
+    updated_time DATETIME    COMMENT 'Updated Time' ,
+    PRIMARY KEY (id)
+) ENGINE=InnoDB AUTO_INCREMENT=1 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT = 'User Role Join Model';
+
 CREATE TABLE tenant(
     id BIGINT(32) NOT NULL   COMMENT 'ID' ,
     name VARCHAR(64)    COMMENT 'Name' ,

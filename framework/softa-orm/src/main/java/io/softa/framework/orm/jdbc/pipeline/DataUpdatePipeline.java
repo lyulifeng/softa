@@ -82,7 +82,8 @@ public class DataUpdatePipeline extends DataPipeline {
                 .addFactory(new NormalProcessorFactory())
                 .addFactory(new ComputeProcessorFactory())
                 .addFactory(new TypeCastProcessorFactory())
-                .addFactory(new EncryptProcessorFactory());
+                .addFactory(new EncryptProcessorFactory())
+                .addFactory(new FilesGroupProcessorFactory());
         return factoryChain.generateProcessorChain(fields);
     }
 

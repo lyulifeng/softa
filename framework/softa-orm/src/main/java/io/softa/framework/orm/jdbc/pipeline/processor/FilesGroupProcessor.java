@@ -8,6 +8,7 @@ import org.springframework.util.CollectionUtils;
 
 import io.softa.framework.orm.dto.FileInfo;
 import io.softa.framework.orm.enums.AccessType;
+import io.softa.framework.orm.enums.ConvertType;
 import io.softa.framework.orm.enums.FieldType;
 import io.softa.framework.orm.meta.MetaField;
 import io.softa.framework.orm.utils.IdUtils;
@@ -20,6 +21,8 @@ import io.softa.framework.orm.utils.ReflectTool;
 @Slf4j
 public class FilesGroupProcessor extends BaseProcessor {
 
+    private final ConvertType convertType;
+
     private final List<MetaField> fileFields = new ArrayList<>(0);
 
     /**
@@ -28,8 +31,9 @@ public class FilesGroupProcessor extends BaseProcessor {
      * @param firstField the first file field
      * @param accessType access type
      */
-    public FilesGroupProcessor(MetaField firstField, AccessType accessType) {
+    public FilesGroupProcessor(MetaField firstField, AccessType accessType, ConvertType convertType) {
         super(firstField, accessType);
+        this.convertType = convertType;
         this.fileFields.add(firstField);
     }
 
@@ -77,7 +81,7 @@ public class FilesGroupProcessor extends BaseProcessor {
      */
     public void batchProcessOutputRows(List<Map<String, Object>> rows) {
         List<Long> fileIds = processFileIds(rows);
-        if (CollectionUtils.isEmpty(fileIds)) {
+        if (CollectionUtils.isEmpty(fileIds) || !ConvertType.REFERENCE.equals(convertType)) {
             return;
         }
         List<FileInfo> fileInfos = ReflectTool.getByFileIds(fileIds);

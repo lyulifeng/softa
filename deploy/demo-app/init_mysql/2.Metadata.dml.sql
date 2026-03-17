@@ -3643,6 +3643,8 @@ INSERT INTO sys_field(label_name, field_name, column_name, model_name, descripti
 INSERT INTO sys_field(label_name, field_name, column_name, model_name, description, field_type, option_set_code, related_model, related_field, join_model, join_left, join_right, cascaded_field, filters, default_value, length, scale, required, readonly, translatable, non_copyable, unsearchable, computed, expression, dynamic, encrypted, masking_type, widget_type)
     VALUES('Policy ID', 'policyId', 'policy_id', 'UserAccount', '', 'ManyToOne', '', 'UserSecurityPolicy', '', '', '', '', '', '', "", 32, 0, false, 0, 0, 0, 0, 0, '', 0, 0, '', '');
 INSERT INTO sys_field(label_name, field_name, column_name, model_name, description, field_type, option_set_code, related_model, related_field, join_model, join_left, join_right, cascaded_field, filters, default_value, length, scale, required, readonly, translatable, non_copyable, unsearchable, computed, expression, dynamic, encrypted, masking_type, widget_type)
+    VALUES('User Roles', 'userRoles', 'user_roles', 'UserAccount', '', 'ManyToMany', '', 'UserRole', '', 'UserRoleRel', 'userId', 'roleId', '', '', "", 0, 0, false, 0, 0, 0, 0, 0, '', 0, 0, '', '');
+INSERT INTO sys_field(label_name, field_name, column_name, model_name, description, field_type, option_set_code, related_model, related_field, join_model, join_left, join_right, cascaded_field, filters, default_value, length, scale, required, readonly, translatable, non_copyable, unsearchable, computed, expression, dynamic, encrypted, masking_type, widget_type)
     VALUES('Account Status', 'status', 'status', 'UserAccount', '', 'Option', 'AccountStatus', '', '', '', '', '', '', '', "'Active'", 64, 0, false, 0, 0, 0, 0, 0, '', 0, 0, '', '');
 INSERT INTO sys_field(label_name, field_name, column_name, model_name, description, field_type, option_set_code, related_model, related_field, join_model, join_left, join_right, cascaded_field, filters, default_value, length, scale, required, readonly, translatable, non_copyable, unsearchable, computed, expression, dynamic, encrypted, masking_type, widget_type)
     VALUES('Updated By', 'updatedBy', 'updated_by', 'UserAccount', '', 'String', '', '', '', '', '', '', '', '', "", 64, 0, false, 0, 0, 0, 0, 0, '', 0, 0, '', '');
@@ -3840,6 +3842,70 @@ INSERT INTO sys_field(label_name, field_name, column_name, model_name, descripti
     VALUES('Updated By', 'updatedBy', 'updated_by', 'UserSecurityPolicy', '', 'String', '', '', '', '', '', '', '', '', "", 64, 0, false, 0, 0, 0, 0, 0, '', 0, 0, '', '');
 INSERT INTO sys_field(label_name, field_name, column_name, model_name, description, field_type, option_set_code, related_model, related_field, join_model, join_left, join_right, cascaded_field, filters, default_value, length, scale, required, readonly, translatable, non_copyable, unsearchable, computed, expression, dynamic, encrypted, masking_type, widget_type)
     VALUES('Active', 'active', 'active', 'UserSecurityPolicy', '', 'Boolean', '', '', '', '', '', '', '', '', "1", 1, 0, false, 0, 0, 0, 0, 0, '', 0, 0, '', '');
+
+-- Clean up historical data
+DELETE FROM sys_model WHERE model_name = 'UserRole';
+DELETE FROM sys_field WHERE model_name = 'UserRole';
+
+-- Insert model metadata
+INSERT INTO sys_model(label_name, model_name, table_name, description, default_order, display_name, search_name, timeline, id_strategy, soft_delete, soft_delete_field, active_control, multi_tenant, version_lock, data_source, service_name, business_key, partition_field)
+    VALUES('User Role', 'UserRole', 'user_role', '', '', '', '', false, 'DistributedLong', false,  '', false, false, false, '', '', '', '');
+
+-- Insert field metadata
+INSERT INTO sys_field(label_name, field_name, column_name, model_name, description, field_type, option_set_code, related_model, related_field, join_model, join_left, join_right, cascaded_field, filters, default_value, length, scale, required, readonly, translatable, non_copyable, unsearchable, computed, expression, dynamic, encrypted, masking_type, widget_type)
+    VALUES('ID', 'id', 'id', 'UserRole', '', 'Long', '', '', '', '', '', '', '', '', "", 32, 0, 0, 0, 0, 0, 0, 0, '', 0, 0, '', '');
+INSERT INTO sys_field(label_name, field_name, column_name, model_name, description, field_type, option_set_code, related_model, related_field, join_model, join_left, join_right, cascaded_field, filters, default_value, length, scale, required, readonly, translatable, non_copyable, unsearchable, computed, expression, dynamic, encrypted, masking_type, widget_type)
+    VALUES('Tenant ID', 'tenantId', 'tenant_id', 'UserRole', '', 'Long', '', '', '', '', '', '', '', '', "", 32, 0, false, 0, 0, 0, 0, 0, '', 0, 0, '', '');
+INSERT INTO sys_field(label_name, field_name, column_name, model_name, description, field_type, option_set_code, related_model, related_field, join_model, join_left, join_right, cascaded_field, filters, default_value, length, scale, required, readonly, translatable, non_copyable, unsearchable, computed, expression, dynamic, encrypted, masking_type, widget_type)
+    VALUES('Name', 'name', 'name', 'UserRole', '', 'String', '', '', '', '', '', '', '', '', "", 64, 0, true, 0, 0, 0, 0, 0, '', 0, 0, '', '');
+INSERT INTO sys_field(label_name, field_name, column_name, model_name, description, field_type, option_set_code, related_model, related_field, join_model, join_left, join_right, cascaded_field, filters, default_value, length, scale, required, readonly, translatable, non_copyable, unsearchable, computed, expression, dynamic, encrypted, masking_type, widget_type)
+    VALUES('Code', 'code', 'code', 'UserRole', '', 'String', '', '', '', '', '', '', '', '', "", 64, 0, false, 0, 0, 0, 0, 0, '', 0, 0, '', '');
+INSERT INTO sys_field(label_name, field_name, column_name, model_name, description, field_type, option_set_code, related_model, related_field, join_model, join_left, join_right, cascaded_field, filters, default_value, length, scale, required, readonly, translatable, non_copyable, unsearchable, computed, expression, dynamic, encrypted, masking_type, widget_type)
+    VALUES('User IDs', 'userIds', 'user_ids', 'UserRole', '', 'ManyToMany', '', 'UserAccount', '', 'UserRoleRel', 'roleId', 'userId', '', '', "", 0, 0, false, 0, 0, 0, 0, 0, '', 0, 0, '', '');
+INSERT INTO sys_field(label_name, field_name, column_name, model_name, description, field_type, option_set_code, related_model, related_field, join_model, join_left, join_right, cascaded_field, filters, default_value, length, scale, required, readonly, translatable, non_copyable, unsearchable, computed, expression, dynamic, encrypted, masking_type, widget_type)
+    VALUES('Description', 'description', 'description', 'UserRole', '', 'String', '', '', '', '', '', '', '', '', "", 256, 0, false, 0, 0, 0, 0, 0, '', 0, 0, '', '');
+INSERT INTO sys_field(label_name, field_name, column_name, model_name, description, field_type, option_set_code, related_model, related_field, join_model, join_left, join_right, cascaded_field, filters, default_value, length, scale, required, readonly, translatable, non_copyable, unsearchable, computed, expression, dynamic, encrypted, masking_type, widget_type)
+    VALUES('Active', 'active', 'active', 'UserRole', '', 'Boolean', '', '', '', '', '', '', '', '', "1", 1, 0, false, 0, 0, 0, 0, 0, '', 0, 0, '', '');
+INSERT INTO sys_field(label_name, field_name, column_name, model_name, description, field_type, option_set_code, related_model, related_field, join_model, join_left, join_right, cascaded_field, filters, default_value, length, scale, required, readonly, translatable, non_copyable, unsearchable, computed, expression, dynamic, encrypted, masking_type, widget_type)
+    VALUES('Created ID', 'createdId', 'created_id', 'UserRole', '', 'Long', '', '', '', '', '', '', '', '', "", 32, 0, false, 0, 0, 0, 0, 0, '', 0, 0, '', '');
+INSERT INTO sys_field(label_name, field_name, column_name, model_name, description, field_type, option_set_code, related_model, related_field, join_model, join_left, join_right, cascaded_field, filters, default_value, length, scale, required, readonly, translatable, non_copyable, unsearchable, computed, expression, dynamic, encrypted, masking_type, widget_type)
+    VALUES('Created Time', 'createdTime', 'created_time', 'UserRole', '', 'DateTime', '', '', '', '', '', '', '', '', "", 0, 0, false, 0, 0, 0, 0, 0, '', 0, 0, '', '');
+INSERT INTO sys_field(label_name, field_name, column_name, model_name, description, field_type, option_set_code, related_model, related_field, join_model, join_left, join_right, cascaded_field, filters, default_value, length, scale, required, readonly, translatable, non_copyable, unsearchable, computed, expression, dynamic, encrypted, masking_type, widget_type)
+    VALUES('Created By', 'createdBy', 'created_by', 'UserRole', '', 'String', '', '', '', '', '', '', '', '', "", 64, 0, false, 0, 0, 0, 0, 0, '', 0, 0, '', '');
+INSERT INTO sys_field(label_name, field_name, column_name, model_name, description, field_type, option_set_code, related_model, related_field, join_model, join_left, join_right, cascaded_field, filters, default_value, length, scale, required, readonly, translatable, non_copyable, unsearchable, computed, expression, dynamic, encrypted, masking_type, widget_type)
+    VALUES('Updated ID', 'updatedId', 'updated_id', 'UserRole', '', 'Long', '', '', '', '', '', '', '', '', "", 32, 0, false, 0, 0, 0, 0, 0, '', 0, 0, '', '');
+INSERT INTO sys_field(label_name, field_name, column_name, model_name, description, field_type, option_set_code, related_model, related_field, join_model, join_left, join_right, cascaded_field, filters, default_value, length, scale, required, readonly, translatable, non_copyable, unsearchable, computed, expression, dynamic, encrypted, masking_type, widget_type)
+    VALUES('Updated Time', 'updatedTime', 'updated_time', 'UserRole', '', 'DateTime', '', '', '', '', '', '', '', '', "", 0, 0, false, 0, 0, 0, 0, 0, '', 0, 0, '', '');
+INSERT INTO sys_field(label_name, field_name, column_name, model_name, description, field_type, option_set_code, related_model, related_field, join_model, join_left, join_right, cascaded_field, filters, default_value, length, scale, required, readonly, translatable, non_copyable, unsearchable, computed, expression, dynamic, encrypted, masking_type, widget_type)
+    VALUES('Updated By', 'updatedBy', 'updated_by', 'UserRole', '', 'String', '', '', '', '', '', '', '', '', "", 64, 0, false, 0, 0, 0, 0, 0, '', 0, 0, '', '');
+
+-- Clean up historical data
+DELETE FROM sys_model WHERE model_name = 'UserRoleRel';
+DELETE FROM sys_field WHERE model_name = 'UserRoleRel';
+
+-- Insert model metadata
+INSERT INTO sys_model(label_name, model_name, table_name, description, default_order, display_name, search_name, timeline, id_strategy, soft_delete, soft_delete_field, active_control, multi_tenant, version_lock, data_source, service_name, business_key, partition_field)
+    VALUES('User Role Join Model', 'UserRoleRel', 'user_role_rel', '', '', '', '', false, '', false,  '', false, false, false, '', '', '', '');
+
+-- Insert field metadata
+INSERT INTO sys_field(label_name, field_name, column_name, model_name, description, field_type, option_set_code, related_model, related_field, join_model, join_left, join_right, cascaded_field, filters, default_value, length, scale, required, readonly, translatable, non_copyable, unsearchable, computed, expression, dynamic, encrypted, masking_type, widget_type)
+    VALUES('ID', 'id', 'id', 'UserRoleRel', '', 'Long', '', '', '', '', '', '', '', '', "", 32, 0, 0, 0, 0, 0, 0, 0, '', 0, 0, '', '');
+INSERT INTO sys_field(label_name, field_name, column_name, model_name, description, field_type, option_set_code, related_model, related_field, join_model, join_left, join_right, cascaded_field, filters, default_value, length, scale, required, readonly, translatable, non_copyable, unsearchable, computed, expression, dynamic, encrypted, masking_type, widget_type)
+    VALUES('User ID', 'userId', 'user_id', 'UserRoleRel', '', 'Long', '', '', '', '', '', '', '', '', "", 32, 0, true, 0, 0, 0, 0, 0, '', 0, 0, '', '');
+INSERT INTO sys_field(label_name, field_name, column_name, model_name, description, field_type, option_set_code, related_model, related_field, join_model, join_left, join_right, cascaded_field, filters, default_value, length, scale, required, readonly, translatable, non_copyable, unsearchable, computed, expression, dynamic, encrypted, masking_type, widget_type)
+    VALUES('Role ID', 'roleId', 'role_id', 'UserRoleRel', '', 'Long', '', '', '', '', '', '', '', '', "", 32, 0, true, 0, 0, 0, 0, 0, '', 0, 0, '', '');
+INSERT INTO sys_field(label_name, field_name, column_name, model_name, description, field_type, option_set_code, related_model, related_field, join_model, join_left, join_right, cascaded_field, filters, default_value, length, scale, required, readonly, translatable, non_copyable, unsearchable, computed, expression, dynamic, encrypted, masking_type, widget_type)
+    VALUES('Created ID', 'createdId', 'created_id', 'UserRoleRel', '', 'Long', '', '', '', '', '', '', '', '', "", 32, 0, false, 0, 0, 0, 0, 0, '', 0, 0, '', '');
+INSERT INTO sys_field(label_name, field_name, column_name, model_name, description, field_type, option_set_code, related_model, related_field, join_model, join_left, join_right, cascaded_field, filters, default_value, length, scale, required, readonly, translatable, non_copyable, unsearchable, computed, expression, dynamic, encrypted, masking_type, widget_type)
+    VALUES('Created Time', 'createdTime', 'created_time', 'UserRoleRel', '', 'DateTime', '', '', '', '', '', '', '', '', "", 0, 0, false, 0, 0, 0, 0, 0, '', 0, 0, '', '');
+INSERT INTO sys_field(label_name, field_name, column_name, model_name, description, field_type, option_set_code, related_model, related_field, join_model, join_left, join_right, cascaded_field, filters, default_value, length, scale, required, readonly, translatable, non_copyable, unsearchable, computed, expression, dynamic, encrypted, masking_type, widget_type)
+    VALUES('Created By', 'createdBy', 'created_by', 'UserRoleRel', '', 'String', '', '', '', '', '', '', '', '', "", 32, 0, false, 0, 0, 0, 0, 0, '', 0, 0, '', '');
+INSERT INTO sys_field(label_name, field_name, column_name, model_name, description, field_type, option_set_code, related_model, related_field, join_model, join_left, join_right, cascaded_field, filters, default_value, length, scale, required, readonly, translatable, non_copyable, unsearchable, computed, expression, dynamic, encrypted, masking_type, widget_type)
+    VALUES('Updated ID', 'updatedId', 'updated_id', 'UserRoleRel', '', 'Long', '', '', '', '', '', '', '', '', "", 32, 0, false, 0, 0, 0, 0, 0, '', 0, 0, '', '');
+INSERT INTO sys_field(label_name, field_name, column_name, model_name, description, field_type, option_set_code, related_model, related_field, join_model, join_left, join_right, cascaded_field, filters, default_value, length, scale, required, readonly, translatable, non_copyable, unsearchable, computed, expression, dynamic, encrypted, masking_type, widget_type)
+    VALUES('Updated By', 'updatedBy', 'updated_by', 'UserRoleRel', '', 'String', '', '', '', '', '', '', '', '', "", 32, 0, false, 0, 0, 0, 0, 0, '', 0, 0, '', '');
+INSERT INTO sys_field(label_name, field_name, column_name, model_name, description, field_type, option_set_code, related_model, related_field, join_model, join_left, join_right, cascaded_field, filters, default_value, length, scale, required, readonly, translatable, non_copyable, unsearchable, computed, expression, dynamic, encrypted, masking_type, widget_type)
+    VALUES('Updated Time', 'updatedTime', 'updated_time', 'UserRoleRel', '', 'DateTime', '', '', '', '', '', '', '', '', "", 0, 0, false, 0, 0, 0, 0, 0, '', 0, 0, '', '');
 
 -- Clean up historical data
 DELETE FROM sys_model WHERE model_name = 'Tenant';

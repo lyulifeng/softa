@@ -84,7 +84,8 @@ public class DataCreatePipeline extends DataPipeline {
                 .addFactory(new ComputeProcessorFactory())
                 .addFactory(new TypeCastProcessorFactory())
                 // Encrypt the `encrypted` fields before storing them in the database.
-                .addFactory(new EncryptProcessorFactory());
+                .addFactory(new EncryptProcessorFactory())
+                .addFactory(new FilesGroupProcessorFactory());
         return factoryChain.generateProcessorChain(fields);
     }
 
