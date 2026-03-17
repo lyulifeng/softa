@@ -61,7 +61,7 @@ public class DateProcessor extends BaseProcessor {
      */
     @Override
     public void processOutputRow(Map<String, Object> row) {
-        if (!row.containsKey(fieldName)) {
+        if (row.get(fieldName) == null) {
             return;
         }
         LocalDate date = DateUtils.dateToLocalDate(row.get(fieldName));

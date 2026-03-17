@@ -61,7 +61,7 @@ public class XToOneGroupProcessorFactory implements FieldProcessorFactory {
         } else if (StringUtils.isNotBlank(metaField.getCascadedField()) && !metaField.isDynamic()) {
             // CREATE/UPDATE scenario: calculate stored cascaded field
             return this.newCascadedGroupProcessor(metaField, accessType);
-        } else if (AccessType.UPDATE.equals(accessType) && FieldType.TO_ONE_TYPES.contains(fieldType)) {
+        } else if (FieldType.TO_ONE_TYPES.contains(fieldType)) {
             return this.newXToOneGroupProcessor(metaField, accessType);
         }
         return null;

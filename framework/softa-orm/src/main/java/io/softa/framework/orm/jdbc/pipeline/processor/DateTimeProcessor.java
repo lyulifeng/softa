@@ -56,7 +56,7 @@ public class DateTimeProcessor extends BaseProcessor {
      */
     @Override
     public void processOutputRow(Map<String, Object> row) {
-        if (!row.containsKey(fieldName)) {
+        if (row.get(fieldName) == null) {
             return;
         }
         LocalDateTime dateTime = DateUtils.dateToLocalDateTime(row.get(fieldName));

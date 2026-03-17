@@ -10,12 +10,14 @@ import org.springframework.util.CollectionUtils;
 
 import io.softa.framework.base.constant.StringConstant;
 import io.softa.framework.base.enums.Operator;
+import io.softa.framework.base.utils.Cast;
 import io.softa.framework.orm.constant.ModelConstant;
 import io.softa.framework.orm.domain.Filters;
 import io.softa.framework.orm.domain.FlexQuery;
 import io.softa.framework.orm.domain.SubQuery;
 import io.softa.framework.orm.enums.AccessType;
 import io.softa.framework.orm.enums.ConvertType;
+import io.softa.framework.orm.enums.FieldType;
 import io.softa.framework.orm.meta.MetaField;
 import io.softa.framework.orm.meta.ModelManager;
 import io.softa.framework.orm.utils.IdUtils;
@@ -79,6 +81,7 @@ public class XToOneGroupProcessor extends BaseProcessor {
      * @param rows Data collection
      */
     public void batchProcessInputRows(List<Map<String, Object>> rows) {
+        processNestedOneToOneRows(rows);
         if (!cascadedFields.isEmpty()) {
             Map<Serializable, Map<String, Object>> relatedRowMap = getRelatedModelRowMap(rows);
             // Calculate the stored cascaded field first.
@@ -199,6 +202,43 @@ public class XToOneGroupProcessor extends BaseProcessor {
             // After expanding the ManyToOne/OneToOne field, remove the `.` separator flag field specified in the `displayName` fields
             cascadedTimeLineFields.forEach(row::remove);
         });
+    }
+
+    /**
+     * Process nested OneToOne value objects before formatting the field to an id.
+     */
+    private void processNestedOneToOneRows(List<Map<String, Object>> rows) {
+        if (!FieldType.ONE_TO_ONE.equals(metaField.getFieldType())) {
+            return;
+        }
+        List<Map<String, Object>> createRows = new ArrayList<>();
+        List<Map<String, Object>> updateRows = new ArrayList<>();
+        List<Map<String, Object>> createTargetRows = new ArrayList<>();
+        for (Map<String, Object> row : rows) {
+            Object value = row.get(fieldName);
+            if (!(value instanceof Map<?, ?> mapValue)) {
+                continue;
+            }
+            Map<String, Object> nestedRow = Cast.of(mapValue);
+            Object relatedId = nestedRow.remove(ModelConstant.ID);
+            if (IdUtils.validId(relatedId)) {
+                Serializable formattedId = IdUtils.formatId(metaField.getRelatedModel(), (Serializable) relatedId);
+                // Set the OneToOne field of the main model
+                row.put(fieldName, formattedId);
+                if (!nestedRow.isEmpty()) {
+                    nestedRow.put(ModelConstant.ID, formattedId);
+                    updateRows.add(nestedRow);
+                }
+            } else {
+                createRows.add(nestedRow);
+                createTargetRows.add(row);
+            }
+        }
+        List<Serializable> createdIds = ReflectTool.createList(metaField.getRelatedModel(), createRows);
+        for (int i = 0; i < createdIds.size(); i++) {
+            createTargetRows.get(i).put(fieldName, createdIds.get(i));
+        }
+        ReflectTool.updateList(metaField.getRelatedModel(), updateRows);
     }
 
 }
