@@ -790,7 +790,7 @@ CREATE TABLE sys_pre_data(
     id BIGINT(32) NOT NULL AUTO_INCREMENT  COMMENT 'ID' ,
     model VARCHAR(64)    COMMENT 'Model Name' ,
     pre_id VARCHAR(128) NOT NULL  DEFAULT '' COMMENT 'Predefined ID' ,
-    row_id BIGINT(32)    COMMENT 'Row Data ID' ,
+    row_id VARCHAR(64)    COMMENT 'Row Data ID' ,
     frozen TINYINT(1)    COMMENT 'Frozen' ,
     tenant_id BIGINT(32)    COMMENT 'Tenant ID' ,
     created_time DATETIME    COMMENT 'Created Time' ,
