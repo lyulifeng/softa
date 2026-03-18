@@ -26,6 +26,7 @@ import io.softa.framework.orm.domain.*;
 import io.softa.framework.orm.entity.TimelineSlice;
 import io.softa.framework.orm.enums.AccessType;
 import io.softa.framework.orm.enums.ConvertType;
+import io.softa.framework.orm.enums.FieldType;
 import io.softa.framework.orm.jdbc.JdbcService;
 import io.softa.framework.orm.meta.MetaField;
 import io.softa.framework.orm.meta.ModelManager;
@@ -168,32 +169,29 @@ public class ModelServiceImpl<K extends Serializable> implements ModelService<K>
     @Override
     @Transactional(rollbackFor = Exception.class)
     public void createOrUpdate(String modelName, List<Map<String, Object>> rows, List<String> uniqueConstraints) {
+        if (CollectionUtils.isEmpty(rows)) {
+            return;
+        }
+        Assert.notEmpty(uniqueConstraints, "The unique constraints of model {0} cannot be empty.", modelName);
         List<Map<String, Object>> createDataList = new ArrayList<>();
         List<Map<String, Object>> updateDataList = new ArrayList<>();
 
         // Step 1: Get the unique key to a row map
-        Map<String, Map<String, Object>> rowKeyMap = new HashMap<>();
-        Map<String, Set<Object>> uniqueValuesMap = new HashMap<>();
-        for (String field : uniqueConstraints) {
-            uniqueValuesMap.put(field, new HashSet<>());
-        }
+        Map<UniqueKey, Map<String, Object>> rowKeyMap = new LinkedHashMap<>();
         for (Map<String, Object> row : rows) {
-            uniqueValuesMap.forEach((k, v) -> v.add(row.get(k)));
-            String key = this.generateUniqueKey(row, uniqueConstraints);
-            if (StringUtils.isNotBlank(key)) {
-                Assert.notTrue(rowKeyMap.containsKey(key),
-                        "The unique key `{0}` of uniqueConstraints `{1}` is duplicated in the data to be created or updated.",
-                        key, uniqueConstraints);
-                rowKeyMap.put(key, row);
-            }
+            UniqueKey key = this.generateUniqueKey(modelName, row, uniqueConstraints);
+            Assert.notTrue(rowKeyMap.containsKey(key),
+                    "The unique key `{0}` of uniqueConstraints `{1}` is duplicated in the data to be created or updated.",
+                    key, uniqueConstraints);
+            rowKeyMap.put(key, row);
         }
 
         // Step 2: Get the row key map from the database by the values of unique constraints
-        Map<String, Map<String, Object>> dbRowKeyMap = this.getRowKeyMapFromDB(modelName, uniqueConstraints, uniqueValuesMap);
+        Map<UniqueKey, Map<String, Object>> dbRowKeyMap = this.getRowKeyMapFromDB(modelName, uniqueConstraints, rowKeyMap.keySet());
 
         // Step 3: Compare the row key map from the database and the import data, to get the data to be created and updated
-        for (Map.Entry<String, Map<String, Object>> entry : rowKeyMap.entrySet()) {
-            String key = entry.getKey();
+        for (Map.Entry<UniqueKey, Map<String, Object>> entry : rowKeyMap.entrySet()) {
+            UniqueKey key = entry.getKey();
             Map<String, Object> row = entry.getValue();
             if (dbRowKeyMap.containsKey(key)) {
                 row.put(ModelConstant.ID, dbRowKeyMap.get(key).get(ModelConstant.ID));
@@ -216,23 +214,26 @@ public class ModelServiceImpl<K extends Serializable> implements ModelService<K>
      *
      * @param modelName The model name
      * @param uniqueConstraints The unique constraints
-     * @param uniqueValuesMap The unique values map
+     * @param uniqueKeys The unique keys of input rows
      * @return The row key map
      */
-    private Map<String, Map<String, Object>> getRowKeyMapFromDB(String modelName,  List<String> uniqueConstraints, Map<String, Set<Object>> uniqueValuesMap) {
-        Filters filters = Filters.and(uniqueValuesMap.entrySet().stream()
-                .map(e -> new Filters().in(e.getKey(), e.getValue()))
-                .collect(Collectors.toList()));
+    private Map<UniqueKey, Map<String, Object>> getRowKeyMapFromDB(String modelName, List<String> uniqueConstraints,
+                                                                   Collection<UniqueKey> uniqueKeys) {
+        if (CollectionUtils.isEmpty(uniqueKeys)) {
+            return Collections.emptyMap();
+        }
+        Filters filters = this.buildUniqueConstraintFilters(uniqueConstraints, uniqueKeys);
         List<String> fields = new ArrayList<>(List.of(ModelConstant.ID));
         fields.addAll(uniqueConstraints);
         FlexQuery flexQuery = new FlexQuery(fields, filters);
         List<Map<String, Object>> dbRows = this.searchList(modelName, flexQuery);
-        Map<String, Map<String, Object>> dbRowKeyMap = new HashMap<>();
+        Map<UniqueKey, Map<String, Object>> dbRowKeyMap = new HashMap<>();
         for (Map<String, Object> dbRow : dbRows) {
-            String key = generateUniqueKey(dbRow, uniqueConstraints);
-            if (StringUtils.isNotBlank(key)) {
-                dbRowKeyMap.put(key, dbRow);
-            }
+            UniqueKey key = generateUniqueKey(modelName, dbRow, uniqueConstraints);
+            Assert.notTrue(dbRowKeyMap.containsKey(key),
+                    "The unique key `{0}` of uniqueConstraints `{1}` is duplicated in database model `{2}`.",
+                    key, uniqueConstraints, modelName);
+            dbRowKeyMap.put(key, dbRow);
         }
         return dbRowKeyMap;
     }
@@ -240,21 +241,48 @@ public class ModelServiceImpl<K extends Serializable> implements ModelService<K>
     /**
      * Generate the unique key
      *
+     * @param modelName The model name
      * @param data The data
      * @param uniqueConstraints The unique constraints
      * @return The unique key
      */
-    private String generateUniqueKey(Map<String, Object> data, List<String> uniqueConstraints) {
+    private UniqueKey generateUniqueKey(String modelName, Map<String, Object> data, List<String> uniqueConstraints) {
+        List<Object> values = uniqueConstraints.stream()
+                .map(field -> normalizeUniqueConstraintValue(modelName, field, data.get(field)))
+                .toList();
+        return new UniqueKey(values);
+    }
+
+    private Filters buildUniqueConstraintFilters(List<String> uniqueConstraints, Collection<UniqueKey> uniqueKeys) {
         if (uniqueConstraints.size() == 1) {
-            Object value = data.get(uniqueConstraints.getFirst());
-            return value != null ? value.toString() : null;
+            return new Filters().in(uniqueConstraints.getFirst(), uniqueKeys.stream()
+                    .map(key -> key.values().getFirst())
+                    .toList());
         }
-        StringBuilder keyBuilder = new StringBuilder();
-        for (String field : uniqueConstraints) {
-            Object value = data.get(field);
-            keyBuilder.append(value != null ? value.toString() : "").append(" && ");
+        return new Filters().tupleIn(uniqueConstraints, uniqueKeys.stream().map(UniqueKey::values).toList());
+    }
+
+    private Object normalizeUniqueConstraintValue(String modelName, String fieldName, Object value) {
+        Assert.notNull(value,
+                "The unique constraint field `{0}` of model `{1}` cannot be null when using createOrUpdate.", fieldName, modelName);
+        MetaField metaField = ModelManager.getModelField(modelName, fieldName);
+        FieldType fieldType = metaField.getFieldType();
+        if (value instanceof String stringValue) {
+            value = switch (fieldType) {
+                case INTEGER, LONG, DOUBLE, BIG_DECIMAL, BOOLEAN, DATE, DATE_TIME, TIME ->
+                        FieldType.convertStringToFieldValue(fieldType, stringValue);
+                default -> value;
+            };
         }
-        return keyBuilder.toString();
+        Assert.notNull(value,
+                "The unique constraint field `{0}` of model `{1}` cannot be blank when using createOrUpdate.", fieldName, modelName);
+        return switch (fieldType) {
+            case INTEGER -> value instanceof Number number ? number.intValue() : Integer.parseInt(value.toString());
+            case LONG, STRING -> IdUtils.formatId(fieldType, value);
+            case DOUBLE -> value instanceof Number number ? number.doubleValue() : Double.parseDouble(value.toString());
+            case BIG_DECIMAL -> value instanceof java.math.BigDecimal decimal ? decimal : new java.math.BigDecimal(value.toString());
+            default -> value;
+        };
     }
 
     /**
@@ -1153,6 +1181,13 @@ public class ModelServiceImpl<K extends Serializable> implements ModelService<K>
     public List<K> filterExistIds(String modelName, Collection<K> ids) {
         FlexQuery flexQuery = new FlexQuery(new Filters().in(ModelConstant.ID, ids));
         return jdbcService.getIds(modelName, ModelConstant.ID, flexQuery);
+    }
+
+    private record UniqueKey(List<Object> values) {
+        @Override
+        public String toString() {
+            return values.toString();
+        }
     }
 
 }

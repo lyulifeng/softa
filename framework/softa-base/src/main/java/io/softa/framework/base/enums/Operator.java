@@ -61,6 +61,9 @@ public enum Operator {
 
     public static final Set<Operator> COLLECTION_OPERATORS = Sets.newHashSet(IN, NOT_IN, BETWEEN, NOT_BETWEEN, PARENT_OF, CHILD_OF);
 
+    /** Tuple predicates only support row-value IN / NOT IN */
+    public static final Set<Operator> TUPLE_OPERATORS = Sets.newHashSet(IN, NOT_IN);
+
     /** On XToMany query conditions, the negative operators are reversed to positive operators */
     public static final Set<Operator> TO_MANY_NEGATIVE_OPERATORS = Sets.newHashSet(NOT_EQUAL, NOT_CONTAINS, NOT_START_WITH, NOT_IN, NOT_BETWEEN);
 
