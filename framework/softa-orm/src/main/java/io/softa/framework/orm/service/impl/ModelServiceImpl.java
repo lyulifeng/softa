@@ -422,7 +422,7 @@ public class ModelServiceImpl<K extends Serializable> implements ModelService<K>
         Map<String, Object> value = this.getById(modelName, id, Collections.emptyList())
                 .orElseThrow(() -> new IllegalArgumentException("The data of model {0} with id {1} does not exist!", modelName, id));
         List<String> copyableFields = ModelManager.getModelCopyableFields(modelName);
-        copyableFields.forEach(value::remove);
+        value.keySet().retainAll(copyableFields);
         return value;
     }
 
@@ -959,7 +959,7 @@ public class ModelServiceImpl<K extends Serializable> implements ModelService<K>
     public List<K> copyByIds(String modelName, List<K> ids) {
         List<Map<String, Object>> rows = this.getByIds(modelName, ids, null);
         List<String> copyableFields = ModelManager.getModelCopyableFields(modelName);
-        rows.forEach(row -> copyableFields.forEach(row::remove));
+        rows.forEach(row -> row.keySet().retainAll(copyableFields));
         this.createList(modelName, rows);
         return Cast.of(rows.stream().map(row -> row.get(ModelConstant.ID)).collect(Collectors.toList()));
     }
