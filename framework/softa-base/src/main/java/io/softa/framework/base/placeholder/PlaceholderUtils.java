@@ -17,7 +17,7 @@ import io.softa.framework.base.utils.Assert;
  * Placeholder Utils
  */
 public class PlaceholderUtils {
-    private static final Pattern PLACEHOLDER_VARIABLE_PATTERN = Pattern.compile("^[a-zA-Z0-9_]+(?:\\.[a-zA-Z0-9_]+)*$");
+    private static final Pattern PLACEHOLDER_VARIABLE_PATTERN = Pattern.compile("^[a-zA-Z_]+(?:\\.[a-zA-Z0-9_]+)*$");
 
 
     /**
