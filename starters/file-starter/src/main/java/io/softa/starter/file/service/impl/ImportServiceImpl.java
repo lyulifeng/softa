@@ -99,14 +99,39 @@ public class ImportServiceImpl implements ImportService {
         validateImportTemplate(importTemplate);
         // Construct the importTemplateDTO object
         ImportTemplateDTO importTemplateDTO = this.getImportTemplateDTO(importTemplate, null);
-        List<String> headers = importTemplateDTO.getImportFields().stream()
-                .map(ImportFieldDTO::getHeader).toList();
-        List<String> requiredHeaderList = importTemplateDTO.getImportFields().stream()
+
+        List<ImportFieldDTO> importFields = importTemplateDTO.getImportFields();
+        List<String> headers = importFields.stream().map(ImportFieldDTO::getHeader).toList();
+        List<String> requiredHeaderList = importFields.stream()
                 .filter(ImportFieldDTO::getRequired).map(ImportFieldDTO::getHeader).toList();
+
+        // 1) Main sheet: header row only (existing behavior)
         CustomHeadStyleHandler headStyleHandler = new CustomHeadStyleHandler(requiredHeaderList);
-        ExcelSheetData sheetData = new ExcelSheetData(importTemplate.getName(), headers, Collections.emptyList(),
+        ExcelSheetData mainSheetData = new ExcelSheetData(importTemplate.getName(), headers, Collections.emptyList(),
                 new CustomHeadStyleHandler[]{headStyleHandler});
-        return excelUploadService.generateFileAndUpload(importTemplate.getModelName(), importTemplate.getName(), sheetData);
+        List<ExcelSheetData> sheetDataList = new ArrayList<>();
+        sheetDataList.add(mainSheetData);
+        if (Boolean.TRUE.equals(importTemplate.getIncludeDescription())) {
+            // 2) Instruction sheet: header row + a second row containing field descriptions.
+            // Use the description configured on the import template field (not MetaField.description).
+            List<Object> instructionRow = importFields.stream().<Object>map(f -> {
+                String description = f.getDescription();
+                return description == null ? "" : description;
+            }).toList();
+            ExcelSheetData instructionSheetData = new ExcelSheetData(
+                    "Import instructions",
+                    headers,
+                    List.of(instructionRow),
+                    new CustomHeadStyleHandler[]{headStyleHandler}
+            );
+            sheetDataList.add(instructionSheetData);
+        }
+
+        return excelUploadService.generateFileAndUpload(
+                importTemplate.getModelName(),
+                importTemplate.getName(),
+                sheetDataList
+        );
     }
 
     /**
@@ -314,6 +339,7 @@ public class ImportServiceImpl implements ImportService {
         importFieldDTO.setFieldName(importTemplateField.getFieldName());
         importFieldDTO.setRequired(importTemplateField.getRequired());
         importFieldDTO.setIgnoreEmpty(importTemplateDTO.getIgnoreEmpty());
+        importFieldDTO.setDescription(importTemplateField.getDescription());
         // Get the metaField object of the last field in cascading `fieldName`.
         MetaField lastField = ModelManager.getLastFieldOfCascaded(importTemplateDTO.getModelName(), importTemplateField.getFieldName());
         // Set the default value of the imported field
