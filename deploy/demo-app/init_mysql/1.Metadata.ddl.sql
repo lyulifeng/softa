@@ -1741,7 +1741,7 @@ CREATE TABLE user_account(
 CREATE TABLE user_profile(
     id BIGINT(32) NOT NULL   COMMENT 'ID' ,
     tenant_id BIGINT(32)    COMMENT 'Tenant ID' ,
-    user_id VARCHAR(32) NOT NULL  DEFAULT '' COMMENT 'User ID' ,
+    user_id BIGINT(32) NOT NULL  COMMENT 'User ID' ,
     full_name VARCHAR(64)    COMMENT 'Full Name' ,
     chinese_name VARCHAR(64)    COMMENT 'Chinese Name' ,
     birth_date DATE    COMMENT 'Birth Date' ,
