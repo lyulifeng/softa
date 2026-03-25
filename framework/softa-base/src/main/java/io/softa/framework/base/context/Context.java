@@ -31,6 +31,12 @@ public class Context implements Serializable {
     private String token;
     private String traceId;
 
+    /**
+     * Business correlation ID, injected by the caller (e.g., workItemId).
+     * Propagated through Context and stored in ChangeLog for WorkItem-centric change tracking.
+     */
+    private String correlationId;
+
     private UserInfo userInfo;
     private EmpInfo empInfo;
     private UserPermission userPermission;
@@ -112,6 +118,7 @@ public class Context implements Serializable {
         newContext.setTriggerFlow(this.triggerFlow);
         newContext.setDebug(this.debug);
         newContext.setEffectiveDate(this.effectiveDate);
+        newContext.setCorrelationId(this.correlationId);
         return newContext;
     }
 

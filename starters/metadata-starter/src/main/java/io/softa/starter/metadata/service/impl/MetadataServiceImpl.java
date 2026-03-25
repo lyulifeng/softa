@@ -13,6 +13,7 @@ import io.softa.framework.base.constant.BaseConstant;
 import io.softa.framework.base.context.ContextHolder;
 import io.softa.framework.base.utils.Assert;
 import io.softa.framework.base.utils.Cast;
+import io.softa.framework.orm.domain.FlexQuery;
 import io.softa.framework.orm.meta.MetaField;
 import io.softa.framework.orm.meta.MetaModel;
 import io.softa.framework.orm.meta.ModelManager;
@@ -186,5 +187,19 @@ public class MetadataServiceImpl implements MetadataService {
         message.setBroadcastType(InnerBroadcastType.RELOAD_METADATA);
         message.setContext(ContextHolder.cloneContext());
         innerBroadcastProducer.sendInnerBroadcast(message);
+    }
+
+    /**
+     * Export all runtime metadata rows for a given version-controlled model.
+     * Returns all scalar fields as row maps for cross-environment comparison.
+     *
+     * @param modelName runtime model name
+     * @return list of row data maps
+     */
+    @Override
+    public List<Map<String, Object>> exportRuntimeMetadata(String modelName) {
+        Assert.notBlank(modelName, "Model name cannot be empty.");
+        FlexQuery flexQuery = new FlexQuery(ModelManager.getModelFieldsWithoutXToMany(modelName));
+        return modelService.searchList(modelName, flexQuery);
     }
 }

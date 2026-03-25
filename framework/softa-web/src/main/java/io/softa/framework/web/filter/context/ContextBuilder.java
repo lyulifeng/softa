@@ -81,6 +81,7 @@ public class ContextBuilder {
         if (SystemConfig.env.isEnableMultiTenancy()) {
             this.setMultiTenancyEnv(context, userInfo);
         }
+        context.setCorrelationId(request.getHeader(BaseConstant.X_CORRELATION_ID));
         this.setDebugModeFromRequest(request, context);
         return context;
     }
