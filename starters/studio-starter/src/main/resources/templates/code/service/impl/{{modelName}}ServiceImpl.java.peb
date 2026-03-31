@@ -8,9 +8,6 @@ import {{ packageName }}.service.{{ modelName }}Service;
 
 /**
  * {{ modelName }} ServiceImpl
- *
- * @author {{ userName }}
- * @date {{ currentDate }}
  */
 @Service
 public class {{ modelName }}ServiceImpl extends EntityServiceImpl<{{ modelName }}, Long> implements {{ modelName }}Service {

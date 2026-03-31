@@ -1,17 +1,15 @@
 package io.softa.starter.studio.release.controller;
 
 import java.util.List;
-
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.Parameter;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import org.springframework.web.bind.annotation.*;
 
-import io.softa.framework.orm.annotation.DataMask;
 import io.softa.framework.web.controller.EntityController;
 import io.softa.framework.web.response.ApiResponse;
-import io.softa.starter.studio.release.dto.DesignAppVersionDTO;
 import io.softa.starter.studio.release.dto.ModelChangesDTO;
+import io.softa.starter.studio.release.dto.VersionDeployDTO;
 import io.softa.starter.studio.release.entity.DesignAppVersion;
 import io.softa.starter.studio.release.service.DesignAppVersionService;
 
@@ -24,18 +22,17 @@ import io.softa.starter.studio.release.service.DesignAppVersionService;
 public class DesignAppVersionController extends EntityController<DesignAppVersionService, DesignAppVersion, Long> {
 
     /**
-     * Create a new App version shell (DRAFT status).
-     * If versionType is omitted, NORMAL is used by default.
+     * Deploy the version to an environment.
      *
-     * @param appVersionDTO App version object
-     * @return id
+     * @param versionDeployDTO deployment request
+     * @return deployment ID
      */
-    @PostMapping(value = "/createOne")
-    @Operation(description = "Create a new App version shell in DRAFT status. "
-            + "Supports versionType Normal/Hotfix; defaults to Normal.")
-    @DataMask
-    public ApiResponse<Long> createOne(@RequestBody DesignAppVersionDTO appVersionDTO) {
-        return ApiResponse.success(service.createOne(appVersionDTO));
+    @PostMapping(value = "/deployToEnv")
+    @Operation(description = "Deploy a sealed/frozen Version to an Environment.")
+    public ApiResponse<Long> deployToEnv(@RequestBody VersionDeployDTO versionDeployDTO) {
+        return ApiResponse.success(service.deployToEnv(
+                versionDeployDTO.getVersionId(),
+                versionDeployDTO.getEnvId()));
     }
 
     /**
@@ -78,36 +75,6 @@ public class DesignAppVersionController extends EntityController<DesignAppVersio
     @Parameter(name = "id", description = "Version ID")
     public ApiResponse<Boolean> unsealVersion(@RequestParam Long id) {
         service.unsealVersion(id);
-        return ApiResponse.success(true);
-    }
-
-    /**
-     * Add a DONE WorkItem to the version.
-     *
-     * @param versionId  Version ID
-     * @param workItemId WorkItem ID
-     * @return true / Exception
-     */
-    @Operation(description = "Add a DONE WorkItem to the version (only allowed in DRAFT status). Merge order is determined by add order.")
-    @PostMapping(value = "/addWorkItem")
-    public ApiResponse<Boolean> addWorkItem(@RequestParam Long versionId,
-                                            @RequestParam Long workItemId) {
-        service.addWorkItem(versionId, workItemId);
-        return ApiResponse.success(true);
-    }
-
-    /**
-     * Remove a WorkItem from the version.
-     *
-     * @param versionId  Version ID
-     * @param workItemId WorkItem ID
-     * @return true / Exception
-     */
-    @Operation(description = "Remove a WorkItem from the version (only allowed in DRAFT status).")
-    @PostMapping(value = "/removeWorkItem")
-    public ApiResponse<Boolean> removeWorkItem(@RequestParam Long versionId,
-                                               @RequestParam Long workItemId) {
-        service.removeWorkItem(versionId, workItemId);
         return ApiResponse.success(true);
     }
 

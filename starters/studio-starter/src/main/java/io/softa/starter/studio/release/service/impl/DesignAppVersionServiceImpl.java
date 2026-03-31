@@ -3,10 +3,10 @@ package io.softa.starter.studio.release.service.impl;
 import java.time.LocalDateTime;
 import java.util.List;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.context.annotation.Lazy;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
-import io.softa.framework.base.exception.BusinessException;
 import io.softa.framework.base.exception.IllegalArgumentException;
 import io.softa.framework.base.security.EncryptUtils;
 import io.softa.framework.base.utils.Assert;
@@ -16,19 +16,10 @@ import io.softa.framework.orm.domain.FlexQuery;
 import io.softa.framework.orm.domain.Orders;
 import io.softa.framework.orm.enums.DatabaseType;
 import io.softa.framework.orm.service.impl.EntityServiceImpl;
-import io.softa.starter.studio.release.dto.DesignAppVersionDTO;
 import io.softa.starter.studio.release.dto.ModelChangesDTO;
-import io.softa.starter.studio.release.entity.DesignApp;
-import io.softa.starter.studio.release.entity.DesignAppVersion;
-import io.softa.starter.studio.release.entity.DesignDeploymentVersion;
-import io.softa.starter.studio.release.entity.DesignWorkItem;
+import io.softa.starter.studio.release.entity.*;
 import io.softa.starter.studio.release.enums.DesignAppVersionStatus;
-import io.softa.starter.studio.release.enums.DesignAppVersionType;
-import io.softa.starter.studio.release.enums.DesignWorkItemStatus;
-import io.softa.starter.studio.release.service.DesignAppService;
-import io.softa.starter.studio.release.service.DesignAppVersionService;
-import io.softa.starter.studio.release.service.DesignDeploymentVersionService;
-import io.softa.starter.studio.release.service.DesignWorkItemService;
+import io.softa.starter.studio.release.service.*;
 import io.softa.starter.studio.release.version.VersionControl;
 import io.softa.starter.studio.release.version.VersionDdl;
 
@@ -54,33 +45,28 @@ public class DesignAppVersionServiceImpl extends EntityServiceImpl<DesignAppVers
     @Autowired
     private DesignAppService appService;
 
-    /**
-     * Create a new App version shell (DRAFT status, no content).
-     * If versionType is omitted, NORMAL is used by default.
-     *
-     * @param appVersionDTO App version object
-     * @return id
-     */
+    @Autowired
+    private DesignAppEnvService appEnvService;
+
+    @Lazy
+    @Autowired
+    private DesignDeploymentService deploymentService;
+
     @Override
     @Transactional(rollbackFor = Exception.class)
-    public Long createOne(DesignAppVersionDTO appVersionDTO) {
-        Assert.notNull(appVersionDTO, "App version is required.");
-        Assert.notNull(appVersionDTO.getAppId(), "App ID is required.");
-        Assert.notBlank(appVersionDTO.getName(), "Version name is required.");
-        DesignAppVersion appVersion = toEntity(appVersionDTO);
-        appVersion.setStatus(DesignAppVersionStatus.DRAFT);
-        return super.createOne(appVersion);
-    }
+    public Long deployToEnv(Long versionId, Long envId) {
+        DesignAppVersion targetVersion = this.getById(versionId)
+                .orElseThrow(() -> new IllegalArgumentException("Version does not exist! {0}", versionId));
+        DesignAppEnv targetEnv = appEnvService.getById(envId)
+                .orElseThrow(() -> new IllegalArgumentException("Environment does not exist! {0}", envId));
 
-    private DesignAppVersion toEntity(DesignAppVersionDTO appVersionDTO) {
-        DesignAppVersion appVersion = new DesignAppVersion();
-        appVersion.setAppId(appVersionDTO.getAppId());
-        appVersion.setName(appVersionDTO.getName());
-        appVersion.setVersionType(appVersionDTO.getVersionType() != null
-                ? appVersionDTO.getVersionType()
-                : DesignAppVersionType.NORMAL);
-        appVersion.setDescription(appVersionDTO.getDescription());
-        return appVersion;
+        Assert.isEqual(targetVersion.getAppId(), targetEnv.getAppId(),
+                "Version and Environment must belong to the same App!");
+        Assert.isTrue(targetVersion.getStatus() == DesignAppVersionStatus.SEALED
+                        || targetVersion.getStatus() == DesignAppVersionStatus.FROZEN,
+                "Only SEALED or FROZEN versions can be deployed! Current status: {0}", targetVersion.getStatus());
+
+        return deploymentService.deployToEnv(targetVersion, targetEnv);
     }
 
     /**
@@ -134,7 +120,7 @@ public class DesignAppVersionServiceImpl extends EntityServiceImpl<DesignAppVers
         appVersion.setVersionedContent(null);
         appVersion.setDiffHash(null);
         appVersion.setSealedTime(null);
-        this.updateOne(appVersion);
+        this.updateOne(appVersion, false);
     }
 
     /**
@@ -156,59 +142,6 @@ public class DesignAppVersionServiceImpl extends EntityServiceImpl<DesignAppVers
     }
 
     /**
-     * Add a DONE WorkItem to the version (only allowed in DRAFT status).
-     * A WorkItem can only belong to one Version at a time.
-     *
-     * @param versionId  Version ID
-     * @param workItemId WorkItem ID
-     */
-    @Override
-    @Transactional(rollbackFor = Exception.class)
-    public void addWorkItem(Long versionId, Long workItemId) {
-        DesignAppVersion appVersion = this.getById(versionId)
-                .orElseThrow(() -> new IllegalArgumentException("Version does not exist! {0}", versionId));
-        Assert.isEqual(appVersion.getStatus(), DesignAppVersionStatus.DRAFT,
-                "Only DRAFT versions can be modified! Current status: {0}", appVersion.getStatus());
-
-        DesignWorkItem workItem = workItemService.getById(workItemId)
-                .orElseThrow(() -> new IllegalArgumentException("WorkItem does not exist! {0}", workItemId));
-        if (workItem.getStatus() != DesignWorkItemStatus.DONE) {
-            throw new BusinessException("Only DONE WorkItems can be added to a version! " +
-                    "WorkItem {0} is {1}", workItemId, workItem.getStatus());
-        }
-        Assert.isEqual(workItem.getAppId(), appVersion.getAppId(),
-                "WorkItem and Version must belong to the same App!");
-        Assert.isTrue(workItem.getVersionId() == null,
-                "WorkItem {0} already belongs to version {1}!", workItemId, workItem.getVersionId());
-
-        workItem.setVersionId(versionId);
-        workItemService.updateOne(workItem);
-    }
-
-    /**
-     * Remove a WorkItem from the version (only allowed in DRAFT status).
-     *
-     * @param versionId  Version ID
-     * @param workItemId WorkItem ID
-     */
-    @Override
-    @Transactional(rollbackFor = Exception.class)
-    public void removeWorkItem(Long versionId, Long workItemId) {
-        DesignAppVersion appVersion = this.getById(versionId)
-                .orElseThrow(() -> new IllegalArgumentException("Version does not exist! {0}", versionId));
-        Assert.isEqual(appVersion.getStatus(), DesignAppVersionStatus.DRAFT,
-                "Only DRAFT versions can be modified! Current status: {0}", appVersion.getStatus());
-
-        DesignWorkItem workItem = workItemService.getById(workItemId)
-                .orElseThrow(() -> new IllegalArgumentException("WorkItem does not exist! {0}", workItemId));
-        Assert.isEqual(workItem.getVersionId(), versionId,
-                "WorkItem {0} is not in version {1}!", workItemId, versionId);
-
-        workItem.setVersionId(null);
-        workItemService.updateOne(workItem);
-    }
-
-    /**
      * Preview the merged content of the version without modifying its status.
      *
      * @param id Version ID
@@ -222,7 +155,7 @@ public class DesignAppVersionServiceImpl extends EntityServiceImpl<DesignAppVers
 
         List<Long> workItemIds = getSelectedWorkItemIds(id);
         Assert.notEmpty(workItemIds, "Version {0} has no WorkItems selected!", id);
-        return versionControl.collectModelChanges(appVersion.getAppId(), workItemIds);
+        return versionControl.collectModelChanges(workItemIds);
     }
 
     /**
@@ -322,7 +255,7 @@ public class DesignAppVersionServiceImpl extends EntityServiceImpl<DesignAppVers
         List<Long> workItemIds = getSelectedWorkItemIds(appVersion.getId());
         Assert.notEmpty(workItemIds, "Version {0} has no WorkItems selected. Add WorkItems before sealing.",
                 appVersion.getId());
-        List<ModelChangesDTO> modelChangesDTOList = versionControl.collectModelChanges(appVersion.getAppId(), workItemIds);
+        List<ModelChangesDTO> modelChangesDTOList = versionControl.collectModelChanges(workItemIds);
 
         String contentJson = JsonUtils.objectToString(modelChangesDTOList);
         String diffHash = EncryptUtils.computeSha256(contentJson);

@@ -22,20 +22,20 @@ public class DesignModelIndex extends AuditableModel {
     @Schema(description = "ID")
     private Long id;
 
+    @Schema(description = "Portfolio")
+    private Long portfolioId;
+
     @Schema(description = "APP ID")
     private Long appId;
 
-    @Schema(description = "Index Title")
-    private String name;
-
-    @Schema(description = "Index Code")
-    private String code;
+    @Schema(description = "Model ID")
+    private Long modelId;
 
     @Schema(description = "Model Name")
     private String modelName;
 
-    @Schema(description = "Model ID")
-    private Long modelId;
+    @Schema(description = "Index Title")
+    private String name;
 
     @Schema(description = "Index Name")
     private String indexName;

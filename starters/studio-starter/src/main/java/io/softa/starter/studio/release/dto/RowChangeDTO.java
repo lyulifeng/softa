@@ -18,11 +18,11 @@ public class RowChangeDTO {
     private Long rowId;
     private AccessType accessType;
 
-    // Field values before the change
+    // Aggregated old values for the fields touched by this change set
     private Map<String, Object> dataBeforeChange = new HashMap<>();
-    // Field values after the change
+    // Aggregated new values for the fields touched by this change set
     private Map<String, Object> dataAfterChange = new HashMap<>();
-    // Current values, stores the latest original values for CREATE and UPDATE operations
+    // Full effective row snapshot used by release, DDL, and deployment workflows
     private Map<String, Object> currentData = new HashMap<>();
 
     private Long lastChangedById;

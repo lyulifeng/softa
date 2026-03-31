@@ -36,12 +36,9 @@ import io.softa.framework.orm.domain.Orders;
 
 /**
  * {{ modelName }} Model
-{%- if description is not empty %}
+{% if description is not empty %}
  * {{ description }}
-{%- endif %}
- *
- * @author {{ userName }}
- * @date {{ currentDate }}
+{% endif %}
  */
 @Data
 @Schema(name = "{{ modelName }}")
@@ -55,5 +52,5 @@ public class {{ modelName }} extends AuditableModel {
     @Schema(description = "{{ field.labelName }}")
     private {{ field.javaType }} {{ field.fieldName }};
 
-{%- endfor %}
+{% endfor %}
 }

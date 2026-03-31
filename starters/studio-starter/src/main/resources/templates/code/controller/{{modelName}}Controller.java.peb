@@ -10,9 +10,6 @@ import {{ packageName }}.service.{{ modelName }}Service;
 
 /**
  * {{ modelName }} Controller
- *
- * @author {{ userName }}
- * @date {{ currentDate }}
  */
 @Tag(name = "{{ modelName }}")
 @RestController

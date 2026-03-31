@@ -19,5 +19,7 @@ public interface MetadataConstant {
             .put("DesignOptionSetTrans", "SysOptionSetTrans")
             .put("DesignOptionItem", "SysOptionItem")
             .put("DesignOptionItemTrans", "SysOptionItemTrans")
+            .put("DesignView",  "SysView")
+            .put("DesignNavigation",  "SysNavigation")
             .build();
 }

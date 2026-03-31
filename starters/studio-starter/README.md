@@ -128,11 +128,17 @@ Pebble SQL templates can be stored in the database and customized per applicatio
 ### Version Control & Deployment Models
 | Entity | Description |
 | --- | --- |
-| `DesignAppEnv` | Application environment (Dev/Test/UAT/Prod), tracks `currentVersionId` |
-| `DesignWorkItem` | Change work item — scopes a unit of design changes via ES correlationId; `versionId` FK links to its Version |
+| `DesignAppEnv` | Application environment (Dev/Test/UAT/Prod), stores environment config and deployment cursor such as `currentVersionId`; it does not store the full metadata snapshot |
+| `DesignAppEnvSnapshot` | One-to-one snapshot record for `DesignAppEnv` via `envId`; stores the full expected runtime metadata JSON plus the `deploymentId` that last rebuilt it |
+| `DesignWorkItem` | Change work item — scopes a unit of design changes via ES correlationId; `versionId` links it to a Version and `closedTime` records when it is closed by deployment |
 | `DesignAppVersion` | Version shell — aggregates WorkItem changes; `versionType` distinguishes `Normal` and `Hotfix`, and released ordering is determined by `status + sealedTime` |
 | `DesignDeployment` | Immutable deployment record — merged content from the sealedTime release interval with DDL and execution results |
 | `DesignDeploymentVersion` | Audit record linking a deployment to the versions it merged |
+
+Environment snapshot relationship:
+- `DesignAppEnv` is the environment state record. It owns deployment progress (`currentVersionId`) and upgrade configuration.
+- `DesignAppEnvSnapshot` stores the environment's full expected runtime metadata state and is maintained separately as a OneToOne record keyed by `envId`.
+- After a successful deployment commits, the snapshot is rebuilt asynchronously by applying `mergedChanges` onto the previous snapshot baseline, then upserted into `DesignAppEnvSnapshot`.
 
 ### Current Runtime Sync Coverage
 The current version-control and deployment pipeline only upgrades the following design-time models to runtime metadata:
@@ -164,6 +170,13 @@ This design ensures:
 deployment artifact. This is the DDL that is actually executed against the target database.
 Deployment is a self-contained, immutable record that includes merged content, DDL, and execution results.
 
+Recommended UI presentation for Deployment DDL:
+- Use one `DDL` tab in the deployment detail page
+- Render `mergedDdlTable` and `mergedDdlIndex` as two sections in the same tab, not as one flattened field
+- Provide `Copy All`, `Copy Table`, and `Copy Index`
+- `Copy All` should concatenate `mergedDdlTable + mergedDdlIndex`
+- Hide a section if its content is empty
+
 ## Workflow
 
 ### Design-Time Workflow
@@ -173,29 +186,29 @@ Deployment is a self-contained, immutable record that includes merged content, D
 
 ### Version Control Workflow
 1. Create a **WorkItem** and mark it `IN_PROGRESS`
-2. Optionally mark the WorkItem as **READY** via `readyWorkItem`
-3. Make design changes (CRUD on models, fields, etc. — changes are logged to ES by WorkItem correlationId)
-4. Complete the WorkItem → `doneWorkItem`
-   - Optionally: `mergeToLatestVersion` to quickly add the WorkItem to the latest app-level DRAFT version
-   - If no DRAFT version exists, the system auto-creates one as `Normal`
-5. Create a **Version** (DRAFT) with `versionType = Normal | Hotfix` -> add completed WorkItems -> `sealVersion`
+2. Make design changes (CRUD on models, fields, etc. — changes are logged to ES by WorkItem correlationId)
+3. Complete the WorkItem → `doneWorkItem`
+4. Create a **Version** (DRAFT) with `versionType = Normal | Hotfix` -> add completed WorkItems -> `sealVersion`
    - Sealing aggregates WorkItem changes, computes diffHash, transitions to SEALED
    - `unsealVersion` can revert a SEALED version back to DRAFT if it has not been deployed
-6. `freezeVersion` after production deployment (immutable)
+5. Deploy a released version
+6. After successful deployment, included `DONE` WorkItems are marked `CLOSED` and `closedTime` is recorded
+7. `freezeVersion` after production deployment (immutable)
 
 Notes:
-- The current API exposes `readyWorkItem`; there is no `startWorkItem` endpoint in code.
-- `DesignWorkItem.startTime` is defined in the entity but is not populated by the current implementation.
+- There is no `readyWorkItem` or `startWorkItem` endpoint in the current implementation.
 
 ### Deployment Workflow
-1. **Incremental Deploy**: `POST /DesignDeployment/deployToEnv?envId=&targetVersionId=`
+1. **Incremental Deploy**: `POST /DesignAppVersion/deployToEnv`
+   - Request body: `{ "versionId": ..., "envId": ... }`
    - Selects released versions by `sealedTime` in `(env.currentVersionId, targetVersion]`
    - Merges version contents via `VersionMerger`, generates DDL
    - Creates a self-contained Deployment record with merged content + DDL
    - Executes deployment (local or remote) and updates `env.currentVersionId`
+   - After the deployment transaction commits, asynchronously rebuilds or updates the env's `DesignAppEnvSnapshot`
    - Auto-freezes versions after successful PROD deployment
    - For new environments (no `currentVersionId`), all released versions up to the target are merged
-2. **Retry**: `POST /DesignDeployment/retry`
+2. **Retry**: `POST /DesignDeployment/retry?id=`
 
 Notes:
 - `DesignDeploymentStatus` contains `ROLLED_BACK`, but there is currently no rollback API or rollback implementation in `studio-starter`.
@@ -216,11 +229,11 @@ Notes:
 ### WorkItem Lifecycle
 | Endpoint | Description |
 | --- | --- |
-| `POST /DesignWorkItem/readyWorkItem?id=` | Mark a WorkItem as `READY` from `IN_PROGRESS` |
 | `POST /DesignWorkItem/doneWorkItem?id=` | Complete — end change tracking |
 | `GET /DesignWorkItem/previewChanges?id=` | Preview accumulated metadata changes |
 | `GET /DesignWorkItem/previewDDL?id=` | Preview DDL SQL from WorkItem changes (copy to DB client) |
-| `POST /DesignWorkItem/mergeToLatestVersion?id=` | Merge a DONE WorkItem into the latest app-level DRAFT version (auto-creates if none exists) |
+| `POST /DesignWorkItem/addToVersion` | Add a DONE WorkItem to a DRAFT Version. Body: `{ "workItemId": ..., "versionId": ... }` |
+| `POST /DesignWorkItem/removeFromVersion?id=` | Remove a WorkItem from its current DRAFT Version |
 | `POST /DesignWorkItem/cancelWorkItem?id=` | Cancel the work item |
 | `POST /DesignWorkItem/deferWorkItem?id=` | Defer the work item |
 | `POST /DesignWorkItem/reopenWorkItem?id=` | Reopen a completed/cancelled/deferred work item |
@@ -229,8 +242,7 @@ Notes:
 | Endpoint | Description |
 | --- | --- |
 | `POST /DesignAppVersion/createOne` | Create a new version (DRAFT, `versionType` = `Normal` or `Hotfix`, default `Normal`) |
-| `POST /DesignAppVersion/addWorkItem?versionId=&workItemId=` | Add a DONE WorkItem to the version |
-| `POST /DesignAppVersion/removeWorkItem?versionId=&workItemId=` | Remove a WorkItem from the version |
+| `POST /DesignAppVersion/deployToEnv` | Deploy a `SEALED` or `FROZEN` version to an environment. Body: `{ "versionId": ..., "envId": ... }` |
 | `GET /DesignAppVersion/previewVersion?id=` | Preview merged version content |
 | `GET /DesignAppVersion/previewDDL?id=` | Preview DDL SQL from version content (copy to DB client) |
 | `POST /DesignAppVersion/sealVersion?id=` | Seal version (DRAFT → SEALED) |
@@ -240,15 +252,21 @@ Notes:
 ### Deployment
 | Endpoint | Description |
 | --- | --- |
-| `POST /DesignDeployment/deployToEnv?envId=&targetVersionId=` | Deploy a version to an environment |
-| `POST /DesignDeployment/retry?deploymentId=` | Retry a failed deployment |
-| `GET /DesignDeployment/previewDeployment?deploymentId=` | Preview deployment content and DDL |
-| `GET /DesignDeployment/previewDDL?deploymentId=` | Preview DDL SQL of deployment (copy to DB client) |
+| `POST /DesignDeployment/retry?id=` | Retry a failed deployment |
 
 ### Environment
+| Endpoint                                            | Description |
+|-----------------------------------------------------| --- |
+| `GET /DesignAppEnv/compareDesignWithRuntime?envId=` | Compare the env's `DesignAppEnvSnapshot` with runtime metadata to detect drift |
+
+### App And Portfolio Status
 | Endpoint | Description |
 | --- | --- |
-| `POST /DesignAppEnv/previewBetweenEnv?sourceEnvId=&targetEnvId=` | Preview changes between two environments |
+| `POST /DesignApp/activate?id=` | Activate an App |
+| `POST /DesignApp/enterMaintenance?id=` | Put an App into maintenance mode |
+| `POST /DesignApp/deprecate?id=` | Deprecate an App |
+| `POST /DesignPortfolio/activate?id=` | Activate a Portfolio |
+| `POST /DesignPortfolio/archive?id=` | Archive a Portfolio |
 
 ## Row-Level Merge (model + rowId)
 Changes are tracked and merged at the **model + rowId** level throughout the entire pipeline:
@@ -284,11 +302,9 @@ Deployment selects the versions to merge from the app's released stream:
 ### Highest-Priority Fixes
 1. **Bring `DesignView` / `DesignNavigation` into the release pipeline**
    - These entities have design-time CRUD, and runtime counterparts already exist, but they are not part of `VERSION_CONTROL_MODELS`. This is the highest-value functional gap because design changes cannot be promoted through environments today.
-2. **Repair the WorkItem activation model**
-   - README previously documented `startWorkItem`, but the implementation exposes `readyWorkItem` and does not populate `DesignWorkItem.startTime`. The API name, workflow semantics, and persisted timestamps should be aligned.
-3. **Close the deployment contract gaps**
+2. **Close the deployment contract gaps**
    - `README` previously mentioned rollback, and `DesignDeploymentStatus` includes `ROLLED_BACK`, but no rollback endpoint/service exists. `DesignAppEnv.asyncUpgrade` also still executes synchronously.
-4. **Clean up reserved or partially wired environment/config fields**
+3. **Clean up reserved or partially wired environment/config fields**
    - `DesignAppEnv.protectedEnv`, `active`, `clientId`, and `autoUpgrade` are not currently enforced in deployment flow.
 
 ### Additional Notes
@@ -310,12 +326,12 @@ Deployment selects the versions to merge from the app's released stream:
 - `Hotfix`: emergency patch release version
 
 ### DesignWorkItemStatus
-`IN_PROGRESS` → `READY` → `DONE`
-- `IN_PROGRESS -> READY`: `readyWorkItem`
-- `IN_PROGRESS / READY -> DONE`: `doneWorkItem`
-- `IN_PROGRESS / READY / DEFERRED -> CANCELLED`: `cancelWorkItem`
+`IN_PROGRESS` → `DONE` → `CLOSED`
+- `IN_PROGRESS -> DONE`: `doneWorkItem`
+- `IN_PROGRESS / DONE / DEFERRED -> CANCELLED`: `cancelWorkItem`
 - `IN_PROGRESS -> DEFERRED`: `deferWorkItem`
 - `DONE / CANCELLED / DEFERRED -> IN_PROGRESS`: `reopenWorkItem`
+- `DONE -> CLOSED`: set automatically when a deployment finishes successfully
 
 ### DesignDeploymentStatus
 `PENDING` → `DEPLOYING` → `SUCCESS` / `FAILURE` / `ROLLED_BACK`

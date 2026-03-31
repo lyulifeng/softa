@@ -16,16 +16,18 @@ import io.softa.framework.base.security.EncryptUtils;
 import io.softa.framework.base.utils.Assert;
 import io.softa.framework.base.utils.DateUtils;
 import io.softa.framework.base.utils.JsonUtils;
+import io.softa.framework.orm.domain.Filters;
+import io.softa.framework.orm.domain.FlexQuery;
 import io.softa.framework.orm.enums.DatabaseType;
 import io.softa.framework.orm.service.impl.EntityServiceImpl;
 import io.softa.framework.web.dto.MetadataUpgradePackage;
-import io.softa.starter.studio.release.dto.DeploymentPreviewDTO;
 import io.softa.starter.studio.release.dto.ModelChangesDTO;
 import io.softa.starter.studio.release.entity.*;
-import io.softa.starter.studio.release.event.DesignDeploymentSnapshotEvent;
 import io.softa.starter.studio.release.enums.DesignAppEnvType;
 import io.softa.starter.studio.release.enums.DesignAppVersionStatus;
 import io.softa.starter.studio.release.enums.DesignDeploymentStatus;
+import io.softa.starter.studio.release.enums.DesignWorkItemStatus;
+import io.softa.starter.studio.release.event.DesignDeploymentSnapshotEvent;
 import io.softa.starter.studio.release.service.*;
 import io.softa.starter.studio.release.upgrade.DeploymentExecutor;
 import io.softa.starter.studio.release.version.VersionDdl;
@@ -38,9 +40,8 @@ import io.softa.starter.studio.release.version.VersionMerger;
  * The Deployment is the single immutable deployment artifact. It combines content preparation
  * (released-version merging, DDL generation) and execution tracking into one self-contained record.
  * <p>
- * Deploy process:
+ * After the caller validates the target Version and Environment, the deployment process:
  * <ol>
- *   <li>Validates the target version and environment</li>
  *   <li>Selects released versions in the sealedTime interval (env.currentVersionId, targetVersionId]</li>
  *   <li>Merges version contents and generates DDL</li>
  *   <li>Creates a Deployment record with all content + DDL</li>
@@ -67,6 +68,10 @@ public class DesignDeploymentServiceImpl extends EntityServiceImpl<DesignDeploym
     @Autowired
     private DesignDeploymentVersionService deploymentVersionService;
 
+    @Lazy
+    @Autowired
+    private DesignWorkItemService workItemService;
+
     @Autowired
     private DesignAppService appService;
 
@@ -77,29 +82,24 @@ public class DesignDeploymentServiceImpl extends EntityServiceImpl<DesignDeploym
     private ApplicationEventPublisher applicationEventPublisher;
 
     /**
-     * Deploy a sealed/frozen Version to an Env.
+     * Deploy a validated Version to an Env.
      * <p>
      * This is the main entry point. It:
-     * 1. Validates the version and environment
-     * 2. Merges released version content and generates DDL
-     * 3. Creates a self-contained Deployment record
-     * 4. Executes the deployment
-     * 5. Updates env.currentVersionId on success
+     * 1. Merges released version content and generates DDL
+     * 2. Creates a self-contained Deployment record
+     * 3. Executes the deployment
+     * 4. Updates env.currentVersionId on success
      */
     @Override
     @Transactional(rollbackFor = Exception.class)
-    public Long deployToEnv(Long envId, Long targetVersionId) {
-        DesignAppEnv targetEnv = appEnvService.getById(envId)
-                .orElseThrow(() -> new IllegalArgumentException("Environment does not exist! {0}", envId));
-
+    public Long deployToEnv(DesignAppVersion targetVersion, DesignAppEnv targetEnv) {
         Long sourceVersionId = targetEnv.getCurrentVersionId();
-        DesignAppVersion targetVersion = validateDeployTarget(targetEnv, targetVersionId);
         PreparedDeploymentArtifact artifact = prepareDeploymentArtifact(targetEnv, targetVersion, sourceVersionId);
         DesignDeployment deployment = createDeploymentRecord(targetEnv, artifact);
         recordIncludedVersions(deployment.getId(), artifact.versionsForMerge());
 
         // Execute deployment
-        this.executeDeployment(deployment, targetEnv, targetVersionId);
+        this.executeDeployment(deployment, targetEnv, targetVersion.getId());
         return deployment.getId();
     }
 
@@ -115,45 +115,9 @@ public class DesignDeploymentServiceImpl extends EntityServiceImpl<DesignDeploym
         Assert.isEqual(failedDeployment.getDeployStatus(), DesignDeploymentStatus.FAILURE,
                 "Only FAILURE deployments can be retried! Current status: {0}", failedDeployment.getDeployStatus());
 
-        return this.deployToEnv(failedDeployment.getEnvId(), failedDeployment.getTargetVersionId());
-    }
-
-    /**
-     * Preview the deployment content.
-     */
-    @Override
-    public DeploymentPreviewDTO previewDeployment(Long deploymentId) {
-        DesignDeployment deployment = this.getById(deploymentId)
-                .orElseThrow(() -> new IllegalArgumentException("Deployment does not exist! {0}", deploymentId));
-
-        List<ModelChangesDTO> mergedChanges = JsonUtils.jsonNodeToObject(
-                deployment.getMergedContent(), new TypeReference<>() {});
-
-        DeploymentPreviewDTO preview = new DeploymentPreviewDTO();
-        preview.setMergedChanges(mergedChanges);
-        preview.setDdlTable(deployment.getMergedDdlTable());
-        preview.setDdlIndex(deployment.getMergedDdlIndex());
-        preview.setDiffHash(deployment.getDiffHash());
-        preview.setPreflightWarnings(new ArrayList<>());
-
-        return preview;
-    }
-
-    /**
-     * Preview the DDL SQL of a deployment, combining table DDL and index DDL.
-     */
-    @Override
-    public String previewDeploymentDDL(Long deploymentId) {
-        DesignDeployment deployment = this.getById(deploymentId)
-                .orElseThrow(() -> new IllegalArgumentException("Deployment does not exist! {0}", deploymentId));
-        StringBuilder ddl = new StringBuilder();
-        if (deployment.getMergedDdlTable() != null) {
-            ddl.append(deployment.getMergedDdlTable());
-        }
-        if (deployment.getMergedDdlIndex() != null) {
-            ddl.append(deployment.getMergedDdlIndex());
-        }
-        return ddl.toString();
+        return appVersionService.deployToEnv(
+                failedDeployment.getTargetVersionId(),
+                failedDeployment.getEnvId());
     }
 
     // ======================== Private methods ========================
@@ -191,6 +155,7 @@ public class DesignDeploymentServiceImpl extends EntityServiceImpl<DesignDeploym
 
             // Auto-freeze the deployed target version after successful PROD deployment.
             if (targetEnv.getEnvType() == DesignAppEnvType.PROD) {
+                this.closeReleasedWorkItems(deployment);
                 this.freezeTargetVersionIfNeeded(targetVersionId);
             }
 
@@ -207,6 +172,38 @@ public class DesignDeploymentServiceImpl extends EntityServiceImpl<DesignDeploym
                 e.addSuppressed(updateException);
             }
             throw e;
+        }
+    }
+
+    private void closeReleasedWorkItems(DesignDeployment deployment) {
+        Filters versionFilters = new Filters().eq(DesignDeploymentVersion::getDeploymentId, deployment.getId());
+        List<DesignDeploymentVersion> deploymentVersions = deploymentVersionService.searchList(new FlexQuery(versionFilters));
+        if (deploymentVersions.isEmpty()) {
+            return;
+        }
+
+        List<Long> versionIds = deploymentVersions.stream()
+                .map(DesignDeploymentVersion::getVersionId)
+                .distinct()
+                .toList();
+        Filters workItemFilters = new Filters().in(DesignWorkItem::getVersionId, versionIds);
+        List<DesignWorkItem> workItems = workItemService.searchList(new FlexQuery(workItemFilters));
+        if (workItems.isEmpty()) {
+            return;
+        }
+
+        LocalDateTime closedTime = deployment.getFinishedTime() != null ? deployment.getFinishedTime() : LocalDateTime.now();
+        for (DesignWorkItem workItem : workItems) {
+            if (workItem.getStatus() == DesignWorkItemStatus.CLOSED && workItem.getClosedTime() != null) {
+                continue;
+            }
+            if (workItem.getStatus() != DesignWorkItemStatus.DONE
+                    && workItem.getStatus() != DesignWorkItemStatus.CLOSED) {
+                continue;
+            }
+            workItem.setStatus(DesignWorkItemStatus.CLOSED);
+            workItem.setClosedTime(closedTime);
+            workItemService.updateOne(workItem);
         }
     }
 
@@ -238,17 +235,6 @@ public class DesignDeploymentServiceImpl extends EntityServiceImpl<DesignDeploym
             }
         }
         return VersionMerger.merge(allVersionChanges);
-    }
-
-    private DesignAppVersion validateDeployTarget(DesignAppEnv targetEnv, Long targetVersionId) {
-        DesignAppVersion targetVersion = appVersionService.getById(targetVersionId)
-                .orElseThrow(() -> new IllegalArgumentException("Version does not exist! {0}", targetVersionId));
-        Assert.isEqual(targetVersion.getAppId(), targetEnv.getAppId(),
-                "Version and Environment must belong to the same App!");
-        Assert.isTrue(targetVersion.getStatus() == DesignAppVersionStatus.SEALED
-                        || targetVersion.getStatus() == DesignAppVersionStatus.FROZEN,
-                "Only SEALED or FROZEN versions can be deployed! Current status: {0}", targetVersion.getStatus());
-        return targetVersion;
     }
 
     private PreparedDeploymentArtifact prepareDeploymentArtifact(

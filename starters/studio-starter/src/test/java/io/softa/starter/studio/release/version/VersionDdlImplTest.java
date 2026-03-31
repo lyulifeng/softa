@@ -39,6 +39,7 @@ class VersionDdlImplTest {
 
         String sql = versionDdl.generateTableDDL(DatabaseType.MYSQL, modelChanges, null);
 
+        assertTrue(sql.contains("Alter table for model: Order"), sql);
         assertTrue(sql.contains("RENAME TABLE order_old TO biz_order;"), sql);
         assertTrue(sql.contains("ALTER TABLE biz_order"), sql);
         assertTrue(sql.contains("COMMENT 'Business order'"), sql);
@@ -191,8 +192,10 @@ class VersionDdlImplTest {
         String sql = versionDdl.generateDDL(DatabaseType.MYSQL, List.of(modelChanges, fieldChanges, indexChanges));
 
         assertTrue(sql.contains("-- Create tables:"), sql);
+        assertTrue(sql.contains("Create table for model: Invoice"), sql);
         assertTrue(sql.contains("CREATE TABLE invoice"), sql);
         assertTrue(sql.contains("-- Create table indexes:"), sql);
+        assertTrue(sql.contains("Table indexes for model: Invoice"), sql);
         assertTrue(sql.contains("ADD UNIQUE INDEX uk_invoice_no (invoice_no)"), sql);
     }
 

@@ -6,6 +6,7 @@ import io.swagger.v3.oas.annotations.media.Schema;
 import lombok.Data;
 import lombok.EqualsAndHashCode;
 
+import io.softa.framework.orm.domain.Orders;
 import io.softa.framework.orm.entity.AuditableModel;
 import io.softa.framework.orm.enums.IdStrategy;
 import io.softa.framework.orm.enums.StorageType;
@@ -24,6 +25,9 @@ public class DesignModel extends AuditableModel {
     @Schema(description = "ID")
     private Long id;
 
+    @Schema(description = "Portfolio")
+    private Long portfolioId;
+
     @Schema(description = "App ID")
     private Long appId;
 
@@ -40,7 +44,7 @@ public class DesignModel extends AuditableModel {
     private List<String> searchName;
 
     @Schema(description = "Default Order")
-    private String defaultOrder;
+    private Orders defaultOrder;
 
     @Schema(description = "Table Name")
     private String tableName;

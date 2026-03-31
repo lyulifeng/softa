@@ -5,9 +5,6 @@ import {{ packageName }}.entity.{{ modelName }};
 
 /**
  * {{ modelName }} Service
- *
- * @author {{ userName }}
- * @date {{ currentDate }}
  */
 public interface {{ modelName }}Service extends EntityService<{{ modelName }}, Long> {
 

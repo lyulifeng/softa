@@ -28,7 +28,7 @@ public interface DesignAppEnvService extends EntityService<DesignAppEnv, Long> {
      * Compare the design-time snapshot with the actual runtime metadata for the given environment.
      * Detects drift caused by direct SQL changes, unsynced runtime modifications, etc.
      * <p>
-     * Uses Business Key to match rows between the snapshot and runtime data.
+     * Uses the synchronized primary id to match rows between the snapshot and runtime data.
      *
      * @param envId Environment ID
      * @return List of model changes representing the drift between snapshot and runtime

@@ -35,7 +35,7 @@ public class DesignWorkItem extends AuditableModel {
     @Schema(description = "Description")
     private String description;
 
-    @Schema(description = "Closed Time — when the WorkItem was completed and correlationId tagging ended")
+    @Schema(description = "Closed Time — when the WorkItem was released to prod.")
     private LocalDateTime closedTime;
 
     @Schema(description = "Version ID — the version this WorkItem belongs to (null if not yet added to a version)")

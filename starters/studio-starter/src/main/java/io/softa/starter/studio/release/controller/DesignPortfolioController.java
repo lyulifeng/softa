@@ -3,10 +3,9 @@ package io.softa.starter.studio.release.controller;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.Parameter;
 import io.swagger.v3.oas.annotations.tags.Tag;
+import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
-import org.springframework.web.bind.annotation.PostMapping;
-import org.springframework.web.bind.annotation.RequestParam;
 
 import io.softa.framework.web.controller.EntityController;
 import io.softa.framework.web.response.ApiResponse;
@@ -23,18 +22,30 @@ import io.softa.starter.studio.release.service.DesignPortfolioService;
 public class DesignPortfolioController extends EntityController<DesignPortfolioService, DesignPortfolio, Long> {
 
     /**
-     * Transition the portfolio status with business validation.
+     * Activate the portfolio.
      *
      * @param id portfolio ID
-     * @param targetStatus target status
      * @return true / Exception
      */
-    @Operation(description = "Transition the Portfolio status with business validation.")
-    @PostMapping(value = "/transitionStatus")
-    public ApiResponse<Boolean> transitionStatus(
-            @RequestParam @Parameter(description = "Portfolio ID") Long id,
-            @RequestParam @Parameter(description = "Target Portfolio status") DesignPortfolioStatus targetStatus) {
-        service.transitionStatus(id, targetStatus);
+    @Operation(description = "Activate the Portfolio.")
+    @PostMapping(value = "/activate")
+    @Parameter(name = "id", description = "Portfolio ID")
+    public ApiResponse<Boolean> activate(Long id) {
+        service.transitionStatus(id, DesignPortfolioStatus.ACTIVE);
+        return ApiResponse.success(true);
+    }
+
+    /**
+     * Archive the portfolio.
+     *
+     * @param id portfolio ID
+     * @return true / Exception
+     */
+    @Operation(description = "Archive the Portfolio.")
+    @PostMapping(value = "/archive")
+    @Parameter(name = "id", description = "Portfolio ID")
+    public ApiResponse<Boolean> archive(Long id) {
+        service.transitionStatus(id, DesignPortfolioStatus.ARCHIVED);
         return ApiResponse.success(true);
     }
 

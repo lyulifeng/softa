@@ -8,9 +8,9 @@ import lombok.Getter;
 @AllArgsConstructor
 public enum DesignWorkItemStatus {
     IN_PROGRESS("InProgress", "In Progress"),
-    READY("Ready", "Ready"),
-    DEFERRED("Deferred", "Deferred"),
     DONE("Done", "Done"),
+    DEFERRED("Deferred", "Deferred"),
+    CLOSED("Closed", "Closed"),
     CANCELLED("Cancelled", "Cancelled"),
     ;
 

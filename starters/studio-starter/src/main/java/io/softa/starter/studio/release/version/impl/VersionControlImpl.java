@@ -6,7 +6,6 @@ import java.util.stream.Collectors;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 
-import io.softa.framework.base.utils.DateUtils;
 import io.softa.framework.orm.changelog.message.dto.ChangeLog;
 import io.softa.framework.orm.constant.ModelConstant;
 import io.softa.framework.orm.domain.Filters;
@@ -16,7 +15,6 @@ import io.softa.framework.orm.meta.ModelManager;
 import io.softa.framework.orm.service.ModelService;
 import io.softa.starter.es.service.ChangeLogService;
 import io.softa.starter.metadata.constant.MetadataConstant;
-import io.softa.starter.studio.release.constant.VersionConstant;
 import io.softa.starter.studio.release.dto.ModelChangesDTO;
 import io.softa.starter.studio.release.dto.RowChangeDTO;
 import io.softa.starter.studio.release.version.VersionControl;
@@ -38,12 +36,11 @@ public class VersionControlImpl implements VersionControl {
     /**
      * Collect model-level changes for all version-controlled models from the specified WorkItems.
      *
-     * @param appId       app ID used to look up the current DB state
      * @param workItemIds list of WorkItem IDs whose changes to aggregate
      * @return list of model-level change summaries, excluding empty models
      */
     @Override
-    public List<ModelChangesDTO> collectModelChanges(Long appId, List<Long> workItemIds) {
+    public List<ModelChangesDTO> collectModelChanges(List<Long> workItemIds) {
         if (workItemIds == null || workItemIds.isEmpty()) {
             return List.of();
         }
@@ -57,30 +54,12 @@ public class VersionControlImpl implements VersionControl {
                 .collect(Collectors.groupingBy(ChangeLog::getModel, LinkedHashMap::new, Collectors.toList()));
         List<ModelChangesDTO> result = new ArrayList<>();
         for (String versionedModel : versionedModels) {
-            ModelChangesDTO changes = buildModelChanges(appId, versionedModel, logsByModel.get(versionedModel));
+            ModelChangesDTO changes = buildModelChanges(versionedModel, logsByModel.get(versionedModel));
             if (changes != null) {
                 result.add(changes);
             }
         }
         return result;
-    }
-
-    /**
-     * Get the change data of the model for the specified WorkItems, querying ES changelogs
-     * by {@code correlationId IN (workItemIds)} instead of a time-based scan.
-     *
-     * @param appId          app ID used to look up the current DB state
-     * @param versionedModel version-controlled design model name
-     * @param workItemIds    list of WorkItem IDs whose changes to aggregate
-     * @return ModelChangesDTO, or {@code null} if there are no changes
-     */
-    @Override
-    public ModelChangesDTO getModelChangesByWorkItems(Long appId, String versionedModel, List<Long> workItemIds) {
-        if (workItemIds == null || workItemIds.isEmpty()) {
-            return null;
-        }
-        List<ChangeLog> allChangeLogs = changeLogService.searchByCorrelationIds(versionedModel, toCorrelationIds(workItemIds));
-        return buildModelChanges(appId, versionedModel, allChangeLogs);
     }
 
     private List<String> toCorrelationIds(List<Long> workItemIds) {
@@ -89,7 +68,7 @@ public class VersionControlImpl implements VersionControl {
                 .collect(Collectors.toList());
     }
 
-    private ModelChangesDTO buildModelChanges(Long appId, String versionedModel, List<ChangeLog> allChangeLogs) {
+    private ModelChangesDTO buildModelChanges(String versionedModel, List<ChangeLog> allChangeLogs) {
         if (allChangeLogs == null || allChangeLogs.isEmpty()) {
             return null;
         }
@@ -98,19 +77,22 @@ public class VersionControlImpl implements VersionControl {
         Map<Serializable, List<ChangeLog>> logsByRow = allChangeLogs.stream()
                 .collect(Collectors.groupingBy(ChangeLog::getRowId, LinkedHashMap::new, Collectors.toList()));
 
-        // Determine which rowIds need a current-data DB lookup (those not ending in DELETE)
+        // Only rows that existed before this WorkItem set still need a DB lookup.
+        // CREATE rows are reconstructed strictly from changelog history.
         Set<Serializable> rowIdsNeedingDbLookup = new HashSet<>();
         for (Map.Entry<Serializable, List<ChangeLog>> entry : logsByRow.entrySet()) {
-            AccessType lastType = entry.getValue().getLast().getAccessType();
-            if (lastType != AccessType.DELETE) {
+            List<ChangeLog> rowLogs = entry.getValue();
+            AccessType firstType = rowLogs.getFirst().getAccessType();
+            AccessType lastType = rowLogs.getLast().getAccessType();
+            if (firstType != AccessType.CREATE && lastType != AccessType.DELETE) {
                 rowIdsNeedingDbLookup.add(entry.getKey());
             }
         }
 
-        // Fetch the current DB state for non-deleted rows
+        // Fetch the current DB state for surviving rows that pre-existed this WorkItem set.
         Map<Serializable, Map<String, Object>> currentDataMap = new HashMap<>();
         if (!rowIdsNeedingDbLookup.isEmpty()) {
-            List<Map<String, Object>> dbRows = getCurrentDataByIds(appId, versionedModel, rowIdsNeedingDbLookup);
+            List<Map<String, Object>> dbRows = getCurrentDataByIds(versionedModel, rowIdsNeedingDbLookup);
             dbRows.forEach(row -> currentDataMap.put((Serializable) row.get(ModelConstant.ID), row));
         }
 
@@ -130,19 +112,16 @@ public class VersionControlImpl implements VersionControl {
                 ChangeLog deleteLog = logs.getLast();
                 RowChangeDTO rowChangeDTO = new RowChangeDTO(versionedModel, (Long) rowId);
                 rowChangeDTO.setAccessType(AccessType.DELETE);
-                rowChangeDTO.setCurrentData(deleteLog.getDataBeforeChange());
+                rowChangeDTO.setCurrentData(deleteLog.getDataBeforeChange() == null
+                        ? new HashMap<>()
+                        : new HashMap<>(deleteLog.getDataBeforeChange()));
                 rowChangeDTO.setLastChangedById(deleteLog.getChangedById());
                 rowChangeDTO.setLastChangedBy(deleteLog.getChangedBy());
                 rowChangeDTO.setLastChangedTime(deleteLog.getChangedTime());
                 modelChangesDTO.addDeletedRow(rowChangeDTO);
             } else if (firstType == AccessType.CREATE) {
                 // Row was created within this WorkItem set.
-                Map<String, Object> currentData = currentDataMap.get(rowId);
-                if (currentData == null) {
-                    // Row was created but subsequently deleted outside this WorkItem set — skip
-                    continue;
-                }
-                modelChangesDTO.addCreatedRow(convertToRowChangeDTO(versionedModel, currentData));
+                modelChangesDTO.addCreatedRow(mergeCreatedToRowChangeDTO(logs));
             } else {
                 // Row existed before and was updated within this WorkItem set.
                 Map<String, Object> currentData = currentDataMap.get(rowId);
@@ -164,18 +143,15 @@ public class VersionControlImpl implements VersionControl {
 
     /**
      * Get the current DB state for specific row IDs within the given app.
-     * Used by the WorkItem-centric path to look up current data for created/updated rows.
+     * Used by the WorkItem-centric path to look up current data for surviving UPDATE rows.
      *
-     * @param appId          app ID
      * @param versionedModel version-controlled design model name
      * @param rowIds         specific row IDs to fetch
      * @return list of current row data maps
      */
-    private List<Map<String, Object>> getCurrentDataByIds(Long appId, String versionedModel,
+    private List<Map<String, Object>> getCurrentDataByIds(String versionedModel,
             Collection<Serializable> rowIds) {
-        Filters filters = new Filters()
-                .eq(VersionConstant.APP_ID, appId)
-                .in(ModelConstant.ID, rowIds);
+        Filters filters = new Filters().in(ModelConstant.ID, rowIds);
         if (ModelManager.isSoftDeleted(versionedModel)) {
             String softDeleteField = ModelManager.getSoftDeleteField(versionedModel);
             filters.in(softDeleteField, Arrays.asList(false, true, null));
@@ -186,19 +162,30 @@ public class VersionControlImpl implements VersionControl {
     }
 
     /**
-     * Convert the changed data to RowChangeDTO
+     * Rebuild a CREATE row strictly from historical changelog data.
      *
-     * @param modelName Model name
-     * @param row Changed data
+     * @param changeLogs List of change records with the same id, sorted in ascending order
      * @return RowChangeDTO object
      */
-    private static RowChangeDTO convertToRowChangeDTO(String modelName, Map<String, Object> row) {
-        RowChangeDTO rowChangeDTO = new RowChangeDTO(modelName, (Long) row.get(ModelConstant.ID));
+    private static RowChangeDTO mergeCreatedToRowChangeDTO(List<ChangeLog> changeLogs) {
+        ChangeLog createLog = changeLogs.getFirst();
+        ChangeLog lastLog = changeLogs.getLast();
+        Map<String, Object> currentData = createLog.getDataAfterChange() != null
+                ? new HashMap<>(createLog.getDataAfterChange())
+                : new HashMap<>();
+        for (int i = 1; i < changeLogs.size(); i++) {
+            ChangeLog changeLog = changeLogs.get(i);
+            if (changeLog.getDataAfterChange() != null) {
+                currentData.putAll(changeLog.getDataAfterChange());
+            }
+        }
+        RowChangeDTO rowChangeDTO = new RowChangeDTO(createLog.getModel(), (Long) createLog.getRowId());
         rowChangeDTO.setAccessType(AccessType.CREATE);
-        rowChangeDTO.setCurrentData(row);
-        rowChangeDTO.setLastChangedById((Long) row.get(ModelConstant.UPDATED_ID));
-        rowChangeDTO.setLastChangedBy((String) row.get(ModelConstant.UPDATED_BY));
-        rowChangeDTO.setLastChangedTime(DateUtils.dateTimeToString(row.get(ModelConstant.UPDATED_TIME)));
+        rowChangeDTO.setCurrentData(new HashMap<>(currentData));
+        rowChangeDTO.setDataAfterChange(new HashMap<>(currentData));
+        rowChangeDTO.setLastChangedById(lastLog.getChangedById());
+        rowChangeDTO.setLastChangedBy(lastLog.getChangedBy());
+        rowChangeDTO.setLastChangedTime(lastLog.getChangedTime());
         return rowChangeDTO;
     }
 
@@ -213,7 +200,7 @@ public class VersionControlImpl implements VersionControl {
         ChangeLog lastLog = changeLogs.getLast();
         RowChangeDTO rowChangeDTO = new RowChangeDTO(lastLog.getModel(), (Long) lastLog.getRowId());
         rowChangeDTO.setAccessType(UPDATE);
-        rowChangeDTO.setCurrentData(currentData);
+        rowChangeDTO.setCurrentData(new HashMap<>(currentData));
         rowChangeDTO.setLastChangedById(lastLog.getChangedById());
         rowChangeDTO.setLastChangedBy(lastLog.getChangedBy());
         rowChangeDTO.setLastChangedTime(lastLog.getChangedTime());

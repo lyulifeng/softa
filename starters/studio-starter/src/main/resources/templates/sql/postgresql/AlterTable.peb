@@ -6,6 +6,7 @@ Root:
 Used model fields:
 - tableName
 - oldTableName
+- labelName
 - renamed
 - hasAlterTableChanges
 - descriptionChanged
@@ -49,6 +50,9 @@ ALTER TABLE {{ tableName }} ALTER COLUMN {{ field.columnName }} DROP DEFAULT;
 COMMENT ON COLUMN {{ tableName }}.{{ field.columnName }} IS '{{ field.description }}';
 {% endif %}
 {% endmacro %}
+{% if model.renamed or model.hasAlterTableChanges %}
+/* Alter table for model: {{ model.labelName }} */
+{% endif %}
 {% if model.renamed %}
 ALTER TABLE {{ model.oldTableName }} RENAME TO {{ model.tableName }};
 {% endif %}
@@ -61,8 +65,7 @@ ALTER TABLE {{ model.tableName }} ADD COLUMN {{ field.columnName }} {{ field.typ
 {%- if field.required %} NOT NULL{% endif -%}
 {%- if field.defaultValue is not empty %} DEFAULT {{ field.defaultValue }}
 {%- elseif field.required and field.dbType == "VARCHAR" %} DEFAULT ''
-{%- endif -%}
-;
+{%- endif -%};
 {% if field.description is not empty %}
 COMMENT ON COLUMN {{ model.tableName }}.{{ field.columnName }} IS '{{ field.description }}';
 {% endif %}
@@ -76,4 +79,4 @@ ALTER TABLE {{ model.tableName }} DROP COLUMN {{ field.columnName }};
 {% for field in model.renamedFields -%}
 ALTER TABLE {{ model.tableName }} RENAME COLUMN {{ field.oldColumnName }} TO {{ field.columnName }};
 {{ renderAlterColumnBlock(model.tableName, field) }}
-{% endfor -%}
+{% endfor %}

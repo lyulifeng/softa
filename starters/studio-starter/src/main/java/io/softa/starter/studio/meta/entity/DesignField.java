@@ -24,8 +24,14 @@ public class DesignField extends AuditableModel {
     @Schema(description = "ID")
     private Long id;
 
+    @Schema(description = "Portfolio")
+    private Long portfolioId;
+
     @Schema(description = "App ID")
     private Long appId;
+
+    @Schema(description = "Model ID")
+    private Long modelId;
 
     @Schema(description = "Label Name")
     private String labelName;
@@ -38,9 +44,6 @@ public class DesignField extends AuditableModel {
 
     @Schema(description = "Model Name")
     private String modelName;
-
-    @Schema(description = "Model ID")
-    private Long modelId;
 
     @Schema(description = "Description")
     private String description;
@@ -60,10 +63,10 @@ public class DesignField extends AuditableModel {
     @Schema(description = "Join Model")
     private String joinModel;
 
-    @Schema(description = "Join Model Left Field")
+    @Schema(description = "Join Model Left Key")
     private String joinLeft;
 
-    @Schema(description = "Join Model Left Field")
+    @Schema(description = "Join Model Right Key")
     private String joinRight;
 
     @Schema(description = "Cascaded Field")

@@ -4,7 +4,7 @@ import java.util.List;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.Parameter;
 import io.swagger.v3.oas.annotations.tags.Tag;
-import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
@@ -31,7 +31,7 @@ public class DesignAppEnvController extends EntityController<DesignAppEnvService
      * @return List of model changes representing the drift between snapshot and runtime
      */
     @Operation(description = "Compare design-time snapshot with runtime metadata for an environment.")
-    @PostMapping(value = "/compareDesignWithRuntime")
+    @GetMapping(value = "/compareDesignWithRuntime")
     @Parameter(name = "envId", description = "Environment ID")
     public ApiResponse<List<ModelChangesDTO>> compareDesignWithRuntime(@RequestParam Long envId) {
         return ApiResponse.success(service.compareDesignWithRuntime(envId));

@@ -12,16 +12,8 @@ import io.softa.starter.studio.release.entity.DesignWorkItem;
 public interface DesignWorkItemService extends EntityService<DesignWorkItem, Long> {
 
     /**
-     * Mark the WorkItem as READY.
+     * Complete the WorkItem and transition status to DONE.
      * The WorkItem must be in IN_PROGRESS status.
-     *
-     * @param id WorkItem ID
-     */
-    void readyWorkItem(Long id);
-
-    /**
-     * Complete the WorkItem: set closedTime and transition status to DONE.
-     * The WorkItem must be in IN_PROGRESS or READY status.
      *
      * @param id WorkItem ID
      */
@@ -45,16 +37,22 @@ public interface DesignWorkItemService extends EntityService<DesignWorkItem, Lon
     String previewWorkItemDDL(Long id);
 
     /**
-     * Merge a DONE WorkItem into the latest DRAFT version of the same App.
-     * If no DRAFT version exists, one is automatically created.
+     * Add a DONE WorkItem to a DRAFT Version.
      *
-     * @param id WorkItem ID
-     * @return the Version ID that the WorkItem was merged into
+     * @param workItemId WorkItem ID
+     * @param versionId Version ID
      */
-    Long mergeToLatestVersion(Long id);
+    void addToVersion(Long workItemId, Long versionId);
 
     /**
-     * Cancel the WorkItem. Only allowed for IN_PROGRESS, READY, or DEFERRED.
+     * Remove a WorkItem from a Version.
+     *
+     * @param workItemId WorkItem ID
+     */
+    void removeFromVersion(Long workItemId);
+
+    /**
+     * Cancel the WorkItem. Only allowed for IN_PROGRESS, DONE, or DEFERRED.
      *
      * @param id WorkItem ID
      */

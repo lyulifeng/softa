@@ -9,6 +9,7 @@ import org.springframework.web.bind.annotation.*;
 import io.softa.framework.web.controller.EntityController;
 import io.softa.framework.web.response.ApiResponse;
 import io.softa.starter.studio.release.dto.ModelChangesDTO;
+import io.softa.starter.studio.release.dto.WorkItemVersionDTO;
 import io.softa.starter.studio.release.entity.DesignWorkItem;
 import io.softa.starter.studio.release.service.DesignWorkItemService;
 
@@ -21,26 +22,12 @@ import io.softa.starter.studio.release.service.DesignWorkItemService;
 public class DesignWorkItemController extends EntityController<DesignWorkItemService, DesignWorkItem, Long> {
 
     /**
-     * Mark the WorkItem as READY.
+     * Complete the WorkItem and transition status to DONE.
      *
      * @param id WorkItem ID
      * @return true / Exception
      */
-    @Operation(description = "Mark the WorkItem as READY (from IN_PROGRESS).")
-    @PostMapping(value = "/readyWorkItem")
-    @Parameter(name = "id", description = "WorkItem ID")
-    public ApiResponse<Boolean> readyWorkItem(@RequestParam Long id) {
-        service.readyWorkItem(id);
-        return ApiResponse.success(true);
-    }
-
-    /**
-     * Complete the WorkItem, setting closedTime and transitioning status to DONE.
-     *
-     * @param id WorkItem ID
-     * @return true / Exception
-     */
-    @Operation(description = "Complete the WorkItem, setting closedTime and transitioning status to DONE.")
+    @Operation(description = "Complete the WorkItem and transition status to DONE.")
     @PostMapping(value = "/doneWorkItem")
     @Parameter(name = "id", description = "WorkItem ID")
     public ApiResponse<Boolean> doneWorkItem(@RequestParam Long id) {
@@ -78,7 +65,7 @@ public class DesignWorkItemController extends EntityController<DesignWorkItemSer
     /**
      * Cancel the WorkItem.
      */
-    @Operation(description = "Cancel the WorkItem (from IN_PROGRESS, READY, or DEFERRED).")
+    @Operation(description = "Cancel the WorkItem (from IN_PROGRESS, DONE, or DEFERRED).")
     @PostMapping(value = "/cancelWorkItem")
     @Parameter(name = "id", description = "WorkItem ID")
     public ApiResponse<Boolean> cancelWorkItem(@RequestParam Long id) {
@@ -109,17 +96,24 @@ public class DesignWorkItemController extends EntityController<DesignWorkItemSer
     }
 
     /**
-     * Merge a DONE WorkItem into the latest DRAFT version of the same App.
-     * If no DRAFT version exists, one is automatically created.
-     *
-     * @param id WorkItem ID
-     * @return the Version ID that the WorkItem was merged into
+     * Add a DONE WorkItem to a Version.
      */
-    @Operation(description = "Merge a DONE WorkItem into the latest DRAFT version. Auto-creates a DRAFT version if none exists.")
-    @PostMapping(value = "/mergeToLatestVersion")
+    @Operation(description = "Add a DONE WorkItem to a DRAFT Version.")
+    @PostMapping(value = "/addToVersion")
+    public ApiResponse<Boolean> addToVersion(@RequestBody WorkItemVersionDTO workItemVersionDTO) {
+        service.addToVersion(workItemVersionDTO.getWorkItemId(), workItemVersionDTO.getVersionId());
+        return ApiResponse.success(true);
+    }
+
+    /**
+     * Remove a WorkItem from a Version.
+     */
+    @Operation(description = "Remove a WorkItem from its current DRAFT Version.")
+    @PostMapping(value = "/removeFromVersion")
     @Parameter(name = "id", description = "WorkItem ID")
-    public ApiResponse<Long> mergeToLatestVersion(@RequestParam Long id) {
-        return ApiResponse.success(service.mergeToLatestVersion(id));
+    public ApiResponse<Boolean> removeFromVersion(@RequestParam Long id) {
+        service.removeFromVersion(id);
+        return ApiResponse.success(true);
     }
 
 }

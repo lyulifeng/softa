@@ -51,13 +51,15 @@ public class DesignModelServiceImpl extends EntityServiceImpl<DesignModel, Long>
         }
         ModelDdlCtx model = DdlContextBuilder.fromCreatedModel(designModel);
         DatabaseType databaseType = appService.getFieldValue(designModel.getAppId(), DesignApp::getDatabaseType);
-        StringBuilder ddl = new StringBuilder("-- Create table for model: ").append(designModel.getLabelName()).append("\n");
-        ddl.append(ddlDialectRegistry.getDialect(databaseType).createTableDDL(model)).append("\n");
+        StringBuilder ddl = new StringBuilder()
+                .append(ddlDialectRegistry.getDialect(databaseType).createTableDDL(model))
+                .append("\n");
         if (CollectionUtils.isEmpty(model.getCreatedIndexes())) {
             return ddl.toString();
         }
-        ddl.append("-- Table index:").append("\n");
-        ddl.append(ddlDialectRegistry.getDialect(databaseType).alterIndexDDL(model)).append("\n");
+        ddl.append("\n")
+                .append(ddlDialectRegistry.getDialect(databaseType).alterIndexDDL(model))
+                .append("\n");
         return ddl.toString();
     }
 

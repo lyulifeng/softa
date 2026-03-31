@@ -14,7 +14,7 @@ import io.softa.starter.studio.release.enums.DesignDeploymentStatus;
 /**
  * DesignDeployment Model — the immutable deployment record produced when a Version is deployed to an Env.
  * <p>
- * A Deployment is the single deployment artifact. It is created during the deploy process:
+ * A Deployment is the single deployment artifact. It is created during the deployment process:
  * the system selects released versions in sealedTime order from the Env's
  * {@code currentVersionId} (sourceVersionId) to the target Version (targetVersionId),
  * merges their version contents via

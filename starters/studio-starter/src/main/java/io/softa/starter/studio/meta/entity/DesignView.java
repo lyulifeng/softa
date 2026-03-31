@@ -23,6 +23,9 @@ public class DesignView extends AuditableModel {
     @Schema(description = "ID")
     private Long id;
 
+    @Schema(description = "Portfolio")
+    private Long portfolioId;
+
     @Schema(description = "App ID")
     private Long appId;
 

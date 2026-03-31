@@ -3,7 +3,6 @@ package io.softa.starter.studio.release.service;
 import java.util.List;
 
 import io.softa.framework.orm.service.EntityService;
-import io.softa.starter.studio.release.dto.DesignAppVersionDTO;
 import io.softa.starter.studio.release.dto.ModelChangesDTO;
 import io.softa.starter.studio.release.entity.DesignAppVersion;
 
@@ -13,15 +12,13 @@ import io.softa.starter.studio.release.entity.DesignAppVersion;
 public interface DesignAppVersionService extends EntityService<DesignAppVersion, Long> {
 
     /**
-     * Create a new App version shell (DRAFT status, no content).
-     * <p>
-     * {@code versionType} distinguishes a normal planned release from a hotfix release.
-     * If not provided, it defaults to {@code NORMAL}.
+     * Deploy a Version to an Environment.
      *
-     * @param appVersionDTO App version object
-     * @return id
+     * @param versionId Version ID
+     * @param envId Environment ID
+     * @return deployment ID
      */
-    Long createOne(DesignAppVersionDTO appVersionDTO);
+    Long deployToEnv(Long versionId, Long envId);
 
     /**
      * Seal the version: aggregate changes from selected WorkItems, generate DDL,
@@ -51,23 +48,6 @@ public interface DesignAppVersionService extends EntityService<DesignAppVersion,
      * @param id Version ID
      */
     void freezeVersion(Long id);
-
-    /**
-     * Add a DONE WorkItem to the version (only allowed in DRAFT status).
-     * The merge order follows WorkItem creation time (newer overrides older).
-     *
-     * @param versionId  Version ID
-     * @param workItemId WorkItem ID
-     */
-    void addWorkItem(Long versionId, Long workItemId);
-
-    /**
-     * Remove a WorkItem from the version (only allowed in DRAFT status).
-     *
-     * @param versionId  Version ID
-     * @param workItemId WorkItem ID
-     */
-    void removeWorkItem(Long versionId, Long workItemId);
 
     /**
      * Preview the merged content of the version without modifying its status.

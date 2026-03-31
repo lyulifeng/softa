@@ -1,7 +1,6 @@
 package io.softa.starter.studio.release.service.impl;
 
 import java.util.*;
-import java.util.stream.Collectors;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.core.env.Environment;
 import org.springframework.stereotype.Service;
@@ -56,7 +55,7 @@ public class DesignAppEnvServiceImpl extends EntityServiceImpl<DesignAppEnv, Lon
      * <p>
      * Loads the previous snapshot (empty for first deployment), then applies the
      * {@code mergedChanges} (CREATE / UPDATE / DELETE) on top to produce the new full state.
-     * Uses Business Key as row identity for applying changes.
+     * Uses the synchronized primary id as row identity for applying changes.
      *
      * @param envId         Environment ID
      * @param deploymentId  Deployment ID that produced this snapshot
@@ -98,7 +97,7 @@ public class DesignAppEnvServiceImpl extends EntityServiceImpl<DesignAppEnv, Lon
      * Compare the design-time snapshot with the actual runtime metadata.
      * <p>
      * For each version-controlled model, loads the snapshot rows and the runtime rows,
-     * matches them by Business Key, and produces a diff (CREATE / UPDATE / DELETE).
+     * matches them by primary id, and produces a diff (CREATE / UPDATE / DELETE).
      *
      * @param envId Environment ID
      * @return List of model changes representing drift between snapshot and runtime
@@ -137,9 +136,9 @@ public class DesignAppEnvServiceImpl extends EntityServiceImpl<DesignAppEnv, Lon
      * <p>
      * For each model in {@code mergedChanges}:
      * <ul>
-     *   <li>CREATE rows → add to baseline, matched by Business Key</li>
-     *   <li>UPDATE rows → find existing baseline row by Business Key, apply {@code dataAfterChange}</li>
-     *   <li>DELETE rows → remove from baseline by Business Key</li>
+     *   <li>CREATE rows → add to baseline by id</li>
+     *   <li>UPDATE rows → overwrite baseline row by id using {@code currentData}</li>
+     *   <li>DELETE rows → remove from baseline by id</li>
      * </ul>
      *
      * @param baseline       mutable map: designModelName → list of row data
@@ -152,56 +151,22 @@ public class DesignAppEnvServiceImpl extends EntityServiceImpl<DesignAppEnv, Lon
         }
         for (ModelChangesDTO modelChanges : mergedChanges) {
             String designModel = modelChanges.getModelName();
-            List<String> businessKey = ModelManager.getModel(designModel).getBusinessKey();
-            if (businessKey == null || businessKey.isEmpty()) {
-                continue;
-            }
-
-            // Get or create the baseline rows for this model, indexed by BK for fast lookup
             List<Map<String, Object>> baselineRows = baseline.computeIfAbsent(designModel, k -> new ArrayList<>());
-            Map<String, Map<String, Object>> baselineByBK = indexByBusinessKey(baselineRows, businessKey);
+            Map<Long, Map<String, Object>> baselineById = indexById(baselineRows);
 
-            // Apply CREATEs — add new rows
             for (RowChangeDTO created : modelChanges.getCreatedRows()) {
-                Map<String, Object> rowData = created.getCurrentData();
-                if (rowData != null) {
-                    String bk = computeBusinessKey(rowData, businessKey);
-                    baselineByBK.put(bk, new HashMap<>(rowData));
-                }
+                upsertBaselineRow(baselineById, created);
             }
 
-            // Apply UPDATEs — merge changed fields into existing rows
             for (RowChangeDTO updated : modelChanges.getUpdatedRows()) {
-                // Locate existing row by Business Key from currentData
-                Map<String, Object> currentData = updated.getCurrentData();
-                if (currentData == null) {
-                    continue;
-                }
-                String bk = computeBusinessKey(currentData, businessKey);
-                Map<String, Object> existingRow = baselineByBK.get(bk);
-                if (existingRow != null) {
-                    // Apply dataAfterChange on top of existing row
-                    Map<String, Object> afterChange = updated.getDataAfterChange();
-                    if (afterChange != null && !afterChange.isEmpty()) {
-                        existingRow.putAll(afterChange);
-                    }
-                } else {
-                    // Row not found in baseline (edge case) — treat as full overwrite
-                    baselineByBK.put(bk, new HashMap<>(currentData));
-                }
+                upsertBaselineRow(baselineById, updated);
             }
 
-            // Apply DELETEs — remove rows
             for (RowChangeDTO deleted : modelChanges.getDeletedRows()) {
-                Map<String, Object> currentData = deleted.getCurrentData();
-                if (currentData != null) {
-                    String bk = computeBusinessKey(currentData, businessKey);
-                    baselineByBK.remove(bk);
-                }
+                baselineById.remove(extractRowId(deleted));
             }
 
-            // Rebuild the list from the indexed map
-            baseline.put(designModel, new ArrayList<>(baselineByBK.values()));
+            baseline.put(designModel, new ArrayList<>(baselineById.values()));
         }
     }
 
@@ -228,7 +193,7 @@ public class DesignAppEnvServiceImpl extends EntityServiceImpl<DesignAppEnv, Lon
 
     /**
      * Compute the diff between snapshot rows and runtime rows for a single model.
-     * Uses Business Key to match rows between snapshot and runtime.
+     * Uses primary id to match rows between snapshot and runtime.
      * <p>
      * <ul>
      *   <li>CREATE — snapshot row with no matching runtime row (missing in runtime)</li>
@@ -239,25 +204,21 @@ public class DesignAppEnvServiceImpl extends EntityServiceImpl<DesignAppEnv, Lon
     private ModelChangesDTO diffSnapshotVsRuntime(String designModel, String runtimeModel,
                                                    List<Map<String, Object>> snapshotRows,
                                                    List<Map<String, Object>> runtimeRows) {
-        List<String> businessKey = ModelManager.getModel(runtimeModel).getBusinessKey();
-        Assert.notEmpty(businessKey, "Model {0} must have a Business Key defined for comparison!", runtimeModel);
-
         Set<String> compareFields = getComparableFields(designModel, runtimeModel);
 
-        Map<String, Map<String, Object>> runtimeByBK = indexByBusinessKey(runtimeRows, businessKey);
-        Set<String> matchedRuntimeBKs = new HashSet<>();
+        Map<Long, Map<String, Object>> runtimeById = indexById(runtimeRows);
+        Set<Long> matchedRuntimeIds = new HashSet<>();
 
         ModelChangesDTO modelChangesDTO = new ModelChangesDTO(designModel);
 
-        // Forward pass: snapshot → runtime
         for (Map<String, Object> snapshotRow : snapshotRows) {
-            String bk = computeBusinessKey(snapshotRow, businessKey);
-            Map<String, Object> runtimeRow = runtimeByBK.get(bk);
+            Long rowId = extractRowId(snapshotRow);
+            Map<String, Object> runtimeRow = runtimeById.get(rowId);
 
             if (runtimeRow == null) {
                 modelChangesDTO.addCreatedRow(toRowChangeDTO(designModel, AccessType.CREATE, snapshotRow));
             } else {
-                matchedRuntimeBKs.add(bk);
+                matchedRuntimeIds.add(rowId);
                 Map<String, Object> diffFields = compareFieldValues(snapshotRow, runtimeRow, compareFields);
                 if (!diffFields.isEmpty()) {
                     RowChangeDTO rowChangeDTO = toRowChangeDTO(designModel, AccessType.UPDATE, snapshotRow);
@@ -268,11 +229,10 @@ public class DesignAppEnvServiceImpl extends EntityServiceImpl<DesignAppEnv, Lon
             }
         }
 
-        // Reverse pass: runtime rows not matched → extra in runtime
         for (Map<String, Object> runtimeRow : runtimeRows) {
-            String bk = computeBusinessKey(runtimeRow, businessKey);
-            if (!matchedRuntimeBKs.contains(bk)) {
-                modelChangesDTO.addDeletedRow(toRowChangeDTO(runtimeModel, AccessType.DELETE, runtimeRow));
+            Long rowId = extractRowId(runtimeRow);
+            if (!matchedRuntimeIds.contains(rowId)) {
+                modelChangesDTO.addDeletedRow(toRowChangeDTO(designModel, AccessType.DELETE, runtimeRow));
             }
         }
 
@@ -299,19 +259,36 @@ public class DesignAppEnvServiceImpl extends EntityServiceImpl<DesignAppEnv, Lon
         return common;
     }
 
-    private static Map<String, Map<String, Object>> indexByBusinessKey(List<Map<String, Object>> rows,
-                                                                       List<String> businessKey) {
-        Map<String, Map<String, Object>> index = new LinkedHashMap<>();
+    private static Map<Long, Map<String, Object>> indexById(List<Map<String, Object>> rows) {
+        Map<Long, Map<String, Object>> index = new LinkedHashMap<>();
         for (Map<String, Object> row : rows) {
-            index.put(computeBusinessKey(row, businessKey), row);
+            index.put(extractRowId(row), new HashMap<>(row));
         }
         return index;
     }
 
-    private static String computeBusinessKey(Map<String, Object> row, List<String> businessKey) {
-        return businessKey.stream()
-                .map(field -> String.valueOf(row.get(field)))
-                .collect(Collectors.joining("::"));
+    private static void upsertBaselineRow(Map<Long, Map<String, Object>> baselineById, RowChangeDTO rowChangeDTO) {
+        Map<String, Object> currentData = rowChangeDTO.getCurrentData();
+        if (currentData != null) {
+            baselineById.put(extractRowId(rowChangeDTO), new HashMap<>(currentData));
+        }
+    }
+
+    private static Long extractRowId(RowChangeDTO rowChangeDTO) {
+        if (rowChangeDTO.getRowId() != null) {
+            return rowChangeDTO.getRowId();
+        }
+        return extractRowId(rowChangeDTO.getCurrentData());
+    }
+
+    private static Long extractRowId(Map<String, Object> row) {
+        Assert.notNull(row, "Snapshot row data cannot be null.");
+        Object id = row.get(ModelConstant.ID);
+        Assert.notNull(id, "Snapshot row id cannot be null. {0}", row);
+        if (id instanceof Number number) {
+            return number.longValue();
+        }
+        return Long.valueOf(String.valueOf(id));
     }
 
     private static Map<String, Object> compareFieldValues(Map<String, Object> snapshotRow,
@@ -337,9 +314,9 @@ public class DesignAppEnvServiceImpl extends EntityServiceImpl<DesignAppEnv, Lon
     }
 
     private static RowChangeDTO toRowChangeDTO(String modelName, AccessType accessType, Map<String, Object> row) {
-        RowChangeDTO dto = new RowChangeDTO(modelName, (Long) row.get(ModelConstant.ID));
+        RowChangeDTO dto = new RowChangeDTO(modelName, extractRowId(row));
         dto.setAccessType(accessType);
-        dto.setCurrentData(row);
+        dto.setCurrentData(new HashMap<>(row));
         dto.setLastChangedById((Long) row.get(ModelConstant.UPDATED_ID));
         dto.setLastChangedBy((String) row.get(ModelConstant.UPDATED_BY));
         dto.setLastChangedTime(DateUtils.dateTimeToString(row.get(ModelConstant.UPDATED_TIME)));

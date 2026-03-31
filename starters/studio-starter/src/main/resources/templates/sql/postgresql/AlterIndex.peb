@@ -5,6 +5,7 @@ Root:
 
 Used model fields:
 - tableName
+- labelName
 - createdIndexes
 - deletedIndexes
 - updatedIndexes
@@ -22,6 +23,7 @@ Notes:
 - Current MySQL behavior renders both update and rename as DROP INDEX + ADD INDEX.
 - Pure deleted indexes also generate SQL.
 #}
+/* Table indexes for model: {{ model.labelName }} */
 {% for index in model.deletedIndexes -%}
 DROP INDEX {{ index.indexName }};
 {% endfor -%}

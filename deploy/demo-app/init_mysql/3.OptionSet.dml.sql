@@ -332,9 +332,9 @@ DELETE FROM sys_option_item WHERE option_set_code='DesignWorkItemStatus';
 INSERT INTO sys_option_set(option_set_code,name,description) VALUES('DesignWorkItemStatus','Design Work Item Status','');
 -- Insert option set items
 INSERT INTO sys_option_item(option_set_code,item_code,item_name,sequence,parent_item_code,item_color,description) VALUES('DesignWorkItemStatus','InProgress','In Progress',1,'','','');
-INSERT INTO sys_option_item(option_set_code,item_code,item_name,sequence,parent_item_code,item_color,description) VALUES('DesignWorkItemStatus','Ready','Ready',2,'','','');
+INSERT INTO sys_option_item(option_set_code,item_code,item_name,sequence,parent_item_code,item_color,description) VALUES('DesignWorkItemStatus','Done','Done',2,'','','');
 INSERT INTO sys_option_item(option_set_code,item_code,item_name,sequence,parent_item_code,item_color,description) VALUES('DesignWorkItemStatus','Deferred','Deferred',3,'','','');
-INSERT INTO sys_option_item(option_set_code,item_code,item_name,sequence,parent_item_code,item_color,description) VALUES('DesignWorkItemStatus','Done','Done',4,'','','');
+INSERT INTO sys_option_item(option_set_code,item_code,item_name,sequence,parent_item_code,item_color,description) VALUES('DesignWorkItemStatus','Closed','Closed',4,'','','');
 INSERT INTO sys_option_item(option_set_code,item_code,item_name,sequence,parent_item_code,item_color,description) VALUES('DesignWorkItemStatus','Cancelled','Cancelled',5,'','','');
 
 -- Option Set: DesignAppEnvType
