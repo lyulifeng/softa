@@ -1,7 +1,9 @@
 package io.softa.starter.file.excel.imports;
 
 import java.util.*;
+import java.util.stream.Collectors;
 import lombok.extern.slf4j.Slf4j;
+import org.apache.commons.lang3.StringUtils;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 
@@ -43,16 +45,15 @@ public class RelationLookupResolver {
      * Describes a group of dotted-path lookup fields sharing the same root FK field.
      * For example, deptId.code and deptId.name would form one group with rootField="deptId".
      *
-     * @param rootField the FK field name in the main model (e.g. "deptId")
-     * @param relatedModel the related model name (e.g. "Department")
-     * @param lookupFields the field names in the related model (e.g. ["code", "name"])
-     * @param dottedPaths the original dotted-path field names (e.g. ["deptId.code", "deptId.name"])
-     * @param ignoreEmpty whether to skip when all lookup values are empty;
-     *                    if true, the rootField is not written (row.remove semantics);
-     *                    if false, the rootField is explicitly set to null.
+     * @param rootField the relation field in the main model, for example {@code deptId} or {@code roleIds}
+     * @param relatedModel the related model name used for reverse lookup
+     * @param lookupFields the business-key fields in the related model, for example {@code ["code"]}
+     * @param dottedPaths the original template field names, for example {@code ["deptId.code"]}
+     * @param ignoreEmpty whether empty source values should leave the root field untouched
+     * @param toMany whether the root relation field is a to-many relation
      */
     public record LookupGroup(String rootField, String relatedModel, List<String> lookupFields,
-                       List<String> dottedPaths, boolean ignoreEmpty) {}
+                              List<String> dottedPaths, boolean ignoreEmpty, boolean toMany) {}
 
     /**
      * Detect, validate and return the lookup groups from the import field list.
@@ -91,22 +92,21 @@ public class RelationLookupResolver {
                         fieldName, rootField, modelName);
             }
             MetaField rootMetaField = ModelManager.getModelField(modelName, rootField);
-            if (!FieldType.TO_ONE_TYPES.contains(rootMetaField.getFieldType())) {
+            if (!FieldType.RELATED_TYPES.contains(rootMetaField.getFieldType())) {
                 throw new IllegalArgumentException(
-                        "Import field `{0}`: root field `{1}` must be ManyToOne or OneToOne, but is `{2}`.",
+                        "Import field `{0}`: root field `{1}` must be a relation field, but is `{2}`.",
                         fieldName, rootField, rootMetaField.getFieldType());
             }
-            rootToDottedFields.computeIfAbsent(rootField, k -> new ArrayList<>()).add(field);
+            rootToDottedFields.computeIfAbsent(rootField, ignored -> new ArrayList<>()).add(field);
         }
 
-        // Validate: direct FK field and dotted lookup field must not coexist
         for (String rootField : rootToDottedFields.keySet()) {
             if (directFields.contains(rootField)) {
                 List<String> paths = rootToDottedFields.get(rootField).stream()
                         .map(ImportFieldDTO::getFieldName).toList();
                 throw new IllegalArgumentException(
                         "Import field `{0}` and `{1}` cannot coexist. " +
-                        "Either import the FK id directly or use relation lookup, not both.",
+                                "Either import the relation value directly or use relation lookup, not both.",
                         rootField, paths);
             }
         }
@@ -126,9 +126,9 @@ public class RelationLookupResolver {
             List<String> lookupFields = dottedPaths.stream()
                     .map(path -> path.substring(rootField.length() + 1))
                     .toList();
-            // Derive ignoreEmpty from the first dotted-path field (all share the same template-level setting)
-            boolean ignoreEmpty = Boolean.TRUE.equals(fieldDTOs.get(0).getIgnoreEmpty());
-            groups.add(new LookupGroup(rootField, relatedModel, lookupFields, dottedPaths, ignoreEmpty));
+            boolean ignoreEmpty = Boolean.TRUE.equals(fieldDTOs.getFirst().getIgnoreEmpty());
+            boolean toMany = FieldType.TO_MANY_TYPES.contains(rootMetaField.getFieldType());
+            groups.add(new LookupGroup(rootField, relatedModel, lookupFields, dottedPaths, ignoreEmpty, toMany));
         }
         return groups;
     }
@@ -143,18 +143,20 @@ public class RelationLookupResolver {
      */
     public void resolveRows(List<Map<String, Object>> rows, List<LookupGroup> lookupGroups, boolean skipException) {
         for (LookupGroup group : lookupGroups) {
-            resolveGroup(rows, group, skipException);
+            if (group.toMany()) {
+                resolveToManyGroup(rows, group, skipException);
+            } else {
+                resolveToOneGroup(rows, group, skipException);
+            }
         }
     }
 
     /**
      * Resolve one lookup group across all rows.
      */
-    private void resolveGroup(List<Map<String, Object>> rows, LookupGroup group, boolean skipException) {
-        // Step 1: Collect distinct business key value lists from all rows
+    private void resolveToOneGroup(List<Map<String, Object>> rows, LookupGroup group, boolean skipException) {
         Set<List<Object>> distinctKeys = new LinkedHashSet<>();
         for (Map<String, Object> row : rows) {
-            // Skip rows already marked as failed
             if (row.containsKey(FileConstant.FAILED_REASON)) {
                 continue;
             }
@@ -182,21 +184,13 @@ public class RelationLookupResolver {
             }
             List<Object> keyValues = extractKeyValues(row, group);
             if (keyValues == null) {
-                // All lookup fields are empty — handle based on ignoreEmpty setting
                 handleEmptyRootField(row, group);
                 removeDottedPaths(row, group);
                 continue;
             }
             Object resolvedId = keyToIdMap.get(keyValues);
             if (resolvedId == null) {
-                String message = buildNotFoundMessage(group, keyValues);
-                if (!skipException) {
-                    throw new ValidationException(message);
-                }
-                String failedReason = row.containsKey(FileConstant.FAILED_REASON)
-                        ? row.get(FileConstant.FAILED_REASON) + "; " : "";
-                failedReason += message;
-                row.put(FileConstant.FAILED_REASON, failedReason);
+                markFailure(row, buildNotFoundMessage(group, keyValues), skipException);
             } else {
                 row.put(group.rootField(), resolvedId);
             }
@@ -205,20 +199,99 @@ public class RelationLookupResolver {
     }
 
     /**
-     * Handle the empty rootField based on ignoreEmpty setting.
-     * <ul>
-     *   <li>ignoreEmpty = true: do not write rootField (skip), consistent with BaseImportHandler.row.remove() semantics.</li>
-     *   <li>ignoreEmpty = false: explicitly write rootField = null, so downstream persistence can clear existing FK values.</li>
-     * </ul>
+     * Resolves one to-many lookup group.
+     *
+     * <p>Example: {@code roleIds.code -> roleIds} where the source cell may contain
+     * comma-separated values such as {@code ADMIN,USER}.</p>
      */
-    private void handleEmptyRootField(Map<String, Object> row, LookupGroup group) {
-        if (!group.ignoreEmpty()) {
-            row.put(group.rootField(), null);
+    private void resolveToManyGroup(List<Map<String, Object>> rows, LookupGroup group, boolean skipException) {
+        Set<List<Object>> distinctKeys = new LinkedHashSet<>();
+        Map<Map<String, Object>, List<List<Object>>> rowResolvedKeys = new IdentityHashMap<>();
+        for (Map<String, Object> row : rows) {
+            if (row.containsKey(FileConstant.FAILED_REASON)) {
+                continue;
+            }
+            List<List<Object>> keyGroups = extractToManyKeyValues(row, group);
+            if (keyGroups != null) {
+                rowResolvedKeys.put(row, keyGroups);
+                distinctKeys.addAll(keyGroups);
+            }
+        }
+
+        if (distinctKeys.isEmpty()) {
+            handleEmptyAndCleanup(rows, group);
+            return;
+        }
+
+        Map<List<Object>, ?> keyToIdMap = modelService.getIdsByBusinessKeys(
+                group.relatedModel(), group.lookupFields(), distinctKeys);
+
+        for (Map<String, Object> row : rows) {
+            if (row.containsKey(FileConstant.FAILED_REASON)) {
+                removeDottedPaths(row, group);
+                continue;
+            }
+            List<List<Object>> keyGroups = rowResolvedKeys.get(row);
+            if (keyGroups == null) {
+                handleEmptyRootField(row, group);
+                removeDottedPaths(row, group);
+                continue;
+            }
+            List<Object> resolvedIds = new ArrayList<>();
+            List<List<Object>> missingKeys = new ArrayList<>();
+            for (List<Object> keyValues : keyGroups) {
+                Object resolvedId = keyToIdMap.get(keyValues);
+                if (resolvedId == null) {
+                    missingKeys.add(keyValues);
+                } else {
+                    resolvedIds.add(resolvedId);
+                }
+            }
+            if (!missingKeys.isEmpty()) {
+                String message = missingKeys.stream().map(keys -> buildNotFoundMessage(group, keys))
+                        .collect(Collectors.joining("; "));
+                markFailure(row, message, skipException);
+            } else {
+                row.put(group.rootField(), resolvedIds);
+            }
+            removeDottedPaths(row, group);
         }
     }
 
     /**
-     * Handle all-empty fast path: set empty rootField and clean up dotted paths for all non-failed rows.
+     * Handles a lookup failure according to the import mode.
+     *
+     * <ul>
+     *   <li>fail-fast mode: throws {@link ValidationException}</li>
+     *   <li>skip mode: appends the message to {@link FileConstant#FAILED_REASON}</li>
+     * </ul>
+     */
+    private void markFailure(Map<String, Object> row, String message, boolean skipException) {
+        if (!skipException) {
+            throw new ValidationException(message);
+        }
+        String failedReason = row.containsKey(FileConstant.FAILED_REASON)
+                ? row.get(FileConstant.FAILED_REASON) + "; " : "";
+        row.put(FileConstant.FAILED_REASON, failedReason + message);
+    }
+
+    /**
+     * Applies empty-value semantics for the resolved root relation field.
+     *
+     * <ul>
+     *   <li>{@code ignoreEmpty=true}: do not write the root field</li>
+     *   <li>to-one + {@code ignoreEmpty=false}: write {@code null}</li>
+     *   <li>to-many + {@code ignoreEmpty=false}: write an empty list</li>
+     * </ul>
+     */
+    private void handleEmptyRootField(Map<String, Object> row, LookupGroup group) {
+        if (!group.ignoreEmpty()) {
+            row.put(group.rootField(), group.toMany() ? Collections.emptyList() : null);
+        }
+    }
+
+    /**
+     * Fast path when all values in a lookup group are empty.
      */
     private void handleEmptyAndCleanup(List<Map<String, Object>> rows, LookupGroup group) {
         for (Map<String, Object> row : rows) {
@@ -230,9 +303,9 @@ public class RelationLookupResolver {
     }
 
     /**
-     * Extract the business key values from a row for the given lookup group.
+     * Extracts one business-key tuple from a row for a to-one lookup group.
      *
-     * @return the key value list, or null if all values are empty
+     * @return the key tuple, or {@code null} when all source fields are empty
      */
     private List<Object> extractKeyValues(Map<String, Object> row, LookupGroup group) {
         List<Object> values = new ArrayList<>(group.dottedPaths().size());
@@ -248,7 +321,82 @@ public class RelationLookupResolver {
     }
 
     /**
-     * Remove dotted-path temporary columns from a row.
+     * Extracts multiple business-key tuples from a row for a to-many lookup group.
+     *
+     * <p>For a single lookup field, a cell like {@code ADMIN,USER} becomes
+     * {@code [["ADMIN"], ["USER"]]}.</p>
+     *
+     * @return a list of key tuples, or {@code null} when all source fields are empty
+     */
+    private List<List<Object>> extractToManyKeyValues(Map<String, Object> row, LookupGroup group) {
+        List<List<String>> splitColumns = new ArrayList<>(group.dottedPaths().size());
+        boolean allEmpty = true;
+        int expectedSize = -1;
+        for (String dottedPath : group.dottedPaths()) {
+            Object rawValue = row.get(dottedPath);
+            List<String> values = splitToManyCellValues(rawValue);
+            if (!values.isEmpty()) {
+                allEmpty = false;
+            }
+            if (expectedSize == -1) {
+                expectedSize = values.size();
+            } else if (expectedSize != values.size()) {
+                throw new ValidationException(
+                        "The relation lookup field `{0}` expects the same number of items in columns {1}, but got {2} and {3}.",
+                        group.rootField(), group.dottedPaths(), expectedSize, values.size());
+            }
+            splitColumns.add(values);
+        }
+        if (allEmpty) {
+            return null;
+        }
+        List<List<Object>> keyGroups = new ArrayList<>(expectedSize);
+        for (int i = 0; i < expectedSize; i++) {
+            List<Object> keyValues = new ArrayList<>(splitColumns.size());
+            boolean allItemEmpty = true;
+            for (List<String> columnValues : splitColumns) {
+                String value = columnValues.get(i);
+                if (StringUtils.isNotBlank(value)) {
+                    allItemEmpty = false;
+                }
+                keyValues.add(value);
+            }
+            if (allItemEmpty) {
+                throw new ValidationException(
+                        "The relation lookup field `{0}` contains an empty item at position {1} in columns {2}.",
+                        group.rootField(), i + 1, group.dottedPaths());
+            }
+            keyGroups.add(keyValues);
+        }
+        return keyGroups;
+    }
+
+    /**
+     * Splits a to-many source cell into individual business-key values.
+     */
+    private List<String> splitToManyCellValues(Object rawValue) {
+        if (rawValue == null) {
+            return Collections.emptyList();
+        }
+        if (rawValue instanceof String str) {
+            if (str.isBlank()) {
+                return Collections.emptyList();
+            }
+            return Arrays.stream(str.split(","))
+                    .map(String::trim)
+                    .toList();
+        }
+        if (rawValue instanceof Collection<?> collection) {
+            if (collection.isEmpty()) {
+                return Collections.emptyList();
+            }
+            return collection.stream().map(value -> value == null ? "" : value.toString().trim()).toList();
+        }
+        return List.of(rawValue.toString());
+    }
+
+    /**
+     * Removes temporary dotted-path fields after resolution.
      */
     private void removeDottedPaths(Map<String, Object> row, LookupGroup group) {
         for (String dottedPath : group.dottedPaths()) {
@@ -256,6 +404,9 @@ public class RelationLookupResolver {
         }
     }
 
+    /**
+     * Builds a human-readable not-found message for one business-key tuple.
+     */
     private String buildNotFoundMessage(LookupGroup group, List<Object> keyValues) {
         StringBuilder sb = new StringBuilder();
         sb.append("Cannot find ").append(group.relatedModel()).append(" by ");
