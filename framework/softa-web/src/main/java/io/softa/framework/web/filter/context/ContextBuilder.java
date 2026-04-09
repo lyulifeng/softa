@@ -23,14 +23,11 @@ import io.softa.framework.web.utils.CookieUtils;
 @Component
 public class ContextBuilder {
 
-    private final CacheService cacheService;
-    private final List<ContextEnricher> contextEnrichers;
+    @Autowired
+    private CacheService cacheService;
 
-    public ContextBuilder(CacheService cacheService,
-                          @Autowired(required = false) List<ContextEnricher> contextEnrichers) {
-        this.cacheService = cacheService;
-        this.contextEnrichers = contextEnrichers != null ? contextEnrichers : List.of();
-    }
+    @Autowired(required = false)
+    private List<ContextEnricher> contextEnrichers;
 
     /**
      * Get UserInfo from the request based on session ID in cookies or headers.
@@ -87,8 +84,18 @@ public class ContextBuilder {
             this.setMultiTenancyEnv(context, userInfo);
         }
         context.setCorrelationId(request.getHeader(BaseConstant.X_CORRELATION_ID));
+        // HTTP requests for users are never allowed to use cross-tenant mode
+        context.setCrossTenant(false);
         this.setDebugModeFromRequest(request, context);
         // Allow business modules to enrich the context (e.g., EmpInfo, PermissionInfo)
+        this.enrichContext(context);
+        return context;
+    }
+
+    private void enrichContext(Context context) {
+        if (contextEnrichers == null || contextEnrichers.isEmpty()) {
+            return;
+        }
         for (ContextEnricher enricher : contextEnrichers) {
             try {
                 enricher.enrich(context);
@@ -97,7 +104,6 @@ public class ContextBuilder {
                         enricher.getClass().getSimpleName(), context.getUserId(), e.getMessage());
             }
         }
-        return context;
     }
 
     /**
@@ -115,6 +121,8 @@ public class ContextBuilder {
             context.setTimezone(Timezone.of(timezone));
         }
         this.setDebugModeFromRequest(request, context);
+        // HTTP requests for non-login users are set to use cross-tenant mode
+        context.setCrossTenant(true);
         return context;
     }
 
@@ -165,8 +173,12 @@ public class ContextBuilder {
      * @param userInfo the user info
      */
     private void setMultiTenancyEnv(Context context, UserInfo userInfo) {
-        Assert.notNull(userInfo.getTenantId(), "User tenantId cannot be null in multi-tenancy mode.");
-        context.setTenantId(userInfo.getTenantId());
+        Long tenantId = userInfo.getTenantId();
+        Assert.notNull(tenantId, "User tenantId cannot be null in multi-tenancy mode.");
+//        TenantInfo tenantInfo = tenantInfoService.getTenantInfo(tenantId);
+//        Assert.notNull(tenantInfo, "Tenant info not found for tenantId: {0}", tenantId);
+//        Assert.isEqual(TenantStatus.ACTIVE, tenantInfo.getStatus(), "Tenant with tenantId {0} is not active", tenantId);
+        context.setTenantId(tenantId);
     }
 
 }

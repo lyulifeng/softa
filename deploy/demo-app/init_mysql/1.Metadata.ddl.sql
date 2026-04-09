@@ -421,6 +421,29 @@ CREATE TABLE flow_node(
     PRIMARY KEY (id)
 ) ENGINE=InnoDB AUTO_INCREMENT=1 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT = 'Flow Node';
 
+CREATE TABLE sys_cron(
+    id BIGINT(32) NOT NULL AUTO_INCREMENT  COMMENT 'ID' ,
+    name VARCHAR(64)   DEFAULT '' COMMENT 'Cron Job Name' ,
+    cron_expression VARCHAR(64)   DEFAULT '' COMMENT 'Cron Expression;Use Quartz seven-field format with seconds and years.' ,
+    cron_semantic VARCHAR(64)   DEFAULT '' COMMENT 'Semantic Description' ,
+    limit_execution TINYINT(1)    COMMENT 'Limit the Execution Times' ,
+    remaining_count TINYINT(4)   DEFAULT -1 COMMENT 'Remaining Execution Times;Subtract 1 after each execution. If the value is less than 1, no more execution is performed. Clear the next execution time and set Enable to false.' ,
+    next_exec_time DATETIME    COMMENT 'Next Execution Time;Recalculated and updated after each successful execution. Allows rollback compensation runs.' ,
+    last_exec_time DATETIME    COMMENT 'Last Execution Time;Records the execution start time after each successful execution and allows rollback compensation for changed data.' ,
+    redo_misfire TINYINT(1)   DEFAULT 0 COMMENT 'Redo Missed Task;No compensation by default. When true, compensate immediately only once.' ,
+    priority TINYINT(4)   DEFAULT 1 COMMENT 'Priority;Smaller numbers indicate higher priority, from 0 to 10' ,
+    description VARCHAR(256)   DEFAULT '' COMMENT 'Description' ,
+    tenant_job_mode VARCHAR(64)    COMMENT 'Tenant job execution mode: PER_TENANT or CROSS_TENANT' ,
+    created_time DATETIME    COMMENT 'Created Time' ,
+    created_id BIGINT(32)    COMMENT 'Created ID' ,
+    created_by VARCHAR(32)    COMMENT 'Created By' ,
+    updated_time DATETIME    COMMENT 'Updated Time' ,
+    updated_id BIGINT(32)    COMMENT 'Updated ID' ,
+    updated_by VARCHAR(32)    COMMENT 'Updated By' ,
+    active TINYINT(1)   DEFAULT 1 COMMENT 'Active' ,
+    PRIMARY KEY (id)
+) ENGINE=InnoDB AUTO_INCREMENT=1 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT = 'System Cron;Carries the task ownership time during execution and supports automatic compensation for missed tasks.';
+
 CREATE TABLE flow_trigger(
     id BIGINT(32) NOT NULL   COMMENT 'ID' ,
     name VARCHAR(64)   DEFAULT '' COMMENT 'Trigger Name' ,
@@ -1351,20 +1374,20 @@ CREATE TABLE payment_record(
     PRIMARY KEY (id)
 ) ENGINE=InnoDB AUTO_INCREMENT=1 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT = 'Payment Record';
 
-CREATE TABLE tenant(
+CREATE TABLE tenant_info(
     id BIGINT(32) NOT NULL   COMMENT 'ID' ,
     name VARCHAR(64)    COMMENT 'Name' ,
     code VARCHAR(64)    COMMENT 'Code' ,
     status VARCHAR(64)    COMMENT 'Status' ,
-    lifecycle_stage VARCHAR(64)    COMMENT 'Lifecycle Stage' ,
+    lifecycle VARCHAR(64)    COMMENT 'Lifecycle Stage' ,
     activated_time DATETIME    COMMENT 'Activated Time' ,
     suspended_time DATETIME    COMMENT 'Suspended Time' ,
     closed_time DATETIME    COMMENT 'Closed Time' ,
-    default_locale VARCHAR(32)    COMMENT 'Default Locale' ,
-    default_timezone VARCHAR(32)    COMMENT 'Default Timezone' ,
-    default_currency VARCHAR(32)    COMMENT 'Default Currency' ,
-    default_country VARCHAR(32)    COMMENT 'Default Country' ,
-    data_region VARCHAR(32)    COMMENT 'Data Region' ,
+    default_language VARCHAR(64)    COMMENT 'Default Language' ,
+    default_timezone VARCHAR(64)    COMMENT 'Default Timezone' ,
+    default_currency VARCHAR(64)    COMMENT 'Default Currency' ,
+    default_country BIGINT(32)    COMMENT 'Default Country' ,
+    data_region VARCHAR(64)    COMMENT 'Data Region' ,
     plan_id BIGINT(32)    COMMENT 'Plan ID' ,
     subscription_id BIGINT(32)    COMMENT 'Subscription ID' ,
     created_id BIGINT(32)    COMMENT 'Created ID' ,
@@ -1375,7 +1398,7 @@ CREATE TABLE tenant(
     updated_by VARCHAR(64)    COMMENT 'Updated By' ,
     deleted TINYINT(1)   DEFAULT 0 COMMENT 'Deleted' ,
     PRIMARY KEY (id)
-) ENGINE=InnoDB AUTO_INCREMENT=1 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT = 'Tenant';
+) ENGINE=InnoDB AUTO_INCREMENT=1 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT = 'Tenant Info';
 
 CREATE TABLE tenant_option_set(
     id BIGINT(32) NOT NULL   COMMENT 'ID' ,

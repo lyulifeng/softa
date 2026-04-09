@@ -50,6 +50,13 @@ public class Context implements Serializable {
     private boolean skipAutoAudit = false;
 
     /**
+     * Whether to skip tenant isolation.
+     * When true, ORM treats all models as non-multi-tenant:
+     * no tenant_id filtering on reads, no auto-fill on writes.
+     */
+    private boolean crossTenant = false;
+
+    /**
      * Whether to mask field value which maskingType is not null
      */
     private boolean dataMask = false;
@@ -84,7 +91,7 @@ public class Context implements Serializable {
      * @param traceId passed by the client or upstream system
      */
     public Context(String traceId) {
-        this.traceId = StringUtils.isNotBlank(traceId) ? UUID.randomUUID().toString() : traceId;
+        this.traceId = StringUtils.isBlank(traceId) ? UUID.randomUUID().toString() : traceId;
     }
 
     public void setEffectiveDate(LocalDate effectiveDate) {
@@ -116,6 +123,7 @@ public class Context implements Serializable {
         newContext.setUserInfo(this.userInfo);
         newContext.setEmpInfo(this.empInfo);
         newContext.setSkipAutoAudit(this.skipAutoAudit);
+        newContext.setCrossTenant(this.crossTenant);
         newContext.setDataMask(this.dataMask);
         newContext.setTriggerFlow(this.triggerFlow);
         newContext.setDebug(this.debug);
