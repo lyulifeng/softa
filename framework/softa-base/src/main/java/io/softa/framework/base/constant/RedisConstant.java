@@ -20,7 +20,8 @@ public interface RedisConstant {
     String EMP_INFO = "emp-info:";
     String PERMISSION_INFO =  "permission-info:";
     String VERIFICATION_CODE =  "verification-code:";
-
+    String TENANT_IDS =  "tenant:id-list";
+    String TENANT_INFO =  "tenant-info:";
 
     String TEMP_TOKEN = "temp-token:";
     String ONE_TIME_KEY = "one-time-key:";

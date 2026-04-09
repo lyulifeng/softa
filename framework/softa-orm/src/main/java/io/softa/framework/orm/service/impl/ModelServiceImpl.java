@@ -58,7 +58,7 @@ public class ModelServiceImpl<K extends Serializable> implements ModelService<K>
     private TimelineService timelineService;
 
     private void checkTenantId(String modelName, List<Map<String, Object>> rows) {
-        if (ModelManager.isMultiTenant(modelName)) {
+        if (ModelManager.isMultiTenantControl(modelName)) {
             rows.forEach(row -> {
                 if (row.containsKey(ModelConstant.TENANT_ID)) {
                     Long tenantId = (Long) row.get(ModelConstant.TENANT_ID);

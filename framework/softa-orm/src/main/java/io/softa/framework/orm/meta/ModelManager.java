@@ -11,6 +11,7 @@ import org.springframework.util.CollectionUtils;
 
 import io.softa.framework.base.config.SystemConfig;
 import io.softa.framework.base.constant.BaseConstant;
+import io.softa.framework.base.context.ContextHolder;
 import io.softa.framework.base.exception.IllegalArgumentException;
 import io.softa.framework.base.exception.ValidationException;
 import io.softa.framework.base.utils.Assert;
@@ -1009,8 +1010,31 @@ public class ModelManager {
      * @param modelName model name
      * @return true or false
      */
-    public static boolean isMultiTenant(String modelName) {
-        return SystemConfig.env.isEnableMultiTenancy() && ModelManager.getModel(modelName).isMultiTenant();
+    public static boolean isMultiTenantModel(String modelName) {
+        return SystemConfig.env.isEnableMultiTenancy()
+                && ModelManager.getModel(modelName).isMultiTenant();
+    }
+
+    /**
+     * Determine whether the model data needs to be isolated by tenantId.
+     *
+     * @param modelName model name
+     * @return true or false
+     */
+    public static boolean isMultiTenantControl(String modelName) {
+        return SystemConfig.env.isEnableMultiTenancy()
+                && ModelManager.getModel(modelName).isMultiTenant()
+                && !ContextHolder.getContext().isCrossTenant();
+    }
+
+    /**
+     * Determine whether the model data needs to be isolated by tenantId.
+     *
+     * @return true or false
+     */
+    public static boolean isMultiTenantControl() {
+        return SystemConfig.env.isEnableMultiTenancy()
+                && !ContextHolder.getContext().isCrossTenant();
     }
 
     /**
