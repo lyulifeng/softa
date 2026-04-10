@@ -11,6 +11,7 @@ import io.softa.framework.base.config.SystemConfig;
 import io.softa.framework.base.constant.BaseConstant;
 import io.softa.framework.base.constant.RedisConstant;
 import io.softa.framework.base.context.Context;
+import io.softa.framework.base.context.ContextHolder;
 import io.softa.framework.base.context.UserInfo;
 import io.softa.framework.base.enums.Language;
 import io.softa.framework.base.enums.Timezone;
@@ -88,7 +89,9 @@ public class ContextBuilder {
         context.setCrossTenant(false);
         this.setDebugModeFromRequest(request, context);
         // Allow business modules to enrich the context (e.g., EmpInfo, PermissionInfo)
-        this.enrichContext(context);
+        // Bind the just-built context before enrichers run; enrichers may execute ORM queries
+        // that rely on ContextHolder for tenant filtering.
+        ContextHolder.runWith(context, () -> this.enrichContext(context));
         return context;
     }
 
