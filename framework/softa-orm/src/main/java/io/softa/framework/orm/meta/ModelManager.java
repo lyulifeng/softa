@@ -700,6 +700,19 @@ public class ModelManager {
     }
 
     /**
+     * Get the MetaField name String collection of the model.
+     *
+     * @param modelName model name
+     * @return MetaField name String collection
+     */
+    public static List<String> getModelFieldNames(String modelName) {
+        return getModelFields(modelName)
+                .stream()
+                .map(MetaField::getFieldName)
+                .collect(Collectors.toList());
+    }
+
+    /**
      * Get the copyable fields of the specified model.
      *
      * @param modelName model name
