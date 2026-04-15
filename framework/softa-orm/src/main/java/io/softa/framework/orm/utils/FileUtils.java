@@ -1,9 +1,8 @@
 package io.softa.framework.orm.utils;
 
-import java.io.BufferedReader;
+import java.io.ByteArrayInputStream;
 import java.io.IOException;
 import java.io.InputStream;
-import java.io.InputStreamReader;
 import java.nio.charset.StandardCharsets;
 import java.util.Optional;
 import lombok.extern.slf4j.Slf4j;
@@ -60,12 +59,13 @@ public class FileUtils {
         Assert.isTrue(resource.exists(), "File does not exist: {0}", fullName);
         FileObject fileObject = new FileObject();
         try (InputStream inputStream = resource.getInputStream()) {
-            FileType actualFileType = getActualFileType(fullName, inputStream);
+            byte[] fileBytes = FileCopyUtils.copyToByteArray(inputStream);
+            FileType actualFileType = getActualFileType(fullName, new ByteArrayInputStream(fileBytes));
             FileType seemingFileType = getFileTypeByExtension(fullName);
             validateFileType(fullName, actualFileType, seemingFileType);
             fileObject.setFileName(fileName);
             fileObject.setFileType(actualFileType);
-            String content = FileCopyUtils.copyToString(new BufferedReader(new InputStreamReader(inputStream, StandardCharsets.UTF_8)));
+            String content = new String(fileBytes, StandardCharsets.UTF_8);
             fileObject.setContent(content);
         } catch (IOException e) {
             throw new IllegalArgumentException("Failed to read the content of file: {0}", fullName, e);
@@ -83,13 +83,14 @@ public class FileUtils {
         FileObject fileObject = new FileObject();
         String fileName = file.getOriginalFilename();
         try (InputStream inputStream = file.getInputStream()) {
-            FileType actualFileType = getActualFileType(fileName, inputStream);
+            byte[] fileBytes = FileCopyUtils.copyToByteArray(inputStream);
+            FileType actualFileType = getActualFileType(fileName, new ByteArrayInputStream(fileBytes));
             FileType seemingFileType = FileType.of(file.getContentType()).orElseThrow(() -> new BusinessException(
                     "The file {0} is not supported. Its content type is: {1}.", fileName, file.getContentType()));
             validateFileType(fileName, actualFileType, seemingFileType);
             fileObject.setFileName(fileName);
             fileObject.setFileType(actualFileType);
-            String content = FileCopyUtils.copyToString(new BufferedReader(new InputStreamReader(inputStream, StandardCharsets.UTF_8)));
+            String content = new String(fileBytes, StandardCharsets.UTF_8);
             fileObject.setContent(content);
             return fileObject;
         } catch (IOException e) {
@@ -123,7 +124,8 @@ public class FileUtils {
     public static FileType getActualFileType(MultipartFile file) {
         String fileName = file.getOriginalFilename();
         try (InputStream inputStream = file.getInputStream()) {
-            FileType actualFileType = getActualFileType(fileName, inputStream);
+            byte[] fileBytes = FileCopyUtils.copyToByteArray(inputStream);
+            FileType actualFileType = getActualFileType(fileName, new ByteArrayInputStream(fileBytes));
             FileType seemingFileType = FileType.of(file.getContentType()).orElseThrow(() -> new BusinessException(
                     "The file {0} is not supported. Its content type is: {1}.", fileName, file.getContentType()));
             validateFileType(fileName, actualFileType, seemingFileType);
