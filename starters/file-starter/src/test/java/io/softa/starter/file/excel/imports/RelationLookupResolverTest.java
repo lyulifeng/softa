@@ -106,6 +106,45 @@ class RelationLookupResolverTest {
 
     @Test
     @SuppressWarnings("unchecked")
+    void resolveRowsToManyByNameWritesBackIdList() {
+        RelationLookupResolver resolver = createResolver();
+        var group = new RelationLookupResolver.LookupGroup(
+                "roleIds", "Role", List.of("name"), List.of("roleIds.name"), true, true);
+        Map<String, Object> row = new LinkedHashMap<>(Map.of("roleIds.name", "Admin,User"));
+
+        ModelService<Long> typedService = (ModelService<Long>) getModelService(resolver);
+        when(typedService.getIdsByBusinessKeys(eq("Role"), eq(List.of("name")), anyCollection()))
+                .thenReturn(Map.of(List.of("Admin"), 21L, List.of("User"), 22L));
+
+        resolver.resolveRows(new ArrayList<>(List.of(row)), List.of(group), true);
+
+        assertEquals(List.of(21L, 22L), row.get("roleIds"));
+        assertFalse(row.containsKey("roleIds.name"));
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void resolveRowsToManyByCompositeBusinessKeysWritesBackIdList() {
+        RelationLookupResolver resolver = createResolver();
+        var group = new RelationLookupResolver.LookupGroup(
+                "roleIds", "Role", List.of("code", "name"), List.of("roleIds.code", "roleIds.name"), true, true);
+        Map<String, Object> row = new LinkedHashMap<>();
+        row.put("roleIds.code", "ADMIN,USER");
+        row.put("roleIds.name", "Admin,User");
+
+        ModelService<Long> typedService = (ModelService<Long>) getModelService(resolver);
+        when(typedService.getIdsByBusinessKeys(eq("Role"), eq(List.of("code", "name")), anyCollection()))
+                .thenReturn(Map.of(List.of("ADMIN", "Admin"), 31L, List.of("USER", "User"), 32L));
+
+        resolver.resolveRows(new ArrayList<>(List.of(row)), List.of(group), true);
+
+        assertEquals(List.of(31L, 32L), row.get("roleIds"));
+        assertFalse(row.containsKey("roleIds.code"));
+        assertFalse(row.containsKey("roleIds.name"));
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
     void resolveRowsToManyMarksFailedWhenCodeNotFound() {
         RelationLookupResolver resolver = createResolver();
         var group = new RelationLookupResolver.LookupGroup(
@@ -135,6 +174,20 @@ class RelationLookupResolverTest {
 
         assertEquals(Collections.emptyList(), row.get("roleIds"));
         assertFalse(row.containsKey("roleIds.code"));
+    }
+
+    @Test
+    void resolveRowsToManyIgnoreEmptyFalseWithNameWritesEmptyList() {
+        RelationLookupResolver resolver = createResolver();
+        var group = new RelationLookupResolver.LookupGroup(
+                "roleIds", "Role", List.of("name"), List.of("roleIds.name"), false, true);
+        Map<String, Object> row = new LinkedHashMap<>();
+        row.put("roleIds.name", "");
+
+        resolver.resolveRows(new ArrayList<>(List.of(row)), List.of(group), true);
+
+        assertEquals(Collections.emptyList(), row.get("roleIds"));
+        assertFalse(row.containsKey("roleIds.name"));
     }
 
     private RelationLookupResolver createResolver() {
