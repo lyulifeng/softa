@@ -44,7 +44,7 @@ public class ImportRowPipeline {
      */
     public void importData(ImportTemplateDTO importTemplateDTO, ImportDataDTO importDataDTO) {
         processRows(importTemplateDTO, importDataDTO);
-        importPersistenceService.persist(importTemplateDTO, importDataDTO.getRows());
+        importPersistenceService.persist(importTemplateDTO, importDataDTO);
     }
 
     /**

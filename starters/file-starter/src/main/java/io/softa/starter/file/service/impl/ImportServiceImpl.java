@@ -285,6 +285,7 @@ public class ImportServiceImpl implements ImportService {
         try {
             ImportDataDTO importDataDTO = this.generateImportDataDTO(importTemplateDTO, inputStream);
             importRowPipeline.importData(importTemplateDTO, importDataDTO);
+            updateImportStatistics(importHistory, importDataDTO);
             if (!CollectionUtils.isEmpty(importDataDTO.getFailedRows())) {
                 Long failedFileId = this.generateFailedExcel(importTemplateDTO.getFileName(), importTemplateDTO, importDataDTO);
                 importHistory.setFailedFileId(failedFileId);
@@ -304,6 +305,14 @@ public class ImportServiceImpl implements ImportService {
             importHistory.setDuration(DateUtils.elapsedSeconds(startNanos));
             this.updateImportHistory(importHistory, importException);
         }
+    }
+
+    private void updateImportStatistics(ImportHistory importHistory, ImportDataDTO importDataDTO) {
+        int failedCount = importDataDTO.getFailedRows() != null ? importDataDTO.getFailedRows().size() : 0;
+        int successCount = importDataDTO.getRows() != null ? importDataDTO.getRows().size() : 0;
+        importHistory.setTotalRows(successCount + failedCount);
+        importHistory.setFailedRows(failedCount);
+        importHistory.setSuccessRows(successCount);
     }
 
     /**
@@ -509,7 +518,7 @@ public class ImportServiceImpl implements ImportService {
         importFieldDTO.setIgnoreEmpty(importTemplateDTO.getIgnoreEmpty());
         importFieldDTO.setDescription(importTemplateField.getDescription());
         // Get the metaField object of the last field in cascading `fieldName`.
-        MetaField lastField = ModelManager.getLastFieldOfCascaded(importTemplateDTO.getModelName(), importTemplateField.getFieldName());
+        MetaField lastField = resolveLastImportField(importTemplateDTO.getModelName(), importTemplateField.getFieldName());
         // Set the default value of the imported field
         if (StringUtils.isNotBlank(importTemplateField.getDefaultValue())) {
             Object defaultValue = this.getDefaultValue(lastField.getFieldType(), importTemplateField.getDefaultValue(), importTemplateDTO.getEnv());
@@ -522,6 +531,37 @@ public class ImportServiceImpl implements ImportService {
             importFieldDTO.setHeader(lastField.getLabelName());
         }
         return importFieldDTO;
+    }
+
+    /**
+     * Resolve the last field for import template field names.
+     *
+     * <p>Unlike generic cascaded-field resolution, import lookup supports to-many relation roots
+     * such as {@code roleIds.code} and {@code additionalProjectTeamIds.code}.
+     */
+    private MetaField resolveLastImportField(String modelName, String fullFieldName) {
+        String[] fieldsArray = StringUtils.split(fullFieldName, ".");
+        Assert.isTrue(fieldsArray != null && fieldsArray.length > 0,
+                "Import field `{0}` cannot be empty.", fullFieldName);
+
+        MetaField metaField = null;
+        for (int i = 0; i < fieldsArray.length; i++) {
+            metaField = ModelManager.getModelField(modelName, fieldsArray[i]);
+            if (i < fieldsArray.length - 1) {
+                Assert.isTrue(FieldType.RELATED_TYPES.contains(metaField.getFieldType()),
+                        "The field {0} in import lookup field {1} must be relation field!",
+                        metaField.getFieldName(), fullFieldName);
+                Assert.notBlank(metaField.getRelatedModel(),
+                        "The field {0} in import lookup field {1} has no related model configured!",
+                        metaField.getFieldName(), fullFieldName);
+                modelName = metaField.getRelatedModel();
+            } else {
+                Assert.notTrue(metaField.isDynamic(),
+                        "The last field {0} in import field {1} must be a stored field in model {2}!",
+                        metaField.getFieldName(), fullFieldName, metaField.getModelName());
+            }
+        }
+        return metaField;
     }
 
     /**
