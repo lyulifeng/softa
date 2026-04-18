@@ -1,6 +1,5 @@
 package io.softa.framework.orm.utils;
 
-import java.io.BufferedInputStream;
 import java.io.IOException;
 import java.net.HttpURLConnection;
 import java.net.MalformedURLException;
@@ -13,10 +12,9 @@ import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.io.FilenameUtils;
 import org.apache.commons.lang3.StringUtils;
 
-import io.softa.framework.base.constant.BaseConstant;
 import io.softa.framework.base.exception.BusinessException;
+import io.softa.framework.orm.domain.FileStream;
 import io.softa.framework.orm.dto.DownloadFileDTO;
-import io.softa.framework.orm.enums.FileType;
 
 /**
  * HTTP download utility class
@@ -52,7 +50,7 @@ public class HttpDownloadUtils {
 
         HttpURLConnection connection = null;
         // Create BufferedInputStream, automatically supports mark/reset
-        BufferedInputStream bufferedInputStream = null;
+        FileStream fileStream = null;
 
         try {
             // Create HTTP connection
@@ -60,44 +58,20 @@ public class HttpDownloadUtils {
 
             // Validate response status
             validateResponse(connection, url);
+
             // Get file name
             String fileName = extractFileName(url, connection);
 
-            // 1. Create BufferedInputStream, automatically supports mark/reset
-            bufferedInputStream = new BufferedInputStream(connection.getInputStream(), BUFFER_SIZE);
+            // Detect file type by reading the stream (after mark)
+            fileStream = FileUtils.getFileStream(fileName, connection.getInputStream());;
 
-            // 2. Get the actual file size (calculated by reading the stream, not dependent on Content-Length)
-            int actualFileSize = calculateActualFileSize(bufferedInputStream);
+            return new DownloadFileDTO(fileStream, connection);
 
-            // 3. Mark the current position for reset
-            bufferedInputStream.mark(BUFFER_SIZE);
-
-            // 4. Detect the actual type of the file (not dependent on HTTP headers)
-            FileType fileType = FileUtils.getActualFileType(fileName, bufferedInputStream);
-
-            // 5. Reset the stream to the marked position
-            bufferedInputStream.reset();
-
-            return new DownloadFileDTO(bufferedInputStream, fileName, fileType, actualFileSize, connection);
-
-        } catch (BusinessException e) {
+        } catch (BusinessException | IOException e) {
             // Business exception directly thrown
-            if (bufferedInputStream != null) {
+            if (fileStream != null && fileStream.getInputStream() != null) {
                 try {
-                    bufferedInputStream.close();
-                } catch (IOException ex) {
-                    log.warn("Failed to close input stream", ex);
-                }
-            }
-            if (connection != null) {
-                connection.disconnect();
-            }
-            throw e;
-        } catch (IOException e) {
-            // IO exception wrapped as business exception
-            if (bufferedInputStream != null) {
-                try {
-                    bufferedInputStream.close();
+                    fileStream.getInputStream().close();
                 } catch (IOException ex) {
                     log.warn("Failed to close input stream", ex);
                 }
@@ -107,37 +81,6 @@ public class HttpDownloadUtils {
             }
             throw new BusinessException("Failed to download file from URL: {0}", e.getMessage(), e);
         }
-    }
-
-    /**
-     * Calculate the actual size of the file
-     *
-     * @param bufferedInputStream input stream
-     * @return file size (KB)
-     * @throws IOException IO exception
-     */
-    private static int calculateActualFileSize(BufferedInputStream bufferedInputStream) throws IOException {
-        long totalBytes = 0;
-        byte[] buffer = new byte[64 * 1024];
-        int bytesRead;
-        // Mark the current position for reset
-        bufferedInputStream.mark(BUFFER_SIZE);
-        while ((bytesRead = bufferedInputStream.read(buffer)) != -1) {
-            totalBytes += bytesRead;
-            // Check if the file size exceeds the limit
-            if (totalBytes > BaseConstant.DEFAULT_FILE_SIZE_LIMIT) {
-                throw new BusinessException("File size exceeds the limit: {0} bytes, maximum allowed: {1} bytes",
-                        totalBytes, BaseConstant.DEFAULT_FILE_SIZE_LIMIT);
-            }
-        }
-        // Reset the stream to the marked position
-        bufferedInputStream.reset();
-        // Convert to KB
-        int fileSizeKB = (int) (totalBytes / 1024);
-        if (totalBytes % 1024 > 0) {
-            fileSizeKB++; // Round up
-        }
-        return fileSizeKB;
     }
 
     /**

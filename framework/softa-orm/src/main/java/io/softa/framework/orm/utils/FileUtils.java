@@ -1,6 +1,6 @@
 package io.softa.framework.orm.utils;
 
-import java.io.ByteArrayInputStream;
+import java.io.BufferedInputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
@@ -10,14 +10,15 @@ import org.apache.commons.io.FilenameUtils;
 import org.apache.tika.Tika;
 import org.apache.tika.metadata.Metadata;
 import org.springframework.core.io.ClassPathResource;
-import org.springframework.util.FileCopyUtils;
 import org.springframework.web.multipart.MultipartFile;
 
+import io.softa.framework.base.constant.BaseConstant;
 import io.softa.framework.base.exception.BusinessException;
 import io.softa.framework.base.exception.IllegalArgumentException;
 import io.softa.framework.base.utils.Assert;
 import io.softa.framework.base.utils.AssertBusiness;
 import io.softa.framework.orm.domain.FileObject;
+import io.softa.framework.orm.domain.FileStream;
 import io.softa.framework.orm.enums.FileType;
 
 /**
@@ -25,6 +26,10 @@ import io.softa.framework.orm.enums.FileType;
  */
 @Slf4j
 public class FileUtils {
+
+    /** BufferedInputStream buffer size: 64KB, enough for file type detection */
+    private static final int BUFFER_SIZE = 64 * 1024;
+    public static final long MAX_FILE_SIZE = 100 * 1024 * 1024;
 
     /**
      * Gets the extension of a file.
@@ -59,14 +64,12 @@ public class FileUtils {
         Assert.isTrue(resource.exists(), "File does not exist: {0}", fullName);
         FileObject fileObject = new FileObject();
         try (InputStream inputStream = resource.getInputStream()) {
-            byte[] fileBytes = FileCopyUtils.copyToByteArray(inputStream);
-            FileType actualFileType = getActualFileType(fullName, new ByteArrayInputStream(fileBytes));
             FileType seemingFileType = getFileTypeByExtension(fullName);
+            FileType actualFileType = getActualFileType(fullName, inputStream, seemingFileType);
             validateFileType(fullName, actualFileType, seemingFileType);
-            fileObject.setFileName(fileName);
             fileObject.setFileType(actualFileType);
-            String content = new String(fileBytes, StandardCharsets.UTF_8);
-            fileObject.setContent(content);
+            fileObject.setFileName(fileName);
+            fileObject.setContent(resource.getContentAsString(StandardCharsets.UTF_8));
         } catch (IOException e) {
             throw new IllegalArgumentException("Failed to read the content of file: {0}", fullName, e);
         }
@@ -80,17 +83,14 @@ public class FileUtils {
      * @return The fileObject object
      */
     public static FileObject getFileObject(MultipartFile file) {
+        if (file.getSize() > MAX_FILE_SIZE) {
+            throw new BusinessException("File too large: {0} bytes", file.getSize());
+        }
         FileObject fileObject = new FileObject();
-        String fileName = file.getOriginalFilename();
-        try (InputStream inputStream = file.getInputStream()) {
-            byte[] fileBytes = FileCopyUtils.copyToByteArray(inputStream);
-            FileType actualFileType = getActualFileType(fileName, new ByteArrayInputStream(fileBytes));
-            FileType seemingFileType = FileType.of(file.getContentType()).orElseThrow(() -> new BusinessException(
-                    "The file {0} is not supported. Its content type is: {1}.", fileName, file.getContentType()));
-            validateFileType(fileName, actualFileType, seemingFileType);
-            fileObject.setFileName(fileName);
-            fileObject.setFileType(actualFileType);
-            String content = new String(fileBytes, StandardCharsets.UTF_8);
+        fileObject.setFileName(file.getOriginalFilename());
+        fileObject.setFileType(getActualFileType(file));
+        try {
+            String content = new String(file.getBytes(), StandardCharsets.UTF_8);
             fileObject.setContent(content);
             return fileObject;
         } catch (IOException e) {
@@ -124,11 +124,9 @@ public class FileUtils {
     public static FileType getActualFileType(MultipartFile file) {
         String fileName = file.getOriginalFilename();
         try (InputStream inputStream = file.getInputStream()) {
-            FileType actualFileType = getActualFileType(fileName, inputStream);
             FileType seemingFileType = FileType.of(file.getContentType()).orElseThrow(() -> new BusinessException(
                     "The file {0} is not supported. Its content type is: {1}.", fileName, file.getContentType()));
-            validateFileType(fileName, actualFileType, seemingFileType);
-            return actualFileType;
+            return getActualFileType(fileName, inputStream, seemingFileType);
         } catch (IOException e) {
             throw new BusinessException("Failed to read the uploaded file!", e);
         }
@@ -140,18 +138,53 @@ public class FileUtils {
      * @param fileName fileName, using relative paths
      * @return The actual fileType
      */
-    public static FileType getActualFileType(String fileName, InputStream fileStream) {
+    private static FileType getActualFileType(String fileName, InputStream inputStream, FileType seemingFileType) {
         try {
             Metadata fileMetadata = new Metadata();
             fileMetadata.set("resourceName", fileName);
-            String mimetype = new Tika().detect(fileStream, fileMetadata);
-            return FileType.of(mimetype)
+            if (inputStream.markSupported()) {
+                inputStream.mark(BUFFER_SIZE);
+            }
+            String mimetype = new Tika().detect(inputStream, fileMetadata);
+            if (inputStream.markSupported()) {
+                inputStream.reset();
+            }
+            FileType actualFileType = FileType.of(mimetype)
                     .orElseThrow(() -> new BusinessException(
                             "The file {0} is not supported. Its actual file type (MimeType) is: {1}.",
                             fileName, mimetype));
+            if (seemingFileType != null) {
+                validateFileType(fileName, actualFileType, seemingFileType);
+            }
+            return actualFileType;
         } catch (Throwable e) {
             throw new BusinessException("Failed to read the uploaded file!", e);
         }
+    }
+
+    /**
+     * Gets the actual fileType of the uploaded file.
+     *
+     * @param fileName fileName, using relative paths
+     * @return The actual fileType
+     */
+    public static FileStream getFileStream(String fileName, InputStream inputStream) {
+        // 1. Create BufferedInputStream, automatically supports mark/reset
+        BufferedInputStream bufferedInputStream = new BufferedInputStream(inputStream, BUFFER_SIZE);
+
+        // 2. Detect the actual type of the file (not dependent on HTTP headers)
+        FileType actualFileType = getActualFileType(fileName, bufferedInputStream, null);
+
+        // 3. Get the actual file size (calculated by reading the stream, not dependent on Content-Length)
+        int actualFileSize = calculateActualFileSize(fileName, bufferedInputStream);
+
+        // 4. Return the FileStream object with the actual file type and size
+        FileStream fileStream = new FileStream();
+        fileStream.setFileName(fileName);
+        fileStream.setFileType(actualFileType);
+        fileStream.setFileSize(actualFileSize);
+        fileStream.setInputStream(bufferedInputStream);
+        return fileStream;
     }
 
     /**
@@ -175,6 +208,40 @@ public class FileUtils {
         AssertBusiness.isTrue(actualFileType.equals(seemingFileType), """
                 The file {0} with actual type {1} does not match the uploaded file type {2}. Please contact the
                 system administrator if you have any questions.""", fileName, actualFileType, seemingFileType);
+    }
+
+    /**
+     * Calculate the actual size of the file
+     *
+     * @param bufferedInputStream input stream
+     * @return file size (KB)
+     */
+    private static int calculateActualFileSize(String fileName, BufferedInputStream bufferedInputStream) {
+        long totalBytes = 0;
+        byte[] buffer = new byte[64 * 1024];
+        int bytesRead;
+        try {
+            // Mark the current position for reset
+            bufferedInputStream.mark(BUFFER_SIZE);
+            while ((bytesRead = bufferedInputStream.read(buffer)) != -1) {
+                totalBytes += bytesRead;
+                // Check if the file size exceeds the limit
+                if (totalBytes > BaseConstant.DEFAULT_FILE_SIZE_LIMIT) {
+                    throw new BusinessException("File size exceeds the limit: {0} bytes, maximum allowed: {1} bytes",
+                            totalBytes, BaseConstant.DEFAULT_FILE_SIZE_LIMIT);
+                }
+            }
+            // Reset the stream to the marked position
+            bufferedInputStream.reset();
+        } catch (IOException e) {
+            throw new BusinessException("Failed to read the uploaded file: {0}", fileName, e);
+        }
+        // Convert to KB
+        int fileSizeKB = (int) (totalBytes / 1024);
+        if (totalBytes % 1024 > 0) {
+            fileSizeKB++; // Round up
+        }
+        return fileSizeKB;
     }
 
 }
