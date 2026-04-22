@@ -17,6 +17,7 @@ import io.softa.framework.base.exception.IllegalArgumentException;
 import io.softa.framework.base.exception.SystemException;
 import io.softa.framework.base.utils.DateUtils;
 import io.softa.framework.orm.constant.FileConstant;
+import io.softa.framework.orm.domain.FileStream;
 import io.softa.framework.orm.domain.Filters;
 import io.softa.framework.orm.dto.DownloadFileDTO;
 import io.softa.framework.orm.dto.FileInfo;
@@ -219,11 +220,12 @@ public class FileServiceImpl extends EntityServiceImpl<FileRecord, Long> impleme
         DownloadFileDTO downloadResult = null;
         try {
             downloadResult = HttpDownloadUtils.downloadFromUrl(url);
-            String originalFileName = downloadResult.getFileName();
+            FileStream fileStream = downloadResult.getFileStream();
+            String originalFileName = fileStream.getFileName();
             String ossKey = this.generateOssKey(modelName, originalFileName);
             // Upload to OSS
             String checksum;
-            try (InputStream inputStream = downloadResult.getInputStream()) {
+            try (InputStream inputStream = fileStream.getInputStream()) {
                 checksum = ossClientService.uploadStreamToOSS(ossKey, inputStream, originalFileName);
             } catch (IOException e) {
                 throw new SystemException("Failed to upload file {0} from URL {1}.", originalFileName, url, e);
@@ -234,11 +236,11 @@ public class FileServiceImpl extends EntityServiceImpl<FileRecord, Long> impleme
             fileRecord.setRowId(rowId == null ? null : rowId.toString());
             fileRecord.setFieldName(fieldName);
             fileRecord.setFileName(originalFileName);
-            fileRecord.setFileType(downloadResult.getFileType());
+            fileRecord.setFileType(fileStream.getFileType());
             fileRecord.setOssKey(ossKey);
             fileRecord.setSource(FileSource.URL);
             fileRecord.setChecksum(checksum);
-            fileRecord.setFileSize(downloadResult.getFileSize());
+            fileRecord.setFileSize(fileStream.getFileSize());
 
             Long id = this.createOne(fileRecord);
             fileRecord.setId(id);
