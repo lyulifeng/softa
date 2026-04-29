@@ -25,4 +25,9 @@ public interface RedisConstant {
 
     String TEMP_TOKEN = "temp-token:";
     String ONE_TIME_KEY = "one-time-key:";
+
+    /** Sequence configuration cache key prefix; full key: {rootKey}:seq-config:{tenantId}:{code} */
+    String SEQUENCE_CONFIG = "seq-config:";
+    /** Pub/Sub channel for cross-instance sequence cache invalidation. */
+    String SEQUENCE_INVALIDATE_CHANNEL = "seq-invalidate";
 }
