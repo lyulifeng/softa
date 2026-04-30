@@ -3,7 +3,6 @@ package io.softa.framework.orm.sequence;
 import java.util.List;
 
 import io.softa.framework.orm.sequence.exception.SequenceCrossTenantException;
-import io.softa.framework.orm.sequence.exception.SequenceDisabledException;
 import io.softa.framework.orm.sequence.exception.SequenceNotFoundException;
 import io.softa.framework.orm.sequence.exception.SequenceTimeoutException;
 
@@ -37,7 +36,6 @@ public interface SequenceService {
      * @param code business code, e.g. "Employee.code"
      * @return rendered sequence string, e.g. "EMP-00043"
      * @throws SequenceNotFoundException     row missing for the current tenant
-     * @throws SequenceDisabledException     row exists but {@code status != Active}
      * @throws SequenceTimeoutException      row lock wait timed out
      * @throws SequenceCrossTenantException  invoked under a cross-tenant context
      */

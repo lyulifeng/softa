@@ -1,5 +1,8 @@
 package io.softa.starter.metadata.sequence.enums;
 
+import com.fasterxml.jackson.annotation.JsonValue;
+import lombok.Getter;
+
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 
@@ -16,47 +19,39 @@ import java.time.format.DateTimeFormatter;
  *   <li>{@link #MONTHLY} — reset on month boundary; current_key = "yyyy-MM"</li>
  *   <li>{@link #DAILY}   — reset on day boundary; current_key = "yyyy-MM-dd"</li>
  * </ul>
+ *
+ * <p>{@code @JsonValue} on {@link #code} keeps JSON serialization symmetric
+ * with {@link SequenceMode}: API payloads carry the pretty-case label
+ * ({@code "None"} / {@code "Yearly"} / …) and Jackson reverses it back to
+ * the enum constant on deserialization.
  */
+@Getter
 public enum ResetCadence {
 
-    NONE("") {
-        @Override
-        public String computeKey(LocalDateTime time) {
-            return "";
-        }
-    },
+    NONE("None", null),
+    YEARLY("Yearly", DateTimeFormatter.ofPattern("yyyy")),
+    MONTHLY("Monthly", DateTimeFormatter.ofPattern("yyyy-MM")),
+    DAILY("Daily", DateTimeFormatter.ofPattern("yyyy-MM-dd")),
+    ;
 
-    YEARLY("yyyy") {
-        @Override
-        public String computeKey(LocalDateTime time) {
-            return time.format(DateTimeFormatter.ofPattern(pattern));
-        }
-    },
+    @JsonValue
+    private final String code;
 
-    MONTHLY("yyyy-MM") {
-        @Override
-        public String computeKey(LocalDateTime time) {
-            return time.format(DateTimeFormatter.ofPattern(pattern));
-        }
-    },
+    private final DateTimeFormatter formatter;
 
-    DAILY("yyyy-MM-dd") {
-        @Override
-        public String computeKey(LocalDateTime time) {
-            return time.format(DateTimeFormatter.ofPattern(pattern));
-        }
-    };
-
-    protected final String pattern;
-
-    ResetCadence(String pattern) {
-        this.pattern = pattern;
+    ResetCadence(String code, DateTimeFormatter formatter) {
+        this.code = code;
+        this.formatter = formatter;
     }
 
     /**
      * Compute the reset key for the given moment.
      * Used by sequence allocation to compare against {@code last_reset_key}
-     * and by template rendering to source date tokens.
+     * and by template rendering to source date tokens. {@link #NONE} returns
+     * the empty string so the SQL {@code <=>} null-safe comparison treats it
+     * as a stable boundary.
      */
-    public abstract String computeKey(LocalDateTime time);
+    public String computeKey(LocalDateTime time) {
+        return formatter == null ? "" : time.format(formatter);
+    }
 }

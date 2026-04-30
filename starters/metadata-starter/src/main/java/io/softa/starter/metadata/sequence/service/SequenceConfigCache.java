@@ -18,17 +18,18 @@ import org.springframework.stereotype.Component;
  * {@code {rootKey}:seq-config:{tenantId}:{code}}.
  *
  * <p>Cache contents reflect only the <strong>immutable</strong> portion of
- * a sequence row (template / startValue / cadence / mode / status /
- * description). The mutable counter fields ({@code currentValue} /
- * {@code lastResetKey}) are still serialized into the cached object but are
- * <strong>never read from the cache</strong> by the allocation path —
- * those go through the row-locked {@code UPDATE sys_sequence ...
- * LAST_INSERT_ID(...)} every time.
+ * a sequence row (template / startValue / cadence / mode / description).
+ * The mutable counter fields ({@code currentValue} / {@code lastResetKey})
+ * are serialized into the cached object too, but the only consumer —
+ * {@code SequenceServiceImpl.dispatch} — reads them just to drive the
+ * {@code UPDATE sys_sequence ... LAST_INSERT_ID(...)} statement, which
+ * carries authoritative values via the {@code <=>} key comparison anyway.
+ * Read paths that need the live counter ({@code peek}) bypass this cache.
  *
- * <p>{@link SysSequenceServiceImpl} (mutating wrapper) calls
- * {@link #evict(String)} after every successful update, then broadcasts the
- * invalidation to peer instances via Redis Pub/Sub
- * ({@code seq-invalidate} channel).
+ * <p>{@code SysSequenceChangeListener} hooks the framework's
+ * {@code TransactionEvent} (after-commit) and calls {@link #evictExplicit}
+ * for every mutated row, then broadcasts the invalidation to peer
+ * instances via Redis Pub/Sub ({@code seq-invalidate} channel).
  */
 @Component
 @RequiredArgsConstructor

@@ -62,33 +62,33 @@ class SequenceServiceIT {
     @Autowired private PlatformTransactionManager txManager;
 
     private TransactionTemplate tx;
+    private Context baseContext;
 
     @BeforeEach
     void setUp() {
         tx = new TransactionTemplate(txManager);
-        // Establish a tenant context for the test.
-        Context ctx = ContextHolder.getContext().copy();
-        ctx.setTenantId(TENANT_ID);
-        ContextHolder.setContext(ctx);
-
+        baseContext = ContextHolder.getContext().copy();
+        baseContext.setTenantId(TENANT_ID);
         // Reset counters to a known state. Use direct SQL to bypass cache + audit.
-        resetCounter(CODE_NO_GAP, "EMP-{seq:5}", "NO_GAP");
-        resetCounter(CODE_ALLOW_GAP, "AUD-{seq:6}", "ALLOW_GAP");
-        configCache.evict(CODE_NO_GAP);
-        configCache.evict(CODE_ALLOW_GAP);
+        ContextHolder.runWith(baseContext, () -> {
+            resetCounter(CODE_NO_GAP, "EMP-{seq:5}", "NO_GAP");
+            resetCounter(CODE_ALLOW_GAP, "AUD-{seq:6}", "ALLOW_GAP");
+            configCache.evict(CODE_NO_GAP);
+            configCache.evict(CODE_ALLOW_GAP);
+        });
     }
 
     @AfterEach
     void tearDown() {
-        ContextHolder.clearContext();
+        baseContext = null;
     }
 
     // ---------------------------------------------------------------- NO_GAP
 
     @Test
     void noGap_basic_returnsRenderedSequence() {
-        String first = tx.execute(s -> sequenceService.next(CODE_NO_GAP));
-        String second = tx.execute(s -> sequenceService.next(CODE_NO_GAP));
+        String first = ContextHolder.callWith(baseContext, () -> tx.execute(s -> sequenceService.next(CODE_NO_GAP)));
+        String second = ContextHolder.callWith(baseContext, () -> tx.execute(s -> sequenceService.next(CODE_NO_GAP)));
         assertThat(first).isEqualTo("EMP-00001");
         assertThat(second).isEqualTo("EMP-00002");
     }
@@ -96,27 +96,27 @@ class SequenceServiceIT {
     @Test
     void noGap_businessRollback_rollsBackCounter() {
         // Allocate inside a tx that we then mark for rollback.
-        tx.execute(s -> {
+        ContextHolder.callWith(baseContext, () -> tx.execute(s -> {
             String code = sequenceService.next(CODE_NO_GAP);
             assertThat(code).isEqualTo("EMP-00001");
             s.setRollbackOnly();
             return null;
-        });
+        }));
         // Counter must NOT have advanced — next call should produce the same value.
-        String reused = tx.execute(s -> sequenceService.next(CODE_NO_GAP));
+        String reused = ContextHolder.callWith(baseContext, () -> tx.execute(s -> sequenceService.next(CODE_NO_GAP)));
         assertThat(reused).isEqualTo("EMP-00001");
     }
 
     @Test
     void noGap_outsideTransaction_rejected() {
         // MANDATORY propagation requires an outer transaction.
-        assertThatThrownBy(() -> sequenceService.next(CODE_NO_GAP))
+        assertThatThrownBy(() -> ContextHolder.callWith(baseContext, () -> sequenceService.next(CODE_NO_GAP)))
                 .hasMessageContaining("transaction");
     }
 
     @Test
     void nextBatch_singleRowLock_returnsContiguousRange() {
-        List<String> codes = tx.execute(s -> sequenceService.nextBatch(CODE_NO_GAP, 5));
+        List<String> codes = ContextHolder.callWith(baseContext, () -> tx.execute(s -> sequenceService.nextBatch(CODE_NO_GAP, 5)));
         assertThat(codes).containsExactly(
                 "EMP-00001", "EMP-00002", "EMP-00003", "EMP-00004", "EMP-00005");
     }
@@ -126,14 +126,14 @@ class SequenceServiceIT {
     @Test
     void allowGap_businessRollback_leavesCounterAdvanced() {
         // ALLOW_GAP commits the inner tx independently — outer rollback cannot retract it.
-        tx.execute(s -> {
+        ContextHolder.callWith(baseContext, () -> tx.execute(s -> {
             String code = sequenceService.next(CODE_ALLOW_GAP);
             assertThat(code).isEqualTo("AUD-000001");
             s.setRollbackOnly();
             return null;
-        });
+        }));
         // Subsequent allocation must SKIP the rolled-back number, demonstrating the gap.
-        String next = tx.execute(s -> sequenceService.next(CODE_ALLOW_GAP));
+        String next = ContextHolder.callWith(baseContext, () -> tx.execute(s -> sequenceService.next(CODE_ALLOW_GAP)));
         assertThat(next).isEqualTo("AUD-000002");
     }
 
@@ -141,7 +141,7 @@ class SequenceServiceIT {
     void allowGap_outsideTransaction_allowed() {
         // REQUIRES_NEW opens its own tx; calling outside one is permitted (though
         // discouraged in production code where exception handling needs to bubble).
-        String code = sequenceService.next(CODE_ALLOW_GAP);
+        String code = ContextHolder.callWith(baseContext, () -> sequenceService.next(CODE_ALLOW_GAP));
         assertThat(code).isEqualTo("AUD-000001");
     }
 
@@ -149,13 +149,13 @@ class SequenceServiceIT {
 
     @Test
     void cache_isPopulatedOnFirstCallAndReusedOnSecond() {
-        tx.execute(s -> sequenceService.next(CODE_NO_GAP));
+        ContextHolder.callWith(baseContext, () -> tx.execute(s -> sequenceService.next(CODE_NO_GAP)));
         // Mutate template directly in DB without going through the listener path:
         // the cache should still have the OLD template for this case (proves cache hit).
         jdbcProxy.update("SysSequence", new SqlParams(
                 "UPDATE sys_sequence SET template = 'CHEAT-{seq:5}' WHERE tenant_id = " + TENANT_ID
                         + " AND code = '" + CODE_NO_GAP + "'"));
-        String stillUsesCachedTemplate = tx.execute(s -> sequenceService.next(CODE_NO_GAP));
+        String stillUsesCachedTemplate = ContextHolder.callWith(baseContext, () -> tx.execute(s -> sequenceService.next(CODE_NO_GAP)));
         assertThat(stillUsesCachedTemplate).startsWith("EMP-");
     }
 
@@ -163,10 +163,9 @@ class SequenceServiceIT {
 
     @Test
     void crossTenantContext_rejected() {
-        Context cross = ContextHolder.getContext().copy();
+        Context cross = baseContext.copy();
         cross.setCrossTenant(true);
-        ContextHolder.setContext(cross);
-        assertThatThrownBy(() -> tx.execute(s -> sequenceService.next(CODE_NO_GAP)))
+        assertThatThrownBy(() -> ContextHolder.callWith(cross, () -> tx.execute(s -> sequenceService.next(CODE_NO_GAP))))
                 .hasCauseInstanceOf(SequenceCrossTenantException.class);
     }
 

@@ -1,5 +1,9 @@
 package io.softa.starter.metadata.sequence.enums;
 
+import com.fasterxml.jackson.annotation.JsonValue;
+import lombok.AllArgsConstructor;
+import lombok.Getter;
+
 /**
  * Sequence allocation mode. Determines whether the counter UPDATE shares
  * the caller's transaction lifecycle.
@@ -17,7 +21,12 @@ package io.softa.starter.metadata.sequence.enums;
  *       is not required.</li>
  * </ul>
  */
+@Getter
+@AllArgsConstructor
 public enum SequenceMode {
-    NO_GAP,
-    ALLOW_GAP
+    NO_GAP("NoGap"),
+    ALLOW_GAP("AllowGap"),
+    ;
+    @JsonValue
+    private final String mode;
 }

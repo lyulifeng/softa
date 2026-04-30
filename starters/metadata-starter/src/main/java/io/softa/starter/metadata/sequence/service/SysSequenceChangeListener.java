@@ -8,7 +8,6 @@ import io.softa.framework.base.context.ContextHolder;
 import io.softa.framework.orm.changelog.ChangeLogHolder;
 import io.softa.framework.orm.changelog.event.TransactionEvent;
 import io.softa.framework.orm.changelog.message.dto.ChangeLog;
-import io.softa.framework.orm.enums.AccessType;
 import io.softa.starter.metadata.sequence.entity.SysSequence;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -78,17 +77,15 @@ public class SysSequenceChangeListener {
     }
 
     /**
-     * Pull the {@code code} field out of the changelog snapshot.
-     * For CREATE the value lives in {@code dataAfterChange}; for UPDATE/DELETE
-     * the original (pre-change) row carries the most reliable identifier.
+     * Pull the {@code code} field out of the changelog snapshot. Prefers the
+     * pre-change row (stable identifier across UPDATE/DELETE) and falls back
+     * to the post-change row for CREATE. {@code AccessType} import is
+     * deliberately kept off — both branches read the same key, so the
+     * fallback chain is enough.
      */
     private String extractCode(ChangeLog log) {
-        AccessType type = log.getAccessType();
-        Map<String, Object> source = type == AccessType.CREATE
-                ? log.getDataAfterChange()
-                : log.getDataBeforeChange();
+        Map<String, Object> source = log.getDataBeforeChange();
         if (source == null) {
-            // UPDATE may put the new code into dataAfterChange when the field changed.
             source = log.getDataAfterChange();
         }
         Object value = source == null ? null : source.get(FIELD_CODE);

@@ -37,6 +37,11 @@ public class TemplateRenderer {
 
     private static final Pattern TOKEN_PATTERN = Pattern.compile("\\{([a-zA-Z]+)(?::(\\d+))?\\}");
 
+    private static final DateTimeFormatter FMT_YYYY = DateTimeFormatter.ofPattern("yyyy");
+    private static final DateTimeFormatter FMT_YY = DateTimeFormatter.ofPattern("yy");
+    private static final DateTimeFormatter FMT_MM = DateTimeFormatter.ofPattern("MM");
+    private static final DateTimeFormatter FMT_DD = DateTimeFormatter.ofPattern("dd");
+
     public String render(String template, long number, LocalDateTime anchorTime, String code) {
         if (template == null || template.isEmpty()) {
             throw new SequenceTemplateException(code, "Template is empty");
@@ -62,10 +67,10 @@ public class TemplateRenderer {
                 int width = Integer.parseInt(arg);
                 yield String.format("%0" + width + "d", number);
             }
-            case "yyyy" -> t.format(DateTimeFormatter.ofPattern("yyyy"));
-            case "yy"   -> t.format(DateTimeFormatter.ofPattern("yy"));
-            case "MM"   -> t.format(DateTimeFormatter.ofPattern("MM"));
-            case "dd"   -> t.format(DateTimeFormatter.ofPattern("dd"));
+            case "yyyy" -> t.format(FMT_YYYY);
+            case "yy"   -> t.format(FMT_YY);
+            case "MM"   -> t.format(FMT_MM);
+            case "dd"   -> t.format(FMT_DD);
             default -> throw new SequenceTemplateException(code, "Unknown template token: {" + name + "}");
         };
     }

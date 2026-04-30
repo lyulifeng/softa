@@ -12,7 +12,6 @@ import io.softa.framework.orm.jdbc.database.SqlParams;
 import io.softa.framework.orm.sequence.SequencePreview;
 import io.softa.framework.orm.sequence.SequenceService;
 import io.softa.framework.orm.sequence.exception.SequenceCrossTenantException;
-import io.softa.framework.orm.sequence.exception.SequenceDisabledException;
 import io.softa.framework.orm.sequence.exception.SequenceNotFoundException;
 import io.softa.framework.orm.sequence.exception.SequenceTimeoutException;
 import io.softa.starter.metadata.sequence.entity.SysSequence;
@@ -69,7 +68,7 @@ public class SequenceServiceImpl implements SequenceService {
                 ),
                 last_reset_key = ?,
                 updated_time = CURRENT_TIMESTAMP
-            WHERE tenant_id = ? AND code = ? AND status = 'Active'
+            WHERE tenant_id = ? AND code = ?
             """;
 
     private static final String SQL_BATCH = """
@@ -82,7 +81,7 @@ public class SequenceServiceImpl implements SequenceService {
                 ),
                 last_reset_key = ?,
                 updated_time = CURRENT_TIMESTAMP
-            WHERE tenant_id = ? AND code = ? AND status = 'Active'
+            WHERE tenant_id = ? AND code = ?
             """;
 
     private static final String SQL_LAST_INSERT_ID = "SELECT LAST_INSERT_ID()";
@@ -111,16 +110,24 @@ public class SequenceServiceImpl implements SequenceService {
     @Override
     public SequencePreview peek(String code) {
         rejectCrossTenant(code);
-        SysSequence cfg = configCache.load(code);
+        // Bypass {@link SequenceConfigCache} for peek: the cache holds a
+        // 5-minute snapshot of the row, including the mutable
+        // {@code currentValue}/{@code lastResetKey} that other allocations
+        // may have advanced past. A direct read keeps the preview honest
+        // (still advisory — another caller can race ahead between this read
+        // and the user's next() call).
+        SysSequence row = sysSequenceService
+                .searchOne(new FlexQuery(new Filters().eq(SysSequence::getCode, code)))
+                .orElseThrow(() -> new SequenceNotFoundException(code));
         LocalDateTime now = LocalDateTime.now();
-        String currentKey = cfg.getResetCadence().computeKey(now);
+        String currentKey = row.getResetCadence().computeKey(now);
         long preview;
-        if (currentKey.equals(cfg.getLastResetKey())) {
-            preview = (cfg.getCurrentValue() == null ? 0L : cfg.getCurrentValue()) + cfg.getIncrementStep();
+        if (currentKey.equals(row.getLastResetKey())) {
+            preview = (row.getCurrentValue() == null ? 0L : row.getCurrentValue()) + row.getIncrementStep();
         } else {
-            preview = cfg.getStartValue();
+            preview = row.getStartValue();
         }
-        String rendered = templateRenderer.render(cfg.getTemplate(), preview, now, code);
+        String rendered = templateRenderer.render(row.getTemplate(), preview, now, code);
         return new SequencePreview(code, rendered, preview, "Preview only, not reserved");
     }
 
@@ -168,10 +175,9 @@ public class SequenceServiceImpl implements SequenceService {
             throw new SequenceTimeoutException(code, e);
         }
         if (rows == 0) {
-            // No row updated — could be (a) row never existed, or (b) row exists but
-            // status was flipped to Disabled (possibly after the cached config was loaded).
-            // Cold path: bypass cache and consult DB directly.
-            throw disabledOrMissing(code);
+            // No row updated → no sys_sequence row for this (tenant, code).
+            // v1 has no status column: existence equals active.
+            throw new SequenceNotFoundException(code);
         }
 
         Long endValue = (Long) jdbcProxy.queryForObject(
@@ -214,15 +220,6 @@ public class SequenceServiceImpl implements SequenceService {
             sqlParams.addArgValue(code);
         }
         return sqlParams;
-    }
-
-    private RuntimeException disabledOrMissing(String code) {
-        // Cold path: row exists but status != 'Active', or row does not exist at all.
-        // searchOne goes through EntityService (auto-filters by tenant for multiTenant=true models).
-        // No status filter here, so we can tell missing apart from disabled.
-        FlexQuery q = new FlexQuery(new Filters().eq(SysSequence::getCode, code));
-        boolean exists = sysSequenceService.searchOne(q).isPresent();
-        return exists ? new SequenceDisabledException(code) : new SequenceNotFoundException(code);
     }
 
     private void rejectCrossTenant(String code) {

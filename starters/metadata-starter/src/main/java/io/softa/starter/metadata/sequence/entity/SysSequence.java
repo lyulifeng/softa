@@ -20,10 +20,15 @@ import lombok.EqualsAndHashCode;
  *   <li>{@code code} matches {@code "<ModelName>.<fieldName>"} for
  *       fields participating in auto-fill (see SequenceProcessor).</li>
  *   <li>{@code incrementStep == 1}.</li>
- *   <li>Admin cannot change {@code code} or {@code status}; cannot
- *       create or delete rows via the API. Use the framework's
- *       {@code loadPreTenantData} on JSON files for tenant bootstrap.</li>
+ *   <li>Admin cannot change {@code code}; cannot create or delete rows via
+ *       the API. Use the framework's {@code loadPreTenantData} on JSON
+ *       files for tenant bootstrap.</li>
  * </ul>
+ *
+ * <p>There is no {@code status} column: a row's existence equals "active".
+ * Emergency disable is a DBA-only operation (DELETE the row, optionally
+ * preserving {@code currentValue} elsewhere if a later restoration is
+ * needed).
  */
 @Data
 @Schema(name = "SysSequence")
@@ -63,12 +68,6 @@ public class SysSequence extends AuditableModel {
     @Schema(description = "Allocation mode")
     private SequenceMode mode;
 
-    @Schema(description = "Active / Disabled")
-    private String status;
-
     @Schema(description = "Description")
     private String description;
-
-    @Schema(description = "Optimistic lock for config changes (counter uses row lock)")
-    private Integer version;
 }

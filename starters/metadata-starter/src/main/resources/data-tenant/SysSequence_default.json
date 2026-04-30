@@ -12,7 +12,6 @@
       "currentValue": 0,
       "resetCadence": "NONE",
       "mode": "NO_GAP",
-      "status": "Active",
       "description": "Employee code"
     }
   ],
