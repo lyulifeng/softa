@@ -16,7 +16,6 @@ import io.softa.framework.orm.sequence.exception.SequenceNotFoundException;
 import io.softa.framework.orm.sequence.exception.SequenceTimeoutException;
 import io.softa.starter.metadata.sequence.entity.SysSequence;
 import io.softa.starter.metadata.sequence.enums.SequenceMode;
-import io.softa.starter.metadata.sequence.service.SequenceConfigCache;
 import io.softa.starter.metadata.sequence.service.SysSequenceService;
 import io.softa.starter.metadata.sequence.service.TemplateRenderer;
 import lombok.RequiredArgsConstructor;
@@ -87,7 +86,6 @@ public class SequenceServiceImpl implements SequenceService {
     private static final String SQL_LAST_INSERT_ID = "SELECT LAST_INSERT_ID()";
 
     private final JdbcProxy jdbcProxy;
-    private final SequenceConfigCache configCache;
     private final SysSequenceService sysSequenceService;
     private final TemplateRenderer templateRenderer;
 
@@ -110,10 +108,10 @@ public class SequenceServiceImpl implements SequenceService {
     @Override
     public SequencePreview peek(String code) {
         rejectCrossTenant(code);
-        // Bypass {@link SequenceConfigCache} for peek: the cache holds a
-        // 5-minute snapshot of the row, including the mutable
-        // {@code currentValue}/{@code lastResetKey} that other allocations
-        // may have advanced past. A direct read keeps the preview honest
+        // Bypass config cache for peek: the cache holds a 5-minute snapshot
+        // of the row, including the mutable {@code currentValue}/{@code
+        // lastResetKey} that other allocations may have advanced past.
+        // A direct read keeps the preview honest
         // (still advisory — another caller can race ahead between this read
         // and the user's next() call).
         SysSequence row = sysSequenceService
@@ -134,7 +132,7 @@ public class SequenceServiceImpl implements SequenceService {
     /** Mode dispatcher; goes through {@link #self} so the propagation annotations apply. */
     private List<String> dispatch(String code, int count) {
         rejectCrossTenant(code);
-        SysSequence cfg = configCache.load(code);
+        SysSequence cfg = sysSequenceService.loadConfigByCode(code);
         return SequenceMode.ALLOW_GAP == cfg.getMode()
                 ? self.allocateInNewTx(code, cfg, count)
                 : self.allocateInOuterTx(code, cfg, count);

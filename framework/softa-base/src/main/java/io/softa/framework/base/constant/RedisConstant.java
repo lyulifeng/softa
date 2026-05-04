@@ -28,6 +28,4 @@ public interface RedisConstant {
 
     /** Sequence configuration cache key prefix; full key: {rootKey}:seq-config:{tenantId}:{code} */
     String SEQUENCE_CONFIG = "seq-config:";
-    /** Pub/Sub channel for cross-instance sequence cache invalidation. */
-    String SEQUENCE_INVALIDATE_CHANNEL = "seq-invalidate";
 }
