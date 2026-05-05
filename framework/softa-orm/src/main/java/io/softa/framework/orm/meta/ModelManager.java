@@ -176,9 +176,17 @@ public class ModelManager {
             Assert.isTrue(StringTools.isFieldName(metaField.getFieldName()),
                     "{0}:{1}, the fieldName is invalid!",
                     metaField.getModelName(), metaField.getFieldName());
-            Assert.isTrue(StringTools.isTableOrColumn(metaField.getColumnName()),
-                    "{0}:{1}, the columnName {2} is invalid!",
-                    metaField.getModelName(), metaField.getFieldName(), metaField.getColumnName());
+            // Dynamic derived fields (cascaded_field or computed expression evaluated at
+            // read time) have no physical column; skip the column-name format check.
+            // Stored fields and stored derived fields still require a valid column name.
+            boolean isReadTimeDerived = metaField.isDynamic()
+                    && (StringUtils.isNotBlank(metaField.getCascadedField())
+                            || StringUtils.isNotBlank(metaField.getExpression()));
+            if (!isReadTimeDerived) {
+                Assert.isTrue(StringTools.isTableOrColumn(metaField.getColumnName()),
+                        "{0}:{1}, the columnName {2} is invalid!",
+                        metaField.getModelName(), metaField.getFieldName(), metaField.getColumnName());
+            }
             Assert.notTrue(ModelConstant.VIRTUAL_FIELDS.contains(metaField.getFieldName()),
                     "Model field {0}:{1} cannot use a virtual field name!",
                     metaField.getModelName(), metaField.getFieldName());
@@ -1081,8 +1089,10 @@ public class ModelManager {
     }
 
     public static Optional<MetaField> getFieldByColumnName(String modelName, String columnName) {
+        // Read-time derived fields (dynamic cascaded / computed) have no physical column;
+        // their column_name may be null or blank, which must not match against any ResultSet column.
         return modelFields().get(modelName).values().stream()
-                .filter(f -> f.getColumnName().equals(columnName))
+                .filter(f -> columnName != null && columnName.equals(f.getColumnName()))
                 .findFirst();
     }
 

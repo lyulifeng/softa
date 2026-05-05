@@ -10,8 +10,10 @@ import java.time.temporal.ChronoUnit;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
+import java.util.stream.Collectors;
 import com.googlecode.aviator.*;
 import com.googlecode.aviator.exception.ExpressionSyntaxErrorException;
 import com.googlecode.aviator.runtime.JavaMethodReflectionFunctionMissing;
@@ -248,12 +250,30 @@ public abstract class ComputeUtils {
     }
 
     /**
-     * Get the variable list of the expression
+     * Names of framework-injected env namespaces that Aviator parses as variable references
+     * (e.g. `ChronoUnit.YEARS` is parsed as variable `ChronoUnit` with property `YEARS`).
+     * These are always available at runtime via {@link #formatEnvValues}, so they must be
+     * excluded from the dependent-field list returned by {@link #getVariables}.
+     */
+    private static final Set<String> RESERVED_ENV_NAMESPACES = ChronoUnitUtils.CHRONO_UNIT_ENV.keySet();
+
+    /**
+     * Get the variable list of the expression. Variables whose top-level segment is a
+     * framework-injected env namespace (currently {@code ChronoUnit}) are filtered out so
+     * that callers like metadata field-validation only see real model-field references.
      * @param expression expression
      * @return variable list
      */
     public static List<String> getVariables(String expression) {
-        return compile(expression).getVariableFullNames();
+        return compile(expression).getVariableFullNames().stream()
+                .filter(name -> !isReservedEnvNamespace(name))
+                .collect(Collectors.toList());
+    }
+
+    private static boolean isReservedEnvNamespace(String fullName) {
+        int dot = fullName.indexOf('.');
+        String top = dot < 0 ? fullName : fullName.substring(0, dot);
+        return RESERVED_ENV_NAMESPACES.contains(top);
     }
 
     /**
