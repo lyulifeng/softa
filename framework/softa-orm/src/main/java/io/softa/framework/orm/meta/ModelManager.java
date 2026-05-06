@@ -176,17 +176,9 @@ public class ModelManager {
             Assert.isTrue(StringTools.isFieldName(metaField.getFieldName()),
                     "{0}:{1}, the fieldName is invalid!",
                     metaField.getModelName(), metaField.getFieldName());
-            // Dynamic derived fields (cascaded_field or computed expression evaluated at
-            // read time) have no physical column; skip the column-name format check.
-            // Stored fields and stored derived fields still require a valid column name.
-            boolean isReadTimeDerived = metaField.isDynamic()
-                    && (StringUtils.isNotBlank(metaField.getCascadedField())
-                            || StringUtils.isNotBlank(metaField.getExpression()));
-            if (!isReadTimeDerived) {
-                Assert.isTrue(StringTools.isTableOrColumn(metaField.getColumnName()),
-                        "{0}:{1}, the columnName {2} is invalid!",
-                        metaField.getModelName(), metaField.getFieldName(), metaField.getColumnName());
-            }
+            Assert.isTrue(StringTools.isTableOrColumn(metaField.getColumnName()),
+                    "{0}:{1}, the columnName {2} is invalid!",
+                    metaField.getModelName(), metaField.getFieldName(), metaField.getColumnName());
             Assert.notTrue(ModelConstant.VIRTUAL_FIELDS.contains(metaField.getFieldName()),
                     "Model field {0}:{1} cannot use a virtual field name!",
                     metaField.getModelName(), metaField.getFieldName());
