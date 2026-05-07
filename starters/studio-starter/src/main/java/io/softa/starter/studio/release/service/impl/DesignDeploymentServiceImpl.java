@@ -132,6 +132,13 @@ public class DesignDeploymentServiceImpl extends EntityServiceImpl<DesignDeploym
         DesignDeployment deployment = createDeploymentRecord(targetEnv, artifact);
         recordIncludedVersions(deployment.getId(), artifact.versionsForMerge());
 
+        // Track the latest deployment record on the env. Unlike currentVersionId
+        // (which only advances on SUCCESS), lastDeploymentId reflects every dispatch
+        // — SUCCESS, FAILURE, or ROLLED_BACK — so audit / UI can answer "what was
+        // the last deploy attempt for this env" in a single env→deployment lookup.
+        targetEnv.setLastDeploymentId(deployment.getId());
+        appEnvService.updateOne(targetEnv);
+
         // Hand the upgrade off to AsyncDeploymentListener, which runs after this
         // transaction commits. Status + mutex are owned downstream by the runtime
         // callback handler. A pre-commit failure rolls back the mutex transition

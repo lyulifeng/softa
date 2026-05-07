@@ -44,6 +44,10 @@ public class DesignAppEnv extends AuditableModel {
     @Schema(description = "Current Version ID — the latest version successfully deployed to this env")
     private Long currentVersionId;
 
+    @Schema(description = "Last Deployment ID — most recent deployment record created for this env, "
+            + "regardless of outcome (SUCCESS / FAILURE / ROLLED_BACK)")
+    private Long lastDeploymentId;
+
     @Schema(description = "Env runtime status — used as a per-env deployment mutex")
     private DesignAppEnvStatus envStatus;
 

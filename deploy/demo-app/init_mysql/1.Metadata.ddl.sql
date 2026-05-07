@@ -683,6 +683,7 @@ CREATE TABLE design_app_env(
     env_status VARCHAR(32) NOT NULL DEFAULT 'Stable' COMMENT 'Env runtime status — deployment mutex (Stable / Deploying)' ,
     protected_env TINYINT(1)    COMMENT 'Protected Env' ,
     current_version_id BIGINT(32)    COMMENT 'Current Version' ,
+    last_deployment_id BIGINT(32)    COMMENT 'Last Deployment' ,
     active TINYINT(1)    DEFAULT 1 COMMENT 'Active' ,
     upgrade_endpoint VARCHAR(128) NOT NULL  DEFAULT '' COMMENT 'Upgrade API EndPoint' ,
     public_key VARCHAR(256)   DEFAULT '' COMMENT 'Public Key;Base64-encoded X.509 SubjectPublicKeyInfo' ,
