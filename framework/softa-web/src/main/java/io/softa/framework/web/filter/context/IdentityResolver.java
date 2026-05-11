@@ -24,7 +24,10 @@ public class IdentityResolver {
             "/swagger-ui/**",
             "/swagger-ui.html",
             "/actuator/**");
-    private static final List<String> ANONYMOUS_PATHS = List.of("/login/**");
+    private static final List<String> ANONYMOUS_PATHS = List.of(
+            "/login/**",
+            // OAuth2 provider browser-redirect endpoint.
+            "/MailOauth2/callback");
     private static final List<String> OPENAPI_PATHS = List.of("/openapi/**");
     private static final List<String> INTERNAL_PATHS = List.of("/internal/**");
 

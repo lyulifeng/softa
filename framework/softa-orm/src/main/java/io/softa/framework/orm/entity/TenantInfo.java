@@ -52,11 +52,15 @@ public class TenantInfo extends AuditableModel {
     @Schema(description = "Default Timezone")
     private Timezone defaultTimezone;
 
-    @Schema(description = "Default Currency")
+    @Schema(description = "Default billing/display currency for this tenant. "
+            + "ISO 4217 alpha-3 code (USD/CNY/EUR/...); concept FK to currency.code "
+            + "in reference-data-starter. Used as the seed default for new invoices/orders.")
     private String defaultCurrency;
 
-    @Schema(description = "Default Country")
-    private Long defaultCountry;
+    @Schema(description = "Default country/region for this tenant. ISO 3166-1 alpha-2 code "
+            + "(CN/US/TW/...); concept FK to country_region.code in reference-data-starter. "
+            + "Used as the seed default for new users, billing addresses, and locale hints.")
+    private String defaultCountry;
 
     @Schema(description = "Data Region")
     private String dataRegion;

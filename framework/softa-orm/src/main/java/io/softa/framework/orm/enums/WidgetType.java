@@ -18,6 +18,7 @@ import org.apache.commons.lang3.StringUtils;
 public enum WidgetType {
     // String
     URL("URL", "URL"),
+    PHONE("Phone", "Phone"),
     EMAIL("Email", "Email"),
     TEXT("Text", "Text"),
     RICH_TEXT("RichText", "Rich Text"),
