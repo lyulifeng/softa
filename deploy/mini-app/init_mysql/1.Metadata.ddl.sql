@@ -32,10 +32,11 @@ CREATE TABLE sys_model(
 
 ALTER TABLE sys_model ADD UNIQUE INDEX uniq_modelname (model_name);
 
-CREATE TABLE sys_language(
+CREATE TABLE language_profile(
     id BIGINT(32) NOT NULL AUTO_INCREMENT  COMMENT 'ID' ,
+    tenant_id VARCHAR(32)    COMMENT 'Tenant ID' ,
     name VARCHAR(64) NOT NULL  DEFAULT '' COMMENT 'Language Name' ,
-    code VARCHAR(64) NOT NULL  DEFAULT '' COMMENT 'Language Code' ,
+    language VARCHAR(64) NOT NULL  DEFAULT '' COMMENT 'Language' ,
     date_format VARCHAR(32)    COMMENT 'Date Format' ,
     time_format VARCHAR(32)    COMMENT 'Time Format' ,
     decimal_separator VARCHAR(32)    COMMENT 'Decimal Separator' ,
@@ -48,7 +49,7 @@ CREATE TABLE sys_language(
     updated_by VARCHAR(32)    COMMENT 'Updated By' ,
     active TINYINT(1)   DEFAULT 1 COMMENT 'Active' ,
     PRIMARY KEY (id)
-) ENGINE=InnoDB AUTO_INCREMENT=1 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT = 'System Language';
+) ENGINE=InnoDB AUTO_INCREMENT=1 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT = 'Language Profile';
 
 CREATE TABLE sys_model_trans(
     id BIGINT(32) NOT NULL AUTO_INCREMENT  COMMENT 'ID' ,

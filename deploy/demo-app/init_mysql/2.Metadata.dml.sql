@@ -97,42 +97,47 @@ INSERT INTO sys_field(label_name, field_name, column_name, model_name, descripti
     VALUES('Updated By', 'updatedBy', 'updated_by', 'SysFieldTrans', '', 'String', '', '', '', '', '', '', '', '', "", 64, 0, false, 0, 0, 0, 0, 0, '', 0, 0, '', '');
 
 -- Clean up historical data
+DELETE FROM sys_model WHERE model_name = 'LanguageProfile';
+DELETE FROM sys_field WHERE model_name = 'LanguageProfile';
+-- Drop legacy SysLanguage rows (renamed to LanguageProfile in v1.4)
 DELETE FROM sys_model WHERE model_name = 'SysLanguage';
 DELETE FROM sys_field WHERE model_name = 'SysLanguage';
 
 -- Insert model metadata
 INSERT INTO sys_model(label_name, model_name, table_name, description, default_order, display_name, search_name, timeline, id_strategy, soft_delete, soft_delete_field, active_control, multi_tenant, version_lock, data_source, service_name, business_key, partition_field)
-    VALUES('System Language', 'SysLanguage', 'sys_language', '', 'name', 'name', '', false, '', false,  '', true, false, false, '', '', '', '');
+    VALUES('Language Profile', 'LanguageProfile', 'language_profile', '', 'name', 'name', '', false, '', false,  '', true, false, false, '', '', '', '');
 
 -- Insert field metadata
 INSERT INTO sys_field(label_name, field_name, column_name, model_name, description, field_type, option_set_code, related_model, related_field, join_model, join_left, join_right, cascaded_field, filters, default_value, length, scale, required, readonly, translatable, non_copyable, unsearchable, computed, expression, dynamic, encrypted, masking_type, widget_type)
-    VALUES('ID', 'id', 'id', 'SysLanguage', '', 'Long', '', '', '', '', '', '', '', '', "", 32, 0, 0, 0, 0, 0, 0, 0, '', 0, 0, '', '');
+    VALUES('ID', 'id', 'id', 'LanguageProfile', '', 'Long', '', '', '', '', '', '', '', '', "", 32, 0, 0, 0, 0, 0, 0, 0, '', 0, 0, '', '');
 INSERT INTO sys_field(label_name, field_name, column_name, model_name, description, field_type, option_set_code, related_model, related_field, join_model, join_left, join_right, cascaded_field, filters, default_value, length, scale, required, readonly, translatable, non_copyable, unsearchable, computed, expression, dynamic, encrypted, masking_type, widget_type)
-    VALUES('Language Name', 'name', 'name', 'SysLanguage', '', 'String', '', '', '', '', '', '', '', '', "", 64, 0, true, 0, 0, 0, 0, 0, '', 0, 0, '', '');
+    VALUES('Tenant ID', 'tenantId', 'tenant_id', 'LanguageProfile', '', 'Long', '', '', '', '', '', '', '', '', "", 32, 0, false, 0, 0, 0, 0, 0, '', 0, 0, '', '');
 INSERT INTO sys_field(label_name, field_name, column_name, model_name, description, field_type, option_set_code, related_model, related_field, join_model, join_left, join_right, cascaded_field, filters, default_value, length, scale, required, readonly, translatable, non_copyable, unsearchable, computed, expression, dynamic, encrypted, masking_type, widget_type)
-    VALUES('Language Code', 'code', 'code', 'SysLanguage', '', 'String', '', '', '', '', '', '', '', '', "", 64, 0, true, 0, 0, 0, 0, 0, '', 0, 0, '', '');
+    VALUES('Language Name', 'name', 'name', 'LanguageProfile', '', 'String', '', '', '', '', '', '', '', '', "", 64, 0, true, 0, 0, 0, 0, 0, '', 0, 0, '', '');
 INSERT INTO sys_field(label_name, field_name, column_name, model_name, description, field_type, option_set_code, related_model, related_field, join_model, join_left, join_right, cascaded_field, filters, default_value, length, scale, required, readonly, translatable, non_copyable, unsearchable, computed, expression, dynamic, encrypted, masking_type, widget_type)
-    VALUES('Date Format', 'dateFormat', 'date_format', 'SysLanguage', '', 'String', '', '', '', '', '', '', '', '', "", 32, 0, false, 0, 0, 0, 0, 0, '', 0, 0, '', '');
+    VALUES('Language', 'language', 'language', 'LanguageProfile', '', 'Option', 'Language', '', '', '', '', '', '', '', "", 64, 0, true, 0, 0, 0, 0, 0, '', 0, 0, '', '');
 INSERT INTO sys_field(label_name, field_name, column_name, model_name, description, field_type, option_set_code, related_model, related_field, join_model, join_left, join_right, cascaded_field, filters, default_value, length, scale, required, readonly, translatable, non_copyable, unsearchable, computed, expression, dynamic, encrypted, masking_type, widget_type)
-    VALUES('Time Format', 'timeFormat', 'time_format', 'SysLanguage', '', 'String', '', '', '', '', '', '', '', '', "", 32, 0, false, 0, 0, 0, 0, 0, '', 0, 0, '', '');
+    VALUES('Date Format', 'dateFormat', 'date_format', 'LanguageProfile', '', 'String', '', '', '', '', '', '', '', '', "", 32, 0, false, 0, 0, 0, 0, 0, '', 0, 0, '', '');
 INSERT INTO sys_field(label_name, field_name, column_name, model_name, description, field_type, option_set_code, related_model, related_field, join_model, join_left, join_right, cascaded_field, filters, default_value, length, scale, required, readonly, translatable, non_copyable, unsearchable, computed, expression, dynamic, encrypted, masking_type, widget_type)
-    VALUES('Decimal Separator', 'decimalSeparator', 'decimal_separator', 'SysLanguage', '', 'String', '', '', '', '', '', '', '', '', "", 32, 0, false, 0, 0, 0, 0, 0, '', 0, 0, '', '');
+    VALUES('Time Format', 'timeFormat', 'time_format', 'LanguageProfile', '', 'String', '', '', '', '', '', '', '', '', "", 32, 0, false, 0, 0, 0, 0, 0, '', 0, 0, '', '');
 INSERT INTO sys_field(label_name, field_name, column_name, model_name, description, field_type, option_set_code, related_model, related_field, join_model, join_left, join_right, cascaded_field, filters, default_value, length, scale, required, readonly, translatable, non_copyable, unsearchable, computed, expression, dynamic, encrypted, masking_type, widget_type)
-    VALUES('Thousand Separator', 'thousandSeparator', 'thousand_separator', 'SysLanguage', '', 'String', '', '', '', '', '', '', '', '', "", 32, 0, false, 0, 0, 0, 0, 0, '', 0, 0, '', '');
+    VALUES('Decimal Separator', 'decimalSeparator', 'decimal_separator', 'LanguageProfile', '', 'String', '', '', '', '', '', '', '', '', "", 32, 0, false, 0, 0, 0, 0, 0, '', 0, 0, '', '');
 INSERT INTO sys_field(label_name, field_name, column_name, model_name, description, field_type, option_set_code, related_model, related_field, join_model, join_left, join_right, cascaded_field, filters, default_value, length, scale, required, readonly, translatable, non_copyable, unsearchable, computed, expression, dynamic, encrypted, masking_type, widget_type)
-    VALUES('Created Time', 'createdTime', 'created_time', 'SysLanguage', '', 'DateTime', '', '', '', '', '', '', '', '', "", 0, 0, false, 0, 0, 0, 0, 0, '', 0, 0, '', '');
+    VALUES('Thousand Separator', 'thousandSeparator', 'thousand_separator', 'LanguageProfile', '', 'String', '', '', '', '', '', '', '', '', "", 32, 0, false, 0, 0, 0, 0, 0, '', 0, 0, '', '');
 INSERT INTO sys_field(label_name, field_name, column_name, model_name, description, field_type, option_set_code, related_model, related_field, join_model, join_left, join_right, cascaded_field, filters, default_value, length, scale, required, readonly, translatable, non_copyable, unsearchable, computed, expression, dynamic, encrypted, masking_type, widget_type)
-    VALUES('Created ID', 'createdId', 'created_id', 'SysLanguage', '', 'Long', '', '', '', '', '', '', '', '', "", 32, 0, false, 0, 0, 0, 0, 0, '', 0, 0, '', '');
+    VALUES('Created Time', 'createdTime', 'created_time', 'LanguageProfile', '', 'DateTime', '', '', '', '', '', '', '', '', "", 0, 0, false, 0, 0, 0, 0, 0, '', 0, 0, '', '');
 INSERT INTO sys_field(label_name, field_name, column_name, model_name, description, field_type, option_set_code, related_model, related_field, join_model, join_left, join_right, cascaded_field, filters, default_value, length, scale, required, readonly, translatable, non_copyable, unsearchable, computed, expression, dynamic, encrypted, masking_type, widget_type)
-    VALUES('Created By', 'createdBy', 'created_by', 'SysLanguage', '', 'String', '', '', '', '', '', '', '', '', "", 32, 0, false, 0, 0, 0, 0, 0, '', 0, 0, '', '');
+    VALUES('Created ID', 'createdId', 'created_id', 'LanguageProfile', '', 'Long', '', '', '', '', '', '', '', '', "", 32, 0, false, 0, 0, 0, 0, 0, '', 0, 0, '', '');
 INSERT INTO sys_field(label_name, field_name, column_name, model_name, description, field_type, option_set_code, related_model, related_field, join_model, join_left, join_right, cascaded_field, filters, default_value, length, scale, required, readonly, translatable, non_copyable, unsearchable, computed, expression, dynamic, encrypted, masking_type, widget_type)
-    VALUES('Updated Time', 'updatedTime', 'updated_time', 'SysLanguage', '', 'DateTime', '', '', '', '', '', '', '', '', "", 0, 0, false, 0, 0, 0, 0, 0, '', 0, 0, '', '');
+    VALUES('Created By', 'createdBy', 'created_by', 'LanguageProfile', '', 'String', '', '', '', '', '', '', '', '', "", 32, 0, false, 0, 0, 0, 0, 0, '', 0, 0, '', '');
 INSERT INTO sys_field(label_name, field_name, column_name, model_name, description, field_type, option_set_code, related_model, related_field, join_model, join_left, join_right, cascaded_field, filters, default_value, length, scale, required, readonly, translatable, non_copyable, unsearchable, computed, expression, dynamic, encrypted, masking_type, widget_type)
-    VALUES('Updated ID', 'updatedId', 'updated_id', 'SysLanguage', '', 'Long', '', '', '', '', '', '', '', '', "", 32, 0, false, 0, 0, 0, 0, 0, '', 0, 0, '', '');
+    VALUES('Updated Time', 'updatedTime', 'updated_time', 'LanguageProfile', '', 'DateTime', '', '', '', '', '', '', '', '', "", 0, 0, false, 0, 0, 0, 0, 0, '', 0, 0, '', '');
 INSERT INTO sys_field(label_name, field_name, column_name, model_name, description, field_type, option_set_code, related_model, related_field, join_model, join_left, join_right, cascaded_field, filters, default_value, length, scale, required, readonly, translatable, non_copyable, unsearchable, computed, expression, dynamic, encrypted, masking_type, widget_type)
-    VALUES('Updated By', 'updatedBy', 'updated_by', 'SysLanguage', '', 'String', '', '', '', '', '', '', '', '', "", 32, 0, false, 0, 0, 0, 0, 0, '', 0, 0, '', '');
+    VALUES('Updated ID', 'updatedId', 'updated_id', 'LanguageProfile', '', 'Long', '', '', '', '', '', '', '', '', "", 32, 0, false, 0, 0, 0, 0, 0, '', 0, 0, '', '');
 INSERT INTO sys_field(label_name, field_name, column_name, model_name, description, field_type, option_set_code, related_model, related_field, join_model, join_left, join_right, cascaded_field, filters, default_value, length, scale, required, readonly, translatable, non_copyable, unsearchable, computed, expression, dynamic, encrypted, masking_type, widget_type)
-    VALUES('Active', 'active', 'active', 'SysLanguage', '', 'Boolean', '', '', '', '', '', '', '', '', "1", 1, 0, false, 0, 0, 0, 0, 0, '', 0, 0, '', '');
+    VALUES('Updated By', 'updatedBy', 'updated_by', 'LanguageProfile', '', 'String', '', '', '', '', '', '', '', '', "", 32, 0, false, 0, 0, 0, 0, 0, '', 0, 0, '', '');
+INSERT INTO sys_field(label_name, field_name, column_name, model_name, description, field_type, option_set_code, related_model, related_field, join_model, join_left, join_right, cascaded_field, filters, default_value, length, scale, required, readonly, translatable, non_copyable, unsearchable, computed, expression, dynamic, encrypted, masking_type, widget_type)
+    VALUES('Active', 'active', 'active', 'LanguageProfile', '', 'Boolean', '', '', '', '', '', '', '', '', "1", 1, 0, false, 0, 0, 0, 0, 0, '', 0, 0, '', '');
 
 -- Clean up historical data
 DELETE FROM sys_model WHERE model_name = 'SysModelTrans';
