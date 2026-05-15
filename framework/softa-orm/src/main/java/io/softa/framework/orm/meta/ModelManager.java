@@ -973,11 +973,7 @@ public class ModelManager {
             throw new IllegalArgumentException(
                     "Custom cascaded field {0} is invalid: {1}", fullFieldName, failure.message());
         }
-        MetaField leaf = ((CascadeFieldWalker.Result.Ok) result).leaf();
-        Assert.notTrue(leaf.isDynamic(),
-                "The last field {0} in custom cascaded field {1} must be a stored field in model {2}!",
-                leaf.getFieldName(), fullFieldName, leaf.getModelName());
-        return leaf;
+        return ((CascadeFieldWalker.Result.Ok) result).leaf();
     }
 
     /**

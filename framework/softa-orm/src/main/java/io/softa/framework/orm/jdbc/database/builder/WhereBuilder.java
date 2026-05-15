@@ -344,6 +344,9 @@ public class WhereBuilder extends BaseBuilder implements SqlClauseBuilder {
         }
         // When there is no XToMany field, get the field alias normally,
         // including the case where the last field is ManyToOne/OneToOne field.
+        Assert.notTrue(metaField.isDynamic(),
+                "The last field {0} of filter cascade {1} must be a stored field in model {2}!",
+                metaField.getFieldName(), filterUnit.getField(), metaField.getModelName());
         return FilterUnitParser.parse(sqlWrapper, currentAlias, metaField, filterUnit);
     }
 
