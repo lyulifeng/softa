@@ -93,23 +93,9 @@ public class ExportByDynamic implements ExportStrategy {
         List<Map<String, Object>> rows = exportDataFetcher.fetchRows(modelName, null, flexQuery);
         List<String> fieldNames = flexQuery.getFields();
         fieldNames.forEach(fieldName -> {
-            headers.add(resolveFieldLabel(modelName, fieldName));
+            MetaField lastField = ModelManager.getLastFieldOfCascaded(modelName, fieldName);
+            headers.add(lastField.getLabelName());
         });
         return ListUtils.convertToTableData(fieldNames, rows);
-    }
-
-    /**
-     * Resolve export header label for both:
-     * - model direct fields (including dynamic/computed fields)
-     * - custom cascaded paths (e.g. oneToOneField.childField)
-     */
-    private String resolveFieldLabel(String modelName, String fieldName) {
-        MetaField field;
-        if (ModelManager.existField(modelName, fieldName)) {
-            field = ModelManager.getModelField(modelName, fieldName);
-        } else {
-            field = ModelManager.getLastFieldOfCascaded(modelName, fieldName);
-        }
-        return field.getLabelName();
     }
 }

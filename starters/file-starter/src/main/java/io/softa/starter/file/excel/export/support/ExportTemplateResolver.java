@@ -46,7 +46,9 @@ public class ExportTemplateResolver {
             if (StringUtils.isNotBlank(exportField.getCustomHeader())) {
                 headers.add(exportField.getCustomHeader());
             } else {
-                headers.add(resolveFieldLabel(exportTemplate.getModelName(), exportField.getFieldName()));
+                MetaField lastField = ModelManager.getLastFieldOfCascaded(exportTemplate.getModelName(),
+                        exportField.getFieldName());
+                headers.add(lastField.getLabelName());
             }
         });
         return new ResolvedTemplateSheet(headers, fetchFields, exportFields);
@@ -57,19 +59,5 @@ public class ExportTemplateResolver {
      */
     public List<List<Object>> resolveRows(ResolvedTemplateSheet resolvedTemplateSheet, List<Map<String, Object>> rows) {
         return ListUtils.convertToTableData(resolvedTemplateSheet.getExportFields(), rows);
-    }
-
-    /**
-     * Resolve export header label for both direct model fields (including dynamic/computed)
-     * and custom cascaded paths.
-     */
-    private String resolveFieldLabel(String modelName, String fieldName) {
-        MetaField field;
-        if (ModelManager.existField(modelName, fieldName)) {
-            field = ModelManager.getModelField(modelName, fieldName);
-        } else {
-            field = ModelManager.getLastFieldOfCascaded(modelName, fieldName);
-        }
-        return field.getLabelName();
     }
 }
