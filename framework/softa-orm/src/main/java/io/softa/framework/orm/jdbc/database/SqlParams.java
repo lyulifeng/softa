@@ -28,7 +28,7 @@ public class SqlParams {
      * mutating the caller's list would throw {@link UnsupportedOperationException}.
      */
     public void setArgs(List<Object> args) {
-        this.args = args == null ? new ArrayList<>() : new ArrayList<>(args);
+        this.args = args == null ? new ArrayList<>() : args;
     }
 
     public void addArgValue(Object value) {
