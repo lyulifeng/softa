@@ -227,6 +227,9 @@ public class ModelServiceImpl<K extends Serializable> implements ModelService<K>
         List<String> fields = new ArrayList<>(List.of(ModelConstant.ID));
         fields.addAll(uniqueConstraints);
         FlexQuery flexQuery = new FlexQuery(fields, filters);
+        // Unique-constraint dedup must see soft-deleted / inactive rows too,
+        // otherwise INSERTs can collide on a "hidden" existing row.
+        flexQuery.setFilterControl(FilterControl.bypassAll());
         List<Map<String, Object>> dbRows = this.searchList(modelName, flexQuery);
         Map<UniqueKey, Map<String, Object>> dbRowKeyMap = new HashMap<>();
         for (Map<String, Object> dbRow : dbRows) {
@@ -402,6 +405,9 @@ public class ModelServiceImpl<K extends Serializable> implements ModelService<K>
         FlexQuery flexQuery = new FlexQuery(fields, Filters.of(ModelConstant.ID, Operator.IN, ids));
         flexQuery.setSubQueries(subQueries);
         flexQuery.setConvertType(convertType);
+        // Lookup-by-id is authorized by PermissionService.checkIdsAccess below;
+        // soft-delete / active-control are query-scope defaults, not access control.
+        flexQuery.setFilterControl(FilterControl.bypassAll());
         List<Map<String, Object>> rows = this.searchList(modelName, flexQuery);
         List<Serializable> resultIds = rows.stream().map(row -> (Serializable) row.get(ModelConstant.ID)).toList();
         if (ids.size() > resultIds.size()) {
@@ -549,6 +555,9 @@ public class ModelServiceImpl<K extends Serializable> implements ModelService<K>
         List<String> fields = Arrays.asList(ModelConstant.ID, ModelConstant.EXTERNAL_ID);
         Filters filters = new Filters().in(ModelConstant.EXTERNAL_ID, externalIds);
         FlexQuery flexQuery = new FlexQuery(fields, filters);
+        // ExternalId mapping must resolve to soft-deleted / inactive rows too,
+        // otherwise import re-syncs would create duplicate rows for the same external id.
+        flexQuery.setFilterControl(FilterControl.bypassAll());
         List<Map<String, Object>> rows = this.searchList(modelName, flexQuery);
         return rows.stream().collect(Collectors.toMap(
                 row -> (Serializable) row.get(ModelConstant.EXTERNAL_ID),
