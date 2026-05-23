@@ -12,6 +12,7 @@ import io.softa.framework.base.constant.StringConstant;
 import io.softa.framework.base.enums.Operator;
 import io.softa.framework.base.utils.Cast;
 import io.softa.framework.orm.constant.ModelConstant;
+import io.softa.framework.orm.domain.FilterControl;
 import io.softa.framework.orm.domain.Filters;
 import io.softa.framework.orm.domain.FlexQuery;
 import io.softa.framework.orm.domain.SubQuery;
@@ -126,9 +127,13 @@ public class XToOneGroupProcessor extends BaseProcessor {
         Set<Serializable> relatedIds = rows.stream().map(r -> (Serializable) r.get(metaField.getFieldName()))
                 .filter(IdUtils::validId).collect(Collectors.toSet());
         if (!CollectionUtils.isEmpty(relatedIds)) {
-            // Query related model rows using filter: ["id", "IN", relatedIds]
+            // Query related model rows using filter: ["id", "IN", relatedIds].
+            // Bypass soft-delete / active control so the parent reference still resolves
+            // when the related row is soft-deleted or inactive (otherwise the field would
+            // silently collapse to null).
             Filters filters = Filters.of(ModelConstant.ID, Operator.IN, relatedIds);
             FlexQuery relatedFlexQuery = new FlexQuery(this.expandFields, filters);
+            relatedFlexQuery.setFilterControl(FilterControl.bypassAll());
             if (flexQuery != null) {
                 relatedFlexQuery.setConvertType(flexQuery.getConvertType());
                 // FIX: propagate nested subQueries so the related model can resolve its own relational subQueries
