@@ -2,6 +2,8 @@ package io.softa.framework.orm.changelog;
 
 import java.io.Serializable;
 import java.time.LocalDateTime;
+import java.time.temporal.TemporalAccessor;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.stream.Collectors;
@@ -71,7 +73,7 @@ public class ChangeLogPublisherImpl implements ChangeLogPublisher {
             Serializable pKey = (Serializable) row.get(primaryKey);
             ChangeLog changeLog = generateChangeLog(model, AccessType.CREATE, pKey, createdTime);
             // For creation log, dataAfterChange contains the full created row
-            changeLog.setDataAfterChange(row);
+            changeLog.setDataAfterChange(normalizeJavaTimeValues(row));
             return changeLog;
         }).collect(Collectors.toList());
         this.publish(changeLogs);
@@ -99,10 +101,10 @@ public class ChangeLogPublisherImpl implements ChangeLogPublisher {
             ModelManager.getModel(model).getAuditUpdateFields().forEach(row::remove);
 
             ChangeLog changeLog = generateChangeLog(model, AccessType.UPDATE, pKey, updatedTime);
-            changeLog.setDataBeforeChange(originalRowsMap.get(pKey));
+            changeLog.setDataBeforeChange(normalizeJavaTimeValues(originalRowsMap.get(pKey)));
             // dataAfterChange contains only the changed fields (excluding PK and audit
             // fields)
-            changeLog.setDataAfterChange(row);
+            changeLog.setDataAfterChange(normalizeJavaTimeValues(row));
             return changeLog;
         }).collect(Collectors.toList());
         this.publish(changeLogs);
@@ -122,10 +124,35 @@ public class ChangeLogPublisherImpl implements ChangeLogPublisher {
             Serializable pKey = (Serializable) row.get(primaryKey);
             ChangeLog changeLog = generateChangeLog(model, AccessType.DELETE, pKey, deleteTime);
             // For deletion log, dataBeforeChange contains the full deleted row
-            changeLog.setDataBeforeChange(row);
+            changeLog.setDataBeforeChange(normalizeJavaTimeValues(row));
             return changeLog;
         }).collect(Collectors.toList());
         this.publish(changeLogs);
+    }
+
+    /**
+     * Normalize java.time.* values in a row map to ISO-8601 strings via
+     * {@code toString()}. Downstream serializers (Pulsar / Elasticsearch) use
+     * Jackson configurations we do not control here and would otherwise emit
+     * {@code LocalDate} / {@code LocalDateTime} as numeric component arrays
+     * (Jackson default when {@code WRITE_DATES_AS_TIMESTAMPS=true}), which the
+     * read-side {@code DateTimeProcessor} cannot cast back to a date.
+     * Returns a new map; the input is left unmodified.
+     */
+    private static Map<String, Object> normalizeJavaTimeValues(Map<String, Object> row) {
+        if (row == null) {
+            return null;
+        }
+        Map<String, Object> result = new LinkedHashMap<>(row.size());
+        for (Map.Entry<String, Object> entry : row.entrySet()) {
+            Object value = entry.getValue();
+            if (value instanceof TemporalAccessor) {
+                result.put(entry.getKey(), value.toString());
+            } else {
+                result.put(entry.getKey(), value);
+            }
+        }
+        return result;
     }
 
     /**
