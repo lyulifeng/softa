@@ -31,7 +31,7 @@ public class MetaOptionItem implements Serializable {
 
     private String itemCode;
 
-    private String itemName;
+    private String label;
 
     private String parentItemCode;
 
@@ -42,19 +42,19 @@ public class MetaOptionItem implements Serializable {
     private String description;
 
     /**
-     * Get the item name by language code from translations.
-     * If the translation is not found, return the item name.
+     * Get the item label by language code from translations.
+     * If the translation is not found, return the item label.
      *
-     * @return item name
+     * @return item label
      */
-    public String getItemName() {
+    public String getLabel() {
         String languageCode = ContextHolder.getContext().getLanguage().getCode();
         MetaOptionItemTrans itemTrans = TranslationCache.getOptionItemTrans(languageCode, id);
         if (itemTrans == null) {
-            return itemName;
+            return label;
         } else {
-            String translation = itemTrans.getItemName();
-            return StringUtils.isNotBlank(translation) ? translation : itemName;
+            String translation = itemTrans.getLabel();
+            return StringUtils.isNotBlank(translation) ? translation : label;
         }
     }
 }

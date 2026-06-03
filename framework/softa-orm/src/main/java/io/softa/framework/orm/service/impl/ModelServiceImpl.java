@@ -456,7 +456,7 @@ public class ModelServiceImpl<K extends Serializable> implements ModelService<K>
         Set<String> getFields = new HashSet<>(displayFields);
         FlexQuery flexQuery = new FlexQuery(getFields, filters);
         // If the `displayName` config consists of an Option field or a ManyToOne/OneToOne field,
-        // get the optionItemName or cascaded displayName value as its field value.
+        // get the option label or cascaded displayName value as its field value.
         flexQuery.setConvertType(ConvertType.DISPLAY);
         List<Map<String, Object>> rows = this.searchList(modelName, flexQuery);
         Map<K, String> displayNames = new HashMap<>();

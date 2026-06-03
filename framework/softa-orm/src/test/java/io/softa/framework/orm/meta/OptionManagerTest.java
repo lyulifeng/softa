@@ -62,11 +62,11 @@ class OptionManagerTest {
                 OptionManager.getMetaOptionItems("legacy_set").stream().map(MetaOptionItem::getItemCode).toList());
     }
 
-    private MetaOptionItem optionItem(String optionSetCode, String itemCode, String itemName) {
+    private MetaOptionItem optionItem(String optionSetCode, String itemCode, String label) {
         MetaOptionItem metaOptionItem = new MetaOptionItem();
         ReflectionTestUtils.setField(metaOptionItem, "optionSetCode", optionSetCode);
         ReflectionTestUtils.setField(metaOptionItem, "itemCode", itemCode);
-        ReflectionTestUtils.setField(metaOptionItem, "itemName", itemName);
+        ReflectionTestUtils.setField(metaOptionItem, "label", label);
         return metaOptionItem;
     }
 }

@@ -1,5 +1,6 @@
 package io.softa.framework.orm.meta;
 
+import java.util.List;
 import org.springframework.beans.factory.InitializingBean;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.core.Ordered;
@@ -10,6 +11,14 @@ import org.springframework.stereotype.Component;
 
 /**
  * Load the global system cache, using the highest priority Runner.
+ *
+ * <ul>
+ *   <li>{@link #afterPropertiesSet()} (boot path) runs {@link MetadataInitializer}
+ *       pre-initializers before {@link #initManagers()}.</li>
+ *   <li>{@link #reloadMetadata()} (reload path; triggered by broadcast / cron)
+ *       only runs {@link #initManagers()}—skipping pre-initializers prevents
+ *       reload from re-applying side effects such as DDL.</li>
+ * </ul>
  */
 @Component
 @Order(Ordered.HIGHEST_PRECEDENCE)
@@ -25,10 +34,35 @@ public class AppStartup implements InitializingBean {
     private TranslationCache translationCache;
 
     /**
-     * Initialize the system metadata cache after springboot startup.
+     * Boot-time pre-initializers (e.g., {@code MetadataAnnotationScanner} in
+     * dev-mode=true). {@code required = false} keeps the SPI optional.
+     */
+    @Autowired(required = false)
+    private List<MetadataInitializer> preInitializers = List.of();
+
+    /**
+     * Boot path: run pre-initializers, then init the core managers.
      */
     @Override
     public void afterPropertiesSet() {
+        runPreInitializers();
+        initManagers();
+    }
+
+    /**
+     * Reload path: re-init core managers only. Pre-initializers are skipped
+     * to avoid re-applying side effects (e.g., DDL).
+     */
+    @Async
+    public void reloadMetadata() {
+        initManagers();
+    }
+
+    private void runPreInitializers() {
+        preInitializers.forEach(MetadataInitializer::initialize);
+    }
+
+    private void initManagers() {
         try {
             // 1. init model manager
             modelManager.init();
@@ -39,13 +73,5 @@ public class AppStartup implements InitializingBean {
         } catch (CannotGetJdbcConnectionException e) {
             throw new RuntimeException("Database connection failed, please check the database configuration.", e);
         }
-    }
-
-    /**
-     * Reload the metadata cache asynchronously.
-     */
-    @Async
-    public void reloadMetadata() {
-        afterPropertiesSet();
     }
 }

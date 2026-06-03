@@ -43,8 +43,8 @@ class ModelServiceImplTest {
             doReturn(List.of(20L)).when(modelService).createList(eq("SysField"), anyList());
 
             List<Map<String, Object>> rows = new ArrayList<>();
-            rows.add(new HashMap<>(Map.of("modelName", "User", "fieldName", "name", "labelName", "Name")));
-            rows.add(new HashMap<>(Map.of("modelName", "Order", "fieldName", "status", "labelName", "Status")));
+            rows.add(new HashMap<>(Map.of("modelName", "User", "fieldName", "name", "label", "Name")));
+            rows.add(new HashMap<>(Map.of("modelName", "Order", "fieldName", "status", "label", "Status")));
 
             modelService.createOrUpdate("SysField", rows, List.of("modelName", "fieldName"));
 

@@ -9,8 +9,8 @@ class LambdaUtilsTest {
 
     @Test
     void getAttributeName() {
-        String attribute = LambdaUtils.getAttributeName(MetaModel::getLabelName);
-        Assertions.assertEquals("labelName", attribute);
+        String attribute = LambdaUtils.getAttributeName(MetaModel::getLabel);
+        Assertions.assertEquals("label", attribute);
     }
 
 }

@@ -38,8 +38,6 @@ public class SystemConfig {
     // For example: - http://localhost:3000/
     private List<String> allowedOrigins;
 
-    private String runtimePublicKey;
-
     /**
      * Publicly-reachable base URL (scheme + host + port) of this application, as
      * seen by other systems. Does NOT include the servlet context path — use

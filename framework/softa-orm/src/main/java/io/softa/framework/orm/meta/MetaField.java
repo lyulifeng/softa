@@ -28,7 +28,7 @@ public class MetaField implements Serializable {
 
     private Long appId;
 
-    private String labelName;
+    private String label;
 
     private String fieldName;
 
@@ -103,18 +103,18 @@ public class MetaField implements Serializable {
 
     /**
      * Get translation by language code from translations.
-     * If the translation is not found, return the original name.
+     * If the translation is not found, return the original label.
      *
-     * @return label name
+     * @return label
      */
-    public String getLabelName() {
+    public String getLabel() {
         String languageCode = ContextHolder.getContext().getLanguage().getCode();
         MetaFieldTrans labelTrans = TranslationCache.getFieldTrans(languageCode, id);
         if (labelTrans == null) {
-            return labelName;
+            return label;
         } else {
-            String translation = labelTrans.getLabelName();
-            return StringUtils.isNotBlank(translation) ? translation : labelName;
+            String translation = labelTrans.getLabel();
+            return StringUtils.isNotBlank(translation) ? translation : label;
         }
     }
 

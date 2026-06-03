@@ -99,27 +99,27 @@ public class OptionManager {
     }
 
     /**
-     * Get the optionItem name by optionSetCode and optionItemCode, return null if not exists.
+     * Get the optionItem label by optionSetCode and optionItemCode, return null if not exists.
      *
      * @param optionSetCode optionSet code
      * @param itemCode option item code
-     * @return optionItem name
+     * @return optionItem label
      */
-    public static String getItemNameByCode(String optionSetCode, String itemCode) {
+    public static String getLabelByCode(String optionSetCode, String itemCode) {
         MetaOptionItem metaOptionItem = getMetaOptionItem(optionSetCode, itemCode);
-        return metaOptionItem == null ? null : metaOptionItem.getItemName();
+        return metaOptionItem == null ? null : metaOptionItem.getLabel();
     }
 
     /**
-     * Get the optionItem code by optionSetCode and optionItemName, return null if not exists.
+     * Get the optionItem code by optionSetCode and optionItem label, return null if not exists.
      *
      * @param optionSetCode optionSet code
-     * @param itemName option item name
+     * @param label option item label
      * @return optionItem code
      */
-    public static String getItemCodeByName(String optionSetCode, String itemName) {
+    public static String getItemCodeByLabel(String optionSetCode, String label) {
         for (MetaOptionItem metaOptionItem : getOptionItems(optionSetCode).values()) {
-            if (metaOptionItem.getItemName().equals(itemName)) {
+            if (metaOptionItem.getLabel().equals(label)) {
                 return metaOptionItem.getItemCode();
             }
         }

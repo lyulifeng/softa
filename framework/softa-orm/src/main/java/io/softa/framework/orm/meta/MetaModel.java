@@ -25,7 +25,7 @@ public class MetaModel implements Serializable {
 
     private Long appId;
 
-    private String labelName;
+    private String label;
 
     private String modelName;
 
