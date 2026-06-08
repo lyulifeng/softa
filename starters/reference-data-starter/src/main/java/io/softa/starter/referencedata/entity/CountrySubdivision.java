@@ -1,14 +1,13 @@
 package io.softa.starter.referencedata.entity;
 
+import java.io.Serial;
+import lombok.Data;
+import lombok.EqualsAndHashCode;
+
 import io.softa.framework.orm.annotation.Field;
 import io.softa.framework.orm.annotation.Index;
 import io.softa.framework.orm.annotation.Model;
 import io.softa.framework.orm.entity.AuditableModel;
-import io.swagger.v3.oas.annotations.media.Schema;
-import lombok.Data;
-import lombok.EqualsAndHashCode;
-
-import java.io.Serial;
 
 /**
  * ISO 3166-2 country subdivisions (provinces, states, prefectures, etc.).
@@ -25,7 +24,6 @@ import java.io.Serial;
  * subdivision's {@code code}.
  */
 @Data
-@Schema(name = "CountrySubdivision")
 @EqualsAndHashCode(callSuper = true)
 @Model(
         label = "Country Subdivision",
@@ -41,7 +39,7 @@ public class CountrySubdivision extends AuditableModel {
     @Serial
     private static final long serialVersionUID = 1L;
 
-    @Schema(description = "ID")
+    @Field(label = "ID")
     private Long id;
 
     @Field(label = "Country Code", required = true, length = 2,

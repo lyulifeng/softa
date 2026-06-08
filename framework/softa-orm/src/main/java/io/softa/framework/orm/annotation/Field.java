@@ -23,7 +23,11 @@ import io.softa.framework.orm.enums.WidgetType;
 @Retention(RetentionPolicy.RUNTIME)
 public @interface Field {
 
-    /** Display label; empty = use i18n key {@code field.{modelName}.{fieldName}.label}. Maps to {@code SysField.label}. */
+    /**
+     * Display label; empty = humanized field name (e.g. {@code deptId -> "Dept Id"})
+     * as the base default, overridden per-language via the i18n translation table
+     * (keyed by {@code field.{modelName}.{fieldName}}). Maps to {@code SysField.label}.
+     */
     String label() default "";
 
     /** Description shown to users in Studio UI; empty = no description. */
@@ -81,17 +85,34 @@ public @interface Field {
     String defaultValue() default "";
 
     /**
-     * Related model name (relational types). Empty = inferred from Java
-     * field's POJO type's class simple name; <b>required</b> when the Java
-     * type is {@code Long} (i.e. storing FK id only).
+     * Related model <b>class</b> (relational types) — preferred, compile-checked
+     * form, e.g. {@code relatedModel = Customer.class}. {@code Void.class}
+     * (default) = not set → falls back to {@link #relatedModelName()}, then to
+     * inference from the Java field's POJO type. The model name is the class's
+     * simple name. <b>Required</b> (via this or {@link #relatedModelName()}) when
+     * the Java type is {@code Long} (storing FK id only).
      */
-    String relatedModel() default "";
+    Class<?> relatedModel() default Void.class;
+
+    /**
+     * Related model <b>name</b> (String form) — fallback for cross-module /
+     * dynamic models not on the compile classpath. Ignored when
+     * {@link #relatedModel()} is set to a non-{@code Void} class.
+     */
+    String relatedModelName() default "";
 
     /** Related field on the related model; empty = {@code "id"}. */
     String relatedField() default "";
 
-    /** Many-to-many join model name. */
-    String joinModel() default "";
+    /**
+     * Many-to-many join model <b>class</b> — preferred, compile-checked form,
+     * e.g. {@code joinModel = EmpProjectRel.class}. {@code Void.class} (default)
+     * = not set → falls back to {@link #joinModelName()}.
+     */
+    Class<?> joinModel() default Void.class;
+
+    /** Many-to-many join model <b>name</b> (String form) — fallback for cross-module / dynamic models. */
+    String joinModelName() default "";
 
     /** Many-to-many join model's left field. */
     String joinLeft() default "";

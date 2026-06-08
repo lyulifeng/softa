@@ -2,44 +2,56 @@ package io.softa.starter.metadata.entity;
 
 import java.io.Serial;
 import java.util.List;
-import io.swagger.v3.oas.annotations.media.Schema;
 import lombok.Data;
 import lombok.EqualsAndHashCode;
 
+import io.softa.framework.orm.annotation.Field;
+import io.softa.framework.orm.annotation.Model;
 import io.softa.framework.orm.entity.AuditableModel;
+import io.softa.framework.orm.enums.Ownership;
 
 /**
- * SysModelIndex Model
+ * SysModelIndex — metadata catalog row describing a model's database index.
+ *
+ * <p>Self-described via {@code @Model} + per-field {@code @Field} so the
+ * scanner manages its schema like any other SYSTEM_MODEL.
  */
 @Data
-@Schema(name = "SysModelIndex")
 @EqualsAndHashCode(callSuper = true)
+@Model(
+        label = "System Model Index",
+        businessKey = {"modelName", "indexName"},
+        description = "Metadata catalog of indexes"
+)
 public class SysModelIndex extends AuditableModel {
 
     @Serial
     private static final long serialVersionUID = 1L;
 
-    @Schema(description = "ID")
+    @Field(label = "ID")
     private Long id;
 
-    @Schema(description = "APP ID")
+    @Field(label = "App ID")
     private Long appId;
 
-    @Schema(description = "Index Title")
-    private String name;
+    @Field(label = "Label")
+    private String label;
 
-    @Schema(description = "Model Name")
+    @Field(label = "Model Name", required = true)
     private String modelName;
 
-    @Schema(description = "Model ID")
+    @Field(label = "Model ID")
     private Long modelId;
 
-    @Schema(description = "Index Name")
+    @Field(label = "Index Name", required = true)
     private String indexName;
 
-    @Schema(description = "Index Fields")
+    @Field(label = "Index Fields", required = true)
     private List<String> indexFields;
 
-    @Schema(description = "Is Unique Index")
+    @Field(label = "Is Unique Index")
     private Boolean uniqueIndex;
+
+    @Field(label = "Ownership")
+    private Ownership ownership;
 }

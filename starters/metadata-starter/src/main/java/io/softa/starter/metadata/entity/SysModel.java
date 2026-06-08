@@ -2,89 +2,112 @@ package io.softa.starter.metadata.entity;
 
 import java.io.Serial;
 import java.util.List;
-import io.swagger.v3.oas.annotations.media.Schema;
 import lombok.Data;
 import lombok.EqualsAndHashCode;
 
+import io.softa.framework.orm.annotation.Field;
+import io.softa.framework.orm.annotation.Model;
 import io.softa.framework.orm.domain.Orders;
 import io.softa.framework.orm.entity.AuditableModel;
+import io.softa.framework.orm.enums.FieldType;
 import io.softa.framework.orm.enums.IdStrategy;
+import io.softa.framework.orm.enums.Ownership;
 import io.softa.framework.orm.enums.StorageType;
 
 /**
- * SysModel Model
+ * SysModel — metadata catalog row describing a Softa Model.
+ *
+ * <p>Self-described: this class carries {@code @Model} + per-field {@code @Field}
+ * annotations, so the {@code MetadataAnnotationScanner} writes {@code sys_model}
+ * rows describing {@code SysModel} itself (and its 7 siblings). The scanner
+ * takes a pure-JDBC path against the physical {@code sys_*} tables and does
+ * <b>not</b> read its own {@code ModelManager} state, so this self-reference
+ * does not create a circular dependency.
  */
 @Data
-@Schema(name = "SysModel")
 @EqualsAndHashCode(callSuper = true)
+@Model(
+        label = "System Model",
+        businessKey = {"modelName"},
+        description = "Metadata catalog of models"
+)
 public class SysModel extends AuditableModel {
 
     @Serial
     private static final long serialVersionUID = 1L;
 
-    @Schema(description = "ID")
+    @Field(label = "ID")
     private Long id;
 
-    @Schema(description = "App ID")
+    @Field(label = "App ID")
     private Long appId;
 
-    @Schema(description = "Label Name")
-    private String labelName;
+    @Field(label = "Label")
+    private String label;
 
-    @Schema(description = "Model Name")
+    @Field(label = "Model Name", required = true)
     private String modelName;
 
-    @Schema(description = "Display Name")
+    @Field(label = "Display Name")
     private List<String> displayName;
 
-    @Schema(description = "Search Name")
+    @Field(label = "Search Name")
     private List<String> searchName;
 
-    @Schema(description = "Default Order")
+    @Field(label = "Default Order")
     private Orders defaultOrder;
 
-    @Schema(description = "Table Name")
+    @Field(label = "Table Name")
     private String tableName;
 
-    @Schema(description = "Enable Soft Delete")
+    @Field(label = "Enable Soft Delete")
     private Boolean softDelete;
 
-    @Schema(description = "Soft Delete Field Name")
+    @Field(label = "Soft Delete Field Name")
     private String softDeleteField;
 
-    @Schema(description = "Enable Active Control")
+    @Field(label = "Enable Active Control")
     private Boolean activeControl;
 
-    @Schema(description = "Is Timeline Model")
+    @Field(label = "Is Timeline Model")
     private Boolean timeline;
 
-    @Schema(description = "ID Strategy")
+    @Field(label = "ID Strategy")
     private IdStrategy idStrategy;
 
-    @Schema(description = "Storage Type")
+    @Field(label = "Storage Type")
     private StorageType storageType;
 
-    @Schema(description = "Enable Version Lock")
+    @Field(label = "Enable Version Lock")
     private Boolean versionLock;
 
-    @Schema(description = "Enable Multi-tenancy")
+    @Field(label = "Enable Multi-tenancy")
     private Boolean multiTenant;
 
-    @Schema(description = "Data Source")
+    @Field(label = "Data Source")
     private String dataSource;
 
-    @Schema(description = "Service Name")
+    @Field(label = "Service Name")
     private String serviceName;
 
-    @Schema(description = "Business Primary Key")
+    @Field(label = "Business Primary Key")
     private List<String> businessKey;
 
-    @Schema(description = "Partition Field")
+    @Field(label = "Partition Field")
     private String partitionField;
 
-    @Schema(description = "Description")
+    @Field(label = "Description")
     private String description;
 
-    @Schema(description = "Model Fields")
+    @Field(label = "Ownership")
+    private Ownership ownership;
+
+    /**
+     * One-to-many to {@link SysField} (joins on business key {@code modelName}, not id).
+     * Has NO {@code sys_model} column — SysCatalog and the DDL builder both exclude
+     * X-to-many — but is emitted as a {@code sys_field} row, so the meta-model is
+     * self-describing. Populated in memory by {@code ModelManager}.
+     */
+    @Field(label = "Model Fields", fieldType = FieldType.ONE_TO_MANY, relatedModel = SysField.class, relatedField = "modelName")
     private List<SysField> modelFields;
 }

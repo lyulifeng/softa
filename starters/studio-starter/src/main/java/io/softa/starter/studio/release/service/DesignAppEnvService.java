@@ -78,7 +78,7 @@ public interface DesignAppEnvService extends EntityService<DesignAppEnv, Long> {
      * <p>
      * The private key is written to {@code DesignAppEnv.privateKey} (ORM-encrypted at
      * rest) and never returned by any read API. The runtime trusts the new key once
-     * the operator has updated its {@code system.runtime-public-key}
+     * the operator has updated its {@code system.metadata.public-key}
      * entry —
      * since each runtime pairs with exactly one env, this is an atomic swap rather
      * than a multi-key rotation.

@@ -35,7 +35,7 @@ public class AppStartup implements InitializingBean {
 
     /**
      * Boot-time pre-initializers (e.g., {@code MetadataAnnotationScanner} in
-     * dev-mode=true). {@code required = false} keeps the SPI optional.
+     * when {@code scanner-scope} is non-empty). {@code required = false} keeps the SPI optional.
      */
     @Autowired(required = false)
     private List<MetadataInitializer> preInitializers = List.of();

@@ -1,11 +1,13 @@
 package io.softa.starter.ai.entity;
 
 import java.io.Serial;
-import io.swagger.v3.oas.annotations.media.Schema;
 import lombok.Data;
 import lombok.EqualsAndHashCode;
 
+import io.softa.framework.orm.annotation.Field;
+import io.softa.framework.orm.annotation.Model;
 import io.softa.framework.orm.entity.AuditableModel;
+import io.softa.framework.orm.enums.IdStrategy;
 import io.softa.starter.ai.enums.AiMessageRole;
 import io.softa.starter.ai.enums.AiMessageStatus;
 
@@ -13,41 +15,41 @@ import io.softa.starter.ai.enums.AiMessageStatus;
  * AiMessage Model
  */
 @Data
-@Schema(name = "AiMessage")
 @EqualsAndHashCode(callSuper = true)
+@Model(
+        label = "AI Message",
+        idStrategy = IdStrategy.DISTRIBUTED_LONG,
+        defaultOrder = {"createdTime"}
+)
 public class AiMessage extends AuditableModel {
 
     @Serial
     private static final long serialVersionUID = 1L;
 
-    @Schema(description = "ID")
+    @Field(label = "ID")
     private Long id;
 
-    @Schema(description = "Robot ID")
+    @Field(label = "Robot ID")
     private Long robotId;
 
-    @Schema(description = "Conversation ID")
+    @Field(label = "Conversation ID", required = true)
     private Long conversationId;
 
-    @Schema(description = "Role")
+    @Field(label = "Role", required = true)
     private AiMessageRole role;
 
-    @Schema(description = "Content")
+    @Field(label = "Content", length = 20000)
     private String content;
 
-    @Schema(description = "Tokens")
+    @Field(label = "Tokens")
     private Integer tokens;
 
-    @Schema(description = "Stream Output")
+    @Field(label = "Stream Output")
     private Boolean stream;
 
-    @Schema(description = "Parent Message ID")
+    @Field(label = "Parent Message ID")
     private Long parentId;
 
-    @Schema(description = "Status")
+    @Field(label = "Status")
     private AiMessageStatus status;
-
-
-
-
 }

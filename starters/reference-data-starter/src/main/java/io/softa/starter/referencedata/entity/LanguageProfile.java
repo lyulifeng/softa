@@ -1,7 +1,6 @@
 package io.softa.starter.referencedata.entity;
 
 import java.io.Serial;
-import io.swagger.v3.oas.annotations.media.Schema;
 import lombok.Data;
 import lombok.EqualsAndHashCode;
 
@@ -40,7 +39,6 @@ import io.softa.framework.orm.entity.AuditableModel;
  * which resolves against that platform-default row.
  */
 @Data
-@Schema(name = "LanguageProfile")
 @EqualsAndHashCode(callSuper = true)
 @Model(
         label = "Language Profile",
@@ -55,7 +53,7 @@ public class LanguageProfile extends AuditableModel {
     @Serial
     private static final long serialVersionUID = 1L;
 
-    @Schema(description = "ID")
+    @Field(label = "ID")
     private Long id;
 
     @Field(label = "Tenant ID", length = 32,

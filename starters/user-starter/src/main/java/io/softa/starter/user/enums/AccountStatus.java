@@ -4,22 +4,32 @@ import com.fasterxml.jackson.annotation.JsonValue;
 import lombok.AllArgsConstructor;
 import lombok.Getter;
 
+import io.softa.framework.orm.annotation.OptionItem;
+import io.softa.framework.orm.annotation.OptionSet;
+
 /**
  * Account Status
  */
 @Getter
 @AllArgsConstructor
+@OptionSet(label = "Account Status")
 public enum AccountStatus {
-    ACTIVE("Active", "Active"),
-    UNVERIFIED("Unverified", "Unverified"),
-    LOCKED("Locked", "Locked"),
-    FROZEN("Frozen", "Frozen"),
-    PENDING_DELETION("PendingDeletion", "Pending Deletion"),
-    DELETED("Deleted", "Deleted"),
-    BLACKLISTED("Blacklisted", "Blacklisted")
+    @OptionItem(label = "Active")
+    ACTIVE("Active"),
+    @OptionItem(label = "Unverified")
+    UNVERIFIED("Unverified"),
+    @OptionItem(label = "Locked")
+    LOCKED("Locked"),
+    @OptionItem(label = "Frozen")
+    FROZEN("Frozen"),
+    @OptionItem(label = "Pending Deletion")
+    PENDING_DELETION("PendingDeletion"),
+    @OptionItem(label = "Deleted")
+    DELETED("Deleted"),
+    @OptionItem(label = "Blacklisted")
+    BLACKLISTED("Blacklisted"),
     ;
+
     @JsonValue
     private final String status;
-
-    private final String description;
 }

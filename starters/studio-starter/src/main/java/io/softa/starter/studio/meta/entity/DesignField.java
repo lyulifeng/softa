@@ -1,125 +1,137 @@
 package io.softa.starter.studio.meta.entity;
 
 import java.io.Serial;
-import io.swagger.v3.oas.annotations.media.Schema;
 import lombok.Data;
 import lombok.EqualsAndHashCode;
 
+import io.softa.framework.orm.annotation.Field;
+import io.softa.framework.orm.annotation.Model;
 import io.softa.framework.orm.entity.AuditableModel;
 import io.softa.framework.orm.enums.FieldType;
+import io.softa.framework.orm.enums.IdStrategy;
 import io.softa.framework.orm.enums.MaskingType;
+import io.softa.framework.orm.enums.Ownership;
 import io.softa.framework.orm.enums.WidgetType;
 
 /**
  * DesignField Model
  */
 @Data
-@Schema(name = "DesignField")
 @EqualsAndHashCode(callSuper = true)
+@Model(
+        label = "Design Field",
+        idStrategy = IdStrategy.DISTRIBUTED_LONG,
+        softDelete = true,
+        businessKey = {"modelName", "fieldName"},
+        displayName = {"label"}
+)
 public class DesignField extends AuditableModel {
 
     @Serial
     private static final long serialVersionUID = 1L;
 
-    @Schema(description = "ID")
+    @Field(label = "ID")
     private Long id;
 
-    @Schema(description = "Portfolio")
+    @Field(label = "Portfolio")
     private Long portfolioId;
 
-    @Schema(description = "App ID")
+    @Field(label = "App ID")
     private Long appId;
 
-    @Schema(description = "Model ID")
+    @Field(label = "Model ID")
     private Long modelId;
 
-    @Schema(description = "Label Name")
-    private String labelName;
+    @Field(label = "Label", required = true, length = 64)
+    private String label;
 
-    @Schema(description = "Field Name")
+    @Field(label = "Field Name", required = true, length = 64)
     private String fieldName;
 
-    @Schema(description = "Column Name")
+    @Field(label = "Column Name", length = 64)
     private String columnName;
 
-    @Schema(description = "Model Name")
+    @Field(label = "Model Name", required = true, length = 64)
     private String modelName;
 
-    @Schema(description = "Description")
+    @Field(label = "Description", length = 256)
     private String description;
 
-    @Schema(description = "Field Type")
+    @Field(label = "Field Type", required = true)
     private FieldType fieldType;
 
-    @Schema(description = "Option Set Code")
+    @Field(label = "Option Set Code", length = 64)
     private String optionSetCode;
 
-    @Schema(description = "Related Model")
+    @Field(label = "Related Model", length = 64)
     private String relatedModel;
 
-    @Schema(description = "Related Field")
+    @Field(label = "Related Field", length = 64)
     private String relatedField;
 
-    @Schema(description = "Join Model")
+    @Field(label = "Join Model", length = 64)
     private String joinModel;
 
-    @Schema(description = "Join Model Left Key")
+    @Field(label = "Join Model Left Key", length = 64)
     private String joinLeft;
 
-    @Schema(description = "Join Model Right Key")
+    @Field(label = "Join Model Right Key", length = 64)
     private String joinRight;
 
-    @Schema(description = "Cascaded Field")
+    @Field(label = "Cascaded Field", length = 256)
     private String cascadedField;
 
-    @Schema(description = "Filters")
+    @Field(label = "Filters", length = 256)
     private String filters;
 
-    @Schema(description = "Default Value")
+    @Field(label = "Default Value", length = 256)
     private String defaultValue;
 
-    @Schema(description = "Length")
+    @Field(label = "Length")
     private Integer length;
 
-    @Schema(description = "Scale")
+    @Field(label = "Scale")
     private Integer scale;
 
-    @Schema(description = "Is Required")
+    @Field(label = "Is Required")
     private Boolean required;
 
-    @Schema(description = "Is Readonly")
+    @Field(label = "Is Readonly")
     private Boolean readonly;
 
-    @Schema(description = "Hidden")
+    @Field(label = "Hidden")
     private Boolean hidden;
 
-    @Schema(description = "Translatable")
+    @Field(label = "Translatable")
     private Boolean translatable;
 
-    @Schema(description = "Non Copyable")
+    @Field(label = "Non Copyable")
     private Boolean nonCopyable;
 
-    @Schema(description = "Unsearchable")
+    @Field(label = "Unsearchable")
     private Boolean unsearchable;
 
-    @Schema(description = "Is Computed")
+    @Field(label = "Is Computed")
     private Boolean computed;
 
-    @Schema(description = "Expression")
+    @Field(label = "Expression", length = 20000)
     private String expression;
 
-    @Schema(description = "Dynamic Field")
+    @Field(label = "Dynamic Field")
     private Boolean dynamic;
 
-    @Schema(description = "Is Encrypted")
+    @Field(label = "Is Encrypted")
     private Boolean encrypted;
 
-    @Schema(description = "Masking Type")
+    @Field(label = "Masking Type")
     private MaskingType maskingType;
 
-    @Schema(description = "Widget Type")
+    @Field(label = "Widget Type")
     private WidgetType widgetType;
 
-    @Schema(description = "Deleted")
+    @Field(label = "Ownership")
+    private Ownership ownership;
+
+    @Field(label = "Deleted")
     private Boolean deleted;
 }

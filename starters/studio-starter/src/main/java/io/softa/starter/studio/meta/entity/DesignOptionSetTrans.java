@@ -1,35 +1,38 @@
 package io.softa.starter.studio.meta.entity;
 
-import io.softa.framework.orm.entity.AuditableModel;
-import io.swagger.v3.oas.annotations.media.Schema;
+import java.io.Serial;
 import lombok.Data;
 import lombok.EqualsAndHashCode;
 
-import java.io.Serial;
+import io.softa.framework.orm.annotation.Field;
+import io.softa.framework.orm.annotation.Model;
+import io.softa.framework.orm.entity.AuditableModel;
 
 /**
  * DesignOptionSetTrans Model
  */
 @Data
-@Schema(name = "DesignOptionSetTrans")
 @EqualsAndHashCode(callSuper = true)
+@Model(
+        label = "Design Option Set Translation"
+)
 public class DesignOptionSetTrans extends AuditableModel {
 
     @Serial
     private static final long serialVersionUID = 1L;
 
-    @Schema(description = "ID")
+    @Field(label = "ID")
     private Long id;
 
-    @Schema(description = "Language Code")
+    @Field(label = "Language Code", required = true, length = 64)
     private String languageCode;
 
-    @Schema(description = "Row ID")
+    @Field(label = "Row ID")
     private Long rowId;
 
-    @Schema(description = "Option Set Name")
-    private String name;
+    @Field(label = "Label", length = 64)
+    private String label;
 
-    @Schema(description = "Description")
+    @Field(label = "Description", length = 256)
     private String description;
 }

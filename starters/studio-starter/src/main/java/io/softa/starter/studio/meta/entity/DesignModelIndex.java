@@ -2,50 +2,61 @@ package io.softa.starter.studio.meta.entity;
 
 import java.io.Serial;
 import java.util.List;
-import io.swagger.v3.oas.annotations.media.Schema;
 import lombok.Data;
 import lombok.EqualsAndHashCode;
 
+import io.softa.framework.orm.annotation.Field;
+import io.softa.framework.orm.annotation.Model;
 import io.softa.framework.orm.entity.AuditableModel;
+import io.softa.framework.orm.enums.IdStrategy;
+import io.softa.framework.orm.enums.Ownership;
 
 /**
  * DesignModelIndex Model
  */
 @Data
-@Schema(name = "DesignModelIndex")
 @EqualsAndHashCode(callSuper = true)
+@Model(
+        label = "Design Model Index",
+        idStrategy = IdStrategy.DISTRIBUTED_LONG,
+        softDelete = true,
+        businessKey = {"modelName", "indexName"}
+)
 public class DesignModelIndex extends AuditableModel {
 
     @Serial
     private static final long serialVersionUID = 1L;
 
-    @Schema(description = "ID")
+    @Field(label = "ID")
     private Long id;
 
-    @Schema(description = "Portfolio")
+    @Field(label = "Portfolio")
     private Long portfolioId;
 
-    @Schema(description = "APP ID")
+    @Field(label = "APP ID")
     private Long appId;
 
-    @Schema(description = "Model ID")
+    @Field(label = "Model ID", required = true)
     private Long modelId;
 
-    @Schema(description = "Model Name")
+    @Field(label = "Model Name", required = true, length = 64)
     private String modelName;
 
-    @Schema(description = "Index Title")
-    private String name;
+    @Field(label = "Label", required = true, length = 64)
+    private String label;
 
-    @Schema(description = "Index Name")
+    @Field(label = "Index Name", length = 64)
     private String indexName;
 
-    @Schema(description = "Index Fields")
+    @Field(label = "Index Fields")
     private List<String> indexFields;
 
-    @Schema(description = "Is Unique Index")
+    @Field(label = "Is Unique Index")
     private Boolean uniqueIndex;
 
-    @Schema(description = "Deleted")
+    @Field(label = "Ownership")
+    private Ownership ownership;
+
+    @Field(label = "Deleted")
     private Boolean deleted;
 }

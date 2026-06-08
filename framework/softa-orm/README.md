@@ -12,7 +12,7 @@
 Softa describes models, fields, option sets, option items, and indexes
 through Java annotations on the entity classes. A boot-time scanner reads
 these annotations, reconciles them with the `sys_*` catalog tables managed
-by `metadata-starter`, and (in dev-mode) applies the matching DDL.
+by `metadata-starter`, and (for packages in `scanner-scope`) applies the matching DDL.
 
 **Five annotations**, all in `io.softa.framework.orm.annotation`:
 
@@ -65,7 +65,7 @@ public enum CustomerTier {
 | `itemCode` | `@JsonValue` field value (fallback `enum.name()`) | — (no override) |
 | `tableName` | `snake_case(modelName)` | `@Model.tableName` |
 | `columnName` | `snake_case(fieldName)` | `@Field.columnName` |
-| `fieldType` | Java type via `TypeInference` (e.g. `String`→`STRING`, enum→`OPTION`, `List<enum>`→`MULTI_OPTION`, `@Model` POJO→`MANY_TO_ONE`) | `@Field.fieldType = { ... }` (single element); **`OPTION` / `MULTI_OPTION` cannot be written explicitly** |
+| `fieldType` | Java type via `TypeInference` (e.g. `String`→`STRING`, enum→`OPTION`, `List<enum>`→`MULTI_OPTION`, `@Model` POJO→`MANY_TO_ONE`) | `@Field.fieldType = FieldType.X` (single value, no braces); **`OPTION` / `MULTI_OPTION` cannot be written explicitly** |
 | index `indexName` | `idx_<table>_<col>...` / `uk_<table>_<col>...` for unique | `@Index.name` |
 
 ### `@Model` ↔ `SysModel`
@@ -73,7 +73,7 @@ public enum CustomerTier {
 | `@Model` attribute | Type | Default | `SysModel` column | Notes |
 |---|---|---|---|---|
 | (class simple name) | — | — | `modelName` | inferred, no override |
-| `label` | String | `""` | `label` | empty → i18n key `model.{modelName}.label` |
+| `label` | String | `""` | `label` | empty → humanized class name (`DeptInfo`→"Dept Info"); i18n translations override by id |
 | `tableName` | String | `""` | `tableName` | empty → `snake_case(modelName)` |
 | `description` | String | `""` | `description` | |
 | `displayName` | String[] | `{}` | `displayName` | list-display defaults |
@@ -106,11 +106,11 @@ extends `AuditableModel`.
 |---|---|---|---|---|
 | (Java field name) | — | — | `fieldName` | inferred, no override |
 | (Java type) | — | — | `fieldType` | inferred via `TypeInference` |
-| `label` | String | `""` | `label` | empty → i18n key |
+| `label` | String | `""` | `label` | empty → humanized field name (`deptId`→"Dept Id"); i18n translations override by id |
 | `description` | String | `""` | `description` | |
-| `fieldType` | `FieldType[]` | `{}` | `fieldType` | single-element override; `OPTION`/`MULTI_OPTION` **cannot** be written explicitly |
+| `fieldType` | `FieldType[]` | `{}` | `fieldType` | single value, no braces (e.g. `fieldType = FieldType.MULTI_FILE`); `OPTION`/`MULTI_OPTION` **cannot** be written explicitly |
 | `columnName` | String | `""` | `columnName` | empty → `snake_case(fieldName)` |
-| `length` | int | `0` | `length` | `0` → type-specific default; STRING / DECIMAL precision |
+| `length` | int | `0` | `length` | `0` → type-specific default (STRING → 64); DECIMAL precision |
 | `scale` | int | `0` | `scale` | DECIMAL scale |
 | `required` | boolean | `false` | `required` | NOT NULL constraint |
 | `readonly` | boolean | `false` | `readonly` | UI hint |
@@ -123,9 +123,10 @@ extends `AuditableModel`.
 | `encrypted` | boolean | `false` | `encrypted` | at-rest encryption |
 | `maskingType` | `MaskingType[]` | `{}` | `maskingType` | single element |
 | `defaultValue` | String | `""` | `defaultValue` | |
-| `relatedModel` | String | `""` | `relatedModel` | empty → inferred from POJO type; **required** when Java type is `Long` storing an FK id |
+| `relatedModel` | `Class<?>` | `Void.class` | `relatedModel` | Class ref (compile-checked), e.g. `Foo.class`; `Void.class` → inferred from POJO type; **required** for `Long` FK. Use `relatedModelName` (String) for cross-module/dynamic models |
+| `relatedModelName` | String | `""` | `relatedModel` | String fallback to `relatedModel` (cross-module/dynamic) |
 | `relatedField` | String | `""` | `relatedField` | empty → `"id"` |
-| `joinModel` | String | `""` | `joinModel` | M2M join table |
+| `joinModel` | `Class<?>` | `Void.class` | `joinModel` | M2M join model class; `joinModelName` (String) fallback |
 | `joinLeft` | String | `""` | `joinLeft` | |
 | `joinRight` | String | `""` | `joinRight` | |
 | `cascadedField` | String | `""` | `cascadedField` | dotted path, e.g. `"owner.name"` |
@@ -142,7 +143,7 @@ extends `AuditableModel`.
 | `@OptionSet` attribute | Type | Default | `SysOptionSet` column | Notes |
 |---|---|---|---|---|
 | (enum simple name) | — | — | `optionSetCode` | inferred, no override |
-| `name` | String | `""` | `name` | display label; empty → i18n key |
+| `name` | String | `""` | `name` | display label; empty → humanized enum name (`TenantStatus`→"Tenant Status") |
 | `description` | String | `""` | `description` | |
 | (scanner sets) | — | — | `appId` / `id` / `ownership` | |
 | (Studio toggle) | — | — | `deleted` / `optionItems` | runtime aggregation |
@@ -153,7 +154,7 @@ extends `AuditableModel`.
 |---|---|---|---|---|
 | (`@JsonValue` field value on enum) | — | — | `itemCode` | fallback to `enum.name()` when no `@JsonValue` |
 | (enclosing enum simple name) | — | — | `optionSetCode` | inferred |
-| `label` | String | `""` | `label` | empty → use `itemCode` as fallback |
+| `label` | String | `""` | `label` | empty → humanized enum constant name (`MULTI_FILE`→"Multi File") |
 | `description` | String | `""` | `description` | |
 | `sequence` | int | `-1` | `sequence` | `-1` → use `ordinal() + 1` |
 | `parentItemCode` | String | `""` | `parentItemCode` | hierarchy |

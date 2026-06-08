@@ -5,9 +5,9 @@ import org.junit.jupiter.api.Test;
 
 import io.softa.framework.base.placeholder.TemplateEngine;
 import io.softa.framework.orm.enums.FieldType;
-import io.softa.starter.studio.template.ddl.context.FieldDdlCtx;
-import io.softa.starter.studio.template.ddl.context.IndexDdlCtx;
-import io.softa.starter.studio.template.ddl.context.ModelDdlCtx;
+import io.softa.starter.metadata.ddl.context.FieldDdlCtx;
+import io.softa.starter.metadata.ddl.context.IndexDdlCtx;
+import io.softa.starter.metadata.ddl.context.ModelDdlCtx;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 
@@ -202,7 +202,7 @@ class PebbleSqlTemplateWhitespaceTest {
     private ModelDdlCtx baseModel(String tableName, String description, String pkColumn, boolean autoIncrementPrimaryKey) {
         ModelDdlCtx model = new ModelDdlCtx();
         model.setModelName(tableName);
-        model.setLabelName(description);
+        model.setLabel(description);
         model.setTableName(tableName);
         model.setDescription(description);
         model.setPkColumn(pkColumn);

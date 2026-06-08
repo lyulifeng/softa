@@ -3,10 +3,11 @@ package io.softa.starter.file.entity;
 import java.io.Serial;
 import java.time.LocalDateTime;
 import java.util.List;
-import io.swagger.v3.oas.annotations.media.Schema;
 import lombok.Data;
 import lombok.EqualsAndHashCode;
 
+import io.softa.framework.orm.annotation.Field;
+import io.softa.framework.orm.annotation.Model;
 import io.softa.framework.orm.entity.AuditableModel;
 import io.softa.starter.file.enums.SigningRequestStatus;
 
@@ -14,37 +15,37 @@ import io.softa.starter.file.enums.SigningRequestStatus;
  * SigningRequest Model
  */
 @Data
-@Schema(name = "SigningRequest")
 @EqualsAndHashCode(callSuper = true)
+@Model(label = "Signing Request")
 public class SigningRequest extends AuditableModel {
 
     @Serial
     private static final long serialVersionUID = 1L;
 
-    @Schema(description = "ID")
+    @Field(label = "ID")
     private Long id;
 
-    @Schema(description = "Tenant ID")
+    @Field(label = "Tenant ID", length = 32)
     private String tenantId;
 
-    @Schema(description = "Model Name")
+    @Field(label = "Model Name", length = 64)
     private String modelName;
 
-    @Schema(description = "title")
+    @Field(label = "Title", length = 256)
     private String title;
 
-    @Schema(description = "Code")
+    @Field(label = "Code", length = 64)
     private String code;
 
-    @Schema(description = "Status")
+    @Field(label = "Status")
     private SigningRequestStatus status;
 
-    @Schema(description = "Recipient User")
+    @Field(label = "Recipient User")
     private Long recipient;
 
-    @Schema(description = "Expires Time")
+    @Field(label = "Expires Time")
     private LocalDateTime expiresTime;
 
-    @Schema(description = "Signing Documents")
+    @Field(label = "Signing Documents")
     private List<SigningDocument> signingDocuments;
 }

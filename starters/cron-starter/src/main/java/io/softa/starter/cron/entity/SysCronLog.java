@@ -1,47 +1,48 @@
 package io.softa.starter.cron.entity;
 
-import io.softa.framework.orm.entity.AuditableModel;
-import io.softa.starter.cron.enums.CronStatus;
-import io.swagger.v3.oas.annotations.media.Schema;
+import java.io.Serial;
+import java.time.LocalDateTime;
 import lombok.Data;
 import lombok.EqualsAndHashCode;
 
-import java.io.Serial;
-import java.time.LocalDateTime;
+import io.softa.framework.orm.annotation.Field;
+import io.softa.framework.orm.annotation.Model;
+import io.softa.framework.orm.entity.AuditableModel;
+import io.softa.starter.cron.enums.CronStatus;
 
 /**
  * SysCronLog Model
  */
 @Data
-@Schema(name = "SysCronLog")
 @EqualsAndHashCode(callSuper = true)
+@Model(label = "System Cron Log")
 public class SysCronLog extends AuditableModel {
 
     @Serial
     private static final long serialVersionUID = 1L;
 
-    @Schema(description = "ID")
+    @Field(label = "ID")
     private Long id;
 
-    @Schema(description = "Cron ID")
+    @Field(label = "Cron ID")
     private Long cronId;
 
-    @Schema(description = "Cron Job Name")
+    @Field(label = "Cron Job Name", length = 64)
     private String cronName;
 
-    @Schema(description = "Cron Execution State")
+    @Field(label = "Cron Execution State")
     private CronStatus status;
 
-    @Schema(description = "Execution Start Time")
+    @Field(label = "Execution Start Time", description = "Update when execution begins.")
     private LocalDateTime startTime;
 
-    @Schema(description = "Execution End Time")
+    @Field(label = "Execution End Time", description = "Update after execution")
     private LocalDateTime endTime;
 
-    @Schema(description = "Total Execution Time (s)")
+    @Field(label = "Total Execution Time (s)")
     private Double totalTime;
 
-    @Schema(description = "Error Message")
+    @Field(label = "Error Message", length = 256)
     private String errorMessage;
 
 }

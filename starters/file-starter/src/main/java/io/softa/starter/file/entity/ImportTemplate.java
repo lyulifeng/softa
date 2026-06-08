@@ -2,10 +2,11 @@ package io.softa.starter.file.entity;
 
 import java.io.Serial;
 import java.util.List;
-import io.swagger.v3.oas.annotations.media.Schema;
 import lombok.Data;
 import lombok.EqualsAndHashCode;
 
+import io.softa.framework.orm.annotation.Field;
+import io.softa.framework.orm.annotation.Model;
 import io.softa.framework.orm.entity.AuditableModel;
 import io.softa.starter.file.enums.ImportRule;
 
@@ -13,49 +14,49 @@ import io.softa.starter.file.enums.ImportRule;
  * ImportTemplate Model
  */
 @Data
-@Schema(name = "ImportTemplate")
 @EqualsAndHashCode(callSuper = true)
+@Model(label = "Import Template")
 public class ImportTemplate extends AuditableModel {
 
     @Serial
     private static final long serialVersionUID = 1L;
 
-    @Schema(description = "ID")
+    @Field(label = "ID")
     private Long id;
 
-    @Schema(description = "Tenant ID")
+    @Field(label = "Tenant ID")
     private Long tenantId;
 
-    @Schema(description = "Template Name")
+    @Field(label = "Template Name", required = true, length = 64)
     private String name;
 
-    @Schema(description = "Model Name")
+    @Field(label = "Model Name", required = true, length = 64)
     private String modelName;
 
-    @Schema(description = "Import Rule")
+    @Field(label = "Import Rule", required = true)
     private ImportRule importRule;
 
-    @Schema(description = "Unique Constraints")
+    @Field(label = "Unique Constraints")
     private List<String> uniqueConstraints;
 
-    @Schema(description = "Ignore Empty Value")
+    @Field(label = "Ignore Empty Value")
     private Boolean ignoreEmpty;
 
-    @Schema(description = "Skip Abnormal Data")
+    @Field(label = "Skip Abnormal Data")
     private Boolean skipException;
 
-    @Schema(description = "Custom Import Handler")
+    @Field(label = "Custom Import Handler", length = 128)
     private String customHandler;
 
-    @Schema(description = "Synchronous Import")
+    @Field(label = "Synchronous Import")
     private Boolean syncImport;
 
-    @Schema(description = "Include Import Description")
+    @Field(label = "Include Import Description")
     private Boolean includeDescription;
 
-    @Schema(description = "Description")
+    @Field(label = "Description", length = 1000)
     private String description;
 
-    @Schema(description = "Import Field List")
+    @Field(label = "Import Field List")
     private List<ImportTemplateField> importFields;
 }

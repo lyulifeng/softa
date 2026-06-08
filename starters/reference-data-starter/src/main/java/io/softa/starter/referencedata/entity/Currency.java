@@ -1,14 +1,13 @@
 package io.softa.starter.referencedata.entity;
 
+import java.io.Serial;
+import lombok.Data;
+import lombok.EqualsAndHashCode;
+
 import io.softa.framework.orm.annotation.Field;
 import io.softa.framework.orm.annotation.Index;
 import io.softa.framework.orm.annotation.Model;
 import io.softa.framework.orm.entity.AuditableModel;
-import io.swagger.v3.oas.annotations.media.Schema;
-import lombok.Data;
-import lombok.EqualsAndHashCode;
-
-import java.io.Serial;
 
 /**
  * Platform-level currency master keyed by ISO 4217 alpha-3 code.
@@ -21,7 +20,6 @@ import java.io.Serial;
  * Mismatching these breaks currency rendering and rounding for that country.
  */
 @Data
-@Schema(name = "Currency")
 @EqualsAndHashCode(callSuper = true)
 @Model(
         label = "Currency",
@@ -35,7 +33,7 @@ public class Currency extends AuditableModel {
     @Serial
     private static final long serialVersionUID = 1L;
 
-    @Schema(description = "ID")
+    @Field(label = "ID")
     private Long id;
 
     @Field(label = "ISO 4217 alpha-3", required = true, length = 3,

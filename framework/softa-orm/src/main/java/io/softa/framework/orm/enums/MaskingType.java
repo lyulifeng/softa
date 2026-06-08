@@ -1,6 +1,8 @@
 package io.softa.framework.orm.enums;
 
 import com.fasterxml.jackson.annotation.JsonValue;
+import io.softa.framework.orm.annotation.OptionItem;
+import io.softa.framework.orm.annotation.OptionSet;
 import lombok.AllArgsConstructor;
 import lombok.Getter;
 
@@ -16,16 +18,21 @@ import lombok.Getter;
  */
 @Getter
 @AllArgsConstructor
+@OptionSet(label = "Masking Type")
 public enum MaskingType {
-    ALL("All", "Masks All Content"),
-    NAME("Name", "Masks Name"),
-    EMAIL("Email", "Masks Email"),
-    PHONE_NUMBER("PhoneNumber", "Masks Phone Number"),
-    ID_NUMBER("IdNumber", "Masks ID Number"),
-    CARD_NUMBER("CardNumber", "Masks Card Number");
+    @OptionItem(label = "Masks All Content")
+    ALL("All"),
+    @OptionItem(label = "Masks Name")
+    NAME("Name"),
+    @OptionItem(label = "Masks Email")
+    EMAIL("Email"),
+    @OptionItem(label = "Masks Phone Number")
+    PHONE_NUMBER("PhoneNumber"),
+    @OptionItem(label = "Masks ID Number")
+    ID_NUMBER("IdNumber"),
+    @OptionItem(label = "Masks Card Number")
+    CARD_NUMBER("CardNumber");
 
     @JsonValue
     private final String type;
-
-    private final String description;
 }

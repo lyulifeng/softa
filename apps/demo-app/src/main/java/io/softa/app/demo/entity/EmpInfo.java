@@ -2,51 +2,55 @@ package io.softa.app.demo.entity;
 
 import java.io.Serial;
 import java.util.List;
-import io.swagger.v3.oas.annotations.media.Schema;
 import lombok.Data;
 import lombok.EqualsAndHashCode;
 
+import io.softa.framework.orm.annotation.Field;
+import io.softa.framework.orm.annotation.Model;
 import io.softa.framework.orm.dto.FileInfo;
 import io.softa.framework.orm.entity.AuditableModel;
+import io.softa.framework.orm.enums.FieldType;
 
 /**
  * EmpInfo Model
  */
 @Data
-@Schema(name = "EmpInfo")
+@Model(label = "Employee", businessKey = {"code"})
 @EqualsAndHashCode(callSuper = true)
 public class EmpInfo extends AuditableModel {
 
     @Serial
     private static final long serialVersionUID = 1L;
 
-    @Schema(description = "ID")
+    @Field(label = "ID")
     private Long id;
 
-    @Schema(description = "Name")
+    @Field(label = "Name", required = true, length = 100)
     private String name;
 
-    @Schema(description = "Code")
+    @Field(label = "Code", length = 64)
     private String code;
 
-    @Schema(description = "Email")
+    @Field(label = "Email", length = 128)
     private String email;
 
-    @Schema(description = "Department")
+    @Field(label = "Department", fieldType = FieldType.MANY_TO_ONE, relatedModel = DeptInfo.class)
     private Long deptId;
 
-    @Schema(description = "Projects Involved")
+    @Field(label = "Projects Involved", fieldType = FieldType.MANY_TO_MANY,
+            relatedModel = ProjectInfo.class, joinModel = EmpProjectRel.class,
+            joinLeft = "empId", joinRight = "projectId")
     private List<Long> projectIds;
 
-    @Schema(description = "Employee Photo")
+    @Field(label = "Employee Photo", fieldType = FieldType.FILE)
     private FileInfo photo;
 
-    @Schema(description = "Employee Documents")
+    @Field(label = "Employee Documents", fieldType = FieldType.MULTI_FILE)
     private List<FileInfo> documents;
 
-    @Schema(description = "Description")
+    @Field(label = "Description", length = 256)
     private String description;
 
-    @Schema(description = "TenantID")
+    @Field(label = "Tenant ID")
     private Long tenantId;
 }

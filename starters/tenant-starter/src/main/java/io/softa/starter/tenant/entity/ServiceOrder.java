@@ -2,45 +2,51 @@ package io.softa.starter.tenant.entity;
 
 import java.io.Serial;
 import java.math.BigDecimal;
-import io.swagger.v3.oas.annotations.media.Schema;
 import lombok.Data;
 import lombok.EqualsAndHashCode;
 
+import io.softa.framework.orm.annotation.Field;
+import io.softa.framework.orm.annotation.Model;
 import io.softa.framework.orm.entity.AuditableModel;
+import io.softa.framework.orm.enums.IdStrategy;
 import io.softa.starter.tenant.enums.OrderStatus;
 
 /**
  * ServiceOrder Model
  */
 @Data
-@Schema(name = "ServiceOrder")
 @EqualsAndHashCode(callSuper = true)
+@Model(
+        label = "Service Order",
+        idStrategy = IdStrategy.DISTRIBUTED_LONG,
+        softDelete = true
+)
 public class ServiceOrder extends AuditableModel {
 
     @Serial
     private static final long serialVersionUID = 1L;
 
-    @Schema(description = "ID")
+    @Field(label = "ID")
     private Long id;
 
-    @Schema(description = "User")
+    @Field(label = "User")
     private Long userId;
 
-    @Schema(description = "Service Product")
+    @Field(label = "Service Product")
     private Long serviceId;
 
-    @Schema(description = "Order Number")
+    @Field(label = "Order Number", length = 32)
     private String orderNumber;
 
-    @Schema(description = "Order Status")
+    @Field(label = "Order Status")
     private OrderStatus orderStatus;
 
-    @Schema(description = "Amount")
+    @Field(label = "Amount", length = 32, scale = 8)
     private BigDecimal amount;
 
-    @Schema(description = "Notes")
+    @Field(label = "Notes", length = 1000)
     private String notes;
 
-    @Schema(description = "Deleted")
+    @Field(label = "Deleted")
     private Boolean deleted;
 }

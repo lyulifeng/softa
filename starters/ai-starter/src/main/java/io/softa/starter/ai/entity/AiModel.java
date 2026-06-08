@@ -2,11 +2,13 @@ package io.softa.starter.ai.entity;
 
 import java.io.Serial;
 import java.math.BigDecimal;
-import io.swagger.v3.oas.annotations.media.Schema;
 import lombok.Data;
 import lombok.EqualsAndHashCode;
 
+import io.softa.framework.orm.annotation.Field;
+import io.softa.framework.orm.annotation.Model;
 import io.softa.framework.orm.entity.AuditableModel;
+import io.softa.framework.orm.enums.IdStrategy;
 import io.softa.starter.ai.enums.AiModelProvider;
 import io.softa.starter.ai.enums.AiModelType;
 
@@ -14,40 +16,48 @@ import io.softa.starter.ai.enums.AiModelType;
  * AiModel Model
  */
 @Data
-@Schema(name = "AiModel")
 @EqualsAndHashCode(callSuper = true)
+@Model(
+        label = "AI Model",
+        idStrategy = IdStrategy.DISTRIBUTED_LONG,
+        softDelete = true,
+        activeControl = true
+)
 public class AiModel extends AuditableModel {
 
     @Serial
     private static final long serialVersionUID = 1L;
 
-    @Schema(description = "ID")
+    @Field(label = "ID")
     private Long id;
 
-    @Schema(description = "Model Name")
+    @Field(label = "Model Name", required = true, length = 64)
     private String name;
 
-    @Schema(description = "Model Code")
+    @Field(label = "Model Code", required = true, length = 64)
     private String code;
 
-    @Schema(description = "Model Provider")
+    @Field(label = "Model Provider")
     private AiModelProvider modelProvider;
 
-    @Schema(description = "Model Type")
+    @Field(label = "Model Type")
     private AiModelType modelType;
 
-    @Schema(description = "Input Price/1M tokens")
+    @Field(label = "Input Price/1M tokens", length = 32, scale = 8)
     private BigDecimal unitPriceInput;
 
-    @Schema(description = "Output price/1M tokens")
+    @Field(label = "Output price/1M tokens", length = 32, scale = 8)
     private BigDecimal unitPriceOutput;
 
-    @Schema(description = "Max Context Tokens")
+    @Field(label = "Max Context Tokens")
     private Integer maxTokens;
 
-    @Schema(description = "Description")
+    @Field(label = "Description", length = 256)
     private String description;
 
-    @Schema(description = "Active")
+    @Field(label = "Active")
     private Boolean active;
+
+    @Field(label = "Deleted")
+    private Boolean deleted;
 }

@@ -13,7 +13,7 @@ import io.softa.framework.orm.enums.WidgetType;
 @Data
 @Schema(name = "MetaFieldDTO")
 public class MetaFieldDTO {
-    private String labelName;
+    private String label;
     private String fieldName;
     private String modelName;
     private FieldType fieldType;

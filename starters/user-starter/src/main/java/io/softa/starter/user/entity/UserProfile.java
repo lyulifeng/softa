@@ -3,13 +3,15 @@ package io.softa.starter.user.entity;
 import java.io.Serial;
 import java.time.LocalDate;
 import java.time.LocalTime;
-import io.swagger.v3.oas.annotations.media.Schema;
 import lombok.Data;
 import lombok.EqualsAndHashCode;
 
 import io.softa.framework.base.enums.Language;
 import io.softa.framework.base.enums.Timezone;
+import io.softa.framework.orm.annotation.Field;
+import io.softa.framework.orm.annotation.Model;
 import io.softa.framework.orm.entity.AuditableModel;
+import io.softa.framework.orm.enums.IdStrategy;
 import io.softa.starter.user.enums.Gender;
 import io.softa.starter.user.enums.UserLayoutDensity;
 
@@ -17,49 +19,53 @@ import io.softa.starter.user.enums.UserLayoutDensity;
  * UserProfile Model
  */
 @Data
-@Schema(name = "UserProfile")
 @EqualsAndHashCode(callSuper = true)
+@Model(
+        label = "User Profile",
+        idStrategy = IdStrategy.DISTRIBUTED_LONG,
+        searchName = {"fullName"}
+)
 public class UserProfile extends AuditableModel {
 
     @Serial
     private static final long serialVersionUID = 1L;
 
-    @Schema(description = "ID")
+    @Field(label = "ID")
     private Long id;
 
-    @Schema(description = "Tenant ID")
+    @Field(label = "Tenant ID")
     private Long tenantId;
 
-    @Schema(description = "User ID")
+    @Field(label = "User ID", required = true)
     private Long userId;
 
-    @Schema(description = "Full Name")
+    @Field(label = "Full Name", length = 64)
     private String fullName;
 
-    @Schema(description = "Chinese Name")
+    @Field(label = "Chinese Name", length = 64)
     private String chineseName;
 
-    @Schema(description = "Birth Date")
+    @Field(label = "Birth Date")
     private LocalDate birthDate;
 
-    @Schema(description = "Birth Time")
+    @Field(label = "Birth Time")
     private LocalTime birthTime;
 
-    @Schema(description = "Birth City")
+    @Field(label = "Birth City", length = 64)
     private String birthCity;
 
-    @Schema(description = "Gender")
+    @Field(label = "Gender")
     private Gender gender;
 
-    @Schema(description = "Profile Photo File ID")
+    @Field(label = "Profile Photo File ID")
     private Long photoId;
 
-    @Schema(description = "Language")
+    @Field(label = "Language")
     private Language language;
 
-    @Schema(description = "Timezone")
+    @Field(label = "Timezone")
     private Timezone timezone;
 
-    @Schema(description = "Density")
+    @Field(label = "Density")
     private UserLayoutDensity density;
 }

@@ -1,29 +1,35 @@
 package io.softa.framework.orm.entity;
 
-import io.swagger.v3.oas.annotations.media.Schema;
+import java.io.Serial;
+import java.time.LocalDate;
+import io.softa.framework.orm.annotation.Field;
 import lombok.Data;
 import lombok.EqualsAndHashCode;
 
-import java.io.Serial;
-import java.time.LocalDate;
-
 /**
  * Abstract class of timeline model, with sliceId, effectiveStartDate and effectiveEndDate fields.
+ *
+ * <p>Like {@link AuditableModel}, these structural fields carry {@code @Field}
+ * so the scanner (walking the superclass chain) emits the matching
+ * {@code sys_field} rows + DDL columns once, rather than per entity. For a
+ * timeline model {@code sliceId} is the physical primary-key column.
+ *
+ * <p>No {@code @Schema}: {@code @Model} / {@code @Field} are the single metadata
+ * source and OpenAPI is generated from them by the softa-web apidocs customizers.
  */
 @Data
-@Schema(name = "TimelineModel")
 @EqualsAndHashCode(callSuper = true)
 public abstract class TimelineModel extends AuditableModel {
 
     @Serial
     private static final long serialVersionUID = 1L;
 
-    @Schema(description = "Slice ID")
+    @Field(label = "Slice ID", readonly = true, nonCopyable = true)
     private Long sliceId;
 
-    @Schema(description = "Effective start date")
+    @Field(label = "Effective start date")
     private LocalDate effectiveStartDate;
 
-    @Schema(description = "Effective end date")
+    @Field(label = "Effective end date")
     private LocalDate effectiveEndDate;
 }

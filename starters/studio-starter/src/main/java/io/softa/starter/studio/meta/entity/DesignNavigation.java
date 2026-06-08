@@ -1,53 +1,60 @@
 package io.softa.starter.studio.meta.entity;
 
 import java.io.Serial;
-import io.swagger.v3.oas.annotations.media.Schema;
 import lombok.Data;
 import lombok.EqualsAndHashCode;
 
+import io.softa.framework.orm.annotation.Field;
+import io.softa.framework.orm.annotation.Model;
 import io.softa.framework.orm.entity.AuditableModel;
+import io.softa.framework.orm.enums.IdStrategy;
 
 /**
  * DesignNavigation Model
  */
 @Data
-@Schema(name = "DesignNavigation")
 @EqualsAndHashCode(callSuper = true)
+@Model(
+        label = "Design Navigation",
+        idStrategy = IdStrategy.DISTRIBUTED_LONG,
+        softDelete = true,
+        businessKey = {"code"}
+)
 public class DesignNavigation extends AuditableModel {
 
     @Serial
     private static final long serialVersionUID = 1L;
 
-    @Schema(description = "ID")
+    @Field(label = "ID")
     private Long id;
 
-    @Schema(description = "Portfolio")
+    @Field(label = "Portfolio")
     private Long portfolioId;
 
-    @Schema(description = "App ID")
+    @Field(label = "App ID")
     private Long appId;
 
-    @Schema(description = "Name")
+    @Field(label = "Name", required = true, length = 64)
     private String name;
 
-    @Schema(description = "Type")
+    @Field(label = "Type", required = true, length = 64)
     private String type;
 
-    @Schema(description = "Code")
+    @Field(label = "Code", required = true, length = 64)
     private String code;
 
-    @Schema(description = "Model Name")
+    @Field(label = "Model Name", length = 256)
     private String modelName;
 
-    @Schema(description = "Parent Navigation")
+    @Field(label = "Parent Navigation")
     private Long parentId;
 
-    @Schema(description = "Description")
+    @Field(label = "Description", length = 256)
     private String description;
 
-    @Schema(description = "Default filters")
+    @Field(label = "Default filters", description = "The default filters at the menu level.", length = 256)
     private String filter;
 
-    @Schema(description = "Deleted")
+    @Field(label = "Deleted")
     private Boolean deleted;
 }

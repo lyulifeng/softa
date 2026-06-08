@@ -23,7 +23,11 @@ import java.lang.annotation.Target;
 @Retention(RetentionPolicy.RUNTIME)
 public @interface OptionSet {
 
-    /** Display label; empty = use i18n key {@code optionSet.{optionSetCode}.label}. Maps to {@code SysOptionSet.label}. */
+    /**
+     * Display label; empty = humanized enum simple name (e.g. {@code TenantStatus -> "Tenant Status"})
+     * as the base default, overridden per-language via the i18n translation table
+     * (keyed by {@code optionSet.{optionSetCode}}). Maps to {@code SysOptionSet.label}.
+     */
     String label() default "";
 
     /** Description shown to users in Studio UI; empty = no description. */

@@ -13,7 +13,7 @@ import io.softa.framework.orm.domain.Orders;
 @Data
 @Schema(name = "MetaModelDTO")
 public class MetaModelDTO {
-    private String labelName;
+    private String label;
     private String modelName;
     private String description;
     private List<String> displayName;

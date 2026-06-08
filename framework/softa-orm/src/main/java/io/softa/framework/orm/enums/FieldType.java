@@ -24,6 +24,8 @@ import io.softa.framework.base.constant.StringConstant;
 import io.softa.framework.base.exception.IllegalArgumentException;
 import io.softa.framework.base.utils.Assert;
 import io.softa.framework.base.utils.DateUtils;
+import io.softa.framework.orm.annotation.OptionItem;
+import io.softa.framework.orm.annotation.OptionSet;
 import io.softa.framework.orm.domain.Filters;
 import io.softa.framework.orm.domain.Orders;
 import io.softa.framework.orm.dto.DTOFieldObject;
@@ -34,48 +36,70 @@ import io.softa.framework.orm.dto.DTOFieldObject;
 @Slf4j
 @Getter
 @AllArgsConstructor
+@OptionSet(label = "Field Type")
 public enum FieldType {
     // String, including long text
-    STRING("String", "String", String.class, Types.VARCHAR),
+    @OptionItem(label = "String")
+    STRING("String", String.class, Types.VARCHAR),
 
     // Numeric
-    INTEGER("Integer", "Integer", Integer.class, Types.INTEGER),
-    LONG("Long", "Long", Long.class, Types.BIGINT),
-    DOUBLE("Double", "Decimal", Double.class, Types.DOUBLE),
-    BIG_DECIMAL("BigDecimal", "High-Precision Decimal", BigDecimal.class, Types.DECIMAL),
+    @OptionItem(label = "Integer")
+    INTEGER("Integer", Integer.class, Types.INTEGER),
+    @OptionItem(label = "Long")
+    LONG("Long", Long.class, Types.BIGINT),
+    @OptionItem(label = "Decimal")
+    DOUBLE("Double", Double.class, Types.DOUBLE),
+    @OptionItem(label = "High-Precision Decimal")
+    BIG_DECIMAL("BigDecimal", BigDecimal.class, Types.DECIMAL),
 
     // bool
-    BOOLEAN("Boolean", "Yes/No", Boolean.class, Types.BOOLEAN),
+    @OptionItem(label = "Yes/No")
+    BOOLEAN("Boolean", Boolean.class, Types.BOOLEAN),
 
     // time
-    DATE("Date", "Date", LocalDate.class, Types.DATE),
-    DATE_TIME("DateTime", "DateTime", LocalDateTime.class, Types.TIMESTAMP),
-    TIME("Time", "Time", LocalTime.class, Types.TIME),
+    @OptionItem(label = "Date")
+    DATE("Date", LocalDate.class, Types.DATE),
+    @OptionItem(label = "DateTime")
+    DATE_TIME("DateTime", LocalDateTime.class, Types.TIMESTAMP),
+    @OptionItem(label = "Time")
+    TIME("Time", LocalTime.class, Types.TIME),
 
     // OptionList, MultiOption, MultiString, JSON, Filters, Orders
-    OPTION("Option", "Single Option", String.class, Types.VARCHAR),
-    MULTI_OPTION("MultiOption", "MultiOption", List.class, Types.VARCHAR),
-    MULTI_STRING("MultiString", "MultiString", List.class, Types.VARCHAR),
-    JSON("JSON", "JSON", JsonNode.class, Types.LONGVARCHAR),
-    FILTERS("Filters", "Filters", Filters.class, Types.VARCHAR),
-    ORDERS("Orders", "Orders", Orders.class, Types.VARCHAR),
+    @OptionItem(label = "Single Option")
+    OPTION("Option", String.class, Types.VARCHAR),
+    @OptionItem(label = "MultiOption")
+    MULTI_OPTION("MultiOption", List.class, Types.VARCHAR),
+    @OptionItem(label = "MultiString")
+    MULTI_STRING("MultiString", List.class, Types.VARCHAR),
+    @OptionItem(label = "JSON")
+    JSON("JSON", JsonNode.class, Types.LONGVARCHAR),
+    @OptionItem(label = "Filters")
+    FILTERS("Filters", Filters.class, Types.VARCHAR),
+    @OptionItem(label = "Orders")
+    ORDERS("Orders", Orders.class, Types.VARCHAR),
 
     // DTO store the json string of DTO object, which is an implementation of DTOFieldObject interface
-    DTO("DTO", "DTO", DTOFieldObject.class, Types.LONGVARCHAR),
+    @OptionItem(label = "DTO")
+    DTO("DTO", DTOFieldObject.class, Types.LONGVARCHAR),
 
     // File and MultiFile store the ids of FileRecord model
-    FILE("File", "File", Long.class, Types.VARCHAR),
-    MULTI_FILE("MultiFile", "MultiFile", List.class, Types.VARCHAR),
+    @OptionItem(label = "File")
+    FILE("File", Long.class, Types.VARCHAR),
+    @OptionItem(label = "MultiFile")
+    MULTI_FILE("MultiFile", List.class, Types.VARCHAR),
 
     // Relational fields
-    ONE_TO_ONE("OneToOne", "OneToOne", Long.class, Types.BIGINT),
-    MANY_TO_ONE("ManyToOne", "ManyToOne", Long.class, Types.BIGINT),
-    ONE_TO_MANY("OneToMany", "OneToMany", List.class, Types.NULL),
-    MANY_TO_MANY("ManyToMany", "ManyToMany", List.class, Types.NULL);
+    @OptionItem(label = "OneToOne")
+    ONE_TO_ONE("OneToOne", Long.class, Types.BIGINT),
+    @OptionItem(label = "ManyToOne")
+    MANY_TO_ONE("ManyToOne", Long.class, Types.BIGINT),
+    @OptionItem(label = "OneToMany")
+    ONE_TO_MANY("OneToMany", List.class, Types.NULL),
+    @OptionItem(label = "ManyToMany")
+    MANY_TO_MANY("ManyToMany", List.class, Types.NULL);
 
     @JsonValue
     private final String type;
-    private final String name;
     private final Class<?> javaType;
     private final int sqlType;
 

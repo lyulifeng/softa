@@ -79,7 +79,7 @@ class CodeGeneratorTest {
         return MapUtils.strObj()
                 .put("fieldType", fieldType.getType())
                 .put("javaType", javaType)
-                .put("labelName", "fieldType: " + fieldType.getType())
+                .put("label", "fieldType: " + fieldType.getType())
                 .put("fieldName", "deptName")
                 .put("relatedModel", "DeptInfo")
                 .build();
@@ -161,7 +161,7 @@ class CodeGeneratorTest {
     private DesignField mockDesignField(String fieldName, String optionSetCode, FieldType fieldType, String relatedModel) {
         DesignField field = new DesignField();
         field.setFieldName(fieldName);
-        field.setLabelName(fieldName);
+        field.setLabel(fieldName);
         field.setFieldType(fieldType);
         field.setOptionSetCode(optionSetCode);
         field.setRelatedModel(relatedModel);

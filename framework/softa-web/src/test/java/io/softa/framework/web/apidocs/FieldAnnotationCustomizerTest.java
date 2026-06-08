@@ -96,9 +96,11 @@ class FieldAnnotationCustomizerTest {
             @Override public boolean encrypted() { return false; }
             @Override public io.softa.framework.orm.enums.MaskingType[] maskingType() { return new io.softa.framework.orm.enums.MaskingType[0]; }
             @Override public String defaultValue() { return ""; }
-            @Override public String relatedModel() { return ""; }
+            @Override public Class<?> relatedModel() { return Void.class; }
+            @Override public String relatedModelName() { return ""; }
             @Override public String relatedField() { return ""; }
-            @Override public String joinModel() { return ""; }
+            @Override public Class<?> joinModel() { return Void.class; }
+            @Override public String joinModelName() { return ""; }
             @Override public String joinLeft() { return ""; }
             @Override public String joinRight() { return ""; }
             @Override public String cascadedField() { return ""; }

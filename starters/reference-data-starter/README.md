@@ -24,7 +24,8 @@ The 4 entities (`CountryRegion` / `Currency` / `CountrySubdivision` /
 - Tenants **may** add custom fields (TENANT-owned) onto these models for
   per-tenant extensions.
 - Schema drift between the annotations and `sys_*` triggers a startup WARN
-  (production) or an automatic ALTER (dev-mode).
+  (when this package is out of `scanner-scope`) or an automatic ALTER (when it
+  is in scope).
 
 The framework `Language` enum (which lives in `softa-base` and cannot carry
 `@OptionSet`) is the one exception — its `sys_option_set` row is intended

@@ -2,12 +2,15 @@ package io.softa.starter.studio.release.entity;
 
 import java.io.Serial;
 import java.time.LocalDateTime;
-import io.swagger.v3.oas.annotations.media.Schema;
 import lombok.Data;
 import lombok.EqualsAndHashCode;
 import tools.jackson.databind.JsonNode;
 
+import io.softa.framework.orm.annotation.Field;
+import io.softa.framework.orm.annotation.Index;
+import io.softa.framework.orm.annotation.Model;
 import io.softa.framework.orm.entity.AuditableModel;
+import io.softa.framework.orm.enums.IdStrategy;
 import io.softa.starter.studio.release.enums.DesignDriftCheckStatus;
 
 /**
@@ -24,37 +27,41 @@ import io.softa.starter.studio.release.enums.DesignDriftCheckStatus;
  * without deserializing the JSON.
  */
 @Data
-@Schema(name = "DesignAppEnvDrift")
 @EqualsAndHashCode(callSuper = true)
+@Model(
+        label = "Design App Env Drift",
+        idStrategy = IdStrategy.DISTRIBUTED_LONG
+)
+@Index(indexName = "unique_env_drift", fields = {"appId", "envId"}, unique = true)
 public class DesignAppEnvDrift extends AuditableModel {
 
     @Serial
     private static final long serialVersionUID = 1L;
 
-    @Schema(description = "ID")
+    @Field(label = "ID")
     private Long id;
 
-    @Schema(description = "App ID")
+    @Field(label = "App ID", required = true)
     private Long appId;
 
-    @Schema(description = "Env ID (OneToOne with DesignAppEnv)")
+    @Field(label = "Env ID", required = true)
     private Long envId;
 
-    @Schema(description = "True when the last successful check found drift")
+    @Field(label = "Has Drift", required = true)
     private Boolean hasDrift;
 
-    @Schema(description = "Serialized List<ModelChangesDTO> — empty when no drift")
+    @Field(label = "Drift Content")
     private JsonNode driftContent;
 
-    @Schema(description = "Outcome of the last drift check")
+    @Field(label = "Check Status", required = true)
     private DesignDriftCheckStatus checkStatus;
 
-    @Schema(description = "Error message from the last failed check (null on success)")
+    @Field(label = "Error Message", length = 1024)
     private String errorMessage;
 
-    @Schema(description = "When the last drift check completed")
+    @Field(label = "Last Checked Time")
     private LocalDateTime lastCheckedTime;
 
-    @Schema(description = "Deleted")
+    @Field(label = "Deleted")
     private Boolean deleted;
 }

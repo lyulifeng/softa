@@ -23,7 +23,11 @@ import io.softa.framework.orm.enums.OptionItemTone;
 @Retention(RetentionPolicy.RUNTIME)
 public @interface OptionItem {
 
-    /** Display label; empty = use {@code itemCode} as fallback. Maps to {@code SysOptionItem.label}. */
+    /**
+     * Display label; empty = humanized enum constant name (e.g. {@code MULTI_FILE -> "Multi File"})
+     * as the base default, overridden per-language via the i18n translation table.
+     * Maps to {@code SysOptionItem.label}.
+     */
     String label() default "";
 
     /** Description shown to users in Studio UI; empty = no description. */

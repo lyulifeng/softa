@@ -12,6 +12,8 @@ import lombok.AllArgsConstructor;
 import lombok.Getter;
 
 import io.softa.framework.base.utils.Assert;
+import io.softa.framework.orm.annotation.OptionItem;
+import io.softa.framework.orm.annotation.OptionSet;
 
 /**
  * File type Enum.
@@ -21,55 +23,92 @@ import io.softa.framework.base.utils.Assert;
  */
 @Getter
 @AllArgsConstructor
+@OptionSet(label = "File Type")
 public enum FileType {
     // Image types. jpg and jpeg are both `image/jpeg`
+    @OptionItem(label = "JPG")
     JPG("jpg", List.of("image/jpeg", "image/jpg", "image/pjpeg")),
+    @OptionItem(label = "PNG")
     PNG("png", List.of("image/png", "image/x-png", "application/png")),
+    @OptionItem(label = "WebP")
     WEBP("webp", List.of("image/webp")),
+    @OptionItem(label = "BMP")
     BMP("bmp", List.of("image/bmp")),
+    @OptionItem(label = "TIFF")
     TIF("tif", List.of("image/tiff")),
+    @OptionItem(label = "SVG")
     SVG("svg", List.of("image/svg+xml")),
+    @OptionItem(label = "GIF")
     GIF("gif", List.of("image/gif", "image/x-gif")),
+    @OptionItem(label = "ICO")
     ICO("ico", List.of("image/vnd.microsoft.icon", "image/x-icon")),
 
     // Document types
+    @OptionItem(label = "CSV")
     CSV("csv", List.of("text/csv")),
+    @OptionItem(label = "TXT")
     TXT("txt", List.of("text/plain")),
+    @OptionItem(label = "DOC")
     DOC("doc", List.of("application/msword")),
+    @OptionItem(label = "DOCX")
     DOCX("docx", List.of("application/vnd.openxmlformats-officedocument.wordprocessingml.document")),
+    @OptionItem(label = "PPT")
     PPT("ppt", List.of("application/vnd.ms-powerpoint")),
+    @OptionItem(label = "PPTX")
     PPTX("pptx", List.of("application/vnd.openxmlformats-officedocument.presentationml.presentation")),
+    @OptionItem(label = "XLS")
     XLS("xls", List.of("application/vnd.ms-excel")),
+    @OptionItem(label = "XLSX")
     XLSX("xlsx", List.of("application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")),
+    @OptionItem(label = "PDF")
     PDF("pdf", List.of("application/pdf", "application/x-pdf")),
 
     // Code file types
+    @OptionItem(label = "JSON")
     JSON("json", List.of("application/json", "text/json")),
+    @OptionItem(label = "XML")
     XML("xml", List.of("text/xml", "application/xml")),
+    @OptionItem(label = "YAML")
     YAML("yaml", List.of("application/x-yaml", "text/yaml")),
+    @OptionItem(label = "Markdown")
     MD("md", List.of("text/markdown", "text/x-markdown", "text/x-web-markdown")),
 
     // Email types
+    @OptionItem(label = "EML")
     EML("eml", List.of("message/rfc822")),
 
     // Compressed file types
+    @OptionItem(label = "ZIP")
     ZIP("zip", List.of("application/zip", "application/x-zip-compressed")),
+    @OptionItem(label = "GZIP")
     GZIP("gzip", List.of("application/gzip", "application/x-gzip")),
+    @OptionItem(label = "TAR")
     TAR("tar", List.of("application/x-tar", "application/x-gtar")),
+    @OptionItem(label = "RAR")
     RAR("rar", List.of("application/vnd.rar", "application/x-rar-compressed")),
 
     // Audio types
+    @OptionItem(label = "MP3")
     MP3("mp3", List.of("audio/mpeg")),
+    @OptionItem(label = "WAV")
     WAV("wav", List.of("audio/x-wav", "audio/wav")),
+    @OptionItem(label = "AAC")
     AAC("aac", List.of("audio/aac")),
+    @OptionItem(label = "OGG")
     OGG("ogg", List.of("audio/ogg")),
+    @OptionItem(label = "FLAC")
     FLAC("flac", List.of("audio/flac")),
 
     // Video types
+    @OptionItem(label = "MP4")
     MP4("mp4", List.of("video/mp4")),
+    @OptionItem(label = "AVI")
      AVI("avi", List.of("video/x-msvideo")),
+    @OptionItem(label = "MOV")
     MOV("mov", List.of("video/quicktime")),
+    @OptionItem(label = "WMV")
     WMV("wmv", List.of("video/x-ms-wmv")),
+    @OptionItem(label = "FLV")
     FLV("flv", List.of("video/x-flv")),
     ;
 

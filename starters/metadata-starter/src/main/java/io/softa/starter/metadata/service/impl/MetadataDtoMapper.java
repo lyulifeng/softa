@@ -20,7 +20,7 @@ public final class MetadataDtoMapper {
 
     public static MetaFieldDTO toFieldDTO(MetaField metaField) {
         MetaFieldDTO fieldDTO = new MetaFieldDTO();
-        fieldDTO.setLabelName(metaField.getLabelName());
+        fieldDTO.setLabel(metaField.getLabel());
         fieldDTO.setFieldName(metaField.getFieldName());
         fieldDTO.setModelName(metaField.getModelName());
         fieldDTO.setFieldType(metaField.getFieldType());
@@ -53,7 +53,7 @@ public final class MetadataDtoMapper {
     public static MetaModelDTO toModelDTO(String modelName) {
         MetaModel metaModel = ModelManager.getModel(modelName);
         MetaModelDTO dto = new MetaModelDTO();
-        dto.setLabelName(metaModel.getLabelName());
+        dto.setLabel(metaModel.getLabel());
         dto.setModelName(metaModel.getModelName());
         dto.setDescription(metaModel.getDescription());
         dto.setDisplayName(metaModel.getDisplayName());

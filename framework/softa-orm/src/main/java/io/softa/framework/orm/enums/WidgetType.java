@@ -5,6 +5,8 @@ import java.util.function.Function;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
 import com.fasterxml.jackson.annotation.JsonValue;
+import io.softa.framework.orm.annotation.OptionItem;
+import io.softa.framework.orm.annotation.OptionSet;
 import lombok.AllArgsConstructor;
 import lombok.Getter;
 import org.apache.commons.lang3.StringUtils;
@@ -15,60 +17,86 @@ import org.apache.commons.lang3.StringUtils;
  */
 @Getter
 @AllArgsConstructor
+@OptionSet(label = "Widget Type")
 public enum WidgetType {
     // String
-    URL("URL", "URL"),
-    PHONE("Phone", "Phone"),
-    EMAIL("Email", "Email"),
-    TEXT("Text", "Text"),
-    RICH_TEXT("RichText", "Rich Text"),
-    TEMPLATE_EDITOR("TemplateEditor", "Template Editor"),
-    MARKDOWN("Markdown", "Markdown"),
-    CODE("Code", "Code"),
-    COLOR("Color", "Color picker"),
+    @OptionItem(label = "URL")
+    URL("URL"),
+    @OptionItem(label = "Phone")
+    PHONE("Phone"),
+    @OptionItem(label = "Email")
+    EMAIL("Email"),
+    @OptionItem(label = "Text")
+    TEXT("Text"),
+    @OptionItem(label = "Rich Text")
+    RICH_TEXT("RichText"),
+    @OptionItem(label = "Template Editor")
+    TEMPLATE_EDITOR("TemplateEditor"),
+    @OptionItem(label = "Markdown")
+    MARKDOWN("Markdown"),
+    @OptionItem(label = "Code")
+    CODE("Code"),
+    @OptionItem(label = "Color picker")
+    COLOR("Color"),
 
     // Numeric
-    MONETARY("Monetary", "Monetary"),
-    PERCENTAGE("Percentage", "Percentage"),
-    SLIDER("Slider", "Slider"),
+    @OptionItem(label = "Monetary")
+    MONETARY("Monetary"),
+    @OptionItem(label = "Percentage")
+    PERCENTAGE("Percentage"),
+    @OptionItem(label = "Slider")
+    SLIDER("Slider"),
 
     // Option fields
-    RADIO("Radio", "Radio"),
+    @OptionItem(label = "Radio")
+    RADIO("Radio"),
     // Boolean, MultiOption fields
-    CHECK_BOX("CheckBox", "CheckBox"),
+    @OptionItem(label = "CheckBox")
+    CHECK_BOX("CheckBox"),
 
     // Option, OneToMany fields
-    STATUS_BAR("StatusBar", "Status bar"),
+    @OptionItem(label = "Status bar")
+    STATUS_BAR("StatusBar"),
 
     // OneToMany, ManyToMany fields
 
     // Single attachment, file key stored in a String field
-    IMAGE("Image", "Single Image"),
+    @OptionItem(label = "Single Image")
+    IMAGE("Image"),
 
     // Multiple attachments, OneToMany, ManyToMany fields
-    MULTI_IMAGE("MultiImage", "Multiple Images"),
+    @OptionItem(label = "Multiple Images")
+    MULTI_IMAGE("MultiImage"),
 
     // Date, DateTime use the corresponding default widget
-    YYYY_MM("yyyy-MM", "Year-Month picker"),
-    MM_DD("MM-dd", "Month-Day picker"),
-    HH_MM("HH:mm", "Hour-Minute picker"),
-    HH_MM_SS("HH:mm:ss", "Time picker"),
-    RELATIVE("Relative", "Relative time"),
+    @OptionItem(label = "Year-Month picker")
+    YYYY_MM("yyyy-MM"),
+    @OptionItem(label = "Month-Day picker")
+    MM_DD("MM-dd"),
+    @OptionItem(label = "Hour-Minute picker")
+    HH_MM("HH:mm"),
+    @OptionItem(label = "Time picker")
+    HH_MM_SS("HH:mm:ss"),
+    @OptionItem(label = "Relative time")
+    RELATIVE("Relative"),
 
     // Tree structure, such as org structure, category, etc.
-    SELECT_TREE("SelectTree", "Tree Select"),
+    @OptionItem(label = "Tree Select")
+    SELECT_TREE("SelectTree"),
 
     // JSON tree to display JSON values in the tree view
-    JSON_TREE("JsonTree", "Json Tree"),
+    @OptionItem(label = "Json Tree")
+    JSON_TREE("JsonTree"),
 
-    TAG_LIST("TagList", "Tag List"),
+    @OptionItem(label = "Tag List")
+    TAG_LIST("TagList"),
 
-    CRON_EDITOR("CronEditor", "Cron expression editor")
+    @OptionItem(label = "Cron expression editor")
+    CRON_EDITOR("CronEditor")
     ;
 
     @JsonValue
     private final String name;
-    private final String description;
 
     /** names map */
     static private final Map<String, WidgetType> namesMap = Stream.of(values()).collect(Collectors.toMap(WidgetType::getName, Function.identity()));

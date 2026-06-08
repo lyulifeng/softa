@@ -1,7 +1,6 @@
 package io.softa.starter.referencedata.entity;
 
 import java.io.Serial;
-import io.swagger.v3.oas.annotations.media.Schema;
 import lombok.Data;
 import lombok.EqualsAndHashCode;
 
@@ -28,7 +27,6 @@ import io.softa.starter.referencedata.enums.Continent;
  * Macau (MO) are distinct entries.
  */
 @Data
-@Schema(name = "CountryRegion")
 @EqualsAndHashCode(callSuper = true)
 @Model(
         label = "Country / Region",
@@ -45,7 +43,7 @@ public class CountryRegion extends AuditableModel {
     @Serial
     private static final long serialVersionUID = 1L;
 
-    @Schema(description = "ID")
+    @Field(label = "ID")
     private Long id;
 
     @Field(label = "ISO 3166-1 alpha-2", required = true, length = 2,

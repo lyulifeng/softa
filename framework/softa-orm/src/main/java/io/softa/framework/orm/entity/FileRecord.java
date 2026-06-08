@@ -1,57 +1,63 @@
 package io.softa.framework.orm.entity;
 
 import java.io.Serial;
-import io.swagger.v3.oas.annotations.media.Schema;
 import lombok.Data;
 import lombok.EqualsAndHashCode;
 
+import io.softa.framework.orm.annotation.Field;
+import io.softa.framework.orm.annotation.Model;
 import io.softa.framework.orm.enums.FileSource;
 import io.softa.framework.orm.enums.FileType;
+import io.softa.framework.orm.enums.IdStrategy;
 
 /**
  * FileRecord Model
  */
 @Data
-@Schema(name = "FileRecord")
 @EqualsAndHashCode(callSuper = true)
+@Model(
+        label = "File Record",
+        idStrategy = IdStrategy.DISTRIBUTED_LONG,
+        softDelete = true
+)
 public class FileRecord extends AuditableModel {
 
     @Serial
     private static final long serialVersionUID = 1L;
 
-    @Schema(description = "ID")
+    @Field(label = "ID")
     private Long id;
 
-    @Schema(description = "Tenant ID")
+    @Field(label = "Tenant ID")
     private Long tenantId;
 
-    @Schema(description = "File Name")
+    @Field(label = "File Name", required = true, length = 128)
     private String fileName;
 
-    @Schema(description = "OSS Key")
+    @Field(label = "OSS Key", length = 128)
     private String ossKey;
 
-    @Schema(description = "File Type")
+    @Field(label = "File Type")
     private FileType fileType;
 
-    @Schema(description = "File Size(KB)")
+    @Field(label = "File Size(KB)")
     private Integer fileSize;
 
-    @Schema(description = "Checksum")
+    @Field(label = "Checksum", length = 64)
     private String checksum;
 
-    @Schema(description = "Model Name")
+    @Field(label = "Model Name", length = 64)
     private String modelName;
 
-    @Schema(description = "Row ID")
+    @Field(label = "Row ID", length = 64)
     private String rowId;
 
-    @Schema(description = "Field Name")
+    @Field(label = "Field Name", length = 64)
     private String fieldName;
 
-    @Schema(description = "Source")
+    @Field(label = "Source")
     private FileSource source;
 
-    @Schema(description = "Deleted")
+    @Field(label = "Deleted")
     private Boolean deleted;
 }

@@ -66,7 +66,7 @@ Top-level context:
 - `DdlTemplateContext.updatedModels`
 
 Per-model context (`ModelDdlCtx`):
-- Base metadata: `modelName`, `labelName`, `description`, `tableName`, `oldTableName`, `pkColumn`
+- Base metadata: `modelName`, `label`, `description`, `tableName`, `oldTableName`, `pkColumn`
 - Table change flags: `renamed`, `tableCommentChanged`, `tableCommentText`
 - Field groups: `createdFields`, `deletedFields`, `updatedFields`, `renamedFields`
 - Index groups: `createdIndexes`, `deletedIndexes`, `updatedIndexes`, `renamedIndexes`
@@ -74,7 +74,7 @@ Per-model context (`ModelDdlCtx`):
 
 Per-field context (`FieldDdlCtx`):
 - Identity: `fieldName`, `columnName`, `oldColumnName`, `renamed`
-- Display/comment: `labelName`, `description`, `commentText`
+- Display/comment: `label`, `description`, `commentText`
 - Type/defaults: `fieldType`, `dbType`, `length`, `scale`, `required`, `autoIncrement`, `defaultValue`
 
 Per-index context (`IndexDdlCtx`):
@@ -112,7 +112,7 @@ Pebble SQL templates can be stored in the database and customized per applicatio
 ## Remote Deployment Configuration
 - `DesignAppEnv.upgradeEndpoint` must point to the target runtime base URL. The studio appends `/upgrade/upgradeMetadata` and `/upgrade/exportRuntimeMetadata` automatically.
 - The studio application must set `system.public-access-url`. Remote deployment derives the runtime callback URL as `<system.public-access-url>/DesignDeployment/callback`; without it, dispatch fails before the request is sent.
-- Call `POST /DesignAppEnv/issueKey?id=` before the first remote deploy, then paste the returned public key into the paired runtime's `system.runtime-public-key`. The runtime only registers the metadata signature verification filter when that property is non-blank.
+- Call `POST /DesignAppEnv/issueKey?id=` before the first remote deploy, then paste the returned public key into the paired runtime's `system.metadata.public-key`. The runtime only registers the metadata signature verification filter when that property is non-blank.
 - Outbound studio -> runtime HTTP uses the Resilience4j client name `studio-remote`; runtime -> studio callback uses `metadata-callback`. If you do not define explicit YAML for those instances, the registry defaults still apply.
 
 Minimal example:
@@ -135,7 +135,8 @@ resilience4j:
 ```yaml
 # target runtime
 system:
-  runtime-public-key: <paste-issued-public-key>
+  metadata:
+    public-key: <paste-issued-public-key>
 ```
 
 ## Data Model
@@ -304,7 +305,7 @@ Notes:
 | `POST /DesignAppEnv/refreshDrift?id=`            | Kick off an async drift recompute; poll `compareDesignWithRuntime` for the result |
 | `POST /DesignAppEnv/applyDrift?id=`              | Overwrite design-time metadata with the cached runtime drift (useCached=true — operator accepts the current drift report as the new truth) |
 | `POST /DesignAppEnv/importFromRuntime?id=`       | Refresh drift against the live runtime, then overwrite design-time with the result (useCached=false — first-time seed from an already-populated runtime) |
-| `POST /DesignAppEnv/issueKey?id=`                | Issue / rotate the Ed25519 keypair used to sign studio → runtime requests. Returns the new public key — the operator pastes it into the paired runtime's `system.runtime-public-key`. Each runtime pairs with exactly one env, so rotation is an atomic yml swap rather than a multi-key grace period |
+| `POST /DesignAppEnv/issueKey?id=`                | Issue / rotate the Ed25519 keypair used to sign studio → runtime requests. Returns the new public key — the operator pastes it into the paired runtime's `system.metadata.public-key`. Each runtime pairs with exactly one env, so rotation is an atomic yml swap rather than a multi-key grace period |
 
 Both `applyDrift` and `importFromRuntime` share one service method with a `useCached` boolean. They acquire the env's deployment mutex (concurrent with deploy — one at a time per env), mint a FROZEN `DesignAppVersion` named `imported-from-runtime-<ISO>`, advance `env.currentVersionId` to it, write a post-import snapshot keyed by the synthetic version id, and clear the drift cache. No-op when drift is empty.
 

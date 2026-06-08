@@ -64,7 +64,7 @@ public class DesignAppEnvController extends EntityController<DesignAppEnvService
      * <p>
      * Writes the new private key (encrypted at rest) onto the env row and returns
      * the public key half — the operator copies this into the runtime's
-     * {@code system.runtime-public-key} entry so the runtime recognises
+     * {@code system.metadata.public-key} entry so the runtime recognises
      * requests signed with the new key. Calling this again atomically replaces the
      * keypair: previous signatures stop validating as soon as the operator updates
      * the runtime yml.

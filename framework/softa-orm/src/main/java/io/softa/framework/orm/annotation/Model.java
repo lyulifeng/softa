@@ -29,7 +29,11 @@ import io.softa.framework.orm.enums.StorageType;
 @Retention(RetentionPolicy.RUNTIME)
 public @interface Model {
 
-    /** Display label; empty = use i18n key {@code model.{modelName}.label}. Maps to {@code SysModel.label}. */
+    /**
+     * Display label; empty = humanized class name (e.g. {@code DeptInfo -> "Dept Info"})
+     * as the base default, overridden per-language via the i18n translation table
+     * (keyed by {@code model.{modelName}}). Maps to {@code SysModel.label}.
+     */
     String label() default "";
 
     /** DB table name; empty = derived from {@code snake_case(modelName)}. */

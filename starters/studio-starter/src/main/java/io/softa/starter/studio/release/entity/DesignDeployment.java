@@ -3,12 +3,16 @@ package io.softa.starter.studio.release.entity;
 import java.io.Serial;
 import java.time.LocalDateTime;
 import java.util.List;
-import io.swagger.v3.oas.annotations.media.Schema;
 import lombok.Data;
 import lombok.EqualsAndHashCode;
 import tools.jackson.databind.JsonNode;
 
+import io.softa.framework.orm.annotation.Field;
+import io.softa.framework.orm.annotation.Model;
 import io.softa.framework.orm.entity.AuditableModel;
+import io.softa.framework.orm.enums.FieldType;
+import io.softa.framework.orm.enums.IdStrategy;
+import io.softa.starter.studio.release.enums.DesignDeploymentDdlStatus;
 import io.softa.starter.studio.release.enums.DesignDeploymentStatus;
 
 /**
@@ -24,76 +28,97 @@ import io.softa.starter.studio.release.enums.DesignDeploymentStatus;
  * Lifecycle: {@code PENDING} → {@code DEPLOYING} → {@code SUCCESS} / {@code FAILURE} / {@code ROLLED_BACK}
  */
 @Data
-@Schema(name = "DesignDeployment")
 @EqualsAndHashCode(callSuper = true)
+@Model(
+        label = "Design Deployment",
+        defaultOrder = "id DESC",
+        idStrategy = IdStrategy.DISTRIBUTED_LONG
+)
 public class DesignDeployment extends AuditableModel {
 
     @Serial
     private static final long serialVersionUID = 1L;
 
-    @Schema(description = "ID")
+    @Field(label = "ID")
     private Long id;
 
-    @Schema(description = "App ID")
+    @Field(label = "App ID", required = true)
     private Long appId;
 
-    @Schema(description = "Env ID — the environment this deployment targets")
+    @Field(label = "Env ID", required = true, description = "The environment this deployment targets")
     private Long envId;
 
-    @Schema(description = "Source Version ID — the Env's currentVersionId at deployment time (null for first deploy)")
+    @Field(label = "Source Version", required = true,
+            description = "The Env's currentVersionId at deployment time (null for first deploy)")
     private Long sourceVersionId;
 
-    @Schema(description = "Target Version ID — the version being deployed")
+    @Field(label = "Target Version", required = true, description = "The version being deployed")
     private Long targetVersionId;
 
-    @Schema(description = "Name")
+    @Field(label = "Name", length = 64)
     private String name;
 
-    @Schema(description = "Deploy Status")
+    @Field(label = "Deploy Status")
     private DesignDeploymentStatus deployStatus;
 
-    @Schema(description = "Deploy Duration (S)")
+    @Field(label = "Deploy Duration (S)")
     private Double deployDuration;
 
-    @Schema(description = "Deployment Summary")
+    @Field(label = "Deployment Summary", length = 20000)
     private String summary;
 
-    @Schema(description = "Diff Hash — SHA-256 of the serialized mergedContent")
+    @Field(label = "Diff Hash", length = 64, description = "SHA-256 of the serialized mergedContent")
     private String diffHash;
 
-    @Schema(description = "Merged Content — the merged versionedContent from the sealedTime release interval")
+    @Field(label = "Merged Content",
+            description = "The merged versionedContent from the sealedTime release interval")
     private JsonNode mergedContent;
 
-    @Schema(description = "Merged Table DDL — combined DDL for table structure changes")
+    @Field(label = "Merged Table DDL", length = 20000, description = "Combined DDL for table structure changes")
     private String mergedDdlTable;
 
-    @Schema(description = "Merged Index DDL — combined DDL for index changes")
+    @Field(label = "Merged Index DDL", length = 20000, description = "Combined DDL for index changes")
     private String mergedDdlIndex;
 
-    @Schema(description = "Version List")
+    @Field(label = "DDL Apply Status",
+            description = "Rollup of per-statement outcomes "
+                    + "(NOT_REQUIRED / PENDING_RUNTIME / AUTO_APPLIED / AUTO_APPLY_PARTIAL_FAILED / "
+                    + "PENDING_DBA_APPROVAL / DBA_RESOLVING / DBA_APPLIED / DBA_REJECTED). "
+                    + "Recomputed on every change to ddlApplyResults — see ADR-0009 #6")
+    private DesignDeploymentDdlStatus ddlApplyStatus;
+
+    @Field(label = "DDL Apply Results",
+            description = "JSON array of per-statement records "
+                    + "{ sequence, sql, status, errorMessage, actedBy, actedAt }, sequence-aligned "
+                    + "with the deploy envelope's ddlStatements (ADR-0009 #6)")
+    private JsonNode ddlApplyResults;
+
+    @Field(label = "Version List", fieldType = FieldType.ONE_TO_MANY,
+            relatedModel = DesignDeploymentVersion.class, relatedField = "deploymentId")
     private List<DesignDeploymentVersion> versions;
 
-    @Schema(description = "Started Time")
+    @Field(label = "Started Time")
     private LocalDateTime startedTime;
 
-    @Schema(description = "Finished Time")
+    @Field(label = "Finished Time")
     private LocalDateTime finishedTime;
 
-    @Schema(description = "Callback Token — one-time token sent to the runtime and verified on webhook return")
+    @Field(label = "Callback Token", length = 128,
+            description = "One-time token sent to the runtime and verified on webhook return")
     private String callbackToken;
 
-    @Schema(description = "Callback Token Expire At — tokens received after this point are rejected")
+    @Field(label = "Callback Token Expire At", description = "Tokens received after this point are rejected")
     private LocalDateTime callbackTokenExpireAt;
 
-    @Schema(description = "Callback Received At — when the runtime webhook landed")
+    @Field(label = "Callback Received At", description = "When the runtime webhook landed")
     private LocalDateTime callbackReceivedAt;
 
-    @Schema(description = "Operator")
+    @Field(label = "Operator")
     private Long operatorId;
 
-    @Schema(description = "Error Message")
+    @Field(label = "Error Message", length = 20000)
     private String errorMessage;
 
-    @Schema(description = "Deleted")
+    @Field(label = "Deleted")
     private Boolean deleted;
 }

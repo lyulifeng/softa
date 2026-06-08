@@ -7,7 +7,7 @@ import lombok.Data;
 
 /**
  * Option reference object.
- * Used to reference the option item code, name, tone, and icon.
+ * Used to reference the option item code, label, tone, and icon.
  */
 @Data
 @Schema(name = "OptionReference")

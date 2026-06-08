@@ -199,7 +199,7 @@ public class DesignAppEnvServiceImpl extends EntityServiceImpl<DesignAppEnv, Lon
      * <p>
      * Generation uses the JDK 25 {@code KeyPairGenerator}. Each runtime trusts
      * exactly one signer, so reissuing here is an atomic replacement — the
-     * operator then swaps {@code system.runtime-public-key} on the
+     * operator then swaps {@code system.metadata.public-key} on the
      * runtime side to match.
      */
     @Override

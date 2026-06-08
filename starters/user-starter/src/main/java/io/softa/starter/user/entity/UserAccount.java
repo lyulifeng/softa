@@ -2,57 +2,63 @@ package io.softa.starter.user.entity;
 
 import java.io.Serial;
 import java.time.LocalDateTime;
-import io.swagger.v3.oas.annotations.media.Schema;
 import lombok.Data;
 import lombok.EqualsAndHashCode;
 
+import io.softa.framework.orm.annotation.Field;
+import io.softa.framework.orm.annotation.Model;
 import io.softa.framework.orm.entity.AuditableModel;
+import io.softa.framework.orm.enums.IdStrategy;
 import io.softa.starter.user.enums.AccountStatus;
 
 /**
  * UserAccount Model
  */
 @Data
-@Schema(name = "UserAccount")
 @EqualsAndHashCode(callSuper = true)
+@Model(
+        label = "User Account",
+        idStrategy = IdStrategy.DISTRIBUTED_LONG,
+        searchName = {"nickname", "username"}
+)
 public class UserAccount extends AuditableModel {
 
     @Serial
     private static final long serialVersionUID = 1L;
 
-    @Schema(description = "ID")
+    @Field(label = "ID")
     private Long id;
 
-    @Schema(description = "Tenant ID")
+    @Field(label = "Tenant ID")
     private Long tenantId;
 
-    @Schema(description = "Nickname")
+    @Field(label = "Nickname", length = 64)
     private String nickname;
 
-    @Schema(description = "Username")
+    @Field(label = "Username", length = 64)
     private String username;
 
-    @Schema(description = "Password")
+    @Field(label = "Password", length = 256)
     private String password;
 
-    @Schema(description = "Password Salt")
+    @Field(label = "Password Salt", length = 64)
     private String passwordSalt;
 
-    @Schema(description = "email")
+    @Field(label = "Email", length = 64)
     private String email;
 
-    @Schema(description = "Mobile")
+    @Field(label = "Mobile", length = 64)
     private String mobile;
 
-    @Schema(description = "Activation Time")
+    @Field(label = "Activation Time")
     private LocalDateTime activationTime;
 
-    @Schema(description = "Policy ID")
+    @Field(label = "Policy ID")
     private Long policyId;
 
-    @Schema(description = "Locked")
+    @Field(label = "Locked")
     private Boolean locked;
 
-    @Schema(description = "Status")
+    @Field(label = "Status")
     private AccountStatus status;
 }

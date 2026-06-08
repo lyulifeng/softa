@@ -8,13 +8,13 @@ import org.junit.jupiter.api.Test;
 import io.softa.framework.orm.enums.DatabaseType;
 import io.softa.framework.orm.enums.FieldType;
 import io.softa.framework.orm.enums.IdStrategy;
+import io.softa.starter.metadata.ddl.dialect.DdlDialectRegistry;
+import io.softa.starter.metadata.ddl.dialect.MySqlDdlDialect;
+import io.softa.starter.metadata.ddl.dialect.PostgreSqlDdlDialect;
 import io.softa.starter.studio.release.dto.ModelChangesDTO;
 import io.softa.starter.studio.release.dto.RowChangeDTO;
 import io.softa.starter.studio.release.version.impl.VersionDdlImpl;
 import io.softa.starter.studio.template.TestMetadataResolver;
-import io.softa.starter.studio.template.ddl.dialect.DdlDialectRegistry;
-import io.softa.starter.studio.template.ddl.dialect.MySqlDdlDialect;
-import io.softa.starter.studio.template.ddl.dialect.PostgreSqlDdlDialect;
 
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -33,8 +33,8 @@ class VersionDdlImplTest {
                 "DesignModel",
                 1L,
                 modelData("Order", "biz_order", "Order", "Business order", false),
-                mapOf("tableName", "order_old", "labelName", "Legacy order", "description", "Legacy description"),
-                mapOf("tableName", "biz_order", "labelName", "Order", "description", "Business order")
+                mapOf("tableName", "order_old", "label", "Legacy order", "description", "Legacy description"),
+                mapOf("tableName", "biz_order", "label", "Order", "description", "Business order")
         ));
 
         String sql = versionDdl.generateTableDDL(DatabaseType.MYSQL, modelChanges, null);
@@ -69,8 +69,8 @@ class VersionDdlImplTest {
                 13L,
                 fieldData("OrderItem", "status", "order_status", FieldType.STRING, 32, null,
                         true, false, "Order status", "Status", null),
-                mapOf("columnName", "old_status", "labelName", "Legacy status", "description", "Legacy description"),
-                mapOf("columnName", "order_status", "labelName", "Order status", "description", "Status")
+                mapOf("columnName", "old_status", "label", "Legacy status", "description", "Legacy description"),
+                mapOf("columnName", "order_status", "label", "Order status", "description", "Status")
         ));
         fieldChanges.addUpdatedRow(rowChange(
                 "DesignField",
@@ -97,8 +97,8 @@ class VersionDdlImplTest {
                 "DesignModel",
                 15L,
                 modelData("Order", "biz_order", "Order", "Business order", false),
-                mapOf("labelName", "Legacy order"),
-                mapOf("labelName", "Order")
+                mapOf("label", "Legacy order"),
+                mapOf("label", "Order")
         ));
 
         ModelChangesDTO fieldChanges = new ModelChangesDTO("DesignField");
@@ -107,8 +107,8 @@ class VersionDdlImplTest {
                 16L,
                 fieldData("Order", "status", "status", FieldType.STRING, 32, null,
                         true, false, "Order status", "Status", null),
-                mapOf("labelName", "Legacy status"),
-                mapOf("labelName", "Order status")
+                mapOf("label", "Legacy status"),
+                mapOf("label", "Order status")
         ));
 
         String sql = versionDdl.generateTableDDL(DatabaseType.MYSQL, modelChanges, fieldChanges);
@@ -259,8 +259,8 @@ class VersionDdlImplTest {
                 25L,
                 fieldData("OrderItem", "status", "order_status", FieldType.STRING, 32, null,
                         true, false, "Order status", "Status", null),
-                mapOf("columnName", "old_status", "labelName", "Legacy status", "description", "Legacy description"),
-                mapOf("columnName", "order_status", "labelName", "Order status", "description", "Status")
+                mapOf("columnName", "old_status", "label", "Legacy status", "description", "Legacy description"),
+                mapOf("columnName", "order_status", "label", "Order status", "description", "Status")
         ));
 
         String sql = versionDdl.generateTableDDL(DatabaseType.POSTGRESQL, null, fieldChanges);
@@ -278,17 +278,17 @@ class VersionDdlImplTest {
         return rowChangeDTO;
     }
 
-    private Map<String, Object> modelData(String modelName, String tableName, String labelName,
+    private Map<String, Object> modelData(String modelName, String tableName, String label,
                                           String description, boolean timeline) {
-        return modelData(modelName, tableName, labelName, description, timeline, null);
+        return modelData(modelName, tableName, label, description, timeline, null);
     }
 
-    private Map<String, Object> modelData(String modelName, String tableName, String labelName,
+    private Map<String, Object> modelData(String modelName, String tableName, String label,
                                           String description, boolean timeline, IdStrategy idStrategy) {
         Map<String, Object> data = new HashMap<>();
         data.put("modelName", modelName);
         data.put("tableName", tableName);
-        data.put("labelName", labelName);
+        data.put("label", label);
         data.put("description", description);
         data.put("timeline", timeline);
         data.put("idStrategy", idStrategy);
@@ -297,7 +297,7 @@ class VersionDdlImplTest {
 
     private Map<String, Object> fieldData(String modelName, String fieldName, String columnName, FieldType fieldType,
                                           Integer length, Integer scale, boolean required, boolean dynamic,
-                                          String labelName, String description, String defaultValue) {
+                                          String label, String description, String defaultValue) {
         Map<String, Object> data = new HashMap<>();
         data.put("modelName", modelName);
         data.put("fieldName", fieldName);
@@ -307,7 +307,7 @@ class VersionDdlImplTest {
         data.put("scale", scale);
         data.put("required", required);
         data.put("dynamic", dynamic);
-        data.put("labelName", labelName);
+        data.put("label", label);
         data.put("description", description);
         data.put("defaultValue", defaultValue);
         return data;

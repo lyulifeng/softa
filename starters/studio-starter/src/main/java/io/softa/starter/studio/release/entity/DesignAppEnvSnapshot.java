@@ -1,12 +1,15 @@
 package io.softa.starter.studio.release.entity;
 
 import java.io.Serial;
-import io.swagger.v3.oas.annotations.media.Schema;
 import lombok.Data;
 import lombok.EqualsAndHashCode;
 import tools.jackson.databind.JsonNode;
 
+import io.softa.framework.orm.annotation.Field;
+import io.softa.framework.orm.annotation.Index;
+import io.softa.framework.orm.annotation.Model;
 import io.softa.framework.orm.entity.AuditableModel;
+import io.softa.framework.orm.enums.IdStrategy;
 
 /**
  * DesignAppEnvSnapshot Model — stores a full metadata snapshot for a DesignAppEnv.
@@ -20,29 +23,32 @@ import io.softa.framework.orm.entity.AuditableModel;
  * (ordered by id / deploymentId DESC).
  */
 @Data
-@Schema(name = "DesignAppEnvSnapshot")
 @EqualsAndHashCode(callSuper = true)
+@Model(
+        label = "Design App Env Snapshot",
+        idStrategy = IdStrategy.DISTRIBUTED_LONG
+)
+@Index(indexName = "unique_env_snapshot", fields = {"appId", "envId", "deploymentId"}, unique = true)
 public class DesignAppEnvSnapshot extends AuditableModel {
 
     @Serial
     private static final long serialVersionUID = 1L;
 
-    @Schema(description = "ID")
+    @Field(label = "ID")
     private Long id;
 
-    @Schema(description = "App ID")
+    @Field(label = "App ID", required = true)
     private Long appId;
 
-    @Schema(description = "Env ID — the environment this snapshot belongs to (OneToOne)")
+    @Field(label = "Env ID", required = true)
     private Long envId;
 
-    @Schema(description = "Deployment ID — the deployment that produced this snapshot")
+    @Field(label = "Deployment ID", required = true)
     private Long deploymentId;
 
-    @Schema(description = "Snapshot — full expected state of runtime metadata keyed by model name")
+    @Field(label = "Snapshot")
     private JsonNode snapshot;
 
-    @Schema(description = "Deleted")
+    @Field(label = "Deleted")
     private Boolean deleted;
 }
-

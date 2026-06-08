@@ -2,12 +2,14 @@ package io.softa.starter.studio.release.entity;
 
 import java.io.Serial;
 import java.time.LocalDateTime;
-import io.swagger.v3.oas.annotations.media.Schema;
 import lombok.Data;
 import lombok.EqualsAndHashCode;
 import tools.jackson.databind.JsonNode;
 
+import io.softa.framework.orm.annotation.Field;
+import io.softa.framework.orm.annotation.Model;
 import io.softa.framework.orm.entity.AuditableModel;
+import io.softa.framework.orm.enums.IdStrategy;
 import io.softa.starter.studio.release.enums.DesignAppVersionStatus;
 import io.softa.starter.studio.release.enums.DesignAppVersionType;
 
@@ -19,43 +21,47 @@ import io.softa.starter.studio.release.enums.DesignAppVersionType;
  * currentVersionId. DRAFT versions do not participate in deployment merge until sealed.
  */
 @Data
-@Schema(name = "DesignAppVersion")
 @EqualsAndHashCode(callSuper = true)
+@Model(
+        label = "Design App Version",
+        idStrategy = IdStrategy.DISTRIBUTED_LONG,
+        defaultOrder = "id DESC"
+)
 public class DesignAppVersion extends AuditableModel {
 
     @Serial
     private static final long serialVersionUID = 1L;
 
-    @Schema(description = "ID")
+    @Field(label = "ID")
     private Long id;
 
-    @Schema(description = "App ID")
+    @Field(label = "App ID")
     private Long appId;
 
-    @Schema(description = "Version Name")
+    @Field(label = "Version Name", required = true, length = 64)
     private String name;
 
-    @Schema(description = "Version Type: Normal or Hotfix")
+    @Field(label = "Version Type")
     private DesignAppVersionType versionType;
 
-    @Schema(description = "Upgrade description")
+    @Field(label = "Upgrade description", length = 256)
     private String description;
 
-    @Schema(description = "Version Content — aggregated changelog from WorkItems, captured at seal time")
+    @Field(label = "Version Content")
     private JsonNode versionedContent;
 
-    @Schema(description = "Diff Hash — SHA-256 of the serialized versionedContent for integrity verification")
+    @Field(label = "Diff Hash", length = 64)
     private String diffHash;
 
-    @Schema(description = "Status")
+    @Field(label = "Status")
     private DesignAppVersionStatus status;
 
-    @Schema(description = "Sealed Time")
+    @Field(label = "Sealed Time")
     private LocalDateTime sealedTime;
 
-    @Schema(description = "Frozen Time")
+    @Field(label = "Frozen Time")
     private LocalDateTime frozenTime;
 
-    @Schema(description = "Deleted")
+    @Field(label = "Deleted")
     private Boolean deleted;
 }

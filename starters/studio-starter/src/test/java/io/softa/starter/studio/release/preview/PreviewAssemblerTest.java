@@ -78,7 +78,7 @@ class PreviewAssemblerTest {
     void designFieldTransOrphanFetchesParentChainAndAttachesToDesignModelRoot() {
         ModelChangesDTO transChanges = new ModelChangesDTO("DesignFieldTrans");
         transChanges.addUpdatedRow(row("DesignFieldTrans", 5000L, AccessType.UPDATE,
-                Map.of(ModelConstant.ID, 5000L, "rowId", 200L, "languageCode", "en_US", "labelName", "Name")));
+                Map.of(ModelConstant.ID, 5000L, "rowId", 200L, "languageCode", "en_US", "label", "Name")));
 
         when(modelService.getByIds(eq("DesignField"), eq(List.of(200L)), any()))
                 .thenReturn(List.of(Map.of(
@@ -163,7 +163,7 @@ class PreviewAssemblerTest {
 
         ModelChangesDTO transChanges = new ModelChangesDTO("DesignFieldTrans");
         transChanges.addUpdatedRow(row("DesignFieldTrans", 5000L, AccessType.UPDATE,
-                Map.of(ModelConstant.ID, 5000L, "rowId", 200L, "labelName", "Name")));
+                Map.of(ModelConstant.ID, 5000L, "rowId", 200L, "label", "Name")));
 
         PreviewTreeDTO tree = assembler.assemble(List.of(modelChanges, fieldChanges, transChanges));
 

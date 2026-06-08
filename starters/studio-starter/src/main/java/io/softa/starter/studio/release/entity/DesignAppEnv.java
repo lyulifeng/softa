@@ -1,11 +1,13 @@
 package io.softa.starter.studio.release.entity;
 
 import java.io.Serial;
-import io.swagger.v3.oas.annotations.media.Schema;
 import lombok.Data;
 import lombok.EqualsAndHashCode;
 
+import io.softa.framework.orm.annotation.Field;
+import io.softa.framework.orm.annotation.Model;
 import io.softa.framework.orm.entity.AuditableModel;
+import io.softa.framework.orm.enums.IdStrategy;
 import io.softa.starter.studio.release.enums.DesignAppEnvStatus;
 import io.softa.starter.studio.release.enums.DesignAppEnvType;
 
@@ -28,62 +30,67 @@ import io.softa.starter.studio.release.enums.DesignAppEnvType;
  * is one env at a time — reissuing a keypair here does not disturb other runtimes.
  */
 @Data
-@Schema(name = "DesignAppEnv")
 @EqualsAndHashCode(callSuper = true)
+@Model(
+        label = "Design App Env",
+        idStrategy = IdStrategy.DISTRIBUTED_LONG
+)
 public class DesignAppEnv extends AuditableModel {
 
     @Serial
     private static final long serialVersionUID = 1L;
 
-    @Schema(description = "ID")
+    @Field(label = "ID")
     private Long id;
 
-    @Schema(description = "App ID")
+    @Field(label = "App ID", required = true)
     private Long appId;
 
-    @Schema(description = "Current Version ID — the latest version successfully deployed to this env")
+    @Field(label = "Current Version")
     private Long currentVersionId;
 
-    @Schema(description = "Last Deployment ID — most recent deployment record created for this env, "
-            + "regardless of outcome (SUCCESS / FAILURE / ROLLED_BACK)")
+    @Field(label = "Last Deployment", description = "Most recent deployment for this env, regardless of outcome")
     private Long lastDeploymentId;
 
-    @Schema(description = "Env runtime status — used as a per-env deployment mutex")
+    @Field(label = "Env Status")
     private DesignAppEnvStatus envStatus;
 
-    @Schema(description = "Env Name")
+    @Field(label = "Env Name", required = true, length = 64)
     private String name;
 
-    @Schema(description = "Sequence")
+    @Field(label = "Sequence")
     private Integer sequence;
 
-    @Schema(description = "Env Type")
+    @Field(label = "Env Type")
     private DesignAppEnvType envType;
 
-    @Schema(description = "Protected Env")
+    @Field(label = "Protected Env")
     private Boolean protectedEnv;
 
-    @Schema(description = "Active")
+    @Field(label = "Active")
     private Boolean active;
 
-    @Schema(description = "Upgrade API EndPoint")
+    @Field(label = "Upgrade API EndPoint", required = true, length = 128)
     private String upgradeEndpoint;
 
-    @Schema(description = "Public Key — Base64-encoded X.509 SubjectPublicKeyInfo; served to the runtime operator when provisioning")
+    @Field(label = "Public Key", length = 256)
     private String publicKey;
 
-    @Schema(description = "Private Key — Base64-encoded PKCS#8; ORM-layer encrypted at rest, never returned in read responses")
+    @Field(label = "Private Key", length = 512)
     private String privateKey;
 
-    @Schema(description = "Auto Upgrade")
+    @Field(label = "Auto Upgrade")
     private Boolean autoUpgrade;
 
-    @Schema(description = "Description")
+    @Field(label = "Auto Execute DDL")
+    private Boolean autoExecuteDDL;
+
+    @Field(label = "Description", length = 256)
     private String description;
 
-    @Schema(description = "Deleted")
+    @Field(label = "Deleted")
     private Boolean deleted;
 
-    @Schema(description = "Version for optimistic locking")
+    @Field(label = "Version")
     private Integer version;
 }

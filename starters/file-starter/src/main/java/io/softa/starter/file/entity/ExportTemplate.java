@@ -2,10 +2,11 @@ package io.softa.starter.file.entity;
 
 import java.io.Serial;
 import java.util.List;
-import io.swagger.v3.oas.annotations.media.Schema;
 import lombok.Data;
 import lombok.EqualsAndHashCode;
 
+import io.softa.framework.orm.annotation.Field;
+import io.softa.framework.orm.annotation.Model;
 import io.softa.framework.orm.domain.Filters;
 import io.softa.framework.orm.domain.Orders;
 import io.softa.framework.orm.entity.AuditableModel;
@@ -14,46 +15,46 @@ import io.softa.framework.orm.entity.AuditableModel;
  * ExportTemplate Model
  */
 @Data
-@Schema(name = "ExportTemplate")
 @EqualsAndHashCode(callSuper = true)
+@Model(label = "Export Template", searchName = {"fileName"})
 public class ExportTemplate extends AuditableModel {
 
     @Serial
     private static final long serialVersionUID = 1L;
 
-    @Schema(description = "ID")
+    @Field(label = "ID")
     private Long id;
 
-    @Schema(description = "Tenant ID")
+    @Field(label = "Tenant ID")
     private Long tenantId;
 
-    @Schema(description = "File Name")
+    @Field(label = "File Name", required = true, length = 64)
     private String fileName;
 
-    @Schema(description = "Sheet Name")
+    @Field(label = "Sheet Name", length = 64)
     private String sheetName;
 
-    @Schema(description = "Model Name")
+    @Field(label = "Model Name", required = true, length = 64)
     private String modelName;
 
-    @Schema(description = "Custom File Template")
+    @Field(label = "Custom File Template")
     private Boolean customFileTemplate;
 
-    @Schema(description = "File Template ID")
+    @Field(label = "File Template ID")
     private Long fileId;
 
-    @Schema(description = "Filters")
+    @Field(label = "Filters")
     private Filters filters;
 
-    @Schema(description = "Orders")
+    @Field(label = "Orders")
     private Orders orders;
 
-    @Schema(description = "Custom Export Handler")
+    @Field(label = "Custom Export Handler", length = 128)
     private String customHandler;
 
-    @Schema(description = "Enable Transpose")
+    @Field(label = "Enable Transpose")
     private Boolean enableTranspose;
 
-    @Schema(description = "Export Fields")
+    @Field(label = "Export Fields")
     private List<ExportTemplateField> exportFields;
 }

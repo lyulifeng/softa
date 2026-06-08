@@ -1,11 +1,12 @@
 package io.softa.starter.metadata.entity;
 
 import java.io.Serial;
-import io.swagger.v3.oas.annotations.media.Schema;
 import lombok.Data;
 import lombok.EqualsAndHashCode;
 import tools.jackson.databind.JsonNode;
 
+import io.softa.framework.orm.annotation.Field;
+import io.softa.framework.orm.annotation.Model;
 import io.softa.framework.orm.domain.Filters;
 import io.softa.framework.orm.domain.Orders;
 import io.softa.framework.orm.entity.AuditableModel;
@@ -15,52 +16,52 @@ import io.softa.framework.orm.enums.ViewType;
  * SysView Model
  */
 @Data
-@Schema(name = "SysView")
 @EqualsAndHashCode(callSuper = true)
+@Model(label = "System View", businessKey = {"modelName", "code"})
 public class SysView extends AuditableModel {
 
     @Serial
     private static final long serialVersionUID = 1L;
 
-    @Schema(description = "ID")
+    @Field(label = "ID")
     private Long id;
 
-    @Schema(description = "App ID")
+    @Field(label = "App ID")
     private Long appId;
 
-    @Schema(description = "Model Name")
+    @Field(label = "Model Name", length = 64)
     private String modelName;
 
-    @Schema(description = "View Name")
+    @Field(label = "Name", required = true, length = 64)
     private String name;
 
-    @Schema(description = "View Code")
+    @Field(label = "Code", length = 64)
     private String code;
 
-    @Schema(description = "View Type")
+    @Field(label = "Type", required = true)
     private ViewType type;
 
-    @Schema(description = "Sequence")
+    @Field(label = "Sequence")
     private Integer sequence;
 
-    @Schema(description = "Structure")
+    @Field(label = "Structure", required = true)
     private JsonNode structure;
 
-    @Schema(description = "Default Filters")
+    @Field(label = "Default Filter")
     private Filters defaultFilter;
 
-    @Schema(description = "Default Order")
+    @Field(label = "Default Order")
     private Orders defaultOrder;
 
-    @Schema(description = "Navigation ID")
+    @Field(label = "Nav ID")
     private Long navId;
 
-    @Schema(description = "Public View")
+    @Field(label = "Public View")
     private Boolean publicView;
 
-    @Schema(description = "Default View")
+    @Field(label = "Default View")
     private Boolean defaultView;
 
-    @Schema(description = "Deleted")
+    @Field(label = "Deleted")
     private Boolean deleted;
 }
