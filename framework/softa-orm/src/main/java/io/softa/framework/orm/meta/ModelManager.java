@@ -457,8 +457,26 @@ public class ModelManager {
                 "{0}:{1} field, the relatedModel `{2}` does not exist in the model metadata!",
                 metaField.getModelName(), metaField.getFieldName(), relatedModel);
         if ((FieldType.TO_ONE_TYPES.contains(metaField.getFieldType()))) {
-            // For OneToOne/ManyToOne fields, the `relatedField` is default to id.
-            metaField.setRelatedField(ModelConstant.ID);
+            if (StringUtils.isBlank(metaField.getRelatedField())) {
+                // Default join key is the related model's surrogate id.
+                metaField.setRelatedField(ModelConstant.ID);
+            } else if (!ModelConstant.ID.equals(metaField.getRelatedField())) {
+                // A MANY_TO_ONE / ONE_TO_ONE relation may join on
+                // a stable business key of the related model (e.g. `currency.code`) instead of
+                // its surrogate id, so the stored FK value is portable across environments.
+                // The target field must exist, be stored, and uniquely identify one row.
+                String relatedField = metaField.getRelatedField();
+                Assert.isTrue(modelFields().get(relatedModel).containsKey(relatedField),
+                        "{0}:{1} field, the relatedModel `{2}` does not contain the related field `{3}`!",
+                        metaField.getModelName(), metaField.getFieldName(), relatedModel, relatedField);
+                Assert.isTrue(isStored(relatedModel, relatedField),
+                        "{0}:{1} field, the related field `{2}.{3}` must be a stored field to be a join key!",
+                        metaField.getModelName(), metaField.getFieldName(), relatedModel, relatedField);
+                Assert.isTrue(isUniqueKey(relatedModel, relatedField),
+                        "{0}:{1} field, the related field `{2}.{3}` must uniquely identify a related row "
+                                + "(`id` or a single-column businessKey of the related model)!",
+                        metaField.getModelName(), metaField.getFieldName(), relatedModel, relatedField);
+            }
         } else if (FieldType.ONE_TO_MANY.equals(metaField.getFieldType())) {
             Assert.notBlank(metaField.getRelatedField(),
                     "{0}:{1} is a OneToMany field, the `relatedField` cannot be empty!",
@@ -489,6 +507,27 @@ public class ModelManager {
                     "{0}:{1} is a ManyToMany field, the joinModel `{2}` does not contain the joinRight field `{3}`!",
                     metaField.getModelName(), metaField.getFieldName(), metaField.getJoinModel(), metaField.getJoinRight());
         }
+    }
+
+    /**
+     * Whether a field uniquely identifies a single row of the given model, so it is a
+     * safe target for a reference-by-code relation join. True for the surrogate `id`,
+     * or a single-column businessKey (the framework's logical unique identity).
+     *
+     * @param modelName model name
+     * @param fieldName candidate join key field
+     * @return true if the field value uniquely identifies a row
+     */
+    private static boolean isUniqueKey(String modelName, String fieldName) {
+        if (ModelConstant.ID.equals(fieldName)) {
+            return true;
+        }
+        MetaModel model = modelMap().get(modelName);
+        if (model == null) {
+            return false;
+        }
+        List<String> businessKey = model.getBusinessKey();
+        return businessKey != null && businessKey.size() == 1 && businessKey.contains(fieldName);
     }
 
     /**
@@ -752,22 +791,45 @@ public class ModelManager {
     }
 
     /**
+     * Check whether the model itself allows copy operations
+     * ({@code @Model(copyable = ...)}). Field-level filtering is a separate
+     * concern handled by {@link #getModelCopyableFields(String)}.
+     *
+     * @param modelName model name
+     * @return true if rows of the model may be duplicated
+     */
+    public static boolean isCopyableModel(String modelName) {
+        validateModel(modelName);
+        return modelMap().get(modelName).isCopyable();
+    }
+
+    /**
      * Get the copyable fields of the specified model.
+     * <p>Excludes fields marked {@code copyable = false}, audit fields, dynamic fields
+     * (OneToMany / ManyToMany / computed / cascaded — they are derived, not stored),
+     * OneToOne fields (the related row is owned by the source row; copying the FK
+     * would make two rows share one exclusively-owned related row), and structural
+     * keys: {@code id} / {@code externalId} for regular models; {@code sliceId} for
+     * timeline models ({@code id} is kept since slices of the same business entity
+     * share it).</p>
      *
      * @param modelName model name
      * @return copyable fields
      */
     public static List<String> getModelCopyableFields(String modelName) {
-        return modelFields().get(modelName).keySet().stream()
-                .filter(fieldName -> {
-                    if (ModelConstant.AUDIT_FIELDS.contains(fieldName)) {
+        boolean isTimeline = isTimelineModel(modelName);
+        return modelFields().get(modelName).values().stream()
+                .filter(metaField -> {
+                    String fieldName = metaField.getFieldName();
+                    if (!metaField.isCopyable() || metaField.isDynamic()
+                            || FieldType.ONE_TO_ONE.equals(metaField.getFieldType())
+                            || ModelConstant.AUDIT_FIELDS.contains(fieldName)) {
                         return false;
-                    } else if (isTimelineModel(modelName)) {
-                        if (ModelConstant.ID.equals(fieldName)) {
-                            return true;
-                        } else return !ModelConstant.SLICE_ID.equals(fieldName);
+                    } else if (isTimeline) {
+                        return !ModelConstant.SLICE_ID.equals(fieldName);
                     } else return !ModelConstant.ID.equals(fieldName) && !ModelConstant.EXTERNAL_ID.equals(fieldName);
                 })
+                .map(MetaField::getFieldName)
                 .toList();
     }
 
@@ -959,12 +1021,20 @@ public class ModelManager {
      * Get the last field object of the custom cascaded field.
      * Take `field1.field2.field3` as an example, get the `field3` MetaField object.
      * <p>
-     * Implemented on top of {@link CascadeFieldWalker}; preserves the historical
-     * "last field must be stored" check at this call site.
+     * Implemented on top of {@link CascadeFieldWalker}, which enforces only the
+     * structural rules (each segment exists, non-last segments are ToOne relations,
+     * depth within {@link BaseConstant#CASCADE_LEVEL}). It is policy-neutral about the
+     * leaf: a dynamic (non-stored) leaf — e.g. a computed field or a dynamic cascaded
+     * field — is resolved and returned, not rejected, so callers such as export-header
+     * and projection resolution can read its type/label. Callers that require a stored
+     * leaf (e.g. SQL filter building in {@code WhereBuilder}) enforce that at their own
+     * call site.
      *
      * @param modelName the main model name
      * @param fullFieldName custom cascaded field name like `field1.field2.field3`
-     * @return last field object
+     * @return last field object (may be a dynamic, non-stored field)
+     * @throws IllegalArgumentException if the path is structurally invalid (missing
+     *         segment, traversal through a non-ToOne field, or exceeds the cascade depth)
      */
     public static MetaField getLastFieldOfCascaded(String modelName, String fullFieldName) {
         CascadeFieldWalker.Result result = CascadeFieldWalker.walk(

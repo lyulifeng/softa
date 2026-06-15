@@ -420,6 +420,8 @@ public class ModelServiceImpl<K extends Serializable> implements ModelService<K>
      */
     @Override
     public Map<String, Object> getCopyableFields(String modelName, K id) {
+        Assert.isTrue(ModelManager.isCopyableModel(modelName),
+                "Model {0} is not copyable, the copy APIs are disabled for it!", modelName);
         Map<String, Object> value = this.getById(modelName, id, Collections.emptyList())
                 .orElseThrow(() -> new IllegalArgumentException("The data of model {0} with id {1} does not exist!", modelName, id));
         List<String> copyableFields = ModelManager.getModelCopyableFields(modelName);
@@ -954,6 +956,8 @@ public class ModelServiceImpl<K extends Serializable> implements ModelService<K>
     @Override
     @Transactional(rollbackFor = Exception.class)
     public List<K> copyByIds(String modelName, List<K> ids) {
+        Assert.isTrue(ModelManager.isCopyableModel(modelName),
+                "Model {0} is not copyable, the copy APIs are disabled for it!", modelName);
         List<Map<String, Object>> rows = this.getByIds(modelName, ids, null);
         List<String> copyableFields = ModelManager.getModelCopyableFields(modelName);
         rows.forEach(row -> row.keySet().retainAll(copyableFields));

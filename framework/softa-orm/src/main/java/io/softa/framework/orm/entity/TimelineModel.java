@@ -24,7 +24,7 @@ public abstract class TimelineModel extends AuditableModel {
     @Serial
     private static final long serialVersionUID = 1L;
 
-    @Field(label = "Slice ID", readonly = true, nonCopyable = true)
+    @Field(label = "Slice ID", readonly = true, copyable = false)
     private Long sliceId;
 
     @Field(label = "Effective start date")

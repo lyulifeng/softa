@@ -26,8 +26,6 @@ public class MetaField implements Serializable {
 
     private Long id;
 
-    private Long appId;
-
     private String label;
 
     private String fieldName;
@@ -35,8 +33,6 @@ public class MetaField implements Serializable {
     private String columnName;
 
     private String modelName;
-
-    private Long modelId;
 
     private String description;
 
@@ -77,7 +73,9 @@ public class MetaField implements Serializable {
 
     private boolean translatable;
 
-    private boolean nonCopyable;
+    // Default true: the sys_field column is NOT NULL DEFAULT 1; the initializer
+    // covers programmatically constructed instances (tests, in-memory models).
+    private boolean copyable = true;
 
     private boolean unsearchable;
 

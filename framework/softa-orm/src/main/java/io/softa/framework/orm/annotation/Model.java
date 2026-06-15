@@ -75,6 +75,15 @@ public @interface Model {
     /** Multi-tenant isolation enabled (adds 'tenantId' constraint to business tables). */
     boolean multiTenant() default false;
 
+    /**
+     * Whether rows of this model may be duplicated via {@code copyById} /
+     * {@code copyByIds} / {@code getCopyableFields}. Set {@code false} on
+     * runtime / log models (execution traces, send records, histories) that
+     * have no duplicate scenario: the copy APIs then reject the model and the
+     * UI hides the Duplicate action (exposed as {@code SysModel.copyable}).
+     */
+    boolean copyable() default true;
+
     /** Override default data source; empty = primary data source. */
     String dataSource() default "";
 

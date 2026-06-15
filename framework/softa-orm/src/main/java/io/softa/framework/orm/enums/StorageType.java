@@ -1,8 +1,8 @@
 package io.softa.framework.orm.enums;
 
 import com.fasterxml.jackson.annotation.JsonValue;
-import io.softa.framework.orm.annotation.OptionItem;
-import io.softa.framework.orm.annotation.OptionSet;
+import io.softa.framework.base.annotation.OptionItem;
+import io.softa.framework.base.annotation.OptionSet;
 import lombok.AllArgsConstructor;
 import lombok.Getter;
 
@@ -11,7 +11,7 @@ import lombok.Getter;
  */
 @Getter
 @AllArgsConstructor
-@OptionSet(label = "Storage Type")
+@OptionSet
 public enum StorageType {
     @OptionItem(label = "Relational Database Management System")
     RDBMS("RDBMS"),

@@ -1,13 +1,13 @@
-package io.softa.framework.orm.enums;
+package io.softa.framework.base.enums;
 
 import com.fasterxml.jackson.annotation.JsonValue;
-import io.softa.framework.orm.annotation.OptionSet;
+import io.softa.framework.base.annotation.OptionSet;
 import lombok.AllArgsConstructor;
 import lombok.Getter;
 
 @Getter
 @AllArgsConstructor
-@OptionSet(label = "Option Item Tone")
+@OptionSet
 public enum OptionItemTone {
     SUCCESS("Success"),
     WARNING("Warning"),

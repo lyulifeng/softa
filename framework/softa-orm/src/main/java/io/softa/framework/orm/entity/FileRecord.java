@@ -16,7 +16,6 @@ import io.softa.framework.orm.enums.IdStrategy;
 @Data
 @EqualsAndHashCode(callSuper = true)
 @Model(
-        label = "File Record",
         idStrategy = IdStrategy.DISTRIBUTED_LONG,
         softDelete = true
 )
@@ -31,33 +30,33 @@ public class FileRecord extends AuditableModel {
     @Field(label = "Tenant ID")
     private Long tenantId;
 
-    @Field(label = "File Name", required = true, length = 128)
+    @Field(required = true, length = 128)
     private String fileName;
 
     @Field(label = "OSS Key", length = 128)
     private String ossKey;
 
-    @Field(label = "File Type")
+    @Field
     private FileType fileType;
 
     @Field(label = "File Size(KB)")
     private Integer fileSize;
 
-    @Field(label = "Checksum", length = 64)
+    @Field
     private String checksum;
 
-    @Field(label = "Model Name", length = 64)
+    @Field
     private String modelName;
 
-    @Field(label = "Row ID", length = 64)
+    @Field(label = "Row ID")
     private String rowId;
 
-    @Field(label = "Field Name", length = 64)
+    @Field
     private String fieldName;
 
-    @Field(label = "Source")
+    @Field
     private FileSource source;
 
-    @Field(label = "Deleted")
+    @Field
     private Boolean deleted;
 }

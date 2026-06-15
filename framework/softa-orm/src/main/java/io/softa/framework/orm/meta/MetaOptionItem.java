@@ -21,10 +21,6 @@ public class MetaOptionItem implements Serializable {
 
     private Long id;
 
-    private Long appId;
-
-    private Long optionSetId;
-
     private String optionSetCode;
 
     private Integer sequence;

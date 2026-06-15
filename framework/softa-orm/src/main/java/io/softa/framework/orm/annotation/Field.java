@@ -45,7 +45,7 @@ public @interface Field {
     /** Length (STRING / DECIMAL precision); 0 = scanner picks type-specific default. */
     int length() default 0;
 
-    /** Scale (BIG_DECIMAL); 0 = scanner picks default. */
+    /** Scale (DOUBLE / BIG_DECIMAL); 0 = scanner picks type-specific default. */
     int scale() default 0;
 
     /** Required (NOT NULL). Default reflects Java primitive (true) vs wrapper (false). */
@@ -57,8 +57,14 @@ public @interface Field {
     /** I18n-translatable column. */
     boolean translatable() default false;
 
-    /** Excluded from {@code copy()} operations. */
-    boolean nonCopyable() default false;
+    /**
+     * Carried over by {@code copyById} / {@code getCopyableFields}. Set
+     * {@code false} on fields whose value must not survive a duplicate:
+     * business keys / unique columns, credentials, runtime state
+     * (counters, last/next-execution times). Model-level
+     * {@link Model#copyable()} switches the whole model off instead.
+     */
+    boolean copyable() default true;
 
     /** Excluded from default search. */
     boolean unsearchable() default false;
@@ -101,7 +107,20 @@ public @interface Field {
      */
     String relatedModelName() default "";
 
-    /** Related field on the related model; empty = {@code "id"}. */
+    /**
+     * Field on the related model this relation joins to.
+     *
+     * <p>For {@code MANY_TO_ONE} / {@code ONE_TO_ONE} (to-one): empty = {@code "id"}
+     * (the surrogate key, the default). A non-id value enables <b>reference-by-code</b>
+     * (ADR-0017): the FK stores a stable business code (e.g. {@code "code"} →
+     * {@code currency.code}) instead of the id, the FK column physically mirrors the
+     * referenced column (so a code FK renders {@code VARCHAR(n)}, not {@code BIGINT}),
+     * and joins/reads/writes use this field. The target must be a stored, uniquely
+     * identifying field of the related model ({@code id} or a single-column businessKey).
+     *
+     * <p>For {@code ONE_TO_MANY}: names the column on the child that references this
+     * model (required, must not be {@code "id"}).
+     */
     String relatedField() default "";
 
     /**

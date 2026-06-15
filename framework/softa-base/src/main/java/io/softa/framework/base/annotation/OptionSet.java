@@ -1,4 +1,4 @@
-package io.softa.framework.orm.annotation;
+package io.softa.framework.base.annotation;
 
 import java.lang.annotation.ElementType;
 import java.lang.annotation.Retention;
@@ -15,7 +15,7 @@ import java.lang.annotation.Target;
  * {@code enumConstant.name()}).
  *
  * <p><b>Requires {@code metadata-starter}</b> on the classpath to take effect
- * (see {@link Model}).
+ * (see {@code @Model}).
  *
  * @see OptionItem
  */

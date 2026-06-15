@@ -88,6 +88,7 @@ public enum CustomerTier {
 | `storageType` | `StorageType` | `RDBMS` | `storageType` | |
 | `versionLock` | boolean | `false` | `versionLock` | optimistic-lock column |
 | `multiTenant` | boolean | `false` | `multiTenant` | requires a `tenantId` field on the class |
+| `copyable` | boolean | `true` | `copyable` | `false` ⇒ copy APIs reject the model; UI hides Duplicate |
 | `dataSource` | String | `""` | `dataSource` | empty → primary datasource |
 | `businessKey` | String[] | `{}` | `businessKey` | composite supported |
 | `partitionField` | String | `""` | `partitionField` | |
@@ -111,12 +112,12 @@ extends `AuditableModel`.
 | `description` | String | `""` | `description` | |
 | `fieldType` | `FieldType[]` | `{}` | `fieldType` | single value, no braces (e.g. `fieldType = FieldType.MULTI_FILE`); `OPTION`/`MULTI_OPTION` **cannot** be written explicitly |
 | `columnName` | String | `""` | `columnName` | empty → `snake_case(fieldName)` |
-| `length` | int | `0` | `length` | `0` → type-specific default (STRING → 64); DECIMAL precision |
-| `scale` | int | `0` | `scale` | DECIMAL scale |
+| `length` | int | `0` | `length` | `0` → type default: STRING/OPTION 64, MULTI_STRING/ORDERS 256, DOUBLE 24 (measurements), BIG_DECIMAL 32 (money); declare explicitly for anything else. MySQL renders `length > 16383` as TEXT |
+| `scale` | int | `0` | `scale` | `0` → type default: DOUBLE 2, BIG_DECIMAL 8 (DECIMAL scale) |
 | `required` | boolean | `false` | `required` | NOT NULL constraint |
 | `readonly` | boolean | `false` | `readonly` | UI hint |
 | `translatable` | boolean | `false` | `translatable` | i18n-aware column |
-| `nonCopyable` | boolean | `false` | `nonCopyable` | excluded from `copy()` |
+| `copyable` | boolean | `true` | `copyable` | `false` ⇒ value not carried over by `copyById` (business keys, credentials, runtime state) |
 | `unsearchable` | boolean | `false` | `unsearchable` | excluded from default search |
 | `computed` | boolean | `false` | `computed` | requires `expression` |
 | `expression` | String | `""` | `expression` | AviatorScript |
@@ -542,7 +543,7 @@ public class ProductPrice extends TimelineModel {
     @Field(label = "Product ID")
     private Long productId;
 
-    @Field(label = "Price", length = 18, scale = 2)
+    @Field(label = "Price")               // BigDecimal → DECIMAL(32,8) by default (money)
     private BigDecimal price;
 }
 ```

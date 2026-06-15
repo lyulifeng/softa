@@ -9,14 +9,14 @@ import lombok.AllArgsConstructor;
 import lombok.Getter;
 
 import io.softa.framework.base.utils.Assert;
-import io.softa.framework.orm.annotation.OptionSet;
+import io.softa.framework.base.annotation.OptionSet;
 
 /**
  * View type Enum.
  */
 @Getter
 @AllArgsConstructor
-@OptionSet(label = "View Type")
+@OptionSet
 public enum ViewType {
     TABLE("Table"),
     FORM("Form"),

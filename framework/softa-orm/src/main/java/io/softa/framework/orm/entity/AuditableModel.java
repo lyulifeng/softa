@@ -2,9 +2,10 @@ package io.softa.framework.orm.entity;
 
 import java.io.Serial;
 import java.time.LocalDateTime;
-import io.softa.framework.orm.annotation.Field;
 import lombok.Data;
 import lombok.EqualsAndHashCode;
+
+import io.softa.framework.orm.annotation.Field;
 
 /**
  * Abstract class of base model, with id and audit fields.
@@ -12,7 +13,7 @@ import lombok.EqualsAndHashCode;
  * <p>The audit fields carry {@code @Field} so the metadata scanner emits the
  * matching {@code sys_field} rows + DDL columns for every model — the scanner
  * walks the superclass chain, so the annotations are declared here once rather
- * than repeated on each entity. They are {@code readonly} / {@code nonCopyable}:
+ * than repeated on each entity. They are {@code readonly} / {@code copyable = false}:
  * populated by the framework on create/update, never by user input or copy.
  *
  * <p>No {@code @Schema}: {@code @Model} / {@code @Field} are the single metadata
@@ -25,22 +26,22 @@ public abstract class AuditableModel extends AbstractModel {
     @Serial
     private static final long serialVersionUID = 1L;
 
-    @Field(label = "Creation time", readonly = true, nonCopyable = true)
+    @Field(readonly = true, copyable = false)
     protected LocalDateTime createdTime;
 
-    @Field(label = "Creator ID", readonly = true, nonCopyable = true)
+    @Field(readonly = true, copyable = false)
     protected Long createdId;
 
-    @Field(label = "Created By", readonly = true, nonCopyable = true, length = 64)
+    @Field(readonly = true, copyable = false)
     protected String createdBy;
 
-    @Field(label = "Update time", readonly = true, nonCopyable = true)
+    @Field(readonly = true, copyable = false)
     protected LocalDateTime updatedTime;
 
-    @Field(label = "Updater ID", readonly = true, nonCopyable = true)
+    @Field(readonly = true, copyable = false)
     protected Long updatedId;
 
-    @Field(label = "Updated By", readonly = true, nonCopyable = true, length = 64)
+    @Field(readonly = true, copyable = false)
     protected String updatedBy;
 
 }

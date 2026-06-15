@@ -10,6 +10,7 @@ import org.springframework.util.CollectionUtils;
 
 import io.softa.framework.base.constant.StringConstant;
 import io.softa.framework.base.enums.Operator;
+import io.softa.framework.base.utils.Assert;
 import io.softa.framework.base.utils.Cast;
 import io.softa.framework.orm.constant.ModelConstant;
 import io.softa.framework.orm.domain.Filters;
@@ -53,6 +54,9 @@ public class XToOneGroupProcessor extends BaseProcessor {
     public XToOneGroupProcessor(MetaField metaField, AccessType accessType, FlexQuery flexQuery) {
         super(metaField, accessType);
         this.flexQuery = flexQuery;
+        // The join key column of the related model (id by default, or a business code for
+        // reference-by-code) must be read so the related rows can be indexed by it.
+        this.expandFields.add(metaField.getRelatedField());
         // For ManyToOne/OneToOne fields, get the displayName of the related model.
         this.expandFields.addAll(ModelManager.getModelDisplayName(metaField.getRelatedModel()));
         if (flexQuery != null) {
@@ -123,11 +127,13 @@ public class XToOneGroupProcessor extends BaseProcessor {
      */
     public Map<Serializable, Map<String, Object>> getRelatedModelRowMap(List<Map<String, Object>> rows) {
         Map<Serializable, Map<String, Object>> relatedValueMap = new HashMap<>();
+        // FK values stored on the main rows: the related model's id, or a business code.
+        String relatedField = metaField.getRelatedField();
         Set<Serializable> relatedIds = rows.stream().map(r -> (Serializable) r.get(metaField.getFieldName()))
                 .filter(IdUtils::validId).collect(Collectors.toSet());
         if (!CollectionUtils.isEmpty(relatedIds)) {
-            // Query related model rows using filter: ["id", "IN", relatedIds]
-            Filters filters = Filters.of(ModelConstant.ID, Operator.IN, relatedIds);
+            // Query related model rows using filter: [relatedField, "IN", relatedIds]
+            Filters filters = Filters.of(relatedField, Operator.IN, relatedIds);
             MetaModel relatedMetaModel = ModelManager.getModel(metaField.getRelatedModel());
             if (relatedMetaModel.isActiveControl()) {
                 filters.in(ModelConstant.ACTIVE_CONTROL_FIELD, List.of(true, false));
@@ -140,7 +146,7 @@ public class XToOneGroupProcessor extends BaseProcessor {
                 relatedFlexQuery.setConvertType(flexQuery.getConvertType());
             }
             List<Map<String, Object>> relatedRows= ReflectTool.searchList(metaField.getRelatedModel(), relatedFlexQuery);
-            relatedRows.forEach(row -> relatedValueMap.put((Serializable) row.get(ModelConstant.ID), row));
+            relatedRows.forEach(row -> relatedValueMap.put((Serializable) row.get(relatedField), row));
         }
         return relatedValueMap;
     }
@@ -157,14 +163,16 @@ public class XToOneGroupProcessor extends BaseProcessor {
     private void batchProcessOutputRowsCascaded(MetaField cascadedField, List<Map<String, Object>> rows, Map<Serializable, Map<String, Object>> relatedValueMap) {
         List<String> casFields = cascadedField.getDependentFields();
         String xToOneFieldName = casFields.getFirst();
-        String cascadeModel = ModelManager.getModelField(modelName, xToOneFieldName).getRelatedModel();
+        MetaField xToOneMeta = ModelManager.getModelField(modelName, xToOneFieldName);
+        String cascadeModel = xToOneMeta.getRelatedModel();
+        String cascadeRelatedField = xToOneMeta.getRelatedField();
         rows.forEach(row -> {
-            Serializable id = (Serializable) row.get(xToOneFieldName);
+            Serializable key = (Serializable) row.get(xToOneFieldName);
             Object value;
-            if (IdUtils.validId(id)) {
-                id = IdUtils.formatId(cascadeModel, id);
-                if (relatedValueMap.containsKey(id)) {
-                    value = relatedValueMap.get(id).get(casFields.get(1));
+            if (IdUtils.validId(key)) {
+                key = IdUtils.formatId(cascadeModel, cascadeRelatedField, key);
+                if (relatedValueMap.containsKey(key)) {
+                    value = relatedValueMap.get(key).get(casFields.get(1));
                 } else {
                     log.warn("Model {}, the {} field value does not exist in the related model {}: {}",
                             metaField.getModelName(), casFields.getFirst(), metaField.getRelatedModel(), row);
@@ -213,15 +221,31 @@ public class XToOneGroupProcessor extends BaseProcessor {
     }
 
     /**
-     * Process nested OneToOne value objects before formatting the field to an id.
+     * Process nested OneToOne value objects before the field is formatted to its join key.
+     *
+     * <p>The main row's FK stores the related row's join key — its id by default, or a
+     * business code for reference-by-code (ADR-0017). A nested object with a valid id is an
+     * existing related row (updated in place); without an id it is created inline.
+     *
+     * <p>For a code-keyed relation the join code <b>is</b> the relation's identity, so it is
+     * always required in the payload (for both inline-create and existing-row references) and a
+     * missing code fails fast. The caller already holds it: the {@code ModelReference} of a code
+     * FK carries the code, and an inline-created owned row must supply its businessKey anyway.
+     * This keeps the FK link equal to the caller-declared target code — no readback heuristic, and
+     * an in-place code change stays self-consistent.
      */
     private void processNestedOneToOneRows(List<Map<String, Object>> rows) {
         if (!FieldType.ONE_TO_ONE.equals(metaField.getFieldType())) {
             return;
         }
+        String relatedModel = metaField.getRelatedModel();
+        String relatedField = metaField.getRelatedField();
+        boolean byId = ModelConstant.ID.equals(relatedField);
         List<Map<String, Object>> createRows = new ArrayList<>();
         List<Map<String, Object>> updateRows = new ArrayList<>();
         List<Map<String, Object>> createTargetRows = new ArrayList<>();
+        // Join codes captured at parse time — the insert pipeline may transform the payloads.
+        List<Object> createCodes = byId ? null : new ArrayList<>();
         for (Map<String, Object> row : rows) {
             Object value = row.get(fieldName);
             if (!(value instanceof Map<?, ?> mapValue)) {
@@ -229,10 +253,19 @@ public class XToOneGroupProcessor extends BaseProcessor {
             }
             Map<String, Object> nestedRow = Cast.of(mapValue);
             Object relatedId = nestedRow.remove(ModelConstant.ID);
+            // Reference-by-code: the join code is the relation's identity and must be supplied.
+            Object code = null;
+            if (!byId) {
+                code = nestedRow.get(relatedField);
+                Assert.notNull(code,
+                        "Model field {0}:{1} nested {2} requires the reference-by-code join field `{3}`.",
+                        metaField.getModelName(), fieldName, relatedModel, relatedField);
+            }
             if (IdUtils.validId(relatedId)) {
-                Serializable formattedId = IdUtils.formatId(metaField.getRelatedModel(), (Serializable) relatedId);
-                // Set the OneToOne field of the main model
-                row.put(fieldName, formattedId);
+                Serializable formattedId = IdUtils.formatId(relatedModel, (Serializable) relatedId);
+                // Link the main row to the existing related row by its join key.
+                row.put(fieldName, byId ? formattedId
+                        : IdUtils.formatId(relatedModel, relatedField, (Serializable) code));
                 if (!nestedRow.isEmpty()) {
                     nestedRow.put(ModelConstant.ID, formattedId);
                     updateRows.add(nestedRow);
@@ -240,13 +273,17 @@ public class XToOneGroupProcessor extends BaseProcessor {
             } else {
                 createRows.add(nestedRow);
                 createTargetRows.add(row);
+                if (!byId) {
+                    createCodes.add(code);
+                }
             }
         }
-        List<Serializable> createdIds = ReflectTool.createList(metaField.getRelatedModel(), createRows);
+        List<Serializable> createdIds = ReflectTool.createList(relatedModel, createRows);
         for (int i = 0; i < createdIds.size(); i++) {
-            createTargetRows.get(i).put(fieldName, createdIds.get(i));
+            createTargetRows.get(i).put(fieldName, byId ? createdIds.get(i)
+                    : IdUtils.formatId(relatedModel, relatedField, (Serializable) createCodes.get(i)));
         }
-        ReflectTool.updateList(metaField.getRelatedModel(), updateRows);
+        ReflectTool.updateList(relatedModel, updateRows);
     }
 
 }

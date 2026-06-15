@@ -4,7 +4,6 @@ import java.util.HashMap;
 import java.util.Map;
 import org.apache.commons.lang3.StringUtils;
 
-import io.softa.framework.orm.constant.ModelConstant;
 import io.softa.framework.orm.domain.FlexQuery;
 import io.softa.framework.orm.enums.AccessType;
 import io.softa.framework.orm.enums.ConvertType;
@@ -68,7 +67,9 @@ public class XToOneGroupProcessorFactory implements FieldProcessorFactory {
     }
 
     private FieldProcessor fieldValueTypeCast(MetaField metaField, AccessType accessType) {
-        FieldType relatedFieldType = ModelManager.getModelField(metaField.getRelatedModel(), ModelConstant.ID).getFieldType();
+        // The FK value type follows the related model's join key (id by default, or a code).
+        String relatedField = metaField.getRelatedField();
+        FieldType relatedFieldType = ModelManager.getModelField(metaField.getRelatedModel(), relatedField).getFieldType();
         if (FieldType.STRING.equals(relatedFieldType)) {
             return new StringProcessor(metaField, accessType);
         } else {

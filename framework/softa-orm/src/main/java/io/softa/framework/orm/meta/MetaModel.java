@@ -23,8 +23,6 @@ public class MetaModel implements Serializable {
 
     private Long id;
 
-    private Long appId;
-
     private String label;
 
     private String modelName;
@@ -60,6 +58,10 @@ public class MetaModel implements Serializable {
     private boolean versionLock;
 
     private boolean multiTenant;
+
+    // Default true: the sys_model column is NOT NULL DEFAULT 1; the initializer
+    // covers programmatically constructed instances (tests, in-memory models).
+    private boolean copyable = true;
 
     private String dataSource;
 

@@ -79,7 +79,12 @@ class ModelManagerTest {
     }
 
     @Test
-    void getLastFieldOfCascadedRejectsDynamicLeaf() {
+    void getLastFieldOfCascadedReturnsDynamicLeaf() {
+        // getLastFieldOfCascaded is a policy-neutral path resolver (delegates to CascadeFieldWalker,
+        // which validates structure only). A dynamic (non-stored) leaf — e.g. a computed field — is
+        // resolved and RETURNED, not rejected, so export-header / projection callers can read its
+        // type/label. The "leaf must be stored" policy lives only where it matters, at the SQL filter
+        // call site (WhereBuilder), not here. (The check was relocated there in commit b06867d.)
         MetaField rel = storedField("AppEnv", "lastDeploymentId", FieldType.MANY_TO_ONE, "DesignDeployment");
         MetaField leaf = dynamicField("DesignDeployment", "computedThing", FieldType.STRING);
         try (MockedStatic<ModelManager> mock = Mockito.mockStatic(ModelManager.class, Mockito.CALLS_REAL_METHODS)) {
@@ -88,10 +93,9 @@ class ModelManagerTest {
             mock.when(() -> ModelManager.getModelField("AppEnv", "lastDeploymentId")).thenReturn(rel);
             mock.when(() -> ModelManager.getModelField("DesignDeployment", "computedThing")).thenReturn(leaf);
 
-            IllegalArgumentException ex = assertThrows(IllegalArgumentException.class,
-                    () -> ModelManager.getLastFieldOfCascaded("AppEnv", "lastDeploymentId.computedThing"));
-            // Original error wording preserved so external callers can still pattern-match if needed.
-            assertEquals(true, ex.getMessage().contains("must be a stored field"));
+            MetaField result = ModelManager.getLastFieldOfCascaded("AppEnv", "lastDeploymentId.computedThing");
+
+            assertSame(leaf, result);
         }
     }
 

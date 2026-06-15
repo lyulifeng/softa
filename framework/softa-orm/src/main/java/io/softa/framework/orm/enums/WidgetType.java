@@ -5,8 +5,8 @@ import java.util.function.Function;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
 import com.fasterxml.jackson.annotation.JsonValue;
-import io.softa.framework.orm.annotation.OptionItem;
-import io.softa.framework.orm.annotation.OptionSet;
+import io.softa.framework.base.annotation.OptionItem;
+import io.softa.framework.base.annotation.OptionSet;
 import lombok.AllArgsConstructor;
 import lombok.Getter;
 import org.apache.commons.lang3.StringUtils;
@@ -17,7 +17,7 @@ import org.apache.commons.lang3.StringUtils;
  */
 @Getter
 @AllArgsConstructor
-@OptionSet(label = "Widget Type")
+@OptionSet
 public enum WidgetType {
     // String
     @OptionItem(label = "URL")

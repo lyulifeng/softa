@@ -12,8 +12,8 @@ import lombok.AllArgsConstructor;
 import lombok.Getter;
 
 import io.softa.framework.base.utils.Assert;
-import io.softa.framework.orm.annotation.OptionItem;
-import io.softa.framework.orm.annotation.OptionSet;
+import io.softa.framework.base.annotation.OptionItem;
+import io.softa.framework.base.annotation.OptionSet;
 
 /**
  * File type Enum.
@@ -23,7 +23,7 @@ import io.softa.framework.orm.annotation.OptionSet;
  */
 @Getter
 @AllArgsConstructor
-@OptionSet(label = "File Type")
+@OptionSet
 public enum FileType {
     // Image types. jpg and jpeg are both `image/jpeg`
     @OptionItem(label = "JPG")

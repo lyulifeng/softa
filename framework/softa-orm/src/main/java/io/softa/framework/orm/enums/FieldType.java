@@ -24,8 +24,8 @@ import io.softa.framework.base.constant.StringConstant;
 import io.softa.framework.base.exception.IllegalArgumentException;
 import io.softa.framework.base.utils.Assert;
 import io.softa.framework.base.utils.DateUtils;
-import io.softa.framework.orm.annotation.OptionItem;
-import io.softa.framework.orm.annotation.OptionSet;
+import io.softa.framework.base.annotation.OptionItem;
+import io.softa.framework.base.annotation.OptionSet;
 import io.softa.framework.orm.domain.Filters;
 import io.softa.framework.orm.domain.Orders;
 import io.softa.framework.orm.dto.DTOFieldObject;
@@ -36,7 +36,7 @@ import io.softa.framework.orm.dto.DTOFieldObject;
 @Slf4j
 @Getter
 @AllArgsConstructor
-@OptionSet(label = "Field Type")
+@OptionSet
 public enum FieldType {
     // String, including long text
     STRING("String", String.class, Types.VARCHAR),
@@ -75,7 +75,7 @@ public enum FieldType {
     DTO("DTO", DTOFieldObject.class, Types.LONGVARCHAR),
 
     // File and MultiFile store the ids of FileRecord model
-    FILE("File", Long.class, Types.VARCHAR),
+    FILE("File", Long.class, Types.BIGINT),
     @OptionItem(label = "MultiFile")
     MULTI_FILE("MultiFile", List.class, Types.VARCHAR),
 

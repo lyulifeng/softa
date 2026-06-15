@@ -19,6 +19,18 @@ public class SystemConfig {
 
     private String name;
 
+    /**
+     * Stable application code identifying which app this runtime hosts
+     * (ADR-0015). The cross-system join key: stamped server-side onto
+     * metadata catalog rows ({@code sys_*.app_code}) and verified against
+     * {@code DesignApp.appCode} on every signed studio call, so an envelope
+     * can never land on the wrong app.
+     * <p>
+     * Optional at the base layer (apps without metadata-starter need no
+     * identity); metadata-starter asserts it non-blank at boot.
+     */
+    private String appCode;
+
     private String defaultLanguage;
 
     private boolean enableAuth;
@@ -88,6 +100,14 @@ public class SystemConfig {
             path = path.substring(0, path.length() - 1);
         }
         return host + path;
+    }
+
+    @AssertTrue(message = "system.app-code must match [a-z][a-z0-9-]{0,63}, e.g. demo-app")
+    public boolean isAppCodeValid() {
+        if (!StringUtils.hasText(appCode)) {
+            return true; // optional in base; metadata-starter enforces presence
+        }
+        return appCode.matches("[a-z][a-z0-9-]{0,63}");
     }
 
     @AssertTrue(message = "system.public-access-url must be an absolute http(s) base URL without context path, e.g. http://localhost:8080")

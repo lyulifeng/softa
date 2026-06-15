@@ -1,12 +1,12 @@
-package io.softa.framework.orm.annotation;
+package io.softa.framework.base.annotation;
 
 import java.lang.annotation.ElementType;
 import java.lang.annotation.Retention;
 import java.lang.annotation.RetentionPolicy;
 import java.lang.annotation.Target;
 
-import io.softa.framework.orm.enums.OptionItemIcon;
-import io.softa.framework.orm.enums.OptionItemTone;
+import io.softa.framework.base.enums.OptionItemIcon;
+import io.softa.framework.base.enums.OptionItemTone;
 
 /**
  * Marks an enum constant (within an {@link OptionSet}-annotated enum) with
@@ -17,7 +17,7 @@ import io.softa.framework.orm.enums.OptionItemTone;
  * enum class.
  *
  * <p><b>Requires {@code metadata-starter}</b> on the classpath to take effect
- * (see {@link Model}).
+ * (see {@code @Model}).
  */
 @Target(ElementType.FIELD)
 @Retention(RetentionPolicy.RUNTIME)

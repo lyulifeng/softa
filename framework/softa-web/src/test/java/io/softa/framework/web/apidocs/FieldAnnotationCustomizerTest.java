@@ -88,7 +88,7 @@ class FieldAnnotationCustomizerTest {
             @Override public boolean required() { return false; }
             @Override public boolean readonly() { return readonly; }
             @Override public boolean translatable() { return false; }
-            @Override public boolean nonCopyable() { return false; }
+            @Override public boolean copyable() { return true; }
             @Override public boolean unsearchable() { return false; }
             @Override public boolean computed() { return false; }
             @Override public String expression() { return ""; }

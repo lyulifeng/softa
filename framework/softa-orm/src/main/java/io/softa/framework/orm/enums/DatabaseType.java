@@ -4,15 +4,15 @@ import com.fasterxml.jackson.annotation.JsonValue;
 import lombok.AllArgsConstructor;
 import lombok.Getter;
 
-import io.softa.framework.orm.annotation.OptionItem;
-import io.softa.framework.orm.annotation.OptionSet;
+import io.softa.framework.base.annotation.OptionItem;
+import io.softa.framework.base.annotation.OptionSet;
 
 /**
  * Database type for {@code SysApp.databaseType} and external data sources.
  */
 @Getter
 @AllArgsConstructor
-@OptionSet(label = "Database Type")
+@OptionSet
 public enum DatabaseType {
     @OptionItem(label = "MySQL")
     MYSQL("MySQL"),
