@@ -2,15 +2,14 @@ package io.softa.starter.ai.service.impl;
 
 import java.util.HashMap;
 import java.util.Map;
-import com.plexpt.chatgpt.entity.billing.Usage;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import io.softa.framework.base.utils.LambdaUtils;
 import io.softa.framework.orm.constant.ModelConstant;
 import io.softa.framework.orm.service.impl.EntityServiceImpl;
-import io.softa.starter.ai.dto.AiContent;
 import io.softa.starter.ai.dto.AiUserMessage;
+import io.softa.starter.ai.dto.TokenUsage;
 import io.softa.starter.ai.entity.AiMessage;
 import io.softa.starter.ai.enums.AiMessageRole;
 import io.softa.starter.ai.enums.AiMessageStatus;
@@ -47,19 +46,19 @@ public class AiMessageServiceImpl extends EntityServiceImpl<AiMessage, Long> imp
      *
      * @param userMessage User message
      * @param answer      AI response content
-     * @param usage       Usage
+     * @param usage       Token usage
      * @return AI response message
      */
     @Override
     @Transactional(rollbackFor = Exception.class)
-    public AiMessage saveAiMessageForNonStreaming(AiMessage userMessage, String answer, Usage usage) {
+    public AiMessage saveAiMessageForNonStreaming(AiMessage userMessage, String answer, TokenUsage usage) {
         AiMessage aiMessage = new AiMessage();
         aiMessage.setRole(AiMessageRole.ASSISTANT);
         aiMessage.setRobotId(userMessage.getRobotId());
         aiMessage.setConversationId(userMessage.getConversationId());
         aiMessage.setParentId(userMessage.getId());
         aiMessage.setContent(answer);
-        aiMessage.setTokens(usage == null ? 0 : Math.toIntExact(usage.getCompletionTokens()));
+        aiMessage.setTokens(usage == null ? 0 : usage.completionTokens());
         aiMessage.setStream(false);
         aiMessage.setStatus(AiMessageStatus.COMPLETED);
         aiMessage.setId(this.createOne(aiMessage));
@@ -72,14 +71,13 @@ public class AiMessageServiceImpl extends EntityServiceImpl<AiMessage, Long> imp
      * Update parent message token usage.
      *
      * @param parentId Parent message ID
-     * @param usage    Usage
+     * @param usage    Token usage
      */
-    private void updateParentMessageTokenUsage(Long parentId, Usage usage) {
+    private void updateParentMessageTokenUsage(Long parentId, TokenUsage usage) {
         Map<String, Object> userMessageMap = new HashMap<>();
         userMessageMap.put(ModelConstant.ID, parentId);
         String tokenField = LambdaUtils.getAttributeName(AiMessage::getTokens);
-        Integer promptTokens = usage == null ? 0 : Math.toIntExact(usage.getPromptTokens());
-        userMessageMap.put(tokenField, promptTokens);
+        userMessageMap.put(tokenField, usage == null ? 0 : usage.promptTokens());
         this.modelService.updateOne(modelName, userMessageMap);
     }
 
@@ -107,18 +105,17 @@ public class AiMessageServiceImpl extends EntityServiceImpl<AiMessage, Long> imp
      * Update AI message after stream completion.
      *
      * @param aiMessageId   AI message ID
-     * @param aiContent     AI response content
+     * @param content       Final AI response content
+     * @param usage         Token usage
      * @param userMessageId User message ID
      */
     @Override
     @Transactional(rollbackFor = Exception.class)
-    public void updateAiMessageAfterStream(Long aiMessageId, AiContent aiContent, Long userMessageId) {
-        Usage usage = aiContent.getUsage();
+    public void updateAiMessageAfterStream(Long aiMessageId, String content, TokenUsage usage, Long userMessageId) {
         Map<String, Object> updateMap = new HashMap<>();
         updateMap.put(ModelConstant.ID, aiMessageId);
-        updateMap.put(LambdaUtils.getAttributeName(AiMessage::getContent), aiContent.getContent().toString());
-        updateMap.put(LambdaUtils.getAttributeName(AiMessage::getTokens),
-                usage == null ? 0 : Math.toIntExact(usage.getCompletionTokens()));
+        updateMap.put(LambdaUtils.getAttributeName(AiMessage::getContent), content);
+        updateMap.put(LambdaUtils.getAttributeName(AiMessage::getTokens), usage == null ? 0 : usage.completionTokens());
         updateMap.put(LambdaUtils.getAttributeName(AiMessage::getStatus), AiMessageStatus.COMPLETED);
 
         this.modelService.updateOne(modelName, updateMap);

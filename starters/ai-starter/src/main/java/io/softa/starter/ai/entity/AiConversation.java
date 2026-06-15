@@ -17,7 +17,8 @@ import io.softa.framework.orm.enums.IdStrategy;
 @EqualsAndHashCode(callSuper = true)
 @Model(
         label = "AI Conversation",
-        idStrategy = IdStrategy.DISTRIBUTED_LONG
+        idStrategy = IdStrategy.DISTRIBUTED_LONG,
+        copyable = false
 )
 public class AiConversation extends AuditableModel {
 
@@ -27,16 +28,16 @@ public class AiConversation extends AuditableModel {
     @Field(label = "ID")
     private Long id;
 
-    @Field(label = "Conversation Title", length = 64)
+    @Field(label = "Conversation Title")
     private String title;
 
     @Field(label = "Robot ID", fieldType = FieldType.MANY_TO_ONE, relatedModel = AiRobot.class)
     private Long robotId;
 
-    @Field(label = "Total Tokens")
+    @Field
     private Integer totalTokens;
 
-    @Field(label = "Description", length = 256)
+    @Field(length = 256)
     private String description;
 
 }

@@ -31,51 +31,51 @@ public class AiRobot extends AuditableModel {
     @Field(label = "ID")
     private Long id;
 
-    @Field(label = "Robot Name", required = true, length = 64)
+    @Field(label = "Robot Name", required = true)
     private String name;
 
-    @Field(label = "Robot Code", length = 64)
+    @Field(label = "Robot Code")
     private String code;
 
     @Field(label = "AI Model ID", fieldType = FieldType.MANY_TO_ONE, relatedModel = AiModel.class, required = true)
     private Long aiModelId;
 
-    @Field(label = "AI Model Code", length = 64)
+    @Field(label = "AI Model Code")
     private String aiModel;
 
     @Field(label = "AI Provider")
     private AiModelProvider aiProvider;
 
-    @Field(label = "System Prompt", length = 20000)
+    @Field(length = 20000)
     private String systemPrompt;
 
     @Field(label = "Model Max Context Tokens")
     private Integer modelMaxTokens;
 
-    @Field(label = "Input Tokens Limit")
+    @Field
     private Integer inputTokensLimit;
 
-    @Field(label = "Output Tokens Limit")
+    @Field
     private Integer outputTokensLimit;
 
-    @Field(label = "Temperature")
+    @Field
     private Double temperature;
 
     @Field(label = "Enable Stream Output")
     private Boolean stream;
 
-    @Field(label = "Presence Penalty")
+    @Field
     private Double presencePenalty;
 
-    @Field(label = "Frequency Penalty")
+    @Field
     private Double frequencyPenalty;
 
-    @Field(label = "Description", length = 256)
+    @Field(length = 256)
     private String description;
 
-    @Field(label = "Active")
+    @Field
     private Boolean active;
 
-    @Field(label = "Deleted")
+    @Field
     private Boolean deleted;
 }

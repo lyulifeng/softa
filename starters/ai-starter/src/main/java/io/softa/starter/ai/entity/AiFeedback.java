@@ -16,7 +16,8 @@ import io.softa.framework.orm.enums.IdStrategy;
 @EqualsAndHashCode(callSuper = true)
 @Model(
         label = "AI Response Feedback",
-        idStrategy = IdStrategy.DISTRIBUTED_LONG
+        idStrategy = IdStrategy.DISTRIBUTED_LONG,
+        copyable = false
 )
 public class AiFeedback extends AuditableModel {
 

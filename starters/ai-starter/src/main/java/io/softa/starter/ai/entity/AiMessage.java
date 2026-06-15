@@ -19,7 +19,8 @@ import io.softa.starter.ai.enums.AiMessageStatus;
 @Model(
         label = "AI Message",
         idStrategy = IdStrategy.DISTRIBUTED_LONG,
-        defaultOrder = {"createdTime"}
+        defaultOrder = {"createdTime"},
+        copyable = false
 )
 public class AiMessage extends AuditableModel {
 
@@ -35,13 +36,13 @@ public class AiMessage extends AuditableModel {
     @Field(label = "Conversation ID", required = true)
     private Long conversationId;
 
-    @Field(label = "Role", required = true)
+    @Field(required = true)
     private AiMessageRole role;
 
-    @Field(label = "Content", length = 20000)
+    @Field(length = 20000)
     private String content;
 
-    @Field(label = "Tokens")
+    @Field
     private Integer tokens;
 
     @Field(label = "Stream Output")
@@ -50,6 +51,6 @@ public class AiMessage extends AuditableModel {
     @Field(label = "Parent Message ID")
     private Long parentId;
 
-    @Field(label = "Status")
+    @Field
     private AiMessageStatus status;
 }

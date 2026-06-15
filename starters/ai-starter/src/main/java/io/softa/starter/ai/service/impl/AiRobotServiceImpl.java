@@ -1,13 +1,9 @@
 package io.softa.starter.ai.service.impl;
 
-import java.util.Arrays;
-import com.plexpt.chatgpt.entity.chat.ChatCompletion;
-import com.plexpt.chatgpt.entity.chat.ChatCompletionResponse;
-import com.plexpt.chatgpt.entity.chat.Message;
-import com.plexpt.chatgpt.entity.chat.StreamOption;
+import java.util.List;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.ai.chat.messages.Message;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
@@ -17,37 +13,47 @@ import io.softa.framework.base.exception.IllegalArgumentException;
 import io.softa.framework.base.utils.Assert;
 import io.softa.framework.orm.domain.Filters;
 import io.softa.framework.orm.service.impl.EntityServiceImpl;
-import io.softa.starter.ai.adapter.AiAdapter;
-import io.softa.starter.ai.adapter.AiAdapterFactory;
-import io.softa.starter.ai.dto.AiContent;
+import io.softa.starter.ai.config.AiProperties;
 import io.softa.starter.ai.dto.AiResponseMessage;
 import io.softa.starter.ai.dto.AiStreamRequest;
 import io.softa.starter.ai.dto.AiUserMessage;
 import io.softa.starter.ai.entity.AiMessage;
+import io.softa.starter.ai.entity.AiModel;
 import io.softa.starter.ai.entity.AiRobot;
-import io.softa.starter.ai.listener.StreamResponseListener;
+import io.softa.starter.ai.model.ChatExecutor;
+import io.softa.starter.ai.model.ConversationHistoryAssembler;
 import io.softa.starter.ai.service.AiConversationService;
 import io.softa.starter.ai.service.AiMessageService;
+import io.softa.starter.ai.service.AiModelService;
 import io.softa.starter.ai.service.AiRobotService;
 
 /**
- * AiRobot Model Service Implementation
+ * AiRobot Model Service Implementation.
+ * <p>
+ * Owns conversation management and message persistence (the database). All model I/O
+ * is delegated to {@link ChatExecutor}; this class never touches a Spring AI / SDK type.
  */
 @Service
 @Slf4j
 public class AiRobotServiceImpl extends EntityServiceImpl<AiRobot, Long> implements AiRobotService {
 
-    @Value("${ai.response.timeout:60000}")
-    private Long timeout;
+    @Autowired
+    private AiProperties aiProperties;
 
     @Autowired
-    private AiAdapterFactory aiAdapterFactory;
+    private AiModelService aiModelService;
 
     @Autowired
     private AiConversationService conversationService;
 
     @Autowired
     private AiMessageService aiMessageService;
+
+    @Autowired
+    private ChatExecutor chatExecutor;
+
+    @Autowired
+    private ConversationHistoryAssembler historyAssembler;
 
     /**
      * Persist user message and AI message in advance for stream response.
@@ -100,27 +106,15 @@ public class AiRobotServiceImpl extends EntityServiceImpl<AiRobot, Long> impleme
     }
 
     /**
-     * Build ChatCompletion object
+     * Resolve the authoritative AI model (provider / endpoint / credentials / code) for a robot.
      *
      * @param aiRobot Robot object
-     * @param content Content
-     * @return ChatCompletion
+     * @return AI model
      */
-    private ChatCompletion buildChatCompletion(AiRobot aiRobot, String content) {
-        // [System message, User message]
-        Message systemMessage = Message.ofSystem(aiRobot.getSystemPrompt());
-        Message userMessage = Message.of(content);
-        ChatCompletion.ChatCompletionBuilder builder = ChatCompletion.builder()
-                .model(aiRobot.getAiModel())
-                .messages(Arrays.asList(systemMessage, userMessage))
-                .temperature(aiRobot.getTemperature());
-        if (Boolean.TRUE.equals(aiRobot.getStream())) {
-            builder.stream(true).streamOptions(new StreamOption(true));
-        }
-        if (aiRobot.getOutputTokensLimit() != null && aiRobot.getOutputTokensLimit() > 0) {
-            builder.maxTokens(aiRobot.getOutputTokensLimit());
-        }
-        return builder.build();
+    private AiModel resolveAiModel(AiRobot aiRobot) {
+        Assert.notNull(aiRobot.getAiModelId(), "Robot has no AI model configured: " + aiRobot.getCode());
+        return aiModelService.getById(aiRobot.getAiModelId()).orElseThrow(
+                () -> new IllegalArgumentException("AI model not found: " + aiRobot.getAiModelId()));
     }
 
     /**
@@ -137,26 +131,18 @@ public class AiRobotServiceImpl extends EntityServiceImpl<AiRobot, Long> impleme
         AiMessage aiMessage = aiMessageService.getById(aiRequest.getAiMessageId()).orElseThrow(
                 () -> new IllegalArgumentException("AI Message ID not exists: " + aiRequest.getAiMessageId()));
         AiRobot aiRobot = this.getAiRobotById(userMessage.getRobotId());
-        ChatCompletion chatCompletion = this.buildChatCompletion(aiRobot, userMessage.getContent());
-        AiAdapter aiAdapter = aiAdapterFactory.getAiAdapter(aiRobot.getAiProvider());
+        AiModel aiModel = this.resolveAiModel(aiRobot);
+        List<Message> history = historyAssembler.load(userMessage.getConversationId(), userMessage.getId());
 
         // Use SseEmitter to send messages to the client
-        SseEmitter sseEmitter = new SseEmitter(timeout);
-        // Close sseEmitter on timeout
+        SseEmitter sseEmitter = new SseEmitter(aiProperties.getResponseTimeout());
         sseEmitter.onTimeout(sseEmitter::complete);
-        // Close sseEmitter on error
         sseEmitter.onError(_ -> sseEmitter.complete());
 
-        // Listen for LLM response through SseStreamListener
-        StreamResponseListener responseListener = new StreamResponseListener(sseEmitter);
-        responseListener.setOnComplete(aiContent -> {
-            // Close the SSE connection to the client
-            sseEmitter.complete();
-            // Update the AI message content and status
-            ContextHolder.runWith(context, () -> aiMessageService.updateAiMessageAfterStream(aiMessage.getId(), aiContent, userMessage.getId()));
-        });
-        // Send the chat message
-        aiAdapter.streamChat(chatCompletion, responseListener);
+        // Stream via Spring AI; persist the accumulated result on completion (in the request context)
+        chatExecutor.stream(aiModel, aiRobot, history, userMessage.getContent(), sseEmitter, result ->
+                ContextHolder.runWith(context, () -> aiMessageService.updateAiMessageAfterStream(
+                        aiMessage.getId(), result.text(), result.usage(), userMessage.getId())));
         return sseEmitter;
     }
 
@@ -182,31 +168,27 @@ public class AiRobotServiceImpl extends EntityServiceImpl<AiRobot, Long> impleme
     /**
      * Complete chat
      *
-     * @param aiRobot      Robot object
+     * @param aiRobot       Robot object
      * @param aiUserMessage AI User message
      * @return AI message
      */
     private AiMessage completeChat(AiRobot aiRobot, AiUserMessage aiUserMessage) {
         // Save user message
         AiMessage userMessage = aiMessageService.saveUserMessage(aiUserMessage);
-        ChatCompletion chatCompletion = this.buildChatCompletion(aiRobot, aiUserMessage.getContent());
-        AiAdapter aiAdapter = aiAdapterFactory.getAiAdapter(aiRobot.getAiProvider());
+        AiModel aiModel = this.resolveAiModel(aiRobot);
+        // Replay prior turns (excluding the just-saved current user message)
+        List<Message> history = historyAssembler.load(userMessage.getConversationId(), userMessage.getId());
 
-        // Send the chat message
-        ChatCompletionResponse chatResponse = aiAdapter.chat(chatCompletion);
-        // Save the chat message
-        String answer = chatResponse.getChoices().getFirst().getMessage().getContent();
-        AiContent aiContent = new AiContent(false);
-        aiContent.append(answer);
-        aiContent.setUsage(chatResponse.getUsage());
-        return aiMessageService.saveAiMessageForNonStreaming(userMessage, answer, chatResponse.getUsage());
+        // Send the chat message and persist the AI response
+        ChatExecutor.ChatResult result = chatExecutor.callSync(aiModel, aiRobot, history, aiUserMessage.getContent());
+        return aiMessageService.saveAiMessageForNonStreaming(userMessage, result.text(), result.usage());
     }
 
     /**
      * One-time chat
      *
-     * @param robotCode    Robot code
-     * @param message  User message
+     * @param robotCode Robot code
+     * @param message   User message
      * @return AI response message
      */
     @Override

@@ -31,33 +31,42 @@ public class AiModel extends AuditableModel {
     @Field(label = "ID")
     private Long id;
 
-    @Field(label = "Model Name", required = true, length = 64)
+    @Field(label = "Model Name", required = true)
     private String name;
 
-    @Field(label = "Model Code", required = true, length = 64)
+    @Field(label = "Model Code", required = true)
     private String code;
 
-    @Field(label = "Model Provider")
+    @Field
     private AiModelProvider modelProvider;
 
-    @Field(label = "Model Type")
+    @Field
     private AiModelType modelType;
 
-    @Field(label = "Input Price/1M tokens", length = 32, scale = 8)
+    @Field(label = "Input Price/1M tokens")
     private BigDecimal unitPriceInput;
 
-    @Field(label = "Output price/1M tokens", length = 32, scale = 8)
+    @Field(label = "Output price/1M tokens")
     private BigDecimal unitPriceOutput;
 
     @Field(label = "Max Context Tokens")
     private Integer maxTokens;
 
-    @Field(label = "Description", length = 256)
+    @Field(label = "API Base URL", length = 256)
+    private String baseUrl;
+
+    @Field(label = "API Key", length = 512, encrypted = true, copyable = false, unsearchable = true)
+    private String apiKey;
+
+    @Field(label = "Request Timeout (ms)")
+    private Integer timeout;
+
+    @Field(length = 256)
     private String description;
 
-    @Field(label = "Active")
+    @Field
     private Boolean active;
 
-    @Field(label = "Deleted")
+    @Field
     private Boolean deleted;
 }

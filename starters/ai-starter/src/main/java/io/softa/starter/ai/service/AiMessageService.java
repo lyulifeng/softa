@@ -1,10 +1,8 @@
 package io.softa.starter.ai.service;
 
-import com.plexpt.chatgpt.entity.billing.Usage;
-
 import io.softa.framework.orm.service.EntityService;
-import io.softa.starter.ai.dto.AiContent;
 import io.softa.starter.ai.dto.AiUserMessage;
+import io.softa.starter.ai.dto.TokenUsage;
 import io.softa.starter.ai.entity.AiMessage;
 
 /**
@@ -32,19 +30,20 @@ public interface AiMessageService extends EntityService<AiMessage, Long> {
      * Update AI message after stream completion.
      *
      * @param aiMessageId   AI message ID
-     * @param aiContent     AI response content
+     * @param content       Final AI response content
+     * @param usage         Token usage
      * @param userMessageId User message ID
      */
-    void updateAiMessageAfterStream(Long aiMessageId, AiContent aiContent, Long userMessageId);
+    void updateAiMessageAfterStream(Long aiMessageId, String content, TokenUsage usage, Long userMessageId);
 
     /**
      * Save AI response message for non-streaming response.
      *
      * @param userMessage User message
      * @param answer      AI response content
-     * @param usage       Usage
+     * @param usage       Token usage
      * @return AI response message
      */
-    AiMessage saveAiMessageForNonStreaming(AiMessage userMessage, String answer, Usage usage);
+    AiMessage saveAiMessageForNonStreaming(AiMessage userMessage, String answer, TokenUsage usage);
 
 }
