@@ -7,6 +7,7 @@ import lombok.EqualsAndHashCode;
 
 import io.softa.framework.orm.annotation.Field;
 import io.softa.framework.orm.annotation.Model;
+import io.softa.framework.orm.enums.FieldType;
 import io.softa.framework.orm.entity.AuditableModel;
 
 /**
@@ -23,18 +24,18 @@ public class DeptInfo extends AuditableModel {
     @Field(label = "ID")
     private Long id;
 
-    @Field(label = "Name", required = true, length = 100)
+    @Field(required = true, length = 100)
     private String name;
 
-    @Field(label = "Code", length = 64)
+    @Field(copyable = false)
     private String code;
 
-    @Field(label = "Employees")
+    @Field(label = "Employees", fieldType = FieldType.ONE_TO_MANY, relatedField = "deptId")
     private List<EmpInfo> empIds;
 
-    @Field(label = "Description", length = 256)
+    @Field(length = 256)
     private String description;
 
-    @Field(label = "Active")
+    @Field
     private Boolean active;
 }

@@ -14,6 +14,7 @@ import org.springframework.ai.chat.model.ChatResponse;
 import org.springframework.ai.chat.prompt.ChatOptions;
 import org.springframework.stereotype.Component;
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
+import reactor.core.Disposable;
 
 import io.softa.framework.base.exception.IntegrationException;
 import io.softa.starter.ai.constant.AiConstant;
@@ -70,7 +71,7 @@ public class ChatExecutor {
         StringBuilder buffer = new StringBuilder();
         AtomicReference<Usage> usageRef = new AtomicReference<>();
 
-        buildRequest(client, robot, history, userContent)
+        Disposable subscription = buildRequest(client, robot, history, userContent)
                 .stream()
                 .chatResponse()
                 .subscribe(
@@ -82,7 +83,14 @@ public class ChatExecutor {
                         () -> {
                             sendStreamEnd(emitter);
                             onComplete.accept(new ChatResult(buffer.toString(), TokenUsage.from(usageRef.get())));
+                            emitter.complete();
                         });
+
+        // If the client goes away (SSE timeout / disconnect — the caller routes both to
+        // emitter.complete()), cancel the upstream model subscription so we stop consuming
+        // tokens and writing to a closed emitter. dispose() is idempotent, so the
+        // normal-completion path above is unaffected.
+        emitter.onCompletion(subscription::dispose);
     }
 
     private void onChunk(ChatResponse chunk, StringBuilder buffer, AtomicReference<Usage> usageRef, SseEmitter emitter) {

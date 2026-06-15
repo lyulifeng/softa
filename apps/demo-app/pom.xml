@@ -27,6 +27,16 @@
             <version>${project.version}</version>
         </dependency>
 
+        <!-- reference-data-starter ships annotation-managed models
+             (CountryRegion / Currency / CountrySubdivision / LanguageProfile)
+             so the annotation scanner has real annotation input to reconcile
+             against sys_* on boot. -->
+        <dependency>
+            <groupId>io.softa</groupId>
+            <artifactId>reference-data-starter</artifactId>
+            <version>${project.version}</version>
+        </dependency>
+
         <dependency>
             <groupId>io.softa</groupId>
             <artifactId>es-starter</artifactId>
@@ -38,6 +48,12 @@
             <artifactId>file-starter</artifactId>
             <version>${project.version}</version>
         </dependency>
+
+<!--        <dependency>-->
+<!--            <groupId>io.softa</groupId>-->
+<!--            <artifactId>message-starter</artifactId>-->
+<!--            <version>${project.version}</version>-->
+<!--        </dependency>-->
 
 <!--        <dependency>-->
 <!--            <groupId>io.softa</groupId>-->
@@ -54,6 +70,13 @@
         <dependency>
             <groupId>io.softa</groupId>
             <artifactId>user-starter</artifactId>
+            <version>${project.version}</version>
+        </dependency>
+
+        <!-- Tenant registry (TenantInfo) + multi-tenant SPI impl — required since multi-tenancy is enabled (ADR-0017) -->
+        <dependency>
+            <groupId>io.softa</groupId>
+            <artifactId>tenant-starter</artifactId>
             <version>${project.version}</version>
         </dependency>
 

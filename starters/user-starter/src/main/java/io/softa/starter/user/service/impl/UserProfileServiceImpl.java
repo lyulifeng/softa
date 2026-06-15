@@ -5,7 +5,6 @@ import java.util.Optional;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.lang3.StringUtils;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.context.annotation.Lazy;
 import org.springframework.stereotype.Service;
 
 import io.softa.framework.base.constant.RedisConstant;
@@ -45,10 +44,6 @@ public class UserProfileServiceImpl extends EntityServiceImpl<UserProfile, Long>
 
     @Autowired
     private TenantInfoService tenantInfoService;
-
-    @Autowired
-    @Lazy
-    private UserProfileService selfProxy;
 
     /**
      * Get Current User Profile
