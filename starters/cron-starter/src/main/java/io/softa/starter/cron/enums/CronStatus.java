@@ -4,15 +4,15 @@ import com.fasterxml.jackson.annotation.JsonValue;
 import lombok.AllArgsConstructor;
 import lombok.Getter;
 
-import io.softa.framework.orm.annotation.OptionItem;
-import io.softa.framework.orm.annotation.OptionSet;
+import io.softa.framework.base.annotation.OptionItem;
+import io.softa.framework.base.annotation.OptionSet;
 
 /**
  * Cron status
  */
 @Getter
 @AllArgsConstructor
-@OptionSet(label = "Cron Status")
+@OptionSet
 public enum CronStatus {
     @OptionItem(description = "Scheduled for a specified time.")
     SCHEDULED("Scheduled"),

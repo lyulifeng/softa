@@ -27,7 +27,7 @@ public class SysDataSource extends AuditableModel {
     @Field(label = "ID")
     private Long id;
 
-    @Field(label = "Name", required = true, length = 32)
+    @Field(required = true, length = 32)
     private String name;
 
     @Field(label = "Data Source Key", length = 32)
@@ -36,27 +36,27 @@ public class SysDataSource extends AuditableModel {
     @Field(label = "JDBC URL", required = true, length = 256)
     private String jdbcUrl;
 
-    @Field(label = "Username", required = true, length = 64)
+    @Field(required = true)
     private String username;
 
-    @Field(label = "Password", required = true, length = 256)
+    @Field(required = true, length = 256)
     private String password;
 
-    @Field(label = "Initial Size", required = true)
+    @Field(required = true)
     private Integer initialSize;
 
-    @Field(label = "Max Active", required = true)
+    @Field(required = true)
     private Integer maxActive;
 
-    @Field(label = "Min Idle", required = true)
+    @Field(required = true)
     private Integer minIdle;
 
-    @Field(label = "Max Wait", required = true)
+    @Field(required = true)
     private Integer maxWait;
 
-    @Field(label = "Readonly")
+    @Field
     private Boolean readonly;
 
-    @Field(label = "Description", length = 256)
+    @Field(length = 256)
     private String description;
 }

@@ -17,7 +17,6 @@ import io.softa.starter.user.enums.LoginMethod;
 @Data
 @EqualsAndHashCode(callSuper = true)
 @Model(
-        label = "User Security Policy",
         idStrategy = IdStrategy.DISTRIBUTED_LONG
 )
 public class UserSecurityPolicy extends AuditableModel {
@@ -31,16 +30,16 @@ public class UserSecurityPolicy extends AuditableModel {
     @Field(label = "Tenant ID")
     private Long tenantId;
 
-    @Field(label = "Policy Name", length = 64)
+    @Field(label = "Policy Name")
     private String name;
 
-    @Field(label = "Policy Code", length = 64)
+    @Field(label = "Policy Code")
     private String code;
 
-    @Field(label = "Login Methods")
+    @Field
     private List<LoginMethod> loginMethods;
 
-    @Field(label = "Active Device Limit")
+    @Field
     private Integer activeDeviceLimit;
 
     @Field(label = "Server Session Duration")
@@ -49,19 +48,19 @@ public class UserSecurityPolicy extends AuditableModel {
     @Field(label = "Client Cookie-Session Idle Duration")
     private Integer sessionIdleDuration;
 
-    @Field(label = "Force Change Initial Password")
+    @Field
     private Boolean forceChangeInitialPassword;
 
-    @Field(label = "Password Valid Days")
+    @Field
     private Integer passwordValidDays;
 
-    @Field(label = "Password Retry Interval")
+    @Field
     private Integer passwordRetryInterval;
 
-    @Field(label = "Password Retry Limit")
+    @Field
     private Integer passwordRetryLimit;
 
-    @Field(label = "Password Complexity Prompt", length = 128)
+    @Field(length = 128)
     private String passwordComplexityPrompt;
 
     @Field(label = "Passwords Not Duplicate")
@@ -85,6 +84,6 @@ public class UserSecurityPolicy extends AuditableModel {
     @Field(label = "Minimum Special Characters")
     private Integer minSpecialChars;
 
-    @Field(label = "Active")
+    @Field
     private Boolean active;
 }

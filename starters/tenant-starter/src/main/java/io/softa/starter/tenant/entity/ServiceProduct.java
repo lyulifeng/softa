@@ -17,7 +17,6 @@ import io.softa.starter.tenant.enums.ServiceCategory;
 @Data
 @EqualsAndHashCode(callSuper = true)
 @Model(
-        label = "Service Product",
         idStrategy = IdStrategy.DISTRIBUTED_LONG,
         softDelete = true,
         activeControl = true
@@ -39,15 +38,15 @@ public class ServiceProduct extends AuditableModel {
     @Field(label = "Service Category")
     private ServiceCategory category;
 
-    @Field(label = "Price($)", length = 32, scale = 8)
+    @Field(label = "Price($)")
     private BigDecimal price;
 
     @Field(label = "Service Duration(mins)")
     private Integer duration;
 
-    @Field(label = "Active")
+    @Field
     private Boolean active;
 
-    @Field(label = "Deleted")
+    @Field
     private Boolean deleted;
 }

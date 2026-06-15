@@ -18,7 +18,6 @@ import io.softa.framework.orm.enums.Ownership;
 @Data
 @EqualsAndHashCode(callSuper = true)
 @Model(
-        label = "Design Option Set",
         idStrategy = IdStrategy.DISTRIBUTED_LONG,
         activeControl = true,
         businessKey = {"optionSetCode"}
@@ -37,23 +36,26 @@ public class DesignOptionSet extends AuditableModel {
     @Field(label = "App ID")
     private Long appId;
 
-    @Field(label = "Label", required = true, length = 64)
+    @Field(required = true)
     private String label;
 
-    @Field(label = "Option Set Code", required = true, length = 64)
+    @Field(required = true)
     private String optionSetCode;
 
-    @Field(label = "Option Items", fieldType = FieldType.ONE_TO_MANY,
+    @Field(fieldType = FieldType.ONE_TO_MANY,
             relatedModel = DesignOptionItem.class, relatedField = "optionSetCode")
     private List<DesignOptionItem> optionItems;
 
-    @Field(label = "Description", length = 256)
+    @Field(length = 256)
     private String description;
 
-    @Field(label = "Ownership", description = "Ownership — PLATFORM_MAINTAINED / PLATFORM_DEFAULT / TENANT; "
+    @Field(description = "Ownership — PLATFORM_MAINTAINED / PLATFORM_DEFAULT / TENANT; "
             + "transparently transmitted to runtime sys_option_set on deploy (ADR-0009 #1)")
     private Ownership ownership;
 
-    @Field(label = "Deleted")
+    @Field
+    private Boolean active;
+
+    @Field
     private Boolean deleted;
 }

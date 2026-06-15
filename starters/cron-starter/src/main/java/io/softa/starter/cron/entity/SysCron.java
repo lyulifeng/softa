@@ -29,30 +29,28 @@ public class SysCron extends AuditableModel {
     @Field(label = "ID")
     private Long id;
 
-    @Field(label = "Cron Job Name", length = 64)
+    @Field(label = "Cron Job Name")
     private String name;
 
-    @Field(label = "Cron Expression", length = 64,
-            description = "Use Quartz seven-field format with seconds and years.")
+    @Field(description = "Use Quartz seven-field format with seconds and years.")
     private String cronExpression;
 
-    @Field(label = "Semantic Description", length = 64,
-            computed = true, expression = "Toolkit.cronSemantic(cronExpression)")
+    @Field(label = "Semantic Description", computed = true, expression = "Toolkit.cronSemantic(cronExpression)")
     private String cronSemantic;
 
     @Field(label = "Limit the Execution Times")
     private Boolean limitExecution;
 
-    @Field(label = "Remaining Execution Times", defaultValue = "-1",
+    @Field(label = "Remaining Execution Times", defaultValue = "-1", copyable = false,
             description = "Subtract 1 after each execution; when below 1, stop, clear the next "
                     + "execution time and disable.")
     private Integer remainingCount;
 
-    @Field(label = "Next Execution Time",
+    @Field(label = "Next Execution Time", copyable = false,
             description = "Recalculated after each successful execution; allows rollback compensation runs.")
     private LocalDateTime nextExecTime;
 
-    @Field(label = "Last Execution Time",
+    @Field(label = "Last Execution Time", copyable = false,
             description = "Records the execution start time after each successful execution.")
     private LocalDateTime lastExecTime;
 
@@ -60,16 +58,16 @@ public class SysCron extends AuditableModel {
             description = "No compensation by default; when true, compensate immediately once.")
     private Boolean redoMisfire;
 
-    @Field(label = "Priority", defaultValue = "1",
+    @Field(defaultValue = "1",
             description = "Smaller numbers indicate higher priority, from 0 to 10.")
     private Integer priority;
 
-    @Field(label = "Tenant Job Mode")
+    @Field
     private TenantJobMode tenantJobMode;
 
-    @Field(label = "Description", length = 256)
+    @Field(length = 256)
     private String description;
 
-    @Field(label = "Active")
+    @Field
     private Boolean active;
 }

@@ -14,7 +14,7 @@ import io.softa.starter.file.enums.DocumentTemplateType;
  */
 @Data
 @EqualsAndHashCode(callSuper = true)
-@Model(label = "Document Template")
+@Model
 public class DocumentTemplate extends AuditableModel {
 
     @Serial
@@ -26,13 +26,13 @@ public class DocumentTemplate extends AuditableModel {
     @Field(label = "Tenant ID")
     private Long tenantId;
 
-    @Field(label = "Model Name", length = 64)
+    @Field
     private String modelName;
 
-    @Field(label = "File Name", length = 128)
+    @Field(length = 128)
     private String fileName;
 
-    @Field(label = "Template Type")
+    @Field
     private DocumentTemplateType templateType;
 
     @Field(label = "File Template ID")
@@ -44,6 +44,6 @@ public class DocumentTemplate extends AuditableModel {
     @Field(label = "Convert To PDF")
     private Boolean convertToPdf;
 
-    @Field(label = "Description", length = 256)
+    @Field(length = 256)
     private String description;
 }

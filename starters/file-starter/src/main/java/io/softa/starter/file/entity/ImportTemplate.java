@@ -8,6 +8,7 @@ import lombok.EqualsAndHashCode;
 import io.softa.framework.orm.annotation.Field;
 import io.softa.framework.orm.annotation.Model;
 import io.softa.framework.orm.entity.AuditableModel;
+import io.softa.framework.orm.enums.FieldType;
 import io.softa.starter.file.enums.ImportRule;
 
 /**
@@ -15,7 +16,7 @@ import io.softa.starter.file.enums.ImportRule;
  */
 @Data
 @EqualsAndHashCode(callSuper = true)
-@Model(label = "Import Template")
+@Model
 public class ImportTemplate extends AuditableModel {
 
     @Serial
@@ -27,16 +28,16 @@ public class ImportTemplate extends AuditableModel {
     @Field(label = "Tenant ID")
     private Long tenantId;
 
-    @Field(label = "Template Name", required = true, length = 64)
+    @Field(label = "Template Name", required = true)
     private String name;
 
-    @Field(label = "Model Name", required = true, length = 64)
+    @Field(required = true)
     private String modelName;
 
-    @Field(label = "Import Rule", required = true)
+    @Field(required = true)
     private ImportRule importRule;
 
-    @Field(label = "Unique Constraints")
+    @Field
     private List<String> uniqueConstraints;
 
     @Field(label = "Ignore Empty Value")
@@ -54,9 +55,9 @@ public class ImportTemplate extends AuditableModel {
     @Field(label = "Include Import Description")
     private Boolean includeDescription;
 
-    @Field(label = "Description", length = 1000)
+    @Field(length = 1000)
     private String description;
 
-    @Field(label = "Import Field List")
+    @Field(fieldType = FieldType.ONE_TO_MANY, relatedField = "templateId")
     private List<ImportTemplateField> importFields;
 }

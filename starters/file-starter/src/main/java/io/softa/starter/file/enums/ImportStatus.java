@@ -4,14 +4,14 @@ import com.fasterxml.jackson.annotation.JsonValue;
 import lombok.AllArgsConstructor;
 import lombok.Getter;
 
-import io.softa.framework.orm.annotation.OptionSet;
+import io.softa.framework.base.annotation.OptionSet;
 
 /**
  * Import Status Enum
  */
 @Getter
 @AllArgsConstructor
-@OptionSet(label = "Import Status")
+@OptionSet
 public enum ImportStatus {
     PROCESSING("Processing"),
     SUCCESS("Success"),

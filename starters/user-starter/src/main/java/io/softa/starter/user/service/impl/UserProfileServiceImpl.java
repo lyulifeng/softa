@@ -20,9 +20,7 @@ import io.softa.framework.base.utils.LambdaUtils;
 import io.softa.framework.orm.domain.Filters;
 import io.softa.framework.orm.domain.FlexQuery;
 import io.softa.framework.orm.dto.FileInfo;
-import io.softa.framework.orm.entity.TenantInfo;
 import io.softa.framework.orm.enums.ConvertType;
-import io.softa.framework.orm.enums.TenantStatus;
 import io.softa.framework.orm.meta.ModelManager;
 import io.softa.framework.orm.service.CacheService;
 import io.softa.framework.orm.service.FileService;
@@ -134,9 +132,11 @@ public class UserProfileServiceImpl extends EntityServiceImpl<UserProfile, Long>
         if (ModelManager.isMultiTenantControl()) {
             Long tenantId = profile.getTenantId();
             Assert.notNull(tenantId, "UserProfile(id = {0}) tenantID is required for multi-tenant model.", profile.getId());
-            TenantInfo tenantInfo = tenantInfoService.getTenantInfo(tenantId);
-            Assert.notNull(tenantInfo, "Tenant info not found for UserProfile tenantId: {0}", tenantId);
-            Assert.isEqual(TenantStatus.ACTIVE, tenantInfo.getStatus(), "Tenant with tenantId {0} is not active", tenantId);
+            Assert.notNull(tenantInfoService,
+                    "Multi-tenant control is enabled but no TenantInfoService is available; "
+                            + "ensure tenant-starter is on the classpath.");
+            Assert.isTrue(tenantInfoService.isTenantActive(tenantId),
+                    "Tenant with tenantId {0} is not active", tenantId);
         }
     }
 

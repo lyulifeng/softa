@@ -29,8 +29,8 @@ import io.softa.starter.studio.release.enums.DesignDriftCheckStatus;
 @Data
 @EqualsAndHashCode(callSuper = true)
 @Model(
-        label = "Design App Env Drift",
-        idStrategy = IdStrategy.DISTRIBUTED_LONG
+        idStrategy = IdStrategy.DISTRIBUTED_LONG,
+        copyable = false
 )
 @Index(indexName = "unique_env_drift", fields = {"appId", "envId"}, unique = true)
 public class DesignAppEnvDrift extends AuditableModel {
@@ -47,21 +47,21 @@ public class DesignAppEnvDrift extends AuditableModel {
     @Field(label = "Env ID", required = true)
     private Long envId;
 
-    @Field(label = "Has Drift", required = true)
+    @Field(required = true)
     private Boolean hasDrift;
 
-    @Field(label = "Drift Content")
+    @Field
     private JsonNode driftContent;
 
-    @Field(label = "Check Status", required = true)
+    @Field(required = true)
     private DesignDriftCheckStatus checkStatus;
 
-    @Field(label = "Error Message", length = 1024)
+    @Field(length = 1024)
     private String errorMessage;
 
-    @Field(label = "Last Checked Time")
+    @Field
     private LocalDateTime lastCheckedTime;
 
-    @Field(label = "Deleted")
+    @Field
     private Boolean deleted;
 }

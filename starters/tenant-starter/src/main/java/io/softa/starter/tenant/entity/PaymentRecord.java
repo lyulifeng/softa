@@ -19,9 +19,9 @@ import io.softa.starter.tenant.enums.PaymentStatus;
 @Data
 @EqualsAndHashCode(callSuper = true)
 @Model(
-        label = "Payment Record",
         idStrategy = IdStrategy.DISTRIBUTED_LONG,
-        softDelete = true
+        softDelete = true,
+        copyable = false
 )
 public class PaymentRecord extends AuditableModel {
 
@@ -34,21 +34,21 @@ public class PaymentRecord extends AuditableModel {
     @Field(label = "Order ID")
     private Long orderId;
 
-    @Field(label = "Payment Method")
+    @Field
     private PaymentMethod paymentMethod;
 
-    @Field(label = "Payment Status")
+    @Field
     private PaymentStatus paymentStatus;
 
-    @Field(label = "Paid Amount", length = 32, scale = 8)
+    @Field
     private BigDecimal paidAmount;
 
-    @Field(label = "Paid At")
+    @Field
     private LocalDateTime paidAt;
 
-    @Field(label = "Transaction ID", length = 64)
+    @Field(label = "Transaction ID")
     private String transactionId;
 
-    @Field(label = "Deleted")
+    @Field
     private Boolean deleted;
 }

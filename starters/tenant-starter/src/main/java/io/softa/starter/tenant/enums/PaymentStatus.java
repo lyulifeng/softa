@@ -4,15 +4,15 @@ import com.fasterxml.jackson.annotation.JsonValue;
 import lombok.AllArgsConstructor;
 import lombok.Getter;
 
-import io.softa.framework.orm.annotation.OptionItem;
-import io.softa.framework.orm.annotation.OptionSet;
+import io.softa.framework.base.annotation.OptionItem;
+import io.softa.framework.base.annotation.OptionSet;
 
 /**
  * Unpaid, Paid, Failed, Canceled, Refunded
  */
 @Getter
 @AllArgsConstructor
-@OptionSet(label = "Payment Status")
+@OptionSet
 public enum PaymentStatus {
     UNPAID("Unpaid"),
     PAID("Paid"),

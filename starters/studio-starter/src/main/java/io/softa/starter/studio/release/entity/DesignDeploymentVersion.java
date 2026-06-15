@@ -17,7 +17,7 @@ import io.softa.framework.orm.entity.AuditableModel;
  * (ascending by sealedTime up to the target version).
  */
 @Data
-@Model(label = "Design Deployment Version", idStrategy = IdStrategy.DISTRIBUTED_LONG)
+@Model(idStrategy = IdStrategy.DISTRIBUTED_LONG, copyable = false)
 @EqualsAndHashCode(callSuper = true)
 public class DesignDeploymentVersion extends AuditableModel {
 
@@ -33,6 +33,6 @@ public class DesignDeploymentVersion extends AuditableModel {
     @Field(label = "Version ID")
     private Long versionId;
 
-    @Field(label = "Sequence", description = "Merge sequence — ascending order in which versions were applied")
+    @Field(description = "Merge sequence — ascending order in which versions were applied")
     private Integer sequence;
 }

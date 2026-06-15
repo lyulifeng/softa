@@ -25,8 +25,8 @@ import io.softa.framework.orm.enums.IdStrategy;
 @Data
 @EqualsAndHashCode(callSuper = true)
 @Model(
-        label = "Design App Env Snapshot",
-        idStrategy = IdStrategy.DISTRIBUTED_LONG
+        idStrategy = IdStrategy.DISTRIBUTED_LONG,
+        copyable = false
 )
 @Index(indexName = "unique_env_snapshot", fields = {"appId", "envId", "deploymentId"}, unique = true)
 public class DesignAppEnvSnapshot extends AuditableModel {
@@ -46,9 +46,9 @@ public class DesignAppEnvSnapshot extends AuditableModel {
     @Field(label = "Deployment ID", required = true)
     private Long deploymentId;
 
-    @Field(label = "Snapshot")
+    @Field
     private JsonNode snapshot;
 
-    @Field(label = "Deleted")
+    @Field
     private Boolean deleted;
 }

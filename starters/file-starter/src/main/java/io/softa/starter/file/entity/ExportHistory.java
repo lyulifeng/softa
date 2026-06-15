@@ -14,7 +14,7 @@ import io.softa.framework.orm.enums.FieldType;
  */
 @Data
 @EqualsAndHashCode(callSuper = true)
-@Model(label = "Export History")
+@Model(copyable = false)
 public class ExportHistory extends AuditableModel {
 
     @Serial
@@ -29,18 +29,18 @@ public class ExportHistory extends AuditableModel {
     @Field(label = "Template ID", fieldType = FieldType.MANY_TO_ONE, relatedModel = ExportTemplate.class)
     private Long templateId;
 
-    @Field(label = "Model Name", length = 64)
+    @Field
     private String modelName;
 
-    @Field(label = "Exported File ID", required = true)
+    @Field(label = "Exported File ID", fieldType = FieldType.FILE, required = true)
     private Long exportedFileId;
 
-    @Field(label = "Total Rows")
+    @Field
     private Integer totalRows;
 
     @Field(label = "Duration in seconds")
     private Double duration;
 
-    @Field(label = "Deleted")
+    @Field
     private Boolean deleted;
 }

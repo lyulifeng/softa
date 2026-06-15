@@ -10,13 +10,14 @@ import io.softa.framework.orm.annotation.Model;
 import io.softa.framework.orm.domain.Filters;
 import io.softa.framework.orm.domain.Orders;
 import io.softa.framework.orm.entity.AuditableModel;
+import io.softa.framework.orm.enums.FieldType;
 
 /**
  * ExportTemplate Model
  */
 @Data
 @EqualsAndHashCode(callSuper = true)
-@Model(label = "Export Template", searchName = {"fileName"})
+@Model(searchName = {"fileName"})
 public class ExportTemplate extends AuditableModel {
 
     @Serial
@@ -28,33 +29,33 @@ public class ExportTemplate extends AuditableModel {
     @Field(label = "Tenant ID")
     private Long tenantId;
 
-    @Field(label = "File Name", required = true, length = 64)
+    @Field(required = true)
     private String fileName;
 
-    @Field(label = "Sheet Name", length = 64)
+    @Field
     private String sheetName;
 
-    @Field(label = "Model Name", required = true, length = 64)
+    @Field(required = true)
     private String modelName;
 
-    @Field(label = "Custom File Template")
+    @Field
     private Boolean customFileTemplate;
 
-    @Field(label = "File Template ID")
+    @Field(label = "File Template ID", fieldType = FieldType.FILE)
     private Long fileId;
 
-    @Field(label = "Filters")
+    @Field(length = 256)
     private Filters filters;
 
-    @Field(label = "Orders")
+    @Field
     private Orders orders;
 
     @Field(label = "Custom Export Handler", length = 128)
     private String customHandler;
 
-    @Field(label = "Enable Transpose")
+    @Field
     private Boolean enableTranspose;
 
-    @Field(label = "Export Fields")
+    @Field(fieldType = FieldType.ONE_TO_MANY, relatedField = "templateId")
     private List<ExportTemplateField> exportFields;
 }

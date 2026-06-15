@@ -14,7 +14,7 @@ import io.softa.framework.orm.entity.AuditableModel;
  */
 @Data
 @EqualsAndHashCode(callSuper = true)
-@Model(label = "Document Template Sign Slot")
+@Model
 public class DocumentTemplateSignSlot extends AuditableModel {
 
     @Serial
@@ -29,18 +29,18 @@ public class DocumentTemplateSignSlot extends AuditableModel {
     @Field(label = "Document Template")
     private Long templateId;
 
-    @Field(label = "Slot Name", length = 64)
+    @Field
     private String slotName;
 
-    @Field(label = "Slot Code", length = 64)
+    @Field
     private String slotCode;
 
-    @Field(label = "Sequence")
+    @Field
     private Integer sequence;
 
-    @Field(label = "Placement")
+    @Field
     private JsonNode placement;
 
-    @Field(label = "Description", length = 256)
+    @Field(length = 256)
     private String description;
 }

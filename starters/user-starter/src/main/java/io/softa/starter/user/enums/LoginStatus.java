@@ -4,14 +4,14 @@ import com.fasterxml.jackson.annotation.JsonValue;
 import lombok.AllArgsConstructor;
 import lombok.Getter;
 
-import io.softa.framework.orm.annotation.OptionSet;
+import io.softa.framework.base.annotation.OptionSet;
 
 /**
  * Login Status
  */
 @Getter
 @AllArgsConstructor
-@OptionSet(label = "Login Status")
+@OptionSet
 public enum LoginStatus {
     SUCCESS("Success"),
     INVALID("Invalid"),

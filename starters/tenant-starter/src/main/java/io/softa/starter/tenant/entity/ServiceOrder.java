@@ -17,7 +17,6 @@ import io.softa.starter.tenant.enums.OrderStatus;
 @Data
 @EqualsAndHashCode(callSuper = true)
 @Model(
-        label = "Service Order",
         idStrategy = IdStrategy.DISTRIBUTED_LONG,
         softDelete = true
 )
@@ -35,18 +34,18 @@ public class ServiceOrder extends AuditableModel {
     @Field(label = "Service Product")
     private Long serviceId;
 
-    @Field(label = "Order Number", length = 32)
+    @Field(length = 32)
     private String orderNumber;
 
-    @Field(label = "Order Status")
+    @Field
     private OrderStatus orderStatus;
 
-    @Field(label = "Amount", length = 32, scale = 8)
+    @Field
     private BigDecimal amount;
 
-    @Field(label = "Notes", length = 1000)
+    @Field(length = 1000)
     private String notes;
 
-    @Field(label = "Deleted")
+    @Field
     private Boolean deleted;
 }

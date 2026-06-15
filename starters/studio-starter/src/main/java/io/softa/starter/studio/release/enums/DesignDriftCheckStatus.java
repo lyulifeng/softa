@@ -1,7 +1,7 @@
 package io.softa.starter.studio.release.enums;
 
 import com.fasterxml.jackson.annotation.JsonValue;
-import io.softa.framework.orm.annotation.OptionSet;
+import io.softa.framework.base.annotation.OptionSet;
 import lombok.AllArgsConstructor;
 import lombok.Getter;
 
@@ -12,7 +12,7 @@ import lombok.Getter;
  */
 @Getter
 @AllArgsConstructor
-@OptionSet(label = "Design Drift Check Status")
+@OptionSet
 public enum DesignDriftCheckStatus {
     /** The drift check completed — the {@code driftContent} reflects the actual runtime state. */
     SUCCESS("Success"),

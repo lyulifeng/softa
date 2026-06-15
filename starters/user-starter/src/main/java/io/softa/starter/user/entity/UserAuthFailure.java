@@ -16,8 +16,8 @@ import io.softa.framework.orm.enums.IdStrategy;
 @Data
 @EqualsAndHashCode(callSuper = true)
 @Model(
-        label = "User Auth Failure",
-        idStrategy = IdStrategy.DISTRIBUTED_LONG
+        idStrategy = IdStrategy.DISTRIBUTED_LONG,
+        copyable = false
 )
 public class UserAuthFailure extends AuditableModel {
 
@@ -30,21 +30,21 @@ public class UserAuthFailure extends AuditableModel {
     @Field(label = "User ID")
     private Long userId;
 
-    @Field(label = "Request Params")
+    @Field
     private JsonNode requestParams;
 
-    @Field(label = "Failure Reason", length = 1000)
+    @Field(length = 1000)
     private String failureReason;
 
-    @Field(label = "Error Stack", length = 20000)
+    @Field(length = 20000)
     private String errorStack;
 
-    @Field(label = "IP Address", length = 64)
+    @Field(label = "IP Address")
     private String ipAddress;
 
-    @Field(label = "User Agent", length = 64)
+    @Field
     private String userAgent;
 
-    @Field(label = "Location", length = 64)
+    @Field
     private String location;
 }

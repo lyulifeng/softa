@@ -4,15 +4,15 @@ import com.fasterxml.jackson.annotation.JsonValue;
 import lombok.AllArgsConstructor;
 import lombok.Getter;
 
-import io.softa.framework.orm.annotation.OptionItem;
-import io.softa.framework.orm.annotation.OptionSet;
+import io.softa.framework.base.annotation.OptionItem;
+import io.softa.framework.base.annotation.OptionSet;
 
 /**
  * Login Method
  */
 @Getter
 @AllArgsConstructor
-@OptionSet(label = "Login Method")
+@OptionSet
 public enum LoginMethod {
     @OptionItem(label = "Apple")
     APPLE_ID("Apple"),

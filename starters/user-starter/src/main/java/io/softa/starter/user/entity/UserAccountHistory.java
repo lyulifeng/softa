@@ -15,8 +15,8 @@ import io.softa.framework.orm.enums.IdStrategy;
 @Data
 @EqualsAndHashCode(callSuper = true)
 @Model(
-        label = "User Account History",
-        idStrategy = IdStrategy.DISTRIBUTED_LONG
+        idStrategy = IdStrategy.DISTRIBUTED_LONG,
+        copyable = false
 )
 public class UserAccountHistory extends AuditableModel {
 
@@ -32,9 +32,9 @@ public class UserAccountHistory extends AuditableModel {
     @Field(label = "User ID")
     private Long userId;
 
-    @Field(label = "Password", length = 256)
+    @Field(length = 256)
     private String password;
 
-    @Field(label = "Password Salt", length = 64)
+    @Field
     private String passwordSalt;
 }

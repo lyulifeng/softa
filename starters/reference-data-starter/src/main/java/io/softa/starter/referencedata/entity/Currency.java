@@ -22,8 +22,6 @@ import io.softa.framework.orm.entity.AuditableModel;
 @Data
 @EqualsAndHashCode(callSuper = true)
 @Model(
-        label = "Currency",
-        tableName = "currency",
         businessKey = {"code"},
         description = "ISO 4217 currency master"
 )
@@ -36,23 +34,23 @@ public class Currency extends AuditableModel {
     @Field(label = "ID")
     private Long id;
 
-    @Field(label = "ISO 4217 alpha-3", required = true, length = 3,
+    @Field(label = "ISO 4217 alpha-3", required = true, length = 3, copyable = false,
             description = "ISO 4217 alpha-3 code (USD/CNY/EUR/...); natural key")
     private String code;
 
-    @Field(label = "Numeric Code", required = true, length = 3,
+    @Field(required = true, length = 3,
             description = "ISO 4217 numeric, 3 digits with leading zero (840/156/048)")
     private String numericCode;
 
-    @Field(label = "Name", required = true, length = 100,
+    @Field(required = true, length = 100,
             description = "English name, e.g. 'US Dollar'")
     private String name;
 
-    @Field(label = "Symbol", required = true, length = 10,
+    @Field(required = true, length = 10,
             description = "Unicode display symbol ($ / ¥ / € / ₹ / £ / ...)")
     private String symbol;
 
-    @Field(label = "Decimal Places", required = true,
+    @Field(required = true,
             description = "ISO 4217 fraction digits — 0 for JPY/KRW, 2 for USD/EUR/CNY, "
                     + "3 for BHD/KWD/IQD. CRITICAL for monetary arithmetic")
     private Integer decimalPlaces;

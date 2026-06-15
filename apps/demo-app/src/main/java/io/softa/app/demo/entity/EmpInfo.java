@@ -25,13 +25,13 @@ public class EmpInfo extends AuditableModel {
     @Field(label = "ID")
     private Long id;
 
-    @Field(label = "Name", required = true, length = 100)
+    @Field(required = true, length = 100)
     private String name;
 
-    @Field(label = "Code", length = 64)
+    @Field(copyable = false)
     private String code;
 
-    @Field(label = "Email", length = 128)
+    @Field(length = 128)
     private String email;
 
     @Field(label = "Department", fieldType = FieldType.MANY_TO_ONE, relatedModel = DeptInfo.class)
@@ -48,7 +48,7 @@ public class EmpInfo extends AuditableModel {
     @Field(label = "Employee Documents", fieldType = FieldType.MULTI_FILE)
     private List<FileInfo> documents;
 
-    @Field(label = "Description", length = 256)
+    @Field(length = 256)
     private String description;
 
     @Field(label = "Tenant ID")

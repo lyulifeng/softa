@@ -17,7 +17,7 @@ import io.softa.starter.file.enums.ImportType;
  */
 @Data
 @EqualsAndHashCode(callSuper = true)
-@Model(label = "Import History")
+@Model(copyable = false)
 public class ImportHistory extends AuditableModel {
 
     @Serial
@@ -32,40 +32,40 @@ public class ImportHistory extends AuditableModel {
     @Field(label = "Template ID", fieldType = FieldType.MANY_TO_ONE, relatedModel = ImportTemplate.class)
     private Long templateId;
 
-    @Field(label = "Model Name", length = 64)
+    @Field
     private String modelName;
 
-    @Field(label = "Original File ID")
+    @Field(label = "Original File ID", fieldType = FieldType.FILE)
     private Long originalFileId;
 
-    @Field(label = "Import Type")
+    @Field
     private ImportType importType;
 
-    @Field(label = "Import Rule")
+    @Field
     private ImportRule importRule;
 
     @Field(label = "Import Status")
     private ImportStatus status;
 
-    @Field(label = "Failed File ID")
+    @Field(label = "Failed File ID", fieldType = FieldType.FILE)
     private Long failedFileId;
 
-    @Field(label = "Total Rows")
+    @Field
     private Integer totalRows;
 
-    @Field(label = "Success Rows")
+    @Field
     private Integer successRows;
 
-    @Field(label = "Failed Rows")
+    @Field
     private Integer failedRows;
 
     @Field(label = "Duration in seconds")
     private Double duration;
 
-    @Field(label = "Error Message", length = 1000)
+    @Field(length = 1000)
     private String errorMessage;
 
-    @Field(label = "Deleted")
+    @Field
     private Boolean deleted;
 
     private static final int MAX_ERROR_MESSAGE_LENGTH = 1000;

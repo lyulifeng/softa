@@ -19,7 +19,6 @@ import io.softa.framework.orm.enums.WidgetType;
 @Data
 @EqualsAndHashCode(callSuper = true)
 @Model(
-        label = "Design Field",
         idStrategy = IdStrategy.DISTRIBUTED_LONG,
         softDelete = true,
         businessKey = {"modelName", "fieldName"},
@@ -42,55 +41,55 @@ public class DesignField extends AuditableModel {
     @Field(label = "Model ID")
     private Long modelId;
 
-    @Field(label = "Label", required = true, length = 64)
+    @Field(required = true)
     private String label;
 
-    @Field(label = "Field Name", required = true, length = 64)
+    @Field(required = true)
     private String fieldName;
 
-    @Field(label = "Column Name", length = 64)
+    @Field
     private String columnName;
 
-    @Field(label = "Model Name", required = true, length = 64)
+    @Field(required = true)
     private String modelName;
 
-    @Field(label = "Description", length = 256)
+    @Field(length = 256)
     private String description;
 
-    @Field(label = "Field Type", required = true)
+    @Field(required = true)
     private FieldType fieldType;
 
-    @Field(label = "Option Set Code", length = 64)
+    @Field
     private String optionSetCode;
 
-    @Field(label = "Related Model", length = 64)
+    @Field
     private String relatedModel;
 
-    @Field(label = "Related Field", length = 64)
+    @Field
     private String relatedField;
 
-    @Field(label = "Join Model", length = 64)
+    @Field
     private String joinModel;
 
-    @Field(label = "Join Model Left Key", length = 64)
+    @Field(label = "Join Model Left Key")
     private String joinLeft;
 
-    @Field(label = "Join Model Right Key", length = 64)
+    @Field(label = "Join Model Right Key")
     private String joinRight;
 
-    @Field(label = "Cascaded Field", length = 256)
+    @Field(length = 256)
     private String cascadedField;
 
-    @Field(label = "Filters", length = 256)
+    @Field(length = 256)
     private String filters;
 
-    @Field(label = "Default Value", length = 256)
+    @Field(length = 256)
     private String defaultValue;
 
-    @Field(label = "Length")
+    @Field
     private Integer length;
 
-    @Field(label = "Scale")
+    @Field
     private Integer scale;
 
     @Field(label = "Is Required")
@@ -99,22 +98,24 @@ public class DesignField extends AuditableModel {
     @Field(label = "Is Readonly")
     private Boolean readonly;
 
-    @Field(label = "Hidden")
+    @Field
     private Boolean hidden;
 
-    @Field(label = "Translatable")
+    @Field
     private Boolean translatable;
 
-    @Field(label = "Non Copyable")
-    private Boolean nonCopyable;
+    // Initialized to true (the column is NOT NULL DEFAULT 1) so hand-constructed
+    // instances never insert NULL.
+    @Field(defaultValue = "true")
+    private Boolean copyable = Boolean.TRUE;
 
-    @Field(label = "Unsearchable")
+    @Field
     private Boolean unsearchable;
 
     @Field(label = "Is Computed")
     private Boolean computed;
 
-    @Field(label = "Expression", length = 20000)
+    @Field(length = 20000)
     private String expression;
 
     @Field(label = "Dynamic Field")
@@ -123,15 +124,15 @@ public class DesignField extends AuditableModel {
     @Field(label = "Is Encrypted")
     private Boolean encrypted;
 
-    @Field(label = "Masking Type")
+    @Field
     private MaskingType maskingType;
 
-    @Field(label = "Widget Type")
+    @Field
     private WidgetType widgetType;
 
-    @Field(label = "Ownership")
+    @Field
     private Ownership ownership;
 
-    @Field(label = "Deleted")
+    @Field
     private Boolean deleted;
 }

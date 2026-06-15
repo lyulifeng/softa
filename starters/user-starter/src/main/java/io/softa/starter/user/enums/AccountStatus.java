@@ -4,14 +4,14 @@ import com.fasterxml.jackson.annotation.JsonValue;
 import lombok.AllArgsConstructor;
 import lombok.Getter;
 
-import io.softa.framework.orm.annotation.OptionSet;
+import io.softa.framework.base.annotation.OptionSet;
 
 /**
  * Account Status
  */
 @Getter
 @AllArgsConstructor
-@OptionSet(label = "Account Status")
+@OptionSet
 public enum AccountStatus {
     ACTIVE("Active"),
     UNVERIFIED("Unverified"),

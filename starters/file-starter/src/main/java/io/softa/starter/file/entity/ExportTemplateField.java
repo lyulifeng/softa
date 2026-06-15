@@ -14,7 +14,7 @@ import io.softa.framework.orm.enums.FieldType;
  */
 @Data
 @EqualsAndHashCode(callSuper = true)
-@Model(label = "Export Template Field")
+@Model
 public class ExportTemplateField extends AuditableModel {
 
     @Serial
@@ -26,13 +26,13 @@ public class ExportTemplateField extends AuditableModel {
     @Field(label = "Export Template ID", fieldType = FieldType.MANY_TO_ONE, relatedModel = ExportTemplate.class)
     private Long templateId;
 
-    @Field(label = "Field Name", required = true, length = 64)
+    @Field(required = true)
     private String fieldName;
 
-    @Field(label = "Custom Header", length = 64)
+    @Field
     private String customHeader;
 
-    @Field(label = "Sequence")
+    @Field
     private Integer sequence;
 
     @Field(label = "Ignored In File")

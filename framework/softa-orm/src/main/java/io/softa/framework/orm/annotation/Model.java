@@ -21,9 +21,6 @@ import io.softa.framework.orm.enums.StorageType;
  * scanner that reads it and reconciles {@code sys_model} rows / DDL. Without
  * {@code metadata-starter}, this annotation is parsed by the compiler but
  * never consumed at runtime.
- *
- * @see Field
- * @see OptionSet
  */
 @Target(ElementType.TYPE)
 @Retention(RetentionPolicy.RUNTIME)

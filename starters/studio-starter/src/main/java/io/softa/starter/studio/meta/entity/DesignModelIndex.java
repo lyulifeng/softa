@@ -17,7 +17,6 @@ import io.softa.framework.orm.enums.Ownership;
 @Data
 @EqualsAndHashCode(callSuper = true)
 @Model(
-        label = "Design Model Index",
         idStrategy = IdStrategy.DISTRIBUTED_LONG,
         softDelete = true,
         businessKey = {"modelName", "indexName"}
@@ -39,24 +38,24 @@ public class DesignModelIndex extends AuditableModel {
     @Field(label = "Model ID", required = true)
     private Long modelId;
 
-    @Field(label = "Model Name", required = true, length = 64)
+    @Field(required = true)
     private String modelName;
 
-    @Field(label = "Label", required = true, length = 64)
+    @Field(required = true)
     private String label;
 
-    @Field(label = "Index Name", length = 64)
+    @Field
     private String indexName;
 
-    @Field(label = "Index Fields")
+    @Field
     private List<String> indexFields;
 
     @Field(label = "Is Unique Index")
     private Boolean uniqueIndex;
 
-    @Field(label = "Ownership")
+    @Field
     private Ownership ownership;
 
-    @Field(label = "Deleted")
+    @Field
     private Boolean deleted;
 }

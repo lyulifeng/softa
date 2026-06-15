@@ -24,10 +24,10 @@ public class ProjectInfo extends AuditableModel {
     @Field(label = "ID")
     private Long id;
 
-    @Field(label = "Name", required = true, length = 100)
+    @Field(required = true, length = 100)
     private String name;
 
-    @Field(label = "Code", length = 64)
+    @Field(copyable = false)
     private String code;
 
     @Field(label = "Employees", fieldType = FieldType.MANY_TO_MANY,
@@ -35,9 +35,9 @@ public class ProjectInfo extends AuditableModel {
             joinLeft = "projectId", joinRight = "empId")
     private List<Long> empIds;
 
-    @Field(label = "Description", length = 256)
+    @Field(length = 256)
     private String description;
 
-    @Field(label = "Active")
+    @Field
     private Boolean active;
 }

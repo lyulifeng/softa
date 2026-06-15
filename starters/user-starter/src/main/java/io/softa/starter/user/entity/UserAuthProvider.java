@@ -16,8 +16,8 @@ import io.softa.starter.user.enums.OAuthProvider;
 @Data
 @EqualsAndHashCode(callSuper = true)
 @Model(
-        label = "User Auth Provider",
-        idStrategy = IdStrategy.DISTRIBUTED_LONG
+        idStrategy = IdStrategy.DISTRIBUTED_LONG,
+        copyable = false
 )
 public class UserAuthProvider extends AuditableModel {
 
@@ -33,12 +33,12 @@ public class UserAuthProvider extends AuditableModel {
     @Field(label = "User ID", required = true)
     private Long userId;
 
-    @Field(label = "Provider", required = true)
+    @Field(required = true)
     private OAuthProvider provider;
 
-    @Field(label = "Provider User ID", required = true, length = 64)
+    @Field(label = "Provider User ID", required = true)
     private String providerUserId;
 
-    @Field(label = "Additional Info", length = 1000)
+    @Field(length = 1000)
     private String additionalInfo;
 }

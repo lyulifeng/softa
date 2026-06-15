@@ -23,9 +23,9 @@ import io.softa.starter.studio.release.enums.DesignAppVersionType;
 @Data
 @EqualsAndHashCode(callSuper = true)
 @Model(
-        label = "Design App Version",
         idStrategy = IdStrategy.DISTRIBUTED_LONG,
-        defaultOrder = "id DESC"
+        defaultOrder = "id DESC",
+        copyable = false
 )
 public class DesignAppVersion extends AuditableModel {
 
@@ -38,10 +38,10 @@ public class DesignAppVersion extends AuditableModel {
     @Field(label = "App ID")
     private Long appId;
 
-    @Field(label = "Version Name", required = true, length = 64)
+    @Field(label = "Version Name", required = true)
     private String name;
 
-    @Field(label = "Version Type")
+    @Field
     private DesignAppVersionType versionType;
 
     @Field(label = "Upgrade description", length = 256)
@@ -50,18 +50,18 @@ public class DesignAppVersion extends AuditableModel {
     @Field(label = "Version Content")
     private JsonNode versionedContent;
 
-    @Field(label = "Diff Hash", length = 64)
+    @Field
     private String diffHash;
 
-    @Field(label = "Status")
+    @Field
     private DesignAppVersionStatus status;
 
-    @Field(label = "Sealed Time")
+    @Field(copyable = false)
     private LocalDateTime sealedTime;
 
-    @Field(label = "Frozen Time")
+    @Field(copyable = false)
     private LocalDateTime frozenTime;
 
-    @Field(label = "Deleted")
+    @Field
     private Boolean deleted;
 }

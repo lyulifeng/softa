@@ -13,8 +13,8 @@ every tenant in the deployment.
 
 ## Metadata ownership
 
-The 4 entities (`CountryRegion` / `Currency` / `CountrySubdivision` /
-`LanguageProfile`) and the `Continent` enum are all annotated with `@Model` /
+The 3 entities (`CountryRegion` / `Currency` / `CountrySubdivision`)
+and the `Continent` enum are all annotated with `@Model` /
 `@Field` / `@OptionSet` / `@OptionItem` (see
 [`framework/softa-orm`](../../framework/softa-orm/README.md#metadata-annotations)).
 `MetadataAnnotationScanner` writes their `sys_*` rows with
@@ -27,11 +27,16 @@ The 4 entities (`CountryRegion` / `Currency` / `CountrySubdivision` /
   (when this package is out of `scanner-scope`) or an automatic ALTER (when it
   is in scope).
 
-The framework `Language` enum (which lives in `softa-base` and cannot carry
-`@OptionSet`) is the one exception — its `sys_option_set` row is intended
-to be DML-seeded as `ownership = 'PLATFORM_DEFAULT'` so the scanner won't
-try to manage it. Tenants typically extend by adding `TENANT`-owned overlay
-items rather than modifying the seeded row directly.
+The framework `Language` enum lives in `softa-base` and carries
+`@OptionSet` / `@OptionItem` like any other enum (the annotations live in
+`io.softa.framework.base.annotation` precisely so base enums avoid a
+base → orm cycle); the scanner manages its `sys_option_set` rows as
+`PLATFORM_MAINTAINED`. Locale formatting facts (date/time patterns, decimal
+and grouping separators) are **not stored** — they derive from the JDK's
+built-in CLDR data via the `Language` enum accessors (`toLocale()`,
+`decimalSeparator()`, `datePattern()`, …); browsers derive the same values
+from the tag via `Intl.*`. (The former `LanguageProfile` entity that stored
+these per tenant was retired in 2026-06.)
 
 ## Dependency
 

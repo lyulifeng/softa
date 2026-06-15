@@ -4,14 +4,14 @@ import com.fasterxml.jackson.annotation.JsonValue;
 import lombok.AllArgsConstructor;
 import lombok.Getter;
 
-import io.softa.framework.orm.annotation.OptionSet;
+import io.softa.framework.base.annotation.OptionSet;
 
 /**
  * Service category
  */
 @Getter
 @AllArgsConstructor
-@OptionSet(label = "Service Category")
+@OptionSet
 public enum ServiceCategory {
     SUPPORT("Support"),
     ;

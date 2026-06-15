@@ -8,8 +8,8 @@ import io.softa.framework.orm.annotation.Field;
 import io.softa.framework.orm.annotation.Model;
 import io.softa.framework.orm.entity.AuditableModel;
 import io.softa.framework.orm.enums.IdStrategy;
-import io.softa.framework.orm.enums.OptionItemIcon;
-import io.softa.framework.orm.enums.OptionItemTone;
+import io.softa.framework.base.enums.OptionItemIcon;
+import io.softa.framework.base.enums.OptionItemTone;
 import io.softa.framework.orm.enums.Ownership;
 
 /**
@@ -42,36 +42,36 @@ public class DesignOptionItem extends AuditableModel {
     @Field(label = "Option Set ID")
     private Long optionSetId;
 
-    @Field(label = "Option Set Code", required = true, length = 64)
+    @Field(required = true)
     private String optionSetCode;
 
-    @Field(label = "Sequence", required = true)
+    @Field(required = true)
     private Integer sequence;
 
-    @Field(label = "Item Code", required = true, length = 64)
+    @Field(required = true)
     private String itemCode;
 
-    @Field(label = "Label", required = true, length = 64)
+    @Field(required = true)
     private String label;
 
-    @Field(label = "Parent Item Code", length = 64)
+    @Field
     private String parentItemCode;
 
-    @Field(label = "Item Tone")
+    @Field
     private OptionItemTone itemTone;
 
-    @Field(label = "Item Icon")
+    @Field
     private OptionItemIcon itemIcon;
 
-    @Field(label = "Description", length = 256)
+    @Field(length = 256)
     private String description;
 
-    @Field(label = "Active")
+    @Field
     private Boolean active;
 
-    @Field(label = "Ownership")
+    @Field
     private Ownership ownership;
 
-    @Field(label = "Deleted")
+    @Field
     private Boolean deleted;
 }

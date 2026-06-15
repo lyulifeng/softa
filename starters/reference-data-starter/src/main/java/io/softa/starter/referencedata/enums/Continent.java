@@ -8,8 +8,8 @@ import com.fasterxml.jackson.annotation.JsonValue;
 import lombok.AllArgsConstructor;
 import lombok.Getter;
 
-import io.softa.framework.orm.annotation.OptionItem;
-import io.softa.framework.orm.annotation.OptionSet;
+import io.softa.framework.base.annotation.OptionItem;
+import io.softa.framework.base.annotation.OptionSet;
 
 /**
  * Continent enumeration — 7-continent model (the most widely-used scheme
@@ -32,7 +32,7 @@ import io.softa.framework.orm.annotation.OptionSet;
  */
 @Getter
 @AllArgsConstructor
-@OptionSet(label = "Continent", description = "7-continent model")
+@OptionSet(description = "7-continent model")
 public enum Continent {
     @OptionItem(label = "Asia")
     AS("AS"),

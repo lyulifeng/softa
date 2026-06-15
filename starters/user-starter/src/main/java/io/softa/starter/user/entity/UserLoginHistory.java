@@ -18,8 +18,8 @@ import io.softa.starter.user.enums.LoginStatus;
 @Data
 @EqualsAndHashCode(callSuper = true)
 @Model(
-        label = "User Login History",
-        idStrategy = IdStrategy.DISTRIBUTED_LONG
+        idStrategy = IdStrategy.DISTRIBUTED_LONG,
+        copyable = false
 )
 public class UserLoginHistory extends AuditableModel {
 
@@ -35,21 +35,21 @@ public class UserLoginHistory extends AuditableModel {
     @Field(label = "User ID", required = true)
     private Long userId;
 
-    @Field(label = "Login Method")
+    @Field
     private LoginMethod loginMethod;
 
-    @Field(label = "Login Device Type")
+    @Field
     private LoginDeviceType loginDeviceType;
 
-    @Field(label = "IP Address", length = 64)
+    @Field(label = "IP Address")
     private String ipAddress;
 
-    @Field(label = "User Agent", length = 64)
+    @Field
     private String userAgent;
 
-    @Field(label = "Location", length = 64)
+    @Field
     private String location;
 
-    @Field(label = "Status")
+    @Field
     private LoginStatus status;
 }

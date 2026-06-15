@@ -1,14 +1,14 @@
 package io.softa.starter.studio.release.enums;
 
 import com.fasterxml.jackson.annotation.JsonValue;
-import io.softa.framework.orm.annotation.OptionItem;
-import io.softa.framework.orm.annotation.OptionSet;
+import io.softa.framework.base.annotation.OptionItem;
+import io.softa.framework.base.annotation.OptionSet;
 import lombok.AllArgsConstructor;
 import lombok.Getter;
 
 @Getter
 @AllArgsConstructor
-@OptionSet(label = "Design App Version Type")
+@OptionSet
 public enum DesignAppVersionType {
     @OptionItem(description = "Normal planned release")
     NORMAL("Normal"),

@@ -4,14 +4,14 @@ import com.fasterxml.jackson.annotation.JsonValue;
 import lombok.AllArgsConstructor;
 import lombok.Getter;
 
-import io.softa.framework.orm.annotation.OptionSet;
+import io.softa.framework.base.annotation.OptionSet;
 
 /**
  * Male, Female
  */
 @Getter
 @AllArgsConstructor
-@OptionSet(label = "Gender")
+@OptionSet
 public enum Gender {
     MALE("Male"),
     FEMALE("Female");

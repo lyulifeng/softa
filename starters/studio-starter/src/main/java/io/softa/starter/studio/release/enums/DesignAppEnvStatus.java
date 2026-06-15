@@ -2,8 +2,8 @@ package io.softa.starter.studio.release.enums;
 
 import com.fasterxml.jackson.annotation.JsonValue;
 
-import io.softa.framework.orm.annotation.OptionItem;
-import io.softa.framework.orm.annotation.OptionSet;
+import io.softa.framework.base.annotation.OptionItem;
+import io.softa.framework.base.annotation.OptionSet;
 
 import lombok.AllArgsConstructor;
 import lombok.Getter;
@@ -19,7 +19,7 @@ import lombok.Getter;
  */
 @Getter
 @AllArgsConstructor
-@OptionSet(label = "Design App Env Status")
+@OptionSet
 public enum DesignAppEnvStatus {
     /** No deployment in progress — ready to accept a new deployment. */
     @OptionItem(description = "Stable")

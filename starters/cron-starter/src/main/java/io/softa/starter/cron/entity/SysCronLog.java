@@ -15,7 +15,7 @@ import io.softa.starter.cron.enums.CronStatus;
  */
 @Data
 @EqualsAndHashCode(callSuper = true)
-@Model(label = "System Cron Log")
+@Model(label = "System Cron Log", copyable = false)
 public class SysCronLog extends AuditableModel {
 
     @Serial
@@ -27,7 +27,7 @@ public class SysCronLog extends AuditableModel {
     @Field(label = "Cron ID")
     private Long cronId;
 
-    @Field(label = "Cron Job Name", length = 64)
+    @Field(label = "Cron Job Name")
     private String cronName;
 
     @Field(label = "Cron Execution State")
@@ -42,7 +42,7 @@ public class SysCronLog extends AuditableModel {
     @Field(label = "Total Execution Time (s)")
     private Double totalTime;
 
-    @Field(label = "Error Message", length = 256)
+    @Field(length = 256)
     private String errorMessage;
 
 }

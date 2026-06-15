@@ -16,7 +16,7 @@ import io.softa.starter.file.enums.SigningDocumentStatus;
  */
 @Data
 @EqualsAndHashCode(callSuper = true)
-@Model(label = "Signing Document")
+@Model(copyable = false)
 public class SigningDocument extends AuditableModel {
 
     @Serial
@@ -31,19 +31,19 @@ public class SigningDocument extends AuditableModel {
     @Field(label = "Signing Request ID")
     private Long signingRequestId;
 
-    @Field(label = "Title", length = 256)
+    @Field(length = 256)
     private String title;
 
-    @Field(label = "Sequence")
+    @Field
     private Integer sequence;
 
-    @Field(label = "Status")
+    @Field
     private SigningDocumentStatus status;
 
     @Field(label = "Document Template")
     private Long templateId;
 
-    @Field(label = "Sign Slot Code", length = 64)
+    @Field
     private String signSlotCode;
 
     @Field(label = "Signed Image File")
@@ -55,12 +55,12 @@ public class SigningDocument extends AuditableModel {
     @Field(label = "Signer User ID")
     private Long signerUserId;
 
-    @Field(label = "Evidence ID", length = 64)
+    @Field(label = "Evidence ID")
     private String evidenceId;
 
     @Field(label = "Signature evidence JSON")
     private JsonNode signatureEvidence;
 
-    @Field(label = "Signed Time")
+    @Field
     private LocalDateTime signedTime;
 }

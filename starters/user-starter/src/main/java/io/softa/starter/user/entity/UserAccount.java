@@ -17,7 +17,6 @@ import io.softa.starter.user.enums.AccountStatus;
 @Data
 @EqualsAndHashCode(callSuper = true)
 @Model(
-        label = "User Account",
         idStrategy = IdStrategy.DISTRIBUTED_LONG,
         searchName = {"nickname", "username"}
 )
@@ -32,33 +31,33 @@ public class UserAccount extends AuditableModel {
     @Field(label = "Tenant ID")
     private Long tenantId;
 
-    @Field(label = "Nickname", length = 64)
+    @Field
     private String nickname;
 
-    @Field(label = "Username", length = 64)
+    @Field
     private String username;
 
-    @Field(label = "Password", length = 256)
+    @Field(length = 256, copyable = false)
     private String password;
 
-    @Field(label = "Password Salt", length = 64)
+    @Field(copyable = false)
     private String passwordSalt;
 
-    @Field(label = "Email", length = 64)
+    @Field
     private String email;
 
-    @Field(label = "Mobile", length = 64)
+    @Field
     private String mobile;
 
-    @Field(label = "Activation Time")
+    @Field(copyable = false)
     private LocalDateTime activationTime;
 
     @Field(label = "Policy ID")
     private Long policyId;
 
-    @Field(label = "Locked")
+    @Field(copyable = false)
     private Boolean locked;
 
-    @Field(label = "Status")
+    @Field
     private AccountStatus status;
 }

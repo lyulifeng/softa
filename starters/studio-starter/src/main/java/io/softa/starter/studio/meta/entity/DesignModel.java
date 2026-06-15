@@ -20,7 +20,6 @@ import io.softa.framework.orm.enums.StorageType;
 @Data
 @EqualsAndHashCode(callSuper = true)
 @Model(
-        label = "Design Model",
         idStrategy = IdStrategy.DISTRIBUTED_LONG,
         businessKey = {"modelName"},
         displayName = {"modelName", "label"},
@@ -41,28 +40,28 @@ public class DesignModel extends AuditableModel {
     @Field(label = "App ID")
     private Long appId;
 
-    @Field(label = "Label", length = 64, required = true)
+    @Field(required = true)
     private String label;
 
-    @Field(label = "Model Name", length = 64, required = true)
+    @Field(required = true)
     private String modelName;
 
-    @Field(label = "Display Name", length = 255)
+    @Field
     private List<String> displayName;
 
-    @Field(label = "Search Name", length = 255)
+    @Field
     private List<String> searchName;
 
-    @Field(label = "Default Order")
+    @Field
     private Orders defaultOrder;
 
-    @Field(label = "Table Name", length = 64)
+    @Field
     private String tableName;
 
     @Field(label = "Enable Soft Delete")
     private Boolean softDelete;
 
-    @Field(label = "Soft Delete Field Name", length = 64)
+    @Field(label = "Soft Delete Field Name")
     private String softDeleteField;
 
     @Field(label = "Enable Active Control")
@@ -74,7 +73,7 @@ public class DesignModel extends AuditableModel {
     @Field(label = "ID Strategy")
     private IdStrategy idStrategy;
 
-    @Field(label = "Storage Type")
+    @Field
     private StorageType storageType;
 
     @Field(label = "Enable Version Lock")
@@ -83,32 +82,37 @@ public class DesignModel extends AuditableModel {
     @Field(label = "Enable Multi-tenancy")
     private Boolean multiTenant;
 
-    @Field(label = "Data Source", length = 64)
+    // Initialized to true (the column is NOT NULL DEFAULT 1) so hand-constructed
+    // instances never insert NULL.
+    @Field(defaultValue = "true")
+    private Boolean copyable = Boolean.TRUE;
+
+    @Field
     private String dataSource;
 
-    @Field(label = "Service Name", length = 64)
+    @Field
     private String serviceName;
 
-    @Field(label = "Business Primary Key", length = 255)
+    @Field(label = "Business Primary Key")
     private List<String> businessKey;
 
-    @Field(label = "Partition Field", length = 64)
+    @Field
     private String partitionField;
 
-    @Field(label = "Description", length = 256)
+    @Field(length = 256)
     private String description;
 
-    @Field(label = "Ownership")
+    @Field
     private Ownership ownership;
 
-    @Field(label = "Model Fields", fieldType = FieldType.ONE_TO_MANY,
+    @Field(fieldType = FieldType.ONE_TO_MANY,
             relatedModel = DesignField.class, relatedField = "modelName")
     private List<DesignField> modelFields;
 
-    @Field(label = "Model Indexes", fieldType = FieldType.ONE_TO_MANY,
+    @Field(fieldType = FieldType.ONE_TO_MANY,
             relatedModel = DesignModelIndex.class, relatedField = "modelName")
     private List<DesignModelIndex> modelIndexes;
 
-    @Field(label = "Deleted")
+    @Field
     private Boolean deleted;
 }

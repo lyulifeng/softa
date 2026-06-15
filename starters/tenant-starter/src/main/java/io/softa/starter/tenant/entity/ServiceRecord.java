@@ -16,9 +16,9 @@ import io.softa.framework.orm.enums.IdStrategy;
 @Data
 @EqualsAndHashCode(callSuper = true)
 @Model(
-        label = "Service Record",
         idStrategy = IdStrategy.DISTRIBUTED_LONG,
-        softDelete = true
+        softDelete = true,
+        copyable = false
 )
 public class ServiceRecord extends AuditableModel {
 
@@ -37,15 +37,15 @@ public class ServiceRecord extends AuditableModel {
     @Field(label = "Order ID")
     private Long orderId;
 
-    @Field(label = "Request Data", required = true)
+    @Field(required = true)
     private JsonNode requestData;
 
-    @Field(label = "Result Summary", length = 3000)
+    @Field(length = 3000)
     private String resultSummary;
 
-    @Field(label = "Result Detail", length = 20000)
+    @Field(length = 20000)
     private String resultDetail;
 
-    @Field(label = "Deleted")
+    @Field
     private Boolean deleted;
 }

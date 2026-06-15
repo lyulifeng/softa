@@ -22,15 +22,15 @@ public class DesignFieldTrans extends AuditableModel {
     @Field(label = "ID")
     private Long id;
 
-    @Field(label = "Language Code", required = true, length = 64)
+    @Field(required = true)
     private String languageCode;
 
     @Field(label = "Row ID")
     private Long rowId;
 
-    @Field(label = "Label", length = 64)
+    @Field
     private String label;
 
-    @Field(label = "Description", length = 256)
+    @Field(length = 256)
     private String description;
 }

@@ -26,21 +26,21 @@ public class ImportTemplateField extends AuditableModel {
     @Field(label = "Import Template ID", fieldType = FieldType.MANY_TO_ONE, relatedModel = ImportTemplate.class)
     private Long templateId;
 
-    @Field(label = "Field Name", required = true, length = 64)
+    @Field(required = true)
     private String fieldName;
 
-    @Field(label = "Custom Header", length = 64)
+    @Field
     private String customHeader;
 
-    @Field(label = "Sequence")
+    @Field
     private Integer sequence;
 
-    @Field(label = "Required")
+    @Field
     private Boolean required;
 
-    @Field(label = "Default Value", length = 128)
+    @Field(length = 128)
     private String defaultValue;
 
-    @Field(label = "Description", length = 256)
+    @Field(length = 256)
     private String description;
 }

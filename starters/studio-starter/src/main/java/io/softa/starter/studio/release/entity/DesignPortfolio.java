@@ -14,7 +14,7 @@ import io.softa.starter.studio.release.enums.DesignPortfolioStatus;
  * DesignPortfolio Model
  */
 @Data
-@Model(label = "Design Portfolio", idStrategy = IdStrategy.DISTRIBUTED_LONG)
+@Model(idStrategy = IdStrategy.DISTRIBUTED_LONG)
 @EqualsAndHashCode(callSuper = true)
 public class DesignPortfolio extends AuditableModel {
 
@@ -27,18 +27,18 @@ public class DesignPortfolio extends AuditableModel {
     @Field(label = "Owner")
     private Long ownerId;
 
-    @Field(label = "Name", required = true, length = 64)
+    @Field(required = true)
     private String name;
 
-    @Field(label = "Code", length = 64)
+    @Field
     private String code;
 
-    @Field(label = "Status")
+    @Field
     private DesignPortfolioStatus status;
 
-    @Field(label = "Description", length = 256)
+    @Field(length = 256)
     private String description;
 
-    @Field(label = "Deleted")
+    @Field
     private Boolean deleted;
 }

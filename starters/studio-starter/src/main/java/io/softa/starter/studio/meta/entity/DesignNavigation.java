@@ -15,7 +15,6 @@ import io.softa.framework.orm.enums.IdStrategy;
 @Data
 @EqualsAndHashCode(callSuper = true)
 @Model(
-        label = "Design Navigation",
         idStrategy = IdStrategy.DISTRIBUTED_LONG,
         softDelete = true,
         businessKey = {"code"}
@@ -34,27 +33,27 @@ public class DesignNavigation extends AuditableModel {
     @Field(label = "App ID")
     private Long appId;
 
-    @Field(label = "Name", required = true, length = 64)
+    @Field(required = true)
     private String name;
 
-    @Field(label = "Type", required = true, length = 64)
+    @Field(required = true)
     private String type;
 
-    @Field(label = "Code", required = true, length = 64)
+    @Field(required = true)
     private String code;
 
-    @Field(label = "Model Name", length = 256)
+    @Field(length = 256)
     private String modelName;
 
     @Field(label = "Parent Navigation")
     private Long parentId;
 
-    @Field(label = "Description", length = 256)
+    @Field(length = 256)
     private String description;
 
     @Field(label = "Default filters", description = "The default filters at the menu level.", length = 256)
     private String filter;
 
-    @Field(label = "Deleted")
+    @Field
     private Boolean deleted;
 }

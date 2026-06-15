@@ -4,15 +4,15 @@ import com.fasterxml.jackson.annotation.JsonValue;
 import lombok.AllArgsConstructor;
 import lombok.Getter;
 
-import io.softa.framework.orm.annotation.OptionItem;
-import io.softa.framework.orm.annotation.OptionSet;
+import io.softa.framework.base.annotation.OptionItem;
+import io.softa.framework.base.annotation.OptionSet;
 
 /**
  * Document template type.
  */
 @Getter
 @AllArgsConstructor
-@OptionSet(label = "Document Template Type")
+@OptionSet
 public enum DocumentTemplateType {
     @OptionItem(description = "Online Rich Text Editor")
     RICH_TEXT("RichText"),

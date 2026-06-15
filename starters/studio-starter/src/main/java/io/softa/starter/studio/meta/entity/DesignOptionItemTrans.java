@@ -22,15 +22,15 @@ public class DesignOptionItemTrans extends AuditableModel {
     @Field(label = "ID")
     private Long id;
 
-    @Field(label = "Language Code", length = 64, required = true)
+    @Field(required = true)
     private String languageCode;
 
     @Field(label = "Row ID")
     private Long rowId;
 
-    @Field(label = "Label", length = 64)
+    @Field
     private String label;
 
-    @Field(label = "Description", length = 256)
+    @Field(length = 256)
     private String description;
 }

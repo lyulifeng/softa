@@ -32,7 +32,6 @@ import io.softa.starter.studio.release.enums.DesignAppEnvType;
 @Data
 @EqualsAndHashCode(callSuper = true)
 @Model(
-        label = "Design App Env",
         idStrategy = IdStrategy.DISTRIBUTED_LONG
 )
 public class DesignAppEnv extends AuditableModel {
@@ -52,45 +51,45 @@ public class DesignAppEnv extends AuditableModel {
     @Field(label = "Last Deployment", description = "Most recent deployment for this env, regardless of outcome")
     private Long lastDeploymentId;
 
-    @Field(label = "Env Status")
+    @Field
     private DesignAppEnvStatus envStatus;
 
-    @Field(label = "Env Name", required = true, length = 64)
+    @Field(label = "Env Name", required = true)
     private String name;
 
-    @Field(label = "Sequence")
+    @Field
     private Integer sequence;
 
-    @Field(label = "Env Type")
+    @Field
     private DesignAppEnvType envType;
 
-    @Field(label = "Protected Env")
+    @Field
     private Boolean protectedEnv;
 
-    @Field(label = "Active")
+    @Field
     private Boolean active;
 
     @Field(label = "Upgrade API EndPoint", required = true, length = 128)
     private String upgradeEndpoint;
 
-    @Field(label = "Public Key", length = 256)
+    @Field(length = 256)
     private String publicKey;
 
-    @Field(label = "Private Key", length = 512)
+    @Field(length = 256)
     private String privateKey;
 
-    @Field(label = "Auto Upgrade")
+    @Field
     private Boolean autoUpgrade;
 
     @Field(label = "Auto Execute DDL")
     private Boolean autoExecuteDDL;
 
-    @Field(label = "Description", length = 256)
+    @Field(length = 256)
     private String description;
 
-    @Field(label = "Deleted")
+    @Field
     private Boolean deleted;
 
-    @Field(label = "Version")
+    @Field
     private Integer version;
 }

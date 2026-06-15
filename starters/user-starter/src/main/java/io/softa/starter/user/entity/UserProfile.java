@@ -11,6 +11,7 @@ import io.softa.framework.base.enums.Timezone;
 import io.softa.framework.orm.annotation.Field;
 import io.softa.framework.orm.annotation.Model;
 import io.softa.framework.orm.entity.AuditableModel;
+import io.softa.framework.orm.enums.FieldType;
 import io.softa.framework.orm.enums.IdStrategy;
 import io.softa.starter.user.enums.Gender;
 import io.softa.starter.user.enums.UserLayoutDensity;
@@ -21,7 +22,6 @@ import io.softa.starter.user.enums.UserLayoutDensity;
 @Data
 @EqualsAndHashCode(callSuper = true)
 @Model(
-        label = "User Profile",
         idStrategy = IdStrategy.DISTRIBUTED_LONG,
         searchName = {"fullName"}
 )
@@ -39,33 +39,33 @@ public class UserProfile extends AuditableModel {
     @Field(label = "User ID", required = true)
     private Long userId;
 
-    @Field(label = "Full Name", length = 64)
+    @Field
     private String fullName;
 
-    @Field(label = "Chinese Name", length = 64)
+    @Field
     private String chineseName;
 
-    @Field(label = "Birth Date")
+    @Field
     private LocalDate birthDate;
 
-    @Field(label = "Birth Time")
+    @Field
     private LocalTime birthTime;
 
-    @Field(label = "Birth City", length = 64)
+    @Field
     private String birthCity;
 
-    @Field(label = "Gender")
+    @Field
     private Gender gender;
 
-    @Field(label = "Profile Photo File ID")
+    @Field(label = "Profile Photo File ID", fieldType = FieldType.FILE)
     private Long photoId;
 
-    @Field(label = "Language")
+    @Field
     private Language language;
 
-    @Field(label = "Timezone")
+    @Field
     private Timezone timezone;
 
-    @Field(label = "Density")
+    @Field
     private UserLayoutDensity density;
 }
