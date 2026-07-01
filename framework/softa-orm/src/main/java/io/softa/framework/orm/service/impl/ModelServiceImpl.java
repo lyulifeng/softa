@@ -112,6 +112,11 @@ public class ModelServiceImpl<K extends Serializable> implements ModelService<K>
     @Transactional(rollbackFor = Exception.class)
     public List<K> createList(String modelName, List<Map<String, Object>> rows) {
         Assert.allNotNull(rows, "The creation data for model {0} must not be empty: {1}", modelName, rows);
+        // Layer D — reject writes touching blocked-for-write fields.
+        // Runs before any DB work; PermissionException aborts the whole batch.
+        for (Map<String, Object> row : rows) {
+            permissionService.checkWritePayload(modelName, row);
+        }
         this.checkTenantId(modelName, rows);
         // Extracts a set of assigned fields for checking field-level permissions
         Set<String> assignedFields = new HashSet<>();
@@ -145,7 +150,14 @@ public class ModelServiceImpl<K extends Serializable> implements ModelService<K>
     @Transactional(rollbackFor = Exception.class)
     public List<Map<String, Object>> createListAndFetch(String modelName, List<Map<String, Object>> rows, ConvertType convertType) {
         List<K> ids = this.createList(modelName, rows);
-        return this.getRowsWithoutPermissionCheck(modelName, ids, Collections.emptyList(), convertType);
+        List<Map<String, Object>> result = this.getRowsWithoutPermissionCheck(modelName, ids, Collections.emptyList(), convertType);
+        // Layer C POST (Known-Issues H4 fix): getRowsWithoutPermissionCheck
+        // bypasses ModelService.getByIds, so maskResponseValue doesn't fire
+        // via the normal read hook. Apply it explicitly so the *AndFetch
+        // response body has blocked-field values nulled out, matching a
+        // subsequent plain getById.
+        permissionService.maskResponseValue(modelName, result, AccessType.READ);
+        return result;
     }
 
     /**
@@ -520,6 +532,11 @@ public class ModelServiceImpl<K extends Serializable> implements ModelService<K>
         filters = timelineService.appendTimelineFilters(modelName, filters);
         // Append permission data range filters
         filters = permissionService.appendScopeAccessFilters(modelName, filters);
+        // NEVER sentinel from scope compilation → caller has no visible rows;
+        // skip DB entirely.
+        if (Filters.isNever(filters)) {
+            return Collections.emptyList();
+        }
         FlexQuery flexQuery = new FlexQuery(filters);
         return jdbcService.getIds(modelName, ModelConstant.ID, flexQuery);
     }
@@ -580,6 +597,10 @@ public class ModelServiceImpl<K extends Serializable> implements ModelService<K>
         filters = timelineService.appendTimelineFilters(modelName, filters);
         // Append permission data range filters
         filters = permissionService.appendScopeAccessFilters(modelName, filters);
+        // NEVER sentinel from scope compilation → caller has no visible rows.
+        if (Filters.isNever(filters)) {
+            return Collections.emptyList();
+        }
         FlexQuery flexQuery = new FlexQuery(filters);
         // Automatic distinct when querying relational field ids
         flexQuery.setDistinct(true);
@@ -662,6 +683,10 @@ public class ModelServiceImpl<K extends Serializable> implements ModelService<K>
     @Override
     @Transactional(rollbackFor = Exception.class)
     public boolean updateList(String modelName, List<Map<String, Object>> rows) {
+        // Layer D — reject writes touching blocked-for-write fields.
+        for (Map<String, Object> row : rows) {
+            permissionService.checkWritePayload(modelName, row);
+        }
         Set<String> updatableFields = ModelManager.getModelUpdatableFields(modelName);
         if (ContextHolder.getContext().isSkipAutoAudit()) {
             updatableFields.addAll(ModelManager.getModel(modelName).getAuditUpdateFields());
@@ -726,7 +751,10 @@ public class ModelServiceImpl<K extends Serializable> implements ModelService<K>
     public List<Map<String, Object>> updateListAndFetch(String modelName, List<Map<String, Object>> rows, ConvertType convertType) {
         this.updateList(modelName, rows);
         List<K> ids = Cast.of(rows.stream().map(r -> r.get(ModelConstant.ID)).collect(Collectors.toList()));
-        return this.getRowsWithoutPermissionCheck(modelName, ids, Collections.emptyList(), convertType);
+        List<Map<String, Object>> result = this.getRowsWithoutPermissionCheck(modelName, ids, Collections.emptyList(), convertType);
+        // Layer C POST (Known-Issues H4 fix) — see createListAndFetch.
+        permissionService.maskResponseValue(modelName, result, AccessType.READ);
+        return result;
     }
 
     /**
@@ -984,7 +1012,10 @@ public class ModelServiceImpl<K extends Serializable> implements ModelService<K>
     @Transactional(rollbackFor = Exception.class)
     public List<Map<String, Object>> copyByIdsAndFetch(String modelName, List<K> ids, ConvertType convertType) {
         List<K> newIds = this.copyByIds(modelName, ids);
-        return this.getRowsWithoutPermissionCheck(modelName, newIds, Collections.emptyList(), convertType);
+        List<Map<String, Object>> result = this.getRowsWithoutPermissionCheck(modelName, newIds, Collections.emptyList(), convertType);
+        // Layer C POST (Known-Issues H4 fix) — see createListAndFetch.
+        permissionService.maskResponseValue(modelName, result, AccessType.READ);
+        return result;
     }
 
     /**
@@ -1017,18 +1048,33 @@ public class ModelServiceImpl<K extends Serializable> implements ModelService<K>
      */
     @Override
     public List<Map<String, Object>> searchList(String modelName, FlexQuery flexQuery) {
+        // Silently drop blocked-for-read fields from the request (Layer C PRE).
+        // Runs BEFORE checkModelFieldsAccess so users see the fields they DO
+        // have access to, rather than 403-ing on any single blocked field.
+        Collection<String> filteredFields = permissionService.filterReadableFields(
+                modelName, flexQuery.getFields(), AccessType.READ);
+        if (filteredFields != flexQuery.getFields()) {
+            flexQuery.setFields(filteredFields);
+        }
         // Check model and field level permissions
         permissionService.checkModelFieldsAccess(modelName, flexQuery.getFields(), AccessType.READ);
         // Append timeline filters
         Filters filters = timelineService.appendTimelineFilters(modelName, flexQuery);
         // Append permission data range filters
         filters = permissionService.appendScopeAccessFilters(modelName, filters);
+        // NEVER sentinel from scope compilation → caller has no visible rows.
+        if (Filters.isNever(filters)) {
+            return Collections.emptyList();
+        }
         flexQuery.setFilters(filters);
         List<Map<String, Object>> rows = jdbcService.selectByFilter(modelName, flexQuery);
         if (rows.size() > BaseConstant.MAX_BATCH_SIZE) {
             log.error("Model {} `searchList` exceeds the limit of {}, please switch to `searchPage`: {}",
                     modelName, BaseConstant.MAX_BATCH_SIZE, flexQuery);
         }
+        // Mask blocked-field values on the response (Layer C POST).
+        // Recurses into cascade child rows under their own model's rules.
+        permissionService.maskResponseValue(modelName, rows, AccessType.READ);
         return rows;
     }
 
@@ -1084,14 +1130,31 @@ public class ModelServiceImpl<K extends Serializable> implements ModelService<K>
      */
     @Override
     public Page<Map<String, Object>> searchPage(String modelName, FlexQuery flexQuery, Page<Map<String, Object>> page) {
+        // Silently drop blocked-for-read fields from the request (Layer C PRE)
+        Collection<String> filteredFields = permissionService.filterReadableFields(
+                modelName, flexQuery.getFields(), AccessType.READ);
+        if (filteredFields != flexQuery.getFields()) {
+            flexQuery.setFields(filteredFields);
+        }
         // Check model and field level permissions
         permissionService.checkModelFieldsAccess(modelName, flexQuery.getFields(), AccessType.READ);
         // Append timeline filters
         Filters filters = timelineService.appendTimelineFilters(modelName, flexQuery);
         // Append permission data range filters
         filters = permissionService.appendScopeAccessFilters(modelName, filters);
+        // NEVER sentinel from scope compilation → caller has no visible rows.
+        if (Filters.isNever(filters)) {
+            page.setRows(Collections.emptyList());
+            if (page.isCount()) {
+                page.setTotalCount(0L);
+            }
+            return page;
+        }
         flexQuery.setFilters(filters);
-        return jdbcService.selectByPage(modelName, flexQuery, page);
+        Page<Map<String, Object>> result = jdbcService.selectByPage(modelName, flexQuery, page);
+        // Mask blocked-field values on the response (Layer C POST)
+        permissionService.maskResponseValue(modelName, result, AccessType.READ);
+        return result;
     }
 
     /**
@@ -1159,6 +1222,10 @@ public class ModelServiceImpl<K extends Serializable> implements ModelService<K>
         filters = timelineService.appendTimelineFilters(modelName, filters);
         // Append permission data range filters
         filters = permissionService.appendScopeAccessFilters(modelName, filters);
+        // NEVER sentinel from scope compilation → caller has no visible rows.
+        if (Filters.isNever(filters)) {
+            return 0L;
+        }
         return jdbcService.count(modelName, new FlexQuery(filters));
     }
 

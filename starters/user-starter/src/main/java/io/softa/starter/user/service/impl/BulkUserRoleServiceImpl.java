@@ -17,10 +17,14 @@ import io.softa.framework.base.context.ContextHolder;
 import io.softa.framework.orm.domain.Filters;
 import io.softa.starter.user.dto.BulkAddResult;
 import io.softa.starter.user.dto.UserRolePair;
+import io.softa.starter.user.entity.Role;
+import io.softa.starter.user.entity.UserAccount;
 import io.softa.starter.user.entity.UserRoleRel;
 import io.softa.starter.user.enums.RoleSource;
 import io.softa.starter.user.service.BulkUserRoleService;
 import io.softa.starter.user.service.PermissionCacheInvalidator;
+import io.softa.starter.user.service.RoleService;
+import io.softa.starter.user.service.UserAccountService;
 import io.softa.starter.user.service.UserRoleRelService;
 
 /**
@@ -39,6 +43,13 @@ public class BulkUserRoleServiceImpl implements BulkUserRoleService {
 
     private final UserRoleRelService userRoleRelService;
     private final PermissionCacheInvalidator permissionCacheInvalidator;
+    /** Load UserAccount / Role rows scoped by caller's tenant to reject
+     *  cross-tenant user_role_rel writes (Known-Issues H2). Both services
+     *  are multi-tenant models — their {@code searchList} auto-appends
+     *  {@code tenant_id = caller.tenantId} via WhereBuilder, so a probe
+     *  {@code IN(userIds)} returns only ids native to caller's tenant. */
+    private final UserAccountService userAccountService;
+    private final RoleService roleService;
 
     @Override
     @Transactional
@@ -63,6 +74,31 @@ public class BulkUserRoleServiceImpl implements BulkUserRoleService {
             if (p == null || p.getUserId() == null || p.getRoleId() == null) continue;
             userIds.add(p.getUserId());
             roleIds.add(p.getRoleId());
+        }
+
+        // Tenant validation (Known-Issues H2): the caller's payload can carry
+        // arbitrary userIds / roleIds. Without this check, tenant A admin
+        // could POST a tenant B userId and land a user_role row in tenant A
+        // that references a foreign-tenant user — next time that foreign
+        // user logs in they inherit tenant A's role grants. Probe both
+        // reference models scoped by caller.tenantId (auto-appended by
+        // WhereBuilder); any id absent from the probe result is cross-tenant
+        // (or non-existent, which we don't distinguish to avoid info-leak).
+        Set<Long> validUserIds = new HashSet<>();
+        if (!userIds.isEmpty()) {
+            List<UserAccount> accounts = userAccountService.searchList(
+                    new Filters().in(UserAccount::getId, new ArrayList<>(userIds)));
+            for (UserAccount a : accounts) {
+                if (a.getId() != null) validUserIds.add(a.getId());
+            }
+        }
+        Set<Long> validRoleIds = new HashSet<>();
+        if (!roleIds.isEmpty()) {
+            List<Role> rolesInTenant = roleService.searchList(
+                    new Filters().in(Role::getId, new ArrayList<>(roleIds)));
+            for (Role r : rolesInTenant) {
+                if (r.getId() != null) validRoleIds.add(r.getId());
+            }
         }
 
         // Probe for rows that ALREADY exist with this source. The schema
@@ -95,6 +131,18 @@ public class BulkUserRoleServiceImpl implements BulkUserRoleService {
                         .userId(p == null ? null : p.getUserId())
                         .roleId(p == null ? null : p.getRoleId())
                         .reason("INVALID_PAIR")
+                        .build());
+                continue;
+            }
+            // H2: cross-tenant / non-existent user or role → reject silently.
+            // "Silently" = same "NOT_FOUND" reason for both cases so the caller
+            // can't distinguish "user exists in another tenant" from "user
+            // doesn't exist at all" (info-leak hygiene per issue writeup).
+            if (!validUserIds.contains(p.getUserId()) || !validRoleIds.contains(p.getRoleId())) {
+                skipped.add(BulkAddResult.SkippedItem.builder()
+                        .userId(p.getUserId())
+                        .roleId(p.getRoleId())
+                        .reason("NOT_FOUND")
                         .build());
                 continue;
             }

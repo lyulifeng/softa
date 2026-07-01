@@ -103,19 +103,26 @@ public class SensitiveFieldSetCache {
             sets = modelService.searchList(
                     "SensitiveFieldSet", new FlexQuery(), SensitiveFieldSet.class);
         } catch (Throwable t) {
-            // Don't take the app down on a single bad row — fail-OPEN at
-            // load time (no extra masking applied / no write rejected).
-            // The startup PermissionRegistryValidator runs after this and
-            // will flag any sensitive_field_set integrity violation with a
-            // clear message; here we just log the framework error so ops
-            // can diagnose, then proceed with empty caches.
-            log.error("SensitiveFieldSetCache.reload — failed to load sensitive_field_set rows; sensitive-field gates will be inert until the next successful reload", t);
-            allSensitiveByModel.set(Map.of());
-            setIdToFieldCodes.set(Map.of());
-            setIdToModel.set(Map.of());
-            setIdToName.set(Map.of());
-            setIdsByAttachedModel.set(Map.of());
-            return;
+            // Known-Issues M5: fail-LOUD, not fail-OPEN. Previously we caught
+            // and left the caches empty — Layer C mask (`hasSensitiveFieldsOn`
+            // returns false for every model) and Layer D write guard (same
+            // signal) both silently turn OFF, so every sensitive field
+            // becomes readable and writable for the lifetime of this pod
+            // (until the next redeploy — {@code sensitive_field_set} is
+            // seed data with no runtime reload).
+            //
+            // Throwing here causes Spring bean init to fail → pod fails its
+            // readiness probe → doesn't accept traffic → K8s rolls it back
+            // or the operator restarts once the DB is reachable. Other pods
+            // that loaded successfully keep serving. This is the correct
+            // defense-in-depth: a DB flap during rolling deploy must NOT
+            // leave a working-looking pod with sensitive-field enforcement
+            // permanently disabled.
+            log.error("SensitiveFieldSetCache.reload — failed to load sensitive_field_set rows; "
+                    + "refusing to start with an empty cache (would disable Layer C mask + Layer D write guard). "
+                    + "Fix the DB / migration and restart.", t);
+            throw new IllegalStateException(
+                    "SensitiveFieldSetCache load failed — cannot start with sensitive-field enforcement disabled", t);
         }
         Map<String, Set<String>> byModel = new HashMap<>();
         Map<String, Set<String>> bySetId = new HashMap<>();

@@ -26,7 +26,17 @@ import lombok.Data;
 public class PermissionInterceptorProperties {
 
     /** Truly public endpoints — no authentication required at all
-     *  (login / oauth callback / health). */
+     *  (login / oauth callback / health).
+     *
+     *  <p><b>Two-layer configuration</b> (Known-Issues M3): this list only
+     *  bypasses the <em>permission-check</em> layer ({@code PermissionInterceptor}).
+     *  The upstream {@code ContextScopeFilter} — which runs at
+     *  {@code HIGHEST_PRECEDENCE} — requires the path also be declared as
+     *  ANONYMOUS at the {@code IdentityResolver} layer, otherwise the
+     *  request is rejected before permission check runs at all. Framework
+     *  hardcodes {@code /login/**}; anything else you list here MUST also be
+     *  added to {@code web.identity.additional-anonymous-patterns} (yml).
+     *  See {@link io.softa.framework.web.filter.context.IdentityResolver}. */
     private List<String> publicUriPatterns = List.of();
 
     /** Authenticated-bypass — caller must be logged in, but the endpoint

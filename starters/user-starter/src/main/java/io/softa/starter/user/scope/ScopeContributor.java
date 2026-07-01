@@ -1,6 +1,7 @@
 package io.softa.starter.user.scope;
 
 import java.util.List;
+import java.util.Set;
 
 import io.softa.framework.orm.domain.Filters;
 import io.softa.starter.user.dto.Principal;
@@ -39,19 +40,62 @@ public interface ScopeContributor {
 
     /**
      * Anchor field names this scope type uses on the queried model.
-     * {@link ScopeApplicabilityResolver} ORs them with model metadata to
-     * decide whether the scope is applicable — admins should not be
-     * offered DEPT_SUBTREE on a model that has no {@code departmentId}
-     * field, for instance.
+     * Feeds the default {@link #isApplicableTo} check — override that
+     * method directly when applicability doesn't reduce to a flat
+     * field-name lookup.
      *
      * <p>Return {@link List#of()} for universally-applicable scopes
-     * (ALL / CUSTOM are special-cased; CREATED_BY_SELF's
-     * {@code createdId} is on every AuditableModel descendant so listing
-     * it still works).
+     * (in which case override {@link #isApplicableTo} to return
+     * {@code true}) or when applicability is decided entirely by an
+     * override.
      *
      * <p>Multiple fields = OR semantics (any present field enables).
      */
     List<String> applicableFields();
+
+    /**
+     * Whether this contributor's scope can be applied to {@code modelName}.
+     * Decided by {@link ScopeApplicabilityResolver} at rule-compile time
+     * and at Wizard-render time — a scope reported as inapplicable is
+     * fail-closed in the compiler and hidden in the FE checkbox grid.
+     *
+     * <h3>Default check</h3>
+     * The default implementation is a flat OR over {@link #applicableFields()}
+     * against the model's direct field names — sufficient for the simple
+     * cases (SELF wants {@code employeeId}, LEGAL_ENTITY wants
+     * {@code legalEntityId}, etc.).
+     *
+     * <h3>When to override</h3>
+     * <ul>
+     *   <li><b>Universal applicability</b>: {@code CustomScopeContributor}
+     *       and {@code CreatedBySelfScopeContributor} return {@code true}
+     *       unconditionally.</li>
+     *   <li><b>Cascade-path resolution</b>: a HR-domain contributor
+     *       whose scope reaches the anchor field indirectly
+     *       (e.g. {@code LeaveRequest → employeeId.departmentId} for
+     *       DEPT_SUBTREE) must return {@code true} even though the
+     *       model has no direct {@code departmentId} field. Consult
+     *       the domain-specific cascade resolver in the override.</li>
+     *   <li><b>Model-identity special cases</b>: SELF on the
+     *       {@code Employee} model itself matches on {@code id}, not
+     *       {@code employeeId} — that knowledge belongs in the
+     *       contributor (which owns the domain), not in the framework
+     *       resolver.</li>
+     * </ul>
+     *
+     * @param modelName        queried model's {@code MetaModel.modelName}
+     * @param modelFieldNames  direct field names on the model (from
+     *                         {@code ModelManager.getModelFields}) — passed
+     *                         in as a Set for O(1) contains lookups.
+     */
+    default boolean isApplicableTo(String modelName, Set<String> modelFieldNames) {
+        List<String> fields = applicableFields();
+        if (fields == null || fields.isEmpty()) return false;
+        for (String field : fields) {
+            if (modelFieldNames.contains(field)) return true;
+        }
+        return false;
+    }
 
     /**
      * Compile this rule into a {@link Filters} for the queried model.

@@ -7,15 +7,14 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 
-import org.springframework.beans.factory.ObjectProvider;
-import org.springframework.context.event.EventListener;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionTemplate;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import tools.jackson.databind.JsonNode;
 
-import io.softa.framework.base.context.ContextHolder;
 import io.softa.framework.base.enums.Operator;
 import io.softa.framework.base.utils.JsonUtils;
 import io.softa.framework.orm.domain.Filters;
@@ -24,24 +23,27 @@ import io.softa.framework.orm.service.ModelService;
 import io.softa.starter.user.entity.Role;
 import io.softa.starter.user.entity.UserRoleRel;
 import io.softa.starter.user.enums.RoleSource;
-import io.softa.starter.user.event.EmployeeChangedEvent;
 import io.softa.starter.user.service.DynamicRoleSyncJob;
-import io.softa.starter.user.service.EmployeeRelationsService;
 import io.softa.starter.user.service.RoleService;
 import io.softa.starter.user.service.UserRoleRelService;
 import io.softa.starter.user.util.ModelRefIds;
 
 /**
  * DynamicRoleSyncJob — single source of truth for syncing the DYNAMIC rows
- * in user_role. Called from three places:
+ * in user_role. Callers:
  *   1. RoleController wizard save (inline, per-role) — admins see synced
  *      members on the detail page immediately.
- *   2. {@link #syncAll()} via a `sys_cron` row + Pulsar consumer in the
- *      assembly module (default name: "DynamicRoleSync") — tenant-wide
- *      rescan that catches employee data changes between role saves.
- *   3. {@link #onEmployeeChanged} event listener — re-evaluates after a
- *      hire / transfer / status change so the affected user's roles update
- *      without waiting for the next cron tick.
+ *   2. {@link #syncAll()} via a {@code sys_cron} row + Pulsar consumer in
+ *      the assembly module (default name: {@code "DynamicRoleSync"}) —
+ *      tenant-wide rescan that catches employee data changes between role
+ *      saves.
+ *   3. {@link #syncMembershipForUser} — per-user re-evaluation, invoked
+ *      by domain-specific bridges when they see an HR-side change that
+ *      might shift dynamic-role membership (e.g. an
+ *      {@code HrEventBridge} listening on the HR module's own
+ *      {@code EmployeeChangedEvent}). The framework knows nothing about
+ *      HR events; the bridge translates its own domain event into this
+ *      generic {@code (tenantId, userId)} call.
  *
  * MANUAL rows are never touched. Each pass:
  *   - DELETE WHERE role_id = R AND source = 'Dynamic'
@@ -54,18 +56,31 @@ import io.softa.starter.user.util.ModelRefIds;
  */
 @Slf4j
 @Service
-@RequiredArgsConstructor
 public class DynamicRoleSyncJobImpl implements DynamicRoleSyncJob {
 
     private final RoleService roleService;
     private final UserRoleRelService userRoleRelService;
     private final ModelService<?> modelService;
-    /** Optional — present when corehr is on the classpath. Used by
-     *  {@link #onEmployeeChanged} to resolve employeeId → (userId, tenantId)
-     *  so the per-employee re-evaluation is scoped to the right tenant.
-     *  When absent, the event listener degrades to a no-op (the next
-     *  scheduled {@link #syncAll()} pass picks up the change). */
-    private final ObjectProvider<EmployeeRelationsService> employeeRelations;
+    /** Explicit tx boundary for {@link #syncRoleInternal} — see the method's
+     *  Javadoc for why this doesn't rely on Spring's {@code @Transactional}
+     *  proxy interception. Known-Issues Lat3.
+     *
+     *  <p>Built from the container's {@link PlatformTransactionManager}
+     *  (Spring Boot auto-registers one; {@code TransactionTemplate} is not
+     *  auto-registered so we build it here rather than expose an
+     *  @{@code Bean} for one call site). */
+    private final TransactionTemplate transactionTemplate;
+
+    public DynamicRoleSyncJobImpl(
+            RoleService roleService,
+            UserRoleRelService userRoleRelService,
+            ModelService<?> modelService,
+            PlatformTransactionManager transactionManager) {
+        this.roleService = roleService;
+        this.userRoleRelService = userRoleRelService;
+        this.modelService = modelService;
+        this.transactionTemplate = new TransactionTemplate(transactionManager);
+    }
 
     @Override
     @Transactional
@@ -84,12 +99,42 @@ public class DynamicRoleSyncJobImpl implements DynamicRoleSyncJob {
      * getById when callers (controller / event listener) already have the
      * Role in hand.
      */
-    @Transactional
     private int syncRoleEntity(Role role) {
         return syncRoleInternal(role);
     }
 
+    /**
+     * Delete-then-insert the DYNAMIC {@code user_role} rows for one role.
+     * Both operations MUST run in a single transaction — a partial write
+     * (delete succeeds, insert fails) would leave the role with zero
+     * DYNAMIC members until the next sync.
+     *
+     * <h3>Explicit {@code TransactionTemplate} boundary (Known-Issues Lat3)</h3>
+     * Not annotated {@code @Transactional}: Spring's proxy-based AOP does
+     * not intercept private methods, and {@code @Transactional} on public
+     * callers ({@link #syncRole}, {@link #syncRoleEntity}) is fragile —
+     * self-calls from other methods in this class (e.g. {@link #syncAll}
+     * calling {@code syncRoleEntity}) bypass the proxy, so the "public
+     * caller carries the annotation" pattern silently loses atomicity for
+     * every self-call site. Historically this class relied on that pattern
+     * and would have broken any time a new caller was added inside this
+     * class.
+     *
+     * <p>{@link TransactionTemplate} runs the delete+insert unit inside a
+     * transaction regardless of how the method was reached — self-call,
+     * proxy call, inline invocation from {@link #syncAll}. If the outer
+     * caller already holds an active transaction, the default REQUIRED
+     * propagation reuses it (nested logical tx); no double-commit or
+     * savepoint churn. Failures propagate as-is; the tx rolls back.
+     */
     private int syncRoleInternal(Role role) {
+        Integer result = transactionTemplate.execute(status -> syncRoleInternalUnsafe(role));
+        return result == null ? 0 : result;
+    }
+
+    /** Inner body of {@link #syncRoleInternal}; must run inside the tx
+     *  established by the caller. Doesn't manage its own tx boundary. */
+    private int syncRoleInternalUnsafe(Role role) {
         // 1. Snapshot the manual user-id set BEFORE the delete so we can
         //    fold both look-ups into the same round-trip pattern (manual
         //    + dynamic share the same role filter; ordering of these two
@@ -149,6 +194,37 @@ public class DynamicRoleSyncJobImpl implements DynamicRoleSyncJob {
         return rows.size();
     }
 
+    /**
+     * Nightly cron entry — recompute DYNAMIC membership for every role
+     * with a rule. Runs per-role: reads roles under caller tenant, then
+     * for each one queries Employee under {@code dynamicFilter} and
+     * rewrites {@code user_role} DYNAMIC rows.
+     *
+     * <h3>⚠️ DO NOT annotate {@code @CrossTenant}</h3>
+     * <b>Known-Issues Lat1</b>: adding {@code @CrossTenant} looks
+     * innocuous (cron typically wants "all tenants"), but the
+     * {@link io.softa.framework.orm.aspect.TenantAspect#crossTenant}
+     * side-effect also flips {@code skipPermissionCheck=true} on the
+     * context — which propagates through the {@code applyPerRole} path
+     * and lets {@code modelService.searchList("Employee", dynamicFilter)}
+     * run WITHOUT the tenant filter. Consequence: a dynamic role in
+     * tenant A whose rule happens to also match Employees in tenant B
+     * would pull those foreign-tenant employees into tenant A's
+     * {@code user_role_rel}, silently granting them tenant A's role
+     * permissions the next time they log in.
+     *
+     * <p>If you ever need cross-tenant sync, do it explicitly:
+     * <pre>{@code
+     * for (Long tenantId : tenantInfoService.getActiveTenantIds()) {
+     *     Context ctx = ContextHolder.cloneContext();
+     *     ctx.setTenantId(tenantId);
+     *     ctx.setCrossTenant(false);
+     *     ContextHolder.callWith(ctx, dynamicRoleSyncJob::syncAll);
+     * }
+     * }</pre>
+     * or annotate the caller with {@code @PerTenant}. Either preserves
+     * per-tenant isolation of the Employee lookup.
+     */
     @Override
     public void syncAll() {
         // Walk every role with a non-null dynamicFilter. Active flag is NOT
@@ -169,85 +245,56 @@ public class DynamicRoleSyncJobImpl implements DynamicRoleSyncJob {
         log.info("DynamicRoleSyncJob.syncAll — done, {} total DYNAMIC grants across all roles", totalGrants);
     }
 
-    /**
-     * Event entry point — re-evaluate role membership after a hire /
-     * transfer / status change. Scope: this tenant only, and within this
-     * tenant, only re-evaluate dynamic roles whose filter could affect
-     * THIS employee.
-     *
-     * <p>Filter introspection is expensive, so we settle for "re-evaluate
-     * every dynamic role in this tenant for this employee" (vs. the old
-     * full cross-tenant {@code syncAll()}). For each role we ask the
-     * Employee model whether this employeeId currently matches the
-     * dynamic filter; if it does we ensure a (userId, roleId, DYNAMIC)
-     * row exists, otherwise we delete one if present. Manual rows are
-     * never touched. The scheduled {@link #syncAll()} job remains the
-     * catch-all for anything an event missed.
-     */
-    @EventListener
+    @Override
     @Transactional
-    public void onEmployeeChanged(EmployeeChangedEvent event) {
-        if (event == null || event.employeeId() == null) return;
-        log.debug("DynamicRoleSyncJob.onEmployeeChanged — employeeId={}, kind={}",
-                event.employeeId(), event.kind());
+    public int syncMembershipForUser(Long tenantId, Long userId) {
+        if (userId == null) return 0;
 
-        EmployeeRelationsService rel = employeeRelations.getIfAvailable();
-        if (rel == null) {
-            log.debug("DynamicRoleSyncJob.onEmployeeChanged — no EmployeeRelationsService on classpath; deferring to scheduled syncAll");
-            return;
-        }
-        EmployeeRelationsService.UserHandle handle = rel.findUserByEmployeeId(event.employeeId());
-        if (handle == null || handle.userId() == null) {
-            log.debug("DynamicRoleSyncJob.onEmployeeChanged — employeeId={} has no linked user; nothing to evaluate",
-                    event.employeeId());
-            return;
-        }
-        Long tenantId = handle.tenantId() != null
-                ? handle.tenantId()
-                : (ContextHolder.getContext() == null ? null : ContextHolder.getContext().getTenantId());
-        Long userId = handle.userId();
-
-        // Load every dynamic role in this tenant. Cross-tenant roles
-        // can't apply to this employee — their tenantId scopes them out.
+        // Load every dynamic role scoped to this tenant. Cross-tenant roles
+        // can't apply to this user — their tenantId scopes them out. When
+        // tenantId is null we fall back to a global scan (bridge failed to
+        // resolve tenant; the safe move is to check every role).
         Filters roleFilter = new Filters().isSet(Role::getDynamicFilter);
         if (tenantId != null) roleFilter.eq(Role::getTenantId, tenantId);
         List<Role> roles = roleService.searchList(roleFilter);
-        if (roles.isEmpty()) return;
+        if (roles.isEmpty()) return 0;
 
         int added = 0;
         int removed = 0;
         for (Role role : roles) {
             try {
-                if (applyPerEmployee(role, event.employeeId(), userId)) added++;
+                if (applyPerUser(role, userId)) added++;
                 else removed += removeDynamicIfPresent(role.getId(), userId);
             } catch (Exception e) {
-                log.error("DynamicRoleSyncJob.onEmployeeChanged — role {} eval failed for employeeId={}; continuing",
-                        role.getId(), event.employeeId(), e);
+                log.error("DynamicRoleSyncJob.syncMembershipForUser — role {} eval failed for userId={}; continuing",
+                        role.getId(), userId, e);
             }
         }
-        log.info("DynamicRoleSyncJob.onEmployeeChanged — tenantId={}, employeeId={}, userId={}, +{} / -{} dynamic grants across {} role(s)",
-                tenantId, event.employeeId(), userId, added, removed, roles.size());
+        log.info("DynamicRoleSyncJob.syncMembershipForUser — tenantId={}, userId={}, +{} / -{} dynamic grants across {} role(s)",
+                tenantId, userId, added, removed, roles.size());
+        return added + removed;
     }
 
     /**
-     * Returns true iff the employee currently matches this role's dynamic
+     * Returns true iff the user currently satisfies this role's dynamic
      * filter (including the standard active-userId safety clauses). When
-     * true, ensure a (userId, roleId, DYNAMIC) row exists — unless the
-     * user already has a MANUAL row for this role (Manual takes precedence,
-     * unique-key collision would result otherwise).
+     * true, ensures a {@code (userId, roleId, DYNAMIC)} row exists — unless
+     * the user already has a MANUAL row for this role (Manual takes
+     * precedence).
      */
-    private boolean applyPerEmployee(Role role, Long employeeId, Long userId) {
+    private boolean applyPerUser(Role role, Long userId) {
         JsonNode rule = role.getDynamicFilter();
         if (rule == null || rule.isNull() || !rule.isArray()) return false;
         Object filterList = JsonUtils.jsonNodeToObject(rule);
         if (!(filterList instanceof List<?> list)) return false;
         Filters filters = Filters.of(list);
         if (filters == null) return false;
-        // AND in the same safety clauses syncRoleInternal uses, plus the
-        // single-employee anchor — we're asking "does THIS employee match".
+        // AND the safety clauses (userId set + Active status) plus the
+        // single-user anchor — we're asking "does the Employee whose
+        // userId matches this user satisfy the rule?".
         filters.and(Filters.of("userId", Operator.IS_SET, null))
                 .and(Filters.of("userId.status", Operator.EQUAL, "Active"))
-                .and(Filters.of("id", Operator.EQUAL, employeeId));
+                .and(Filters.of("userId", Operator.EQUAL, userId));
         long matches = modelService.count("Employee", filters);
         if (matches <= 0) return false;
 
@@ -275,8 +322,8 @@ public class DynamicRoleSyncJobImpl implements DynamicRoleSyncJob {
         return true;
     }
 
-    /** Remove the (userId, roleId, DYNAMIC) row if one exists. Manual rows
-     *  are intentionally left intact. Returns count actually deleted. */
+    /** Remove the {@code (userId, roleId, DYNAMIC)} row if one exists. Manual
+     *  rows are intentionally left intact. Returns count actually deleted. */
     private int removeDynamicIfPresent(Long roleId, Long userId) {
         List<UserRoleRel> existing = userRoleRelService.searchList(
                 new Filters().eq(UserRoleRel::getRoleId, roleId)

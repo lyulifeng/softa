@@ -1,5 +1,6 @@
 package io.softa.starter.user.scope.contributor;
 
+import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -40,10 +41,21 @@ import io.softa.starter.user.scope.ScopeContributor;
  * </ul>
  *
  * <h3>Failure semantics</h3>
- * Any unresolved ref (unknown key, or known key but value missing) →
- * whole rule degrades to empty filter. Partial substitution is unsafe:
- * a leftover {@code "$principal.xxx"} literal would silently match
- * arbitrary string rows.
+ * <p>Leaf conditions and AND-composites: an unresolved ref (unknown
+ * key, or known key but value missing) invalidates the entire sub-tree.
+ * Leaving a {@code "$principal.xxx"} literal would silently match
+ * arbitrary string rows, so we drop the whole conjunction.
+ *
+ * <p>OR-composites (Known-Issues M7): substituted per-disjunct. A
+ * disjunct that fails to resolve is dropped; sibling disjuncts continue.
+ * This preserves the "at least one of these is my row" fallback pattern
+ * — e.g. {@code [["createdId","=","$principal.userId"], "OR",
+ * ["assigneeId","=","$principal.employeeId"]]} for a pure user (no
+ * employeeId) keeps the {@code createdId = userId} branch alive instead
+ * of degrading the whole rule to 0 rows.
+ *
+ * <p>An OR-composite where <em>every</em> disjunct fails still degrades
+ * to empty — safe default.
  */
 @Slf4j
 @Component
@@ -81,9 +93,17 @@ public class CustomScopeContributor implements ScopeContributor {
 
     @Override
     public List<String> applicableFields() {
-        // CUSTOM is universally applicable — admin can author any filter.
-        // ApplicabilityResolver special-cases CUSTOM (always enabled).
+        // Empty on purpose — CUSTOM is universally applicable. The
+        // default isApplicableTo check would treat empty as
+        // "never applicable", so we override the check below.
         return List.of();
+    }
+
+    @Override
+    public boolean isApplicableTo(String modelName, java.util.Set<String> modelFieldNames) {
+        // CUSTOM lets admins author any Filters expression — the filter
+        // itself is validated at compile time. Applicable to every model.
+        return true;
     }
 
     @Override
@@ -101,10 +121,18 @@ public class CustomScopeContributor implements ScopeContributor {
         }
     }
 
+    private static final String LOGIC_OR = "OR";
+    private static final String LOGIC_AND = "AND";
+
     /** Recursively walk the scopeExpr JSON tree and replace every
      *  {@code "$principal.<field>"} string leaf with the resolved value.
-     *  Returns the substituted tree, or {@code null} if any ref can't be
-     *  resolved (unknown ref / required context missing). */
+     *  Returns the substituted tree, or {@code null} if the whole tree
+     *  degraded (see class-level Failure semantics).
+     *
+     *  <p>An array containing top-level {@code "OR"} logic tokens is
+     *  substituted per-disjunct — failed disjuncts are dropped, surviving
+     *  ones stay. All other arrays (leaf tuples like {@code ["field","=",val]},
+     *  AND-composites, argument lists) fail-hard on any missing ref. */
     private JsonNode substitutePrincipalRefs(JsonNode node, Principal principal) {
         if (node == null) return null;
         if (node.isString()) {
@@ -119,6 +147,9 @@ public class CustomScopeContributor implements ScopeContributor {
             return JsonNodeFactory.instance.textNode(resolved.toString());
         }
         if (node.isArray()) {
+            if (containsTopLevelOr(node)) {
+                return substituteOrComposite(node, principal);
+            }
             ArrayNode arr = JsonNodeFactory.instance.arrayNode(node.size());
             for (JsonNode child : node) {
                 JsonNode sub = substitutePrincipalRefs(child, principal);
@@ -137,6 +168,69 @@ public class CustomScopeContributor implements ScopeContributor {
             return obj;
         }
         return node;   // Number / Boolean / Null literals pass through
+    }
+
+    /** True iff {@code arr} has a direct {@code "OR"} string child.
+     *  Case-sensitive, matches the framework's filter DSL convention.
+     *  {@code "AND"} at the top level is treated as a strict AND-composite
+     *  by the caller (any child failure invalidates the whole array). */
+    private static boolean containsTopLevelOr(JsonNode arr) {
+        for (JsonNode child : arr) {
+            if (child != null && child.isString() && LOGIC_OR.equals(child.asString())) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
+     * Substitute an OR-composite array: split by {@code "OR"} tokens,
+     * substitute each disjunct independently, drop failed disjuncts, and
+     * re-assemble surviving ones. Returns null when every disjunct fails
+     * (whole rule degrades — safe default).
+     *
+     * <p>Preserves the top-level array shape when possible: a single
+     * surviving disjunct is returned unwrapped (avoids nesting an OR
+     * around one child which would confuse the downstream parser).
+     */
+    private JsonNode substituteOrComposite(JsonNode arr, Principal principal) {
+        List<JsonNode> disjuncts = new ArrayList<>();
+        List<JsonNode> currentDisjunct = new ArrayList<>();
+        for (JsonNode child : arr) {
+            if (child != null && child.isString() && LOGIC_OR.equals(child.asString())) {
+                disjuncts.add(collapseDisjunct(currentDisjunct));
+                currentDisjunct = new ArrayList<>();
+            } else {
+                currentDisjunct.add(child);
+            }
+        }
+        disjuncts.add(collapseDisjunct(currentDisjunct));
+
+        List<JsonNode> substituted = new ArrayList<>();
+        for (JsonNode disjunct : disjuncts) {
+            JsonNode sub = substitutePrincipalRefs(disjunct, principal);
+            if (sub != null) substituted.add(sub);
+            else log.debug("CustomScope — dropping OR-disjunct with unresolved $principal ref");
+        }
+        if (substituted.isEmpty()) return null;
+        if (substituted.size() == 1) return substituted.get(0);
+        ArrayNode out = JsonNodeFactory.instance.arrayNode();
+        for (int i = 0; i < substituted.size(); i++) {
+            if (i > 0) out.add(JsonNodeFactory.instance.textNode(LOGIC_OR));
+            out.add(substituted.get(i));
+        }
+        return out;
+    }
+
+    /** Wrap disjunct fragments back into an array, or unwrap a single element.
+     *  {@code [a]} becomes {@code a}; multi-element fragments become
+     *  {@code [a, b, ...]}. Empty fragment (adjacent OR tokens) returns an
+     *  empty ArrayNode — will fail substitution → dropped. */
+    private static JsonNode collapseDisjunct(List<JsonNode> fragment) {
+        if (fragment.size() == 1) return fragment.get(0);
+        ArrayNode arr = JsonNodeFactory.instance.arrayNode(fragment.size());
+        for (JsonNode f : fragment) arr.add(f);
+        return arr;
     }
 
     /** Dispatch to the framework-built-in userId path or to a registered

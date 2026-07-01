@@ -8,6 +8,7 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.context.annotation.Lazy;
 import org.springframework.stereotype.Service;
+import lombok.extern.slf4j.Slf4j;
 
 import io.softa.framework.base.context.ContextHolder;
 import io.softa.framework.base.exception.BusinessException;
@@ -29,6 +30,7 @@ import io.softa.starter.user.service.UserRoleRelService;
  * {@link #deleteByFilters}, so it covers all delete paths whether they go
  * through bulk revoke, the wizard "rewrite" flow, or a custom service call.
  */
+@Slf4j
 @Service
 public class UserRoleRelServiceImpl extends EntityServiceImpl<UserRoleRel, Long> implements UserRoleRelService {
 
@@ -108,6 +110,19 @@ public class UserRoleRelServiceImpl extends EntityServiceImpl<UserRoleRel, Long>
         if (userIds == null || userIds.isEmpty()) return;
         Long tenantId = ContextHolder.getContext() == null ? null
                 : ContextHolder.getContext().getTenantId();
+        if (tenantId == null) {
+            // Known-Issues H10: publisher without a bound tenant context.
+            // Downstream evictBatch (see PermissionCacheInvalidatorImpl) skips
+            // when tenantId is null → cache stays stale for the affected
+            // users up to 1h TTL. Log loudly so operators can trace which
+            // code path (scheduled job, async pool, test fixture, migration)
+            // is missing a ContextHolder.callWith(bootstrapCtx, ...) wrapper.
+            // We do NOT throw — the write itself is legitimate; refusing to
+            // publish would silently swallow the miss instead of surfacing it.
+            log.warn("UserRoleRel change publisher — null tenantId; cache eviction "
+                    + "will be skipped for userIds={}. Wrap the caller in "
+                    + "ContextHolder.callWith(bootstrapCtx, ...) to fix.", userIds);
+        }
         events.publishEvent(UserRoleRelChangedEvent.forUsers(tenantId, userIds));
     }
 

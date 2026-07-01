@@ -37,11 +37,16 @@ import io.softa.starter.user.enums.ScopeType;
  * concepts; it just dispatches by ScopeType.
  *
  * <h3>Fail-closed semantics</h3>
- * When a rule depends on principal state that's missing (e.g. SELF
- * without an EmployeeContext extension, CUSTOM with an unresolvable
- * {@code $principal.xxx} ref), the contributor returns
- * {@link Filters#EMPTY} — yields no rows rather than leaking the whole
- * table.
+ * Contributors signal "this rule degraded" by returning
+ * {@code new Filters()} (EMPTY-typed). The OR-merge in
+ * {@link #compile(java.util.List, PermissionInfo, String)} skips those. If
+ * every rule degrades, {@code compile} emits {@link Filters#never()}
+ * (NEVER-typed) at its exit — a guaranteed-false predicate that
+ * {@code ModelServiceImpl} short-circuits into an empty result before
+ * hitting the DB, and that {@code WhereBuilder} otherwise emits as
+ * {@code 1=0}. This closes the C1 gap where {@link Filters#EMPTY} was
+ * silently dropped by {@code combine}/{@code WhereBuilder}, leaking the
+ * whole table.
  */
 @Slf4j
 @Component
@@ -85,12 +90,14 @@ public final class ScopeRuleCompiler {
      * Compile the rules into one OR-combined Filters. Returns:
      * <ul>
      *   <li>{@code null} — any rule is ALL → no scope filter (caller appends nothing).</li>
-     *   <li>{@link Filters#EMPTY} — rules list is empty OR every rule degraded to EMPTY.</li>
+     *   <li>{@link Filters#never()} — rules list is empty OR every rule degraded.
+     *       Caller ({@code ModelServiceImpl}) short-circuits into an empty result
+     *       before hitting the DB.</li>
      *   <li>otherwise — OR-merged Filters expression.</li>
      * </ul>
      */
     public Filters compile(List<ScopeRule> rules, PermissionInfo pi, String modelName) {
-        if (rules == null || rules.isEmpty()) return emptyFilter();
+        if (rules == null || rules.isEmpty()) return Filters.never();
         for (ScopeRule r : rules) {
             if (r.getScopeType() == ScopeType.ALL) return null;
         }
@@ -103,7 +110,7 @@ public final class ScopeRuleCompiler {
             if (Filters.isEmpty(one)) continue;
             out = (out == null) ? one : out.or(one);
         }
-        return out == null ? emptyFilter() : out;
+        return out == null ? Filters.never() : out;
     }
 
     private Filters compileOne(ScopeRule rule, Principal principal, String modelName) {
@@ -135,7 +142,13 @@ public final class ScopeRuleCompiler {
         }
     }
 
-    /** Empty Filters — matches no rows. */
+    /**
+     * Internal degraded-rule marker (EMPTY-typed) — signals "this single rule
+     * degraded" to the OR-merge loop in {@link #compile}, which skips it via
+     * {@link Filters#isEmpty}. NOT a fail-closed sentinel — if every rule
+     * degrades, {@code compile}'s exit converts to {@link Filters#never()}.
+     * Callers outside this class must use {@code Filters.never()} directly.
+     */
     private static Filters emptyFilter() {
         return new Filters();
     }

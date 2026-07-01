@@ -68,6 +68,16 @@ public abstract class ESServiceImpl<T> implements ESService<T> {
      * @return a page of indexed data
      */
     public Page<T> searchPage(Filters filters, Orders orders, Page<T> page) {
+        // Fail-closed sentinel from upstream scope compilation → no rows visible.
+        // ES service is not currently wired to PermissionService.appendScopeAccessFilters,
+        // so NEVER shouldn't reach here today; defense in depth in case it does.
+        if (Filters.isNever(filters)) {
+            page.setRows(java.util.Collections.emptyList());
+            if (page.isCount()) {
+                page.setTotalCount(0L);
+            }
+            return page;
+        }
         Criteria criteria = this.convertFilters(filters);
         Query query = new CriteriaQuery(criteria);
         // ES offset is started from 0, so the calculation is '(page - 1) * pageSize'

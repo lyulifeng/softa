@@ -127,6 +127,15 @@ public class PermissionInfoEnricher {
     // Cache layer.
     private final CacheService cacheService;
 
+    /** Known-Issues R13: consulted after the explicit modelScopeMap is built,
+     *  to inject implicit ALL scope for models reachable only via L1 / L2
+     *  lookup derivation. {@code @Lazy} because {@link EndpointIndex}
+     *  {@code @PostConstruct} calls {@code ModelService.searchList} which
+     *  routes through {@code PermissionServiceImpl}, and that in turn
+     *  {@code @Lazy}-holds this enricher — a plain injection would create a
+     *  bean-init cycle. */
+    private final EndpointIndex endpointIndex;
+
     public PermissionInfoEnricher(
             RoleService roleService,
             UserRoleRelService userRoleRelService,
@@ -134,7 +143,8 @@ public class PermissionInfoEnricher {
             NavigationModelResolver navigationModelResolver,
             SensitiveFieldSetCache sensitiveFieldSetCache,
             List<PrincipalEnrichmentContributor> enrichmentContributors,
-            CacheService cacheService) {
+            CacheService cacheService,
+            @org.springframework.context.annotation.Lazy EndpointIndex endpointIndex) {
         this.roleService = roleService;
         this.userRoleRelService = userRoleRelService;
         this.roleNavigationService = roleNavigationService;
@@ -142,6 +152,7 @@ public class PermissionInfoEnricher {
         this.sensitiveFieldSetCache = sensitiveFieldSetCache;
         this.enrichmentContributors = enrichmentContributors;
         this.cacheService = cacheService;
+        this.endpointIndex = endpointIndex;
     }
 
     /** leafNavId → root→leaf ancestor chain (inclusive of the leaf).
@@ -327,6 +338,25 @@ public class PermissionInfoEnricher {
         // 5. Ancestor expansion — a granted child implies its container is
         //    visible in the sidebar.
         Set<String> expandedNavigations = expandAncestors(navigations);
+
+        // 6. Known-Issues R13: inject implicit ALL scope for models the user
+        //    can only reach via L1 / L2 lookup derivation (e.g. granting
+        //    `Employee.view` gives lookup access to Department to populate
+        //    the dept picker in the Employee form). Post-R5 the framework
+        //    fail-closes on `modelScopeMap.get(model) == null` — without
+        //    this injection, the derived lookup would return zero rows even
+        //    though Layer A endpoint permission passes.
+        //
+        //    Only inject when the user has NO explicit scope rule on the
+        //    derived model — an explicit grant (however narrow, or even
+        //    degrading to NEVER) always wins.
+        Set<String> derivedLookupModels = endpointIndex.derivedLookupModelsFor(permissions);
+        for (String derivedModel : derivedLookupModels) {
+            if (modelScopeMap.containsKey(derivedModel)) continue;
+            ScopeRule allRule = new ScopeRule();
+            allRule.setScopeType(ScopeType.ALL);
+            modelScopeMap.put(derivedModel, List.of(allRule));
+        }
 
         PermissionInfo info = new PermissionInfo();
         info.setPrincipal(principal);

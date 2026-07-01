@@ -31,7 +31,10 @@ public class Permission extends AuditableModel {
     @Schema(description = "Display name shown in admin Wizard (e.g. 'Transfer Employee')")
     private String name;
 
-    @Schema(description = "Explicit endpoint list for non-conventional URLs; null means EndpointIndex derives by convention. Format: ['POST /api/<Model>/<action>', ...]")
+    @Schema(description = "Explicit endpoint list for non-conventional URLs; null means EndpointIndex derives by convention. "
+            + "Format: ['POST /<Model>/<action>', ...] — NO /api prefix (EndpointIndex matches against servletPath which is "
+            + "already stripped of the app context by Spring). Path must start with '/'; entries with a leading '/api' or "
+            + "missing '/' are rejected at startup (Known-Issues M1).")
     private JsonNode endpoints;
 
     @Schema(description = "Optional description")

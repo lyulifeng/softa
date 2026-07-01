@@ -92,7 +92,17 @@ public class Principal {
         if (value == null) return null;
         if (type.isInstance(value)) return type.cast(value);
         try {
-            return JsonUtils.getMapper().convertValue(value, type);
+            T typed = JsonUtils.getMapper().convertValue(value, type);
+            // Known-Issues L4: Jackson convertValue is reflection-heavy —
+            // several contributors read the same slot on each request (e.g.
+            // SelfScopeContributor, DirectReportsScopeContributor,
+            // LegalEntityScopeContributor all read extensions["employee"]).
+            // Cache the typed instance back into the slot so subsequent reads
+            // hit the isInstance short-circuit above. Safe because
+            // extensions is a per-Principal instance owned by the request /
+            // enricher — no cross-request or cross-user sharing.
+            if (typed != null) extensions.put(key, typed);
+            return typed;
         } catch (RuntimeException ex) {
             log.warn("Principal.getExtension('{}') — cached value cannot be converted to {}: {}",
                     key, type.getName(), ex.toString());

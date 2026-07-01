@@ -5,20 +5,19 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
 
-import org.springframework.context.event.EventListener;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.event.TransactionPhase;
+import org.springframework.transaction.event.TransactionalEventListener;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 
-import org.springframework.beans.factory.ObjectProvider;
-
+import io.softa.framework.base.context.Context;
+import io.softa.framework.base.context.ContextHolder;
 import io.softa.framework.orm.domain.Filters;
 import io.softa.framework.orm.service.CacheService;
 import io.softa.starter.user.entity.UserRoleRel;
-import io.softa.starter.user.event.EmployeeChangedEvent;
 import io.softa.starter.user.event.RoleNavigationChangedEvent;
 import io.softa.starter.user.event.UserRoleRelChangedEvent;
-import io.softa.starter.user.service.EmployeeRelationsService;
 import io.softa.starter.user.service.PermissionCacheInvalidator;
 import io.softa.starter.user.service.PermissionInfoEnricher;
 import io.softa.starter.user.service.UserRoleRelService;
@@ -46,9 +45,15 @@ import io.softa.starter.user.service.UserRoleRelService;
  *       whose role set changed.</li>
  *   <li>{@link RoleNavigationChangedEvent} → {@link #evictByRole} for the role
  *       whose nav/permission/scope grant changed.</li>
- *   <li>{@link EmployeeChangedEvent}       → evict the affected user's snapshot
- *       (employeeContext may have changed).</li>
  * </ul>
+ *
+ * <p>Domain-flavored triggers (e.g. HR events like "employee transferred"
+ * that should also evict the affected user's snapshot because the cached
+ * {@code Principal.extensions["employee"]} shape may have shifted) do NOT
+ * live here — the framework has no business knowing what an Employee is.
+ * Instead, business modules add their own bridge bean that listens to
+ * their domain event and calls {@link #evictOne} on this API. See
+ * {@code HrEventBridge} in the HR module.
  */
 @Slf4j
 @Service
@@ -57,17 +62,21 @@ public class PermissionCacheInvalidatorImpl implements PermissionCacheInvalidato
 
     private final UserRoleRelService userRoleRelService;
     private final CacheService cacheService;
-    /** Optional — present when corehr is on the classpath. Used by
-     *  {@link #onEmployeeChanged} to resolve employeeId → (userId, tenantId)
-     *  so we can target the right cache key. When absent, EmployeeChanged
-     *  fan-out degrades to a no-op (cache will TTL out). */
-    private final ObjectProvider<EmployeeRelationsService> employeeRelations;
 
     // ────────────────────── public evict API ──────────────────────
 
     @Override
     public void evictOne(Long tenantId, Long userId) {
-        if (tenantId == null || userId == null) return;
+        if (userId == null) return;
+        if (tenantId == null) {
+            // Known-Issues H10: publisher lost tenant context. Cache stays
+            // stale for this user until 1h TTL. Log at WARN so ops has a
+            // trail — silent no-op (pre-R8 behaviour) masked broken
+            // scheduled-job / async-pool paths.
+            log.warn("PermissionInfo cache evict skipped — null tenantId (userId={}); "
+                    + "publisher missing ContextHolder.callWith(bootstrapCtx, ...)", userId);
+            return;
+        }
         String key = PermissionInfoEnricher.cacheKey(tenantId, userId);
         try {
             cacheService.clear(key);
@@ -79,7 +88,14 @@ public class PermissionCacheInvalidatorImpl implements PermissionCacheInvalidato
 
     @Override
     public void evictBatch(Long tenantId, Set<Long> userIds) {
-        if (tenantId == null || userIds == null || userIds.isEmpty()) return;
+        if (userIds == null || userIds.isEmpty()) return;
+        if (tenantId == null) {
+            // See evictOne for rationale.
+            log.warn("PermissionInfo cache evict batch skipped — null tenantId "
+                    + "(userIds count={}); publisher missing "
+                    + "ContextHolder.callWith(bootstrapCtx, ...)", userIds.size());
+            return;
+        }
         List<String> keys = new ArrayList<>(userIds.size());
         for (Long uid : userIds) {
             if (uid != null) keys.add(PermissionInfoEnricher.cacheKey(tenantId, uid));
@@ -107,7 +123,23 @@ public class PermissionCacheInvalidatorImpl implements PermissionCacheInvalidato
 
     // ────────────────────── event listeners ──────────────────────
 
-    @EventListener
+    /**
+     * {@code @TransactionalEventListener(AFTER_COMMIT)} — fire only after
+     * the publishing transaction commits (Known-Issues H9 fix). Plain
+     * {@code @EventListener} would run synchronously inside
+     * {@code publishEvent()}, which is called from inside a
+     * {@code @Transactional} controller method — the eviction fires
+     * <em>before</em> commit, so a concurrent read between eviction and
+     * commit misses Redis, reads pre-commit DB state, and refills Redis
+     * with stale data. Waiting for AFTER_COMMIT closes that race.
+     *
+     * <p>{@code fallbackExecution = true} keeps the listener working when
+     * the publisher runs outside a transaction (e.g. tests, cron jobs
+     * that manage their own tx boundary) — falls back to synchronous
+     * execution, matching the pre-fix behaviour for the non-transactional
+     * path.
+     */
+    @TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT, fallbackExecution = true)
     public void onUserRoleRelChanged(UserRoleRelChangedEvent ev) {
         if (ev.userIds() == null || ev.userIds().isEmpty()) {
             // Empty fan-out — nothing actionable. Publishers must include
@@ -121,51 +153,45 @@ public class PermissionCacheInvalidatorImpl implements PermissionCacheInvalidato
         evictBatch(ev.tenantId(), ev.userIds());
     }
 
-    @EventListener
+    @TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT, fallbackExecution = true)
     public void onRoleNavigationChanged(RoleNavigationChangedEvent ev) {
         if (ev.roleId() == null) return;
         // evictByRole resolves the user set + batch-clears internally.
         evictByRole(ev.tenantId(), ev.roleId());
     }
 
-    @EventListener
-    public void onEmployeeChanged(EmployeeChangedEvent ev) {
-        // DynamicRoleSyncJob already listens for this to re-sync user_role_rel
-        // rows; that in turn publishes UserRoleRelChangedEvent which evicts.
-        // Here we additionally evict the affected user directly because the
-        // EmpInfo payload (deptId / companyId / managedDeptIds) baked into
-        // the cached PermissionInfo's Principal.extensions["employee"] may
-        // have changed without any user_role_rel mutation.
-        if (ev.employeeId() == null) return;
-        EmployeeRelationsService rel = employeeRelations.getIfAvailable();
-        if (rel == null) {
-            // No corehr on classpath → no way to resolve userId. Cache will
-            // TTL out within the hour; log so ops can spot if this matters.
-            log.debug("PermissionCacheInvalidator — EmployeeChangedEvent (employeeId={}, kind={}) — no EmployeeRelationsService; relying on TTL",
-                    ev.employeeId(), ev.kind());
-            return;
-        }
-        EmployeeRelationsService.UserHandle handle = rel.findUserByEmployeeId(ev.employeeId());
-        if (handle == null) {
-            log.debug("PermissionCacheInvalidator — EmployeeChangedEvent (employeeId={}) has no linked user; nothing to evict",
-                    ev.employeeId());
-            return;
-        }
-        evictOne(handle.tenantId(), handle.userId());
-    }
-
     // ────────────────────── helpers ──────────────────────
 
-    /** Look up the users currently holding a role. Bounded by typical role
-     *  cardinality (a few hundred holders); pulls user ids only. */
+    /**
+     * Look up the users currently holding a role. Bounded by typical role
+     * cardinality (a few hundred holders); pulls user ids only.
+     *
+     * <p>Runs with {@code skipPermissionCheck=true} — cache invalidation is
+     * system-level and must see every role holder regardless of the
+     * publisher's scope. Without this, a non-super-admin who edits a role
+     * would only invalidate the subset of holders their own scope rules
+     * allow them to see; the remaining holders keep stale PermissionInfo
+     * for up to the 1h Redis TTL (Known-Issues H3).
+     *
+     * <p>Tenant filter is <em>not</em> skipped — {@code evictByRole} takes
+     * a {@code tenantId} and expects per-tenant scoping. Only scope /
+     * field / write-guard checks are suppressed.
+     */
     private Set<Long> usersHoldingRole(Long roleId) {
-        List<UserRoleRel> rels = userRoleRelService.searchList(
-                new Filters().eq(UserRoleRel::getRoleId, roleId));
-        Set<Long> userIds = new HashSet<>(rels.size());
-        for (UserRoleRel r : rels) {
-            if (r.getUserId() != null) userIds.add(r.getUserId());
+        Context ctx = ContextHolder.getContext();
+        boolean previous = ctx != null && ctx.isSkipPermissionCheck();
+        if (ctx != null) ctx.setSkipPermissionCheck(true);
+        try {
+            List<UserRoleRel> rels = userRoleRelService.searchList(
+                    new Filters().eq(UserRoleRel::getRoleId, roleId));
+            Set<Long> userIds = new HashSet<>(rels.size());
+            for (UserRoleRel r : rels) {
+                if (r.getUserId() != null) userIds.add(r.getUserId());
+            }
+            return userIds;
+        } finally {
+            if (ctx != null) ctx.setSkipPermissionCheck(previous);
         }
-        return userIds;
     }
 
 }

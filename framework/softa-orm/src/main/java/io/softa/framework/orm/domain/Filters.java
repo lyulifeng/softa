@@ -189,6 +189,26 @@ public class Filters implements Serializable {
     }
 
     /**
+     * Fail-closed sentinel — matches no rows. Dominates AND-combine, absorbs
+     * into OR-combine, causes WhereBuilder to emit {@code 1=0}. Emitted by
+     * scope compilation when every rule degrades (missing principal state,
+     * misconfigured contributor, etc.) so callers signal "no rows visible"
+     * without hitting the database.
+     */
+    public static Filters never() {
+        Filters filters = new Filters();
+        filters.setType(FilterType.NEVER);
+        return filters;
+    }
+
+    /**
+     * @return {@code true} iff {@code filters} is the NEVER sentinel.
+     */
+    public static boolean isNever(Filters filters) {
+        return filters != null && FilterType.NEVER.equals(filters.getType());
+    }
+
+    /**
      * Add a filterUnit to the current Filters object.
      *
      * @param method method reference of the field
@@ -712,7 +732,15 @@ public class Filters implements Serializable {
      * @return is empty or not
      */
     public static boolean isEmpty(Filters filters) {
-        if (filters == null || EMPTY.equals(filters.getType()) || (filters.getFilterUnit() == null && filters.getChildren().isEmpty())) {
+        if (filters == null) {
+            return true;
+        }
+        // NEVER is a real fail-closed predicate — never treated as empty,
+        // otherwise combine() and WhereBuilder would drop it.
+        if (FilterType.NEVER.equals(filters.getType())) {
+            return false;
+        }
+        if (EMPTY.equals(filters.getType()) || (filters.getFilterUnit() == null && filters.getChildren().isEmpty())) {
             return true;
         } else if (filters.getChildren().size() == 1) {
             return Filters.isEmpty(filters.getChildren().getFirst());
@@ -852,7 +880,33 @@ public class Filters implements Serializable {
     private Filters combine(LogicOperator logicOperator, Filters filters) {
         if (Filters.isEmpty(filters)) {
             return this;
-        } else if (EMPTY.equals(this.getType())) {
+        }
+        // NEVER semantics:
+        //   AND: any NEVER operand → whole expression is NEVER
+        //   OR : NEVER operand absorbs (drops), whole expression is the other side
+        boolean isAnd = LogicOperator.AND.equals(logicOperator);
+        if (Filters.isNever(filters) || Filters.isNever(this)) {
+            if (isAnd) {
+                this.setType(FilterType.NEVER);
+                this.setFilterUnit(null);
+                this.children.clear();
+                this.setLogicOperator(null);
+                return this;
+            }
+            // OR mode
+            if (Filters.isNever(filters)) {
+                // this OR NEVER = this — drop the NEVER operand, no state change.
+                return this;
+            }
+            // NEVER OR filters = filters — mutate this to become filters.
+            this.setType(filters.getType());
+            this.setFilterUnit(filters.getFilterUnit());
+            this.children.clear();
+            this.children.addAll(filters.getChildren());
+            this.setLogicOperator(filters.getLogicOperator());
+            return this;
+        }
+        if (EMPTY.equals(this.getType())) {
             this.setType(FilterType.TREE);
             this.setLogicOperator(logicOperator);
             this.children.add(filters);
@@ -880,15 +934,25 @@ public class Filters implements Serializable {
      * @return new filters object after combined
      */
     private static Filters combine(LogicOperator logicOperator, Filters filters1, Filters filters2, Filters... filtersArray) {
-        // Just combine filters which are not empty.
+        // NEVER semantics:
+        //   AND: any NEVER operand → whole expression is NEVER
+        //   OR : NEVER operand absorbs (dropped alongside EMPTY below)
+        if (LogicOperator.AND.equals(logicOperator)) {
+            if (Filters.isNever(filters1) || Filters.isNever(filters2)
+                    || Arrays.stream(filtersArray).anyMatch(Filters::isNever)) {
+                return Filters.never();
+            }
+        }
+        // Just combine filters which are not empty (and drop NEVER in OR-mode — reached only when no AND-NEVER).
         List<Filters> filtersList = new ArrayList<>();
-        if (!Filters.isEmpty(filters1)) {
+        if (!Filters.isEmpty(filters1) && !Filters.isNever(filters1)) {
             filtersList.add(filters1);
         }
-        if (!Filters.isEmpty(filters2)) {
+        if (!Filters.isEmpty(filters2) && !Filters.isNever(filters2)) {
             filtersList.add(filters2);
         }
-        filtersList.addAll(Arrays.stream(filtersArray).filter(f -> !Filters.isEmpty(f)).toList());
+        filtersList.addAll(Arrays.stream(filtersArray)
+                .filter(f -> !Filters.isEmpty(f) && !Filters.isNever(f)).toList());
         // If all filters are empty, return null.
         if (filtersList.isEmpty()) {
             return null;

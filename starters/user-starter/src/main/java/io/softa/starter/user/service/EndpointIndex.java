@@ -1,6 +1,7 @@
 package io.softa.starter.user.service;
 
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.HashSet;
@@ -138,11 +139,18 @@ public class EndpointIndex {
      *  request threads. No reload — seed-only data; redeploy to update. */
     private Map<String, Set<String>> exactIndex = Map.of();
     private List<PatternEntry> patternEntries = List.of();
+    /** {@code permissionId → set of models the permission grants lookup access to
+     *  via L1 / L2 derivation}. Populated at {@link #init}; consulted by
+     *  {@code PermissionInfoEnricher} to inject implicit ALL scope for lookup
+     *  models (Known-Issues R13). Never includes the permission's own primary
+     *  model — only derived reference models (Department, JobPosition, etc.). */
+    private Map<String, Set<String>> derivedModelsByPermissionId = Map.of();
 
     @PostConstruct
     void init() {
         Map<String, Set<String>> exact = new HashMap<>();
         List<PatternEntry> patterns = new ArrayList<>();
+        Map<String, Set<String>> derivedModels = new HashMap<>();
 
         for (Permission p : modelService.searchList("Permission", new FlexQuery(), Permission.class)) {
             List<String> endpoints = explicitOrDerive(p);
@@ -155,6 +163,13 @@ public class EndpointIndex {
                     exact.computeIfAbsent(ep, k -> new HashSet<>()).add(p.getId());
                 }
             }
+            // Reverse index: permissionId → derived-lookup models. Skipped
+            // for permissions with explicit `endpoints` (no derivation)
+            // and for non-lookup-trigger actions (delete / export / copy).
+            Set<String> models = computeDerivedLookupModels(p);
+            if (!models.isEmpty()) {
+                derivedModels.put(p.getId(), Set.copyOf(models));
+            }
         }
         // Freeze: wrap each inner Set as unmodifiable + the outer Map too.
         Map<String, Set<String>> frozenExact = new HashMap<>(exact.size());
@@ -163,7 +178,78 @@ public class EndpointIndex {
         }
         this.exactIndex = Collections.unmodifiableMap(frozenExact);
         this.patternEntries = List.copyOf(patterns);
-        log.info("EndpointIndex built: {} exact + {} pattern entries", exact.size(), patterns.size());
+        this.derivedModelsByPermissionId = Map.copyOf(derivedModels);
+        log.info("EndpointIndex built: {} exact + {} pattern entries + {} permissions with lookup derivations",
+                exact.size(), patterns.size(), derivedModels.size());
+    }
+
+    /**
+     * Compute the set of models a permission grants LOOKUP access to via
+     * L1 / L2 derivation. Skips permissions with explicit {@code endpoints}
+     * (those override derivation) and non-lookup-trigger actions.
+     *
+     * <p>Used by {@code PermissionInfoEnricher} to inject implicit ALL
+     * scope for lookup models — without this, a user with only
+     * {@code Employee.view} granted (and no explicit scope on Department)
+     * would fail Layer B (post-R5 fail-closed on empty scope) even though
+     * their permission tree legitimately derives Department access
+     * (Known-Issues R13).
+     */
+    private Set<String> computeDerivedLookupModels(Permission p) {
+        if (p.getEndpoints() != null && p.getEndpoints().isArray() && !p.getEndpoints().isEmpty()) {
+            // Explicit endpoints override derivation — no lookup propagation.
+            return Set.of();
+        }
+        Navigation nav = navResolver.findNavigation(p.getNavigationId());
+        if (nav == null || nav.getModel() == null) return Set.of();
+        String action = lastSegment(p.getId());
+        List<String> derivedEndpoints = deriveLookupEndpoints(nav.getModel(), action);
+        if (derivedEndpoints.isEmpty()) return Set.of();
+        Set<String> models = new HashSet<>();
+        for (String entry : derivedEndpoints) {
+            String model = extractModelFromEndpoint(entry);
+            if (model != null && !model.equals(nav.getModel())) {
+                // Exclude the permission's own primary model — it goes into
+                // the user's modelScopeMap via the normal grant path with the
+                // caller's explicit scope rules. Only derived lookup models
+                // need the implicit ALL treatment.
+                models.add(model);
+            }
+        }
+        return models;
+    }
+
+    /** Parse {@code "POST /ModelName/suffix"} → {@code ModelName}. Returns
+     *  null on malformed input (defensive; derivation output shape is
+     *  controlled but the extractor is used at boot-time so no throws). */
+    private static String extractModelFromEndpoint(String entry) {
+        int space = entry.indexOf(' ');
+        if (space < 0 || space == entry.length() - 1) return null;
+        String path = entry.substring(space + 1);
+        if (!path.startsWith("/")) return null;
+        int nextSlash = path.indexOf('/', 1);
+        if (nextSlash < 0) return null;
+        return path.substring(1, nextSlash);
+    }
+
+    /**
+     * Union the derived-lookup-model sets across a collection of
+     * permission ids. Used by {@code PermissionInfoEnricher.enrich} to
+     * compute "which reference models does this user reach via lookup
+     * propagation only" — those get an implicit ALL scope rule so the
+     * post-R5 fail-closed NEVER doesn't trip a legitimate cross-model
+     * picker query.
+     *
+     * <p>Missing permission ids (revoked or seed lag) drop silently.
+     */
+    public Set<String> derivedLookupModelsFor(Collection<String> permissionIds) {
+        if (permissionIds == null || permissionIds.isEmpty()) return Set.of();
+        Set<String> out = new HashSet<>();
+        for (String pid : permissionIds) {
+            Set<String> models = derivedModelsByPermissionId.get(pid);
+            if (models != null) out.addAll(models);
+        }
+        return out;
     }
 
     /**
@@ -207,21 +293,81 @@ public class EndpointIndex {
         JsonNode explicit = p.getEndpoints();
         if (explicit != null && explicit.isArray() && !explicit.isEmpty()) {
             List<String> out = new ArrayList<>(explicit.size());
-            for (JsonNode node : explicit) out.add(node.asString());
+            for (JsonNode node : explicit) {
+                String ep = node.asString();
+                // Known-Issues M1: reject entries that don't match the
+                // documented "VERB /Model/action" format. The two common
+                // misconfigurations are (a) a leading "/api" prefix left over
+                // from someone's copy from `@Schema` docs (EndpointIndex
+                // matches servletPath which already has the app context
+                // stripped, so /api entries never match anything) and (b) a
+                // missing leading '/' after the VERB. Fail loud at startup —
+                // silent misconfiguration turns permissions into inert entries
+                // that grant nothing at runtime.
+                validateExplicitEndpoint(p.getId(), ep);
+                out.add(ep);
+            }
             return out;
         }
         return deriveStandardEndpoints(p);
     }
+
+    /**
+     * Validate the shape of an explicit {@code permission.endpoints} entry.
+     * See Known-Issues M1 for the two common failure modes.
+     */
+    private static void validateExplicitEndpoint(String permissionId, String ep) {
+        if (ep == null || ep.isBlank()) {
+            throw new IllegalStateException(
+                    "Permission " + permissionId + " has a blank endpoint entry");
+        }
+        int space = ep.indexOf(' ');
+        if (space <= 0 || space == ep.length() - 1) {
+            throw new IllegalStateException(
+                    "Permission " + permissionId + " endpoint '" + ep + "' is malformed; expected 'VERB /path'");
+        }
+        String verb = ep.substring(0, space);
+        String path = ep.substring(space + 1);
+        if (!KNOWN_HTTP_VERBS.contains(verb)) {
+            throw new IllegalStateException(
+                    "Permission " + permissionId + " endpoint '" + ep + "' has unknown HTTP verb '" + verb + "'");
+        }
+        if (!path.startsWith("/")) {
+            throw new IllegalStateException(
+                    "Permission " + permissionId + " endpoint '" + ep + "' path must start with '/'");
+        }
+        if (path.startsWith("/api/") || "/api".equals(path)) {
+            throw new IllegalStateException(
+                    "Permission " + permissionId + " endpoint '" + ep + "' must NOT include the '/api' prefix — "
+                            + "EndpointIndex matches against servletPath which already has the app context stripped");
+        }
+    }
+
+    private static final Set<String> KNOWN_HTTP_VERBS =
+            Set.of("GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS");
 
     private List<String> deriveStandardEndpoints(Permission p) {
         Navigation nav = navResolver.findNavigation(p.getNavigationId());
         if (nav == null || nav.getModel() == null) return List.of();
 
         String action = lastSegment(p.getId());
-        // Standard action → list of "VERB suffix" entries; unknown (custom)
-        // action → POST with the action segment as the URL suffix. One
-        // permission row can drive multiple endpoint entries in the lookup map.
-        List<String> entries = STANDARD_ACTION_MAP.getOrDefault(action, List.of("POST " + action));
+        // Standard action → list of "VERB suffix" entries. Known-Issues M2:
+        // an action name that's not in STANDARD_ACTION_MAP means "custom
+        // action with no explicit endpoints" — the previous fallback derived
+        // "POST /<Model>/<action>" from the id's last segment, which
+        // sometimes matched the controller and sometimes didn't (different
+        // verbs, kebab-vs-camel casing, path parameters, etc.). Rather than
+        // guess, log ERROR and register nothing — the permission stays inert
+        // but at least ops has a loud signal to add explicit endpoints.
+        List<String> entries = STANDARD_ACTION_MAP.get(action);
+        if (entries == null) {
+            log.error(
+                    "Permission {} has a non-standard action '{}' and no explicit endpoints — refusing to register. "
+                            + "Set permission.endpoints explicitly (e.g. ['POST /{Model}/{action}']) to make this permission "
+                            + "match a real controller (Known-Issues M2).",
+                    p.getId(), action);
+            return List.of();
+        }
         List<String> out = new ArrayList<>(entries.size());
         for (String entry : entries) {
             int spaceIdx = entry.indexOf(' ');

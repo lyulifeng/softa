@@ -28,4 +28,25 @@ public interface DynamicRoleSyncJob {
      * Sync all roles in all tenants. Invoked by the Spring scheduler.
      */
     void syncAll();
+
+    /**
+     * Re-evaluate every dynamic role's membership for a single user.
+     * Intended for domain-event bridges that see an HR change (transfer /
+     * hire / status flip) and need the affected user's dynamic-role
+     * assignments to refresh without waiting for the next cron tick.
+     *
+     * <p>Runs the same delta logic as {@link #syncRole} but scoped to a
+     * single (tenant, user) pair: loads every dynamic role in the tenant,
+     * checks whether this user satisfies each rule now vs. the current
+     * {@code user_role_rel.DYNAMIC} rows, inserts / deletes accordingly.
+     * MANUAL rows are never touched.
+     *
+     * <p>Framework has no idea what "HR change" means — callers are
+     * expected to be domain-specific bridges (e.g. {@code HrEventBridge}
+     * in an HR business module) that translate their own domain events
+     * into this call.
+     *
+     * @return count of inserts + deletes performed
+     */
+    int syncMembershipForUser(Long tenantId, Long userId);
 }
