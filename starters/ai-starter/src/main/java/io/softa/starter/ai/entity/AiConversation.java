@@ -34,8 +34,15 @@ public class AiConversation extends AuditableModel {
     @Field(label = "Robot ID", fieldType = FieldType.MANY_TO_ONE, relatedModel = AiRobot.class)
     private Long robotId;
 
-    @Field
-    private Integer totalTokens;
+    @Field(label = "Input Tokens",
+            description = "Running rollup of prompt (input) tokens across all turns in this conversation — "
+                    + "incremented per turn from the message-level usage. Cost = inputTokens * AiModel.unitPriceInput.")
+    private Integer inputTokens;
+
+    @Field(label = "Output Tokens",
+            description = "Running rollup of completion (output) tokens across all turns in this conversation — "
+                    + "incremented per turn. Cost = outputTokens * AiModel.unitPriceOutput.")
+    private Integer outputTokens;
 
     @Field(length = 256)
     private String description;

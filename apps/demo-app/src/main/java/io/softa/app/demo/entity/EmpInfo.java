@@ -10,6 +10,7 @@ import io.softa.framework.orm.annotation.Model;
 import io.softa.framework.orm.dto.FileInfo;
 import io.softa.framework.orm.entity.AuditableModel;
 import io.softa.framework.orm.enums.FieldType;
+import io.softa.framework.orm.enums.OnDelete;
 
 /**
  * EmpInfo Model
@@ -34,7 +35,9 @@ public class EmpInfo extends AuditableModel {
     @Field(length = 128)
     private String email;
 
-    @Field(label = "Department", fieldType = FieldType.MANY_TO_ONE, relatedModel = DeptInfo.class)
+    // onDelete = RESTRICT: a department that still has employees cannot be deleted.
+    @Field(label = "Department", fieldType = FieldType.MANY_TO_ONE, relatedModel = DeptInfo.class,
+            onDelete = OnDelete.RESTRICT)
     private Long deptId;
 
     @Field(label = "Projects Involved", fieldType = FieldType.MANY_TO_MANY,

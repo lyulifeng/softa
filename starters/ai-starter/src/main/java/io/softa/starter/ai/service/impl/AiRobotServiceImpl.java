@@ -11,7 +11,6 @@ import io.softa.framework.base.context.Context;
 import io.softa.framework.base.context.ContextHolder;
 import io.softa.framework.base.exception.IllegalArgumentException;
 import io.softa.framework.base.utils.Assert;
-import io.softa.framework.orm.domain.Filters;
 import io.softa.framework.orm.service.impl.EntityServiceImpl;
 import io.softa.starter.ai.config.AiProperties;
 import io.softa.starter.ai.dto.AiResponseMessage;
@@ -71,7 +70,7 @@ public class AiRobotServiceImpl extends EntityServiceImpl<AiRobot, Long> impleme
         // Save user message
         AiMessage userMessage = aiMessageService.saveUserMessage(aiUserMessage);
         // Save AI message in advance for stream response
-        AiMessage aiMessage = aiMessageService.SaveAiMessageForStream(userMessage);
+        AiMessage aiMessage = aiMessageService.saveAiMessageForStream(userMessage);
         // Build response message
         AiResponseMessage aiResponseMessage = new AiResponseMessage();
         aiResponseMessage.setConversationId(userMessage.getConversationId());
@@ -90,19 +89,6 @@ public class AiRobotServiceImpl extends EntityServiceImpl<AiRobot, Long> impleme
         Assert.notNull(robotId, "Robot ID cannot be empty!");
         return this.getById(robotId).orElseThrow(
                 () -> new IllegalArgumentException("Robot ID not exists: " + robotId));
-    }
-
-    /**
-     * Get robot object based on robot code
-     *
-     * @param robotCode Robot code
-     * @return Robot object
-     */
-    private AiRobot getAiRobotByCode(String robotCode) {
-        Assert.notBlank(robotCode, "Robot code cannot be empty!");
-        Filters filters = new Filters().eq(AiRobot::getCode, robotCode);
-        return this.searchOne(filters).orElseThrow(
-                () -> new IllegalArgumentException("Robot code not exists: " + robotCode));
     }
 
     /**
@@ -142,7 +128,7 @@ public class AiRobotServiceImpl extends EntityServiceImpl<AiRobot, Long> impleme
         // Stream via Spring AI; persist the accumulated result on completion (in the request context)
         chatExecutor.stream(aiModel, aiRobot, history, userMessage.getContent(), sseEmitter, result ->
                 ContextHolder.runWith(context, () -> aiMessageService.updateAiMessageAfterStream(
-                        aiMessage.getId(), result.text(), result.usage(), userMessage.getId())));
+                        aiMessage.getId(), result.text(), result.usage(), userMessage.getConversationId())));
         return sseEmitter;
     }
 
@@ -184,22 +170,4 @@ public class AiRobotServiceImpl extends EntityServiceImpl<AiRobot, Long> impleme
         return aiMessageService.saveAiMessageForNonStreaming(userMessage, result.text(), result.usage());
     }
 
-    /**
-     * One-time chat
-     *
-     * @param robotCode Robot code
-     * @param message   User message
-     * @return AI response message
-     */
-    @Override
-    public String oneTimeChat(String robotCode, String message) {
-        AiRobot aiRobot = this.getAiRobotByCode(robotCode);
-        // Build AI user message
-        AiUserMessage aiUserMessage = new AiUserMessage();
-        aiUserMessage.setRobotId(aiRobot.getId());
-        aiUserMessage.setContent(message);
-        // Complete chat
-        AiMessage aiMessage = this.completeChat(aiRobot, aiUserMessage);
-        return aiMessage.getContent();
-    }
 }

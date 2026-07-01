@@ -73,7 +73,7 @@
             <version>${project.version}</version>
         </dependency>
 
-        <!-- Tenant registry (TenantInfo) + multi-tenant SPI impl — required since multi-tenancy is enabled (ADR-0017) -->
+        <!-- Tenant registry (TenantInfo) + multi-tenant SPI impl — required since multi-tenancy is enabled -->
         <dependency>
             <groupId>io.softa</groupId>
             <artifactId>tenant-starter</artifactId>

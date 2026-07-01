@@ -1,7 +1,7 @@
 package io.softa.starter.ai.dto;
 
 import io.swagger.v3.oas.annotations.media.Schema;
-import jakarta.validation.constraints.NotBlank;
+import jakarta.validation.constraints.NotNull;
 import lombok.Data;
 
 /**
@@ -12,11 +12,11 @@ import lombok.Data;
 public class AiStreamRequest {
 
     @Schema(description = "User Message ID")
-    @NotBlank(message = "User Message ID cannot be empty!")
+    @NotNull(message = "User Message ID cannot be empty!")
     private Long userMessageId;
 
     @Schema(description = "AI Message ID")
-    @NotBlank(message = "AI Message ID cannot be empty!")
+    @NotNull(message = "AI Message ID cannot be empty!")
     private Long aiMessageId;
 
 }

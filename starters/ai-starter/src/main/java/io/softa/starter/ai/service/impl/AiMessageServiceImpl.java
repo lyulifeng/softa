@@ -2,6 +2,7 @@ package io.softa.starter.ai.service.impl;
 
 import java.util.HashMap;
 import java.util.Map;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -13,6 +14,7 @@ import io.softa.starter.ai.dto.TokenUsage;
 import io.softa.starter.ai.entity.AiMessage;
 import io.softa.starter.ai.enums.AiMessageRole;
 import io.softa.starter.ai.enums.AiMessageStatus;
+import io.softa.starter.ai.service.AiConversationService;
 import io.softa.starter.ai.service.AiMessageService;
 
 /**
@@ -20,6 +22,9 @@ import io.softa.starter.ai.service.AiMessageService;
  */
 @Service
 public class AiMessageServiceImpl extends EntityServiceImpl<AiMessage, Long> implements AiMessageService {
+
+    @Autowired
+    private AiConversationService conversationService;
 
     /**
      * Save user request message.
@@ -58,27 +63,26 @@ public class AiMessageServiceImpl extends EntityServiceImpl<AiMessage, Long> imp
         aiMessage.setConversationId(userMessage.getConversationId());
         aiMessage.setParentId(userMessage.getId());
         aiMessage.setContent(answer);
-        aiMessage.setTokens(usage == null ? 0 : usage.completionTokens());
+        applyUsage(aiMessage, usage);
         aiMessage.setStream(false);
         aiMessage.setStatus(AiMessageStatus.COMPLETED);
         aiMessage.setId(this.createOne(aiMessage));
-        // update parent message token usage
-        this.updateParentMessageTokenUsage(userMessage.getId(), usage);
+        // Roll the turn's usage up to the conversation
+        conversationService.addTokenUsage(userMessage.getConversationId(), usage);
         return aiMessage;
     }
 
     /**
-     * Update parent message token usage.
+     * Set the turn's input/output token usage on the assistant message. The provider
+     * reports the whole turn's usage on the response, so both counts live on this row
+     * (user-role rows carry no usage). A null usage degrades to 0.
      *
-     * @param parentId Parent message ID
-     * @param usage    Token usage
+     * @param aiMessage Assistant message
+     * @param usage     Token usage
      */
-    private void updateParentMessageTokenUsage(Long parentId, TokenUsage usage) {
-        Map<String, Object> userMessageMap = new HashMap<>();
-        userMessageMap.put(ModelConstant.ID, parentId);
-        String tokenField = LambdaUtils.getAttributeName(AiMessage::getTokens);
-        userMessageMap.put(tokenField, usage == null ? 0 : usage.promptTokens());
-        this.modelService.updateOne(modelName, userMessageMap);
+    private void applyUsage(AiMessage aiMessage, TokenUsage usage) {
+        aiMessage.setInputTokens(usage == null ? 0 : usage.promptTokens());
+        aiMessage.setOutputTokens(usage == null ? 0 : usage.completionTokens());
     }
 
     /**
@@ -89,7 +93,7 @@ public class AiMessageServiceImpl extends EntityServiceImpl<AiMessage, Long> imp
      */
     @Override
     @Transactional(rollbackFor = Exception.class)
-    public AiMessage SaveAiMessageForStream(AiMessage userMessage) {
+    public AiMessage saveAiMessageForStream(AiMessage userMessage) {
         AiMessage aiMessage = new AiMessage();
         aiMessage.setRole(AiMessageRole.ASSISTANT);
         aiMessage.setRobotId(userMessage.getRobotId());
@@ -107,20 +111,21 @@ public class AiMessageServiceImpl extends EntityServiceImpl<AiMessage, Long> imp
      * @param aiMessageId   AI message ID
      * @param content       Final AI response content
      * @param usage         Token usage
-     * @param userMessageId User message ID
+     * @param conversationId Conversation ID
      */
     @Override
     @Transactional(rollbackFor = Exception.class)
-    public void updateAiMessageAfterStream(Long aiMessageId, String content, TokenUsage usage, Long userMessageId) {
+    public void updateAiMessageAfterStream(Long aiMessageId, String content, TokenUsage usage, Long conversationId) {
         Map<String, Object> updateMap = new HashMap<>();
         updateMap.put(ModelConstant.ID, aiMessageId);
         updateMap.put(LambdaUtils.getAttributeName(AiMessage::getContent), content);
-        updateMap.put(LambdaUtils.getAttributeName(AiMessage::getTokens), usage == null ? 0 : usage.completionTokens());
+        updateMap.put(LambdaUtils.getAttributeName(AiMessage::getInputTokens), usage == null ? 0 : usage.promptTokens());
+        updateMap.put(LambdaUtils.getAttributeName(AiMessage::getOutputTokens), usage == null ? 0 : usage.completionTokens());
         updateMap.put(LambdaUtils.getAttributeName(AiMessage::getStatus), AiMessageStatus.COMPLETED);
 
         this.modelService.updateOne(modelName, updateMap);
 
-        // Update parent message token usage
-        this.updateParentMessageTokenUsage(userMessageId, usage);
+        // Roll the turn's usage up to the conversation
+        conversationService.addTokenUsage(conversationId, usage);
     }
 }

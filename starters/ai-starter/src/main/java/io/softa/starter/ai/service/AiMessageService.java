@@ -24,17 +24,17 @@ public interface AiMessageService extends EntityService<AiMessage, Long> {
      * @param userMessage User message
      * @return AI message with initial status
      */
-    AiMessage SaveAiMessageForStream(AiMessage userMessage);
+    AiMessage saveAiMessageForStream(AiMessage userMessage);
 
     /**
      * Update AI message after stream completion.
      *
      * @param aiMessageId   AI message ID
      * @param content       Final AI response content
-     * @param usage         Token usage
-     * @param userMessageId User message ID
+     * @param usage          Token usage
+     * @param conversationId Conversation ID (for the conversation-level token rollup)
      */
-    void updateAiMessageAfterStream(Long aiMessageId, String content, TokenUsage usage, Long userMessageId);
+    void updateAiMessageAfterStream(Long aiMessageId, String content, TokenUsage usage, Long conversationId);
 
     /**
      * Save AI response message for non-streaming response.

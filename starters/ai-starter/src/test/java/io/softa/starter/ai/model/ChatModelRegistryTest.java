@@ -19,7 +19,7 @@ import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
 /**
- * Tests for {@link ChatModelRegistry} — provider dispatch + per-row caching/invalidation.
+ * Tests for {@link ChatModelRegistry} — provider dispatch, build-on-demand models, and client caching.
  */
 class ChatModelRegistryTest {
 
@@ -54,31 +54,15 @@ class ChatModelRegistryTest {
     }
 
     @Test
-    void dispatchesByProviderAndCachesByUpdatedTime() {
+    void dispatchesByProvider() {
         RecordingBuilder openai = new RecordingBuilder(
                 Set.of(AiModelProvider.OPEN_AI, AiModelProvider.OPENAI_COMPATIBLE));
         ChatModelRegistry registry = new ChatModelRegistry(List.of(openai), mock(AiObservability.class));
 
-        LocalDateTime t = LocalDateTime.of(2026, 1, 1, 0, 0);
-        AiModel m = model(1L, AiModelProvider.OPEN_AI, t);
+        ChatModel built = registry.get(model(1L, AiModelProvider.OPEN_AI, LocalDateTime.of(2026, 1, 1, 0, 0)));
 
-        ChatModel first = registry.get(m);
-        ChatModel second = registry.get(model(1L, AiModelProvider.OPEN_AI, t));
-
-        assertThat(first).isSameAs(second);
-        assertThat(openai.buildCount.get()).isEqualTo(1);
-    }
-
-    @Test
-    void rebuildsWhenUpdatedTimeChanges() {
-        RecordingBuilder openai = new RecordingBuilder(Set.of(AiModelProvider.OPEN_AI));
-        ChatModelRegistry registry = new ChatModelRegistry(List.of(openai), mock(AiObservability.class));
-
-        ChatModel v1 = registry.get(model(1L, AiModelProvider.OPEN_AI, LocalDateTime.of(2026, 1, 1, 0, 0)));
-        ChatModel v2 = registry.get(model(1L, AiModelProvider.OPEN_AI, LocalDateTime.of(2026, 1, 2, 0, 0)));
-
-        assertThat(v1).isNotSameAs(v2);
-        assertThat(openai.buildCount.get()).isEqualTo(2);
+        assertThat(built).isNotNull();
+        assertThat(openai.buildCount.get()).isEqualTo(1);   // built on demand (no separate model cache)
     }
 
     @Test

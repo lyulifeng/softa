@@ -15,12 +15,15 @@ import io.softa.starter.ai.entity.AiModel;
 import io.softa.starter.ai.enums.AiModelProvider;
 
 /**
- * Resolves and caches a Spring AI {@link ChatModel} per {@link AiModel} row.
+ * Resolves a Spring AI {@link ChatModel} per {@link AiModel} row (built on demand) and caches the
+ * reusable {@link ChatClient} per row.
  * <p>
  * Replaces the former {@code AiAdapterFactory}. Dispatch is by {@link AiModelProvider}
- * over the registered {@link ChatModelBuilder} beans. The cache key includes the row's
- * {@code updatedTime}, so editing a model (new credentials, endpoint, code) yields a new
- * key and a freshly built model; stale versions for the same id are evicted.
+ * over the registered {@link ChatModelBuilder} beans. The client cache key includes the row's
+ * {@code updatedTime}, so editing a model (new credentials, endpoint, code) yields a new key and a
+ * freshly built client; stale versions for the same id are evicted. The model is <b>not</b> cached
+ * separately: {@link #get(AiModel)} has no caller beyond {@link #getChatClient(AiModel)}, whose
+ * client cache already covers the reuse, so a model cache could never serve a hit.
  */
 @Slf4j
 @Component
@@ -28,7 +31,6 @@ public class ChatModelRegistry {
 
     private final Map<AiModelProvider, ChatModelBuilder> builders;
     private final AiObservability aiObservability;
-    private final Map<String, ChatModel> cache = new ConcurrentHashMap<>();
     private final Map<String, ChatClient> clientCache = new ConcurrentHashMap<>();
 
     public ChatModelRegistry(List<ChatModelBuilder> chatModelBuilders, AiObservability aiObservability) {
@@ -44,7 +46,8 @@ public class ChatModelRegistry {
     }
 
     /**
-     * Get (building and caching on first use) the {@link ChatModel} for a model row.
+     * Resolve and build the {@link ChatModel} for a model row. Built on demand (not cached) — the
+     * only caller, {@link #getChatClient(AiModel)}, caches the wrapping client.
      */
     public ChatModel get(AiModel aiModel) {
         Assert.notNull(aiModel, "AI model cannot be null");
@@ -55,17 +58,7 @@ public class ChatModelRegistry {
         if (builder == null) {
             throw new IllegalArgumentException("AI model provider not supported: " + provider);
         }
-
-        String key = cacheKey(aiModel);
-        ChatModel cached = cache.get(key);
-        if (cached != null) {
-            return cached;
-        }
-        ChatModel model = builder.build(aiModel);
-        // Drop any prior version cached for the same model id before storing the new one.
-        cache.keySet().removeIf(k -> k.startsWith(aiModel.getId() + ":"));
-        cache.put(key, model);
-        return model;
+        return builder.build(aiModel);
     }
 
     /**

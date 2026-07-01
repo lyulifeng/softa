@@ -39,12 +39,4 @@ public interface AiRobotService extends EntityService<AiRobot, Long> {
      */
     AiMessage chat(AiUserMessage aiUserMessage);
 
-    /**
-     * One-time chat
-     *
-     * @param robotCode    Robot code
-     * @param userMessage  User message
-     * @return AI response message
-     */
-    String oneTimeChat(String robotCode, String userMessage);
 }

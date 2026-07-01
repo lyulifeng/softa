@@ -42,8 +42,16 @@ public class AiMessage extends AuditableModel {
     @Field(length = 20000)
     private String content;
 
-    @Field
-    private Integer tokens;
+    @Field(label = "Input Tokens",
+            description = "Prompt (input) tokens of the turn this message belongs to. Populated on the "
+                    + "ASSISTANT message from the provider's reported usage (the response carries the "
+                    + "whole turn's usage); user-role rows stay 0.")
+    private Integer inputTokens;
+
+    @Field(label = "Output Tokens",
+            description = "Completion (output) tokens of the turn. Populated on the ASSISTANT message; "
+                    + "user-role rows stay 0.")
+    private Integer outputTokens;
 
     @Field(label = "Stream Output")
     private Boolean stream;

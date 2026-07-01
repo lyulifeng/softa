@@ -1,8 +1,10 @@
 debug: false
 system:
   name: Demo Application
-  public-access-url: http://localhost:8080
-  runtime-public-key:
+  app-code: demo-app
+  public-access-url: http://localhost
+  metadata:
+    public-key:
 security:
   encryption:
     password: 12345678
