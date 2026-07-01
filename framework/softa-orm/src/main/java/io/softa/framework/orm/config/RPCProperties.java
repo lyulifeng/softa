@@ -21,6 +21,7 @@ public class RPCProperties {
 
     private String secretKey;
 
+    // Remote service endpoints, keyed by the owning app's appCode (its system.app-code).
     private Map<String, ServiceConfig> services;
 
     @Data
@@ -30,7 +31,7 @@ public class RPCProperties {
         private String apiSecret;
     }
 
-    public ServiceConfig getServiceConfig(String serviceName) {
-        return services.get(serviceName);
+    public ServiceConfig getServiceConfig(String appCode) {
+        return services.get(appCode);
     }
 }

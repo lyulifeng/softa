@@ -4,7 +4,7 @@ import java.util.List;
 
 /**
  * Framework SPI for multi-tenant runtime concerns. Returns only ids / booleans — never the
- * tenant entity, which lives in tenant-starter (ADR-0017). The implementation
+ * tenant entity, which lives in tenant-starter. The implementation
  * ({@code TenantInfoServiceImpl}) is provided by tenant-starter; framework consumers
  * (TenantAspect, ContextBuilder) depend only on this contract.
  */

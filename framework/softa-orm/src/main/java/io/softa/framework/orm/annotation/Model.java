@@ -87,13 +87,16 @@ public @interface Model {
     /** Business key field names (composite supported). */
     String[] businessKey() default {};
 
+    /**
+     * The single immediately-prior model name for a declared rename (empty = no rename).
+     * Lets the metadata diff pair this model with it and emit {@code RENAME TABLE} (data preserved)
+     * instead of drop+add. <b>Single-step</b> (no chain): multi-version lineage is not accumulated here —
+     * studio derives it from snapshot history, the annotation lane handles a skipped version via manual
+     * migration. Materialized into {@code sys_model.renamedFrom}. Replaces the retired {@code @RenamedFrom}
+     * annotation.
+     */
+    String renamedFrom() default "";
+
     /** Partition field name for partitioned storage. */
     String partitionField() default "";
-
-    /**
-     * Microservice name when the application is deployed as multiple services.
-     * Empty = single-service deployment (no inference, no default). Used by the
-     * routing layer to dispatch model operations to the owning service.
-     */
-    String serviceName() default "";
 }

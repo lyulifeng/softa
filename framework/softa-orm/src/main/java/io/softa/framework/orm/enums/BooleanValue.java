@@ -9,7 +9,7 @@ import io.softa.framework.base.annotation.OptionSet;
 
 /**
  * The {@code "true"} / {@code "false"} option vocabulary for rendering boolean
- * fields as a two-item option set (P0-6, ADR-0013).
+ * fields as a two-item option set.
  *
  * <p>Code-fixed: {@code BooleanExpandProcessor} keys option-item lookups on
  * {@code Boolean.toString(value)} — i.e. the literal strings {@code "true"} /

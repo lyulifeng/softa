@@ -17,7 +17,6 @@ import io.softa.framework.orm.enums.AccessType;
 import io.softa.framework.orm.enums.ConvertType;
 import io.softa.framework.orm.meta.MetaField;
 import io.softa.framework.orm.meta.ModelManager;
-import io.softa.framework.orm.utils.BeanTool;
 import io.softa.framework.orm.utils.IdUtils;
 import io.softa.framework.orm.vo.ModelReference;
 
@@ -65,20 +64,17 @@ public class XToOneProcessor extends BaseProcessor {
         checkReadonly(isContain);
         Object value = row.get(fieldName);
         if (isContain && value != null) {
-            // The reference key is the related model's `relatedField` (id by default, or a
-            // business code for reference-by-code). A ModelReference round-trip carries that
-            // value under the `id` key, so the Map branch is correct for both.
-            String relatedField = metaField.getRelatedField();
+            // A TO_ONE FK stores the related row's id. A ModelReference round-trip
+            // carries that id under the `id` key.
             Object key;
-            if (value instanceof Map<?, ?> mapValue && mapValue.containsKey(relatedField)) {
-                key = mapValue.get(relatedField);
+            if (value instanceof Map<?, ?> mapValue && mapValue.containsKey(ModelConstant.ID)) {
+                key = mapValue.get(ModelConstant.ID);
             } else if (value instanceof AbstractModel entity) {
-                key = ModelConstant.ID.equals(relatedField)
-                        ? entity.getId() : BeanTool.getFieldValue(entity, relatedField);
+                key = entity.getId();
             } else {
                 key = value;
             }
-            row.put(fieldName, IdUtils.formatId(metaField.getRelatedModel(), relatedField, (Serializable) key));
+            row.put(fieldName, IdUtils.formatId(metaField.getRelatedModel(), (Serializable) key));
         } else if (AccessType.CREATE.equals(accessType)) {
             checkRequired(value);
             row.computeIfAbsent(fieldName, k -> metaField.getDefaultValueObject());
@@ -98,7 +94,7 @@ public class XToOneProcessor extends BaseProcessor {
             // When the subQuery is not null, assign the subQuery result to the ManyToOne/OneToOne field directly.
             rows.forEach(row -> {
                 Serializable key = (Serializable) row.get(fieldName);
-                key = IdUtils.formatId(metaField.getRelatedModel(), metaField.getRelatedField(), key);
+                key = IdUtils.formatId(metaField.getRelatedModel(), key);
                 row.put(fieldName, relatedRowMap.get(key));
             });
         } else if (ConvertType.EXPAND_TYPES.contains(convertType)) {
@@ -119,7 +115,7 @@ public class XToOneProcessor extends BaseProcessor {
             return;
         }
         Serializable key = (Serializable) row.get(fieldName);
-        Serializable formattedId = IdUtils.formatId(metaField.getRelatedModel(), metaField.getRelatedField(), key);
+        Serializable formattedId = IdUtils.formatId(metaField.getRelatedModel(), key);
         if (formattedId == null) {
             log.warn("Model data {}(id={}) with field {}={}, the field value not exist in related model {}!",
                     metaField.getModelName(), row.get(ModelConstant.ID), fieldName, key, metaField.getRelatedModel());

@@ -92,8 +92,7 @@ public enum CustomerTier {
 | `dataSource` | String | `""` | `dataSource` | empty → primary datasource |
 | `businessKey` | String[] | `{}` | `businessKey` | composite supported |
 | `partitionField` | String | `""` | `partitionField` | |
-| `serviceName` | String | `""` | `serviceName` | microservice routing key — see [RPC](../architecture/rpc.md) |
-| (scanner sets) | — | — | `appId` | always set by scanner / Studio |
+| (scanner sets) | — | — | `appCode` | always set by scanner / Studio |
 | (DB auto) | — | — | `id` | primary key |
 | (scanner sets) | — | — | `ownership` | `PLATFORM_MAINTAINED` for scanner writes |
 
@@ -127,7 +126,8 @@ extends `AuditableModel`.
 | `defaultValue` | String | `""` | `defaultValue` | |
 | `relatedModel` | `Class<?>` | `Void.class` | `relatedModel` | Class ref (compile-checked), e.g. `Foo.class`; `Void.class` → inferred from POJO type; **required** for `Long` FK. Use `relatedModelName` (String) for cross-module/dynamic models |
 | `relatedModelName` | String | `""` | `relatedModel` | String fallback to `relatedModel` (cross-module/dynamic) |
-| `relatedField` | String | `""` | `relatedField` | empty → `"id"` |
+| `relatedField` | String | `""` | `relatedField` | TO_ONE: always `id` — leave empty (a non-id value is rejected at boot, ADR-0024; to store a business code make the related model code-as-id). ONE_TO_MANY: names the child FK column |
+| `onDelete` | `OnDelete[]` | `{}` | `on_delete` | TO_ONE FK delete strategy: `RESTRICT` / `CASCADE` / `SET_NULL`; `{}`/unset = KEEP (default — do nothing). App-level (no DB FK). See "Delete strategy" below + ADR-0022 |
 | `joinModel` | `Class<?>` | `Void.class` | `joinModel` | M2M join model class; `joinModelName` (String) fallback |
 | `joinLeft` | String | `""` | `joinLeft` | |
 | `joinRight` | String | `""` | `joinRight` | |
@@ -136,9 +136,52 @@ extends `AuditableModel`.
 | `widgetType` | `WidgetType[]` | `{}` | `widgetType` | single-element override |
 | (scanner sets) | — | — | `modelName` | from enclosing `@Model` class |
 | (scanner sets) | — | — | `optionSetCode` | derived from enum type when fieldType is `OPTION`/`MULTI_OPTION` |
-| (scanner sets) | — | — | `appId` / `id` / `ownership` | |
+| (scanner sets) | — | — | `appCode` / `id` / `ownership` | |
 | (FK fixup post-init) | — | — | `modelId` | |
 | (not exposed via `@Field`) | — | — | `hidden` | UI-only flag set via Studio |
+
+#### Delete strategy (`onDelete`)
+
+On a `MANY_TO_ONE` / `ONE_TO_ONE` FK, `onDelete` declares what happens to the **referencing** rows when
+the referenced ("One") row is deleted. Enforced application-level in `ModelServiceImpl.deleteByIds` — no
+physical DB `FOREIGN KEY ... ON DELETE` is ever emitted (relations are app-level):
+
+- `RESTRICT` — block the delete if any live (`deleted=false`) referrer exists.
+- `CASCADE` — delete the referrers in the same transaction (each follows its own soft/hard delete).
+  **Rejected at boot** if a soft-delete One would cascade to a hard-delete Many (a recoverable parent
+  must not irreversibly delete children — make the Many soft-delete too, or use RESTRICT/SET_NULL).
+- `SET_NULL` — null the referrer FK; **only on a hard delete** of the One (no-op on soft delete, so a
+  restore still resolves the link). Requires a nullable FK (`required = false`).
+- unset (`{}` / `on_delete` NULL) = **KEEP** (default) — the framework does nothing.
+
+**CASCADE soft/hard-delete matrix** — the cascade on each Many follows the *Many's* own delete mode
+(not the One's); the one unsafe combination is rejected at boot:
+
+| One (referenced / parent) | Many (referrer / child) | CASCADE result |
+|---|---|---|
+| soft-delete | soft-delete | Many **soft-deleted** (both recoverable) |
+| soft-delete | hard-delete | **rejected at boot** — a recoverable parent must not irreversibly delete children |
+| hard-delete | soft-delete | Many **soft-deleted** |
+| hard-delete | hard-delete | Many **hard-deleted** |
+
+A `CASCADE` from a **shared (non-multi-tenant) parent to a multi-tenant child** is likewise rejected at
+boot — one delete would cascade across all tenants (use RESTRICT).
+
+**Runtime safety** — a `CASCADE` / `SET_NULL` affecting more than `MAX_BATCH_SIZE` referrers *per cascade
+level* is rejected: `referrerIds` fetches at most `MAX_BATCH_SIZE + 1` ids in one `LIMIT`-ed query, so an
+over-limit delete fails fast **without loading the full set** (bounded memory, no extra `count`). Large
+deletes are chunked to `DEFAULT_BATCH_SIZE` to bound the SELECT/DELETE statement + IN-clause size (same
+transaction — chunking bounds statement size, not lock duration).
+
+For a OneToMany "delete parent → delete children", put `CASCADE` on the **child's back-reference FK**
+(the FK is the single source of truth; `onDelete` is not declared on `ONE_TO_MANY`).
+
+Boot-time guards (fail-fast): `onDelete` is valid only on TO_ONE; `SET_NULL` requires a nullable FK; the
+target may not be a timeline model; a **cyclic / self-referential `CASCADE`** is rejected (delete such
+hierarchies — org trees, BOM, category trees — in application code); a **`CASCADE` chain deeper than
+`MAX_CASCADE_DEPTH` models** is rejected (bounds recursion; the error names the full chain); and a
+`CASCADE` from a **soft-delete parent to a hard-delete child**, or from a **shared parent to a
+multi-tenant child**, is rejected (see the matrix above).
 
 ### `@OptionSet` ↔ `SysOptionSet`
 
@@ -147,7 +190,7 @@ extends `AuditableModel`.
 | (enum simple name) | — | — | `optionSetCode` | inferred, no override |
 | `name` | String | `""` | `name` | display label; empty → humanized enum name (`TenantStatus`→"Tenant Status") |
 | `description` | String | `""` | `description` | |
-| (scanner sets) | — | — | `appId` / `id` / `ownership` | |
+| (scanner sets) | — | — | `appCode` / `id` / `ownership` | |
 | (Studio toggle) | — | — | `deleted` / `optionItems` | runtime aggregation |
 
 ### `@OptionItem` ↔ `SysOptionItem`
@@ -162,7 +205,7 @@ extends `AuditableModel`.
 | `parentItemCode` | String | `""` | `parentItemCode` | hierarchy |
 | `itemTone` | `OptionItemTone[]` | `{}` | `itemTone` | single element |
 | `itemIcon` | `OptionItemIcon[]` | `{}` | `itemIcon` | single element |
-| (scanner sets) | — | — | `appId` / `id` / `ownership` / `optionSetId` | |
+| (scanner sets) | — | — | `appCode` / `id` / `ownership` / `optionSetId` | |
 | (Studio toggle) | — | — | `active` | |
 
 ### `@Index` ↔ `SysModelIndex`
@@ -176,7 +219,7 @@ extends `AuditableModel`.
 | `name` (or auto-derived) | — | — | `indexName` | `idx_<table>_<col>...` / `uk_<table>_<col>...` for unique |
 | `fields` | String[] | required | `indexFields` | **camelCase Java field names**, not column names |
 | `unique` | boolean | `false` | `uniqueIndex` | |
-| (scanner sets) | — | — | `appId` / `id` / `ownership` | |
+| (scanner sets) | — | — | `appCode` / `id` / `ownership` | |
 | (FK fixup post-init) | — | — | `modelId` | |
 
 **Note**: `@Model.businessKey` does **not** auto-create a UNIQUE index.
@@ -296,10 +339,11 @@ Recommendation:
 
 ### Less Common Annotations
 - `@RPCCheckpoint`: framework-internal AOP hook used by `JdbcServiceImpl` to
-  redirect ORM calls to a remote service when the model's `serviceName` is set.
-  Application services do not apply this annotation themselves. See
-  [RPC](../architecture/rpc.md) for the
-  mechanism, wire format, and configuration.
+  redirect ORM calls to the app that owns the model — `SwitchServiceAspect`
+  routes by the model's `appCode` (ADR-0015) when it differs from this runtime's
+  `system.app-code`. Application services do not apply this annotation themselves.
+  See [Service-to-Service RPC](../architecture/rpc.md) for
+  the mechanism, wire format, and configuration.
 - `@CrossTenant` and `@PerTenant`: covered in the multi-tenancy section below.
 
 ## Multi-Tenancy

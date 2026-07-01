@@ -65,7 +65,10 @@ public class MetaModel implements Serializable {
 
     private String dataSource;
 
-    private String serviceName;
+    // Owning app identity, projected from sys_model.app_code by the generic
+    // meta row mapper. Drives RPC routing in SwitchServiceAspect: an operation on a model
+    // whose appCode differs from this runtime's system.app-code is routed to the owning app.
+    private String appCode;
 
     @Setter(AccessLevel.NONE)
     private List<String> businessKey;
@@ -91,6 +94,15 @@ public class MetaModel implements Serializable {
      */
     @Setter(AccessLevel.NONE)
     private Set<String> childModels = new HashSet<>();
+
+    /**
+     * OnDelete TO_ONE foreign keys pointing AT this model with a non-KEEP delete strategy
+     * ({@code @Field.onDelete}): when a row of this model is deleted, these referencing
+     * fields' RESTRICT/CASCADE/SET_NULL are enforced. Populated at init by
+     * {@code ModelManager.identifyOnDeleteRefs()}; empty for models nobody references with a non-KEEP policy.
+     */
+    @Setter(AccessLevel.NONE)
+    private List<MetaField> onDeleteRefFields = new ArrayList<>();
 
     protected void setDisplayName(List<String> displayName) {
         this.displayName = Collections.unmodifiableList(displayName);
@@ -120,6 +132,10 @@ public class MetaModel implements Serializable {
         this.childModels.add(modelName);
     }
 
+    protected void addOnDeleteRefField(MetaField metaField) {
+        this.onDeleteRefFields.add(metaField);
+    }
+
     /**
      * Seal the model fields and related attributes to make them immutable after initialization,
      * preventing accidental modification.
@@ -130,6 +146,7 @@ public class MetaModel implements Serializable {
         this.auditCreateFields = Collections.unmodifiableSet(this.auditCreateFields);
         this.auditUpdateFields = Collections.unmodifiableSet(this.auditUpdateFields);
         this.childModels = Collections.unmodifiableSet(this.childModels);
+        this.onDeleteRefFields = Collections.unmodifiableList(this.onDeleteRefFields);
     }
 
 

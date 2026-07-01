@@ -10,6 +10,7 @@ import org.apache.commons.lang3.StringUtils;
 import io.softa.framework.base.context.ContextHolder;
 import io.softa.framework.orm.enums.FieldType;
 import io.softa.framework.orm.enums.MaskingType;
+import io.softa.framework.orm.enums.OnDelete;
 import io.softa.framework.orm.enums.WidgetType;
 
 /**
@@ -43,6 +44,13 @@ public class MetaField implements Serializable {
     private String relatedModel;
 
     private String relatedField;
+
+    // System-computed mirror of the referenced column's physical type for a TO_ONE FK
+    // (fieldType stays the logical MANY_TO_ONE / ONE_TO_ONE). Loaded from sys_field.
+    private FieldType relatedFieldType;
+
+    // FK delete strategy for a TO_ONE relation; null = KEEP (framework does nothing).
+    private OnDelete onDelete;
 
     private String joinModel;
 

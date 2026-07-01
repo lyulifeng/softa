@@ -58,6 +58,30 @@ public abstract class ReflectTool {
     }
 
     /**
+     * Get up to {@code limitSize} ids of the specified model matching the filters (a LIMIT-ed getIds) —
+     * lets a caller detect an over-limit set (fetch limit+1) without loading the full list.
+     *
+     * @param modelName model name
+     * @param filters filters
+     * @param limitSize max number of ids to return
+     * @return up to {@code limitSize} matching ids
+     */
+    public static List<Serializable> getIds(String modelName, Filters filters, int limitSize) {
+        return getModelService().getIds(modelName, filters, limitSize);
+    }
+
+    /**
+     * Count rows of the specified model matching the filters.
+     *
+     * @param modelName model name
+     * @param filters filters
+     * @return matching row count
+     */
+    public static long count(String modelName, Filters filters) {
+        return getModelService().count(modelName, filters);
+    }
+
+    /**
      * Get the ids for ManyToOne/OneToOne relational field.
      *
      * @param modelName model name

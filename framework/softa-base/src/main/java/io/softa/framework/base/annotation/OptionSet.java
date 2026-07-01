@@ -32,4 +32,11 @@ public @interface OptionSet {
 
     /** Description shown to users in Studio UI; empty = no description. */
     String description() default "";
+
+    /**
+     * The single immediately-prior option-set code for a declared rename (empty = no rename;
+     * single-step). Materialized into {@code sys_option_set.renamedFrom}; lets the diff pair this option
+     * set with it instead of drop+add.
+     */
+    String renamedFrom() default "";
 }

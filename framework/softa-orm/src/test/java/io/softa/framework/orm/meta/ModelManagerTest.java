@@ -131,4 +131,55 @@ class ModelManagerTest {
             mock.verify(() -> ModelManager.existField(Mockito.anyString(), Mockito.anyString()), Mockito.never());
         }
     }
+
+    // --- boot-time CASCADE acyclicity (replaces the runtime cycle guard) ---
+
+    @Test
+    void cascadeSelfLoop_rejectedAtBoot() {
+        // self-referential CASCADE (e.g. OrgUnit.parentId → OrgUnit) would recurse forever
+        assertThrows(IllegalArgumentException.class,
+                () -> ModelManager.assertCascadeAcyclic(Map.of("OrgUnit", List.of("OrgUnit"))));
+    }
+
+    @Test
+    void cascadeCycle_rejectedAtBoot() {
+        // A → B → A
+        assertThrows(IllegalArgumentException.class,
+                () -> ModelManager.assertCascadeAcyclic(Map.of("A", List.of("B"), "B", List.of("A"))));
+    }
+
+    @Test
+    void cascadeDiamond_allowed() {
+        // A → B, A → C, B → D, C → D : a DAG (re-convergence), NOT a cycle → allowed (no throw)
+        ModelManager.assertCascadeAcyclic(Map.of("A", List.of("B", "C"), "B", List.of("D"), "C", List.of("D")));
+    }
+
+    @Test
+    void cascadeChain_allowed() {
+        ModelManager.assertCascadeAcyclic(Map.of("A", List.of("B"), "B", List.of("C")));
+    }
+
+    @Test
+    void cascadeChain_atMaxDepth_allowed() {
+        // A→B→C→D is exactly MAX_CASCADE_DEPTH (4) models → allowed (no throw).
+        ModelManager.assertCascadeAcyclic(Map.of("A", List.of("B"), "B", List.of("C"), "C", List.of("D")));
+    }
+
+    @Test
+    void cascadeChain_overMaxDepth_rejectedWithFullChain() {
+        // A→B→C→D→E is 5 models deep (> MAX_CASCADE_DEPTH = 4) → rejected; the message names the full chain.
+        IllegalArgumentException ex = assertThrows(IllegalArgumentException.class,
+                () -> ModelManager.assertCascadeAcyclic(Map.of(
+                        "A", List.of("B"), "B", List.of("C"), "C", List.of("D"), "D", List.of("E"))));
+        assertTrue(ex.getMessage().contains("A -> B -> C -> D -> E"), ex.getMessage());
+        assertTrue(ex.getMessage().contains("MAX_CASCADE_DEPTH"), ex.getMessage());
+    }
+
+    @Test
+    void cascadeDiamondDeep_measuresLongestPath() {
+        // Diamond A→B→D, A→C→D→E: the longest path A→B/C→D→E = 4 models = MAX → allowed (re-convergence
+        // at D is memoized, not double-counted). Adding one more level would tip it over.
+        ModelManager.assertCascadeAcyclic(Map.of(
+                "A", List.of("B", "C"), "B", List.of("D"), "C", List.of("D"), "D", List.of("E")));
+    }
 }

@@ -10,29 +10,29 @@ package io.softa.framework.orm.enums;
  * platform-defaults a tenant can customize (e.g. system roles, workflow
  * templates, email templates, default categories).
  *
- * <h2>Metadata catalog usage (ADR-0013)</h2>
+ * <h2>Metadata catalog usage</h2>
  *
  * All tenants share the {@code sys_*} metadata — per-tenant fields / models
  * are <b>not supported</b> (product decision; revisiting it requires a new
- * ADR plus a tenant dimension on the {@code sys_*} unique keys). On the
- * metadata catalog only two tiers are live:
+ * architecture decision plus a tenant dimension on the {@code sys_*} unique
+ * keys). On the metadata catalog only two tiers are live:
  *
  * <ul>
  *   <li>{@link #PLATFORM_MAINTAINED} — materialized from {@code @Model} /
  *   {@code @Field} / {@code @OptionSet} / {@code @OptionItem} declarations in
  *   source code. Source of truth is the Java annotation; evolves via the
- *   boot-time scanner (dev) or runtime Plan/Apply (prod, ADR-0011).</li>
+ *   boot-time scanner (dev) or runtime Plan/Apply (prod).</li>
  *
  *   <li>{@link #STUDIO_MANAGED} — platform <b>no-code</b> definitions
  *   (models / fields / option sets with no Java source), authored in the
  *   Studio {@code design_*} workspace. Source of truth is the design
- *   workspace; evolves via version freeze → signed deployment envelope
- *   (ADR-0009 / ADR-0012). The envelope write path may only touch rows of
+ *   workspace; evolves via version freeze → signed deployment envelope.
+ *   The envelope write path may only touch rows of
  *   this tier; the two channels are physically partitioned at the writer.</li>
  * </ul>
  *
  * <p>{@link #PLATFORM_DEFAULT} and {@link #TENANT} are <b>retired on
- * {@code sys_*}</b> (ADR-0013): existing rows were re-tiered by migration
+ * {@code sys_*}</b>: existing rows were re-tiered by migration
  * {@code V7__ownership_studio_managed.sql}. Both values remain in the enum
  * for the original business-data intent — platform-seeded rows a tenant may
  * customize, and tenant-owned rows respectively.
@@ -55,13 +55,13 @@ public enum Ownership {
 
     /**
      * Platform-provided default that tenants may override. Reserved for
-     * business-data scenarios; retired on {@code sys_*} (ADR-0013).
+     * business-data scenarios; retired on {@code sys_*}.
      */
     PLATFORM_DEFAULT,
 
     /**
      * Tenant-owned data. Reserved for business-data scenarios; retired on
-     * {@code sys_*} (ADR-0013).
+     * {@code sys_*}.
      */
     TENANT
 }

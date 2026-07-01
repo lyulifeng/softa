@@ -7,6 +7,7 @@ import java.lang.annotation.Target;
 
 import io.softa.framework.orm.enums.FieldType;
 import io.softa.framework.orm.enums.MaskingType;
+import io.softa.framework.orm.enums.OnDelete;
 import io.softa.framework.orm.enums.WidgetType;
 
 /**
@@ -38,6 +39,16 @@ public @interface Field {
      * single element = explicit override.
      */
     FieldType[] fieldType() default {};
+
+    /**
+     * The single immediately-prior field name for a declared rename (empty = no rename).
+     * Lets the metadata diff pair this field with it and emit {@code CHANGE COLUMN} (data preserved)
+     * instead of drop+add. <b>Single-step</b> (no chain): multi-version lineage is not accumulated here —
+     * studio derives it from snapshot history, the annotation lane handles a skipped version via manual
+     * migration. Materialized into {@code sys_field.renamedFrom}. Replaces the retired {@code @RenamedFrom}
+     * annotation.
+     */
+    String renamedFrom() default "";
 
     /** DB column name; empty = derived from {@code snake_case(fieldName)}. */
     String columnName() default "";
@@ -110,18 +121,26 @@ public @interface Field {
     /**
      * Field on the related model this relation joins to.
      *
-     * <p>For {@code MANY_TO_ONE} / {@code ONE_TO_ONE} (to-one): empty = {@code "id"}
-     * (the surrogate key, the default). A non-id value enables <b>reference-by-code</b>
-     * (ADR-0017): the FK stores a stable business code (e.g. {@code "code"} →
-     * {@code currency.code}) instead of the id, the FK column physically mirrors the
-     * referenced column (so a code FK renders {@code VARCHAR(n)}, not {@code BIGINT}),
-     * and joins/reads/writes use this field. The target must be a stored, uniquely
-     * identifying field of the related model ({@code id} or a single-column businessKey).
+     * <p>For {@code MANY_TO_ONE} / {@code ONE_TO_ONE} (to-one): always the related model's
+     * {@code "id"} — leave empty (a TO_ONE relation joins on the surrogate id only; a non-id
+     * value is rejected at boot). To store a portable business code in the FK, make the related model
+     * <b>code-as-id</b> ({@code EXTERNAL_ID}, id = the code, e.g. {@code Currency}/{@code CountryRegion}):
+     * the FK then stores the code while the join stays id-native, and the FK column mirrors the
+     * referenced id type ({@code VARCHAR} for a String code-as-id, {@code BIGINT} for a Long surrogate).
      *
      * <p>For {@code ONE_TO_MANY}: names the column on the child that references this
      * model (required, must not be {@code "id"}).
      */
     String relatedField() default "";
+
+    /**
+     * FK delete strategy for a {@code MANY_TO_ONE} / {@code ONE_TO_ONE} relation: what happens to
+     * the referencing rows when the referenced ("One") row is deleted. Empty array = unset = KEEP
+     * (framework does nothing, FK left as-is — the default). A single value {@code RESTRICT} /
+     * {@code CASCADE} / {@code SET_NULL} is an explicit policy. Meaningful only on TO_ONE relations
+     * (rejected on other field types at boot).
+     */
+    OnDelete[] onDelete() default {};
 
     /**
      * Many-to-many join model <b>class</b> — preferred, compile-checked form,

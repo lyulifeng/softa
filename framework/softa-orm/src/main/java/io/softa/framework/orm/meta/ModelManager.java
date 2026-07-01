@@ -3,7 +3,6 @@ package io.softa.framework.orm.meta;
 import java.util.*;
 import java.util.concurrent.locks.ReentrantLock;
 import java.util.stream.Collectors;
-import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.lang3.StringUtils;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
@@ -22,13 +21,14 @@ import io.softa.framework.orm.constant.ModelConstant;
 import io.softa.framework.orm.domain.Orders;
 import io.softa.framework.orm.enums.FieldType;
 import io.softa.framework.orm.enums.IdStrategy;
+import io.softa.framework.orm.enums.OnDelete;
 import io.softa.framework.orm.jdbc.JdbcService;
+import io.softa.framework.orm.utils.GraphUtils;
 
 /**
  * Model Manager, maintaining model metadata and field metadata in memory.
  */
 @Component
-@Slf4j
 public class ModelManager {
 
     private static volatile MetadataSnapshot snapshot = MetadataSnapshot.empty();
@@ -89,6 +89,10 @@ public class ModelManager {
                 this.validateFieldAttributes(fields);
                 // Identify composition relationships and build childModels
                 this.identifyChildModels();
+                // Build the inbound TO_ONE reverse-reference index (delete strategy)
+                this.identifyOnDeleteRefs();
+                // Reject cyclic / self-referential CASCADE so the runtime cascade needs no cycle guard
+                this.validateCascadeAcyclic();
                 // Identify the audit fields of the models.
                 this.identifyAuditFields(models);
                 // Seal the model attributes to make them immutable after initialization
@@ -158,8 +162,6 @@ public class ModelManager {
             validateVersionField(metaModel);
             // Check if the model dataSource attribute is valid
             validateModelDataSource(metaModel);
-            // Check if the model serviceName attribute is valid
-            validateModelService(metaModel);
             // Check if the model businessKey attribute is valid
             validateBusinessKey(metaModel);
         }
@@ -186,6 +188,11 @@ public class ModelManager {
             if (FieldType.RELATED_TYPES.contains(metaField.getFieldType())) {
                 validateRelationalField(metaField);
             }
+            // onDelete is meaningful only on TO_ONE relations (reject elsewhere — determinism).
+            Assert.isTrue(metaField.getOnDelete() == null
+                            || FieldType.TO_ONE_TYPES.contains(metaField.getFieldType()),
+                    "{0}:{1}, onDelete is only valid on a MANY_TO_ONE / ONE_TO_ONE field!",
+                    metaField.getModelName(), metaField.getFieldName());
             if (StringUtils.isNotBlank(metaField.getCascadedField())) {
                 // Verify the cascaded field and update the MetaModel object
                 verifyCascadedField(metaField);
@@ -243,6 +250,69 @@ public class ModelManager {
                 }
             }
         }
+    }
+
+    /**
+     * Build the onDelete reverse-reference index: for every TO_ONE field carrying a non-KEEP
+     * {@code onDelete}, register it on the model it points AT, so deleting that model can enforce the
+     * policy without scanning the whole field graph. KEEP ({@code onDelete == null}) fields are skipped
+     * — the default costs nothing.
+     */
+    private void identifyOnDeleteRefs() {
+        for (Map<String, MetaField> fields : modelFields().values()) {
+            for (MetaField field : fields.values()) {
+                if (field.getOnDelete() != null && FieldType.TO_ONE_TYPES.contains(field.getFieldType())) {
+                    MetaModel target = modelMap().get(field.getRelatedModel());
+                    if (target != null) {
+                        target.addOnDeleteRefField(field);
+                    }
+                }
+            }
+        }
+    }
+
+    /**
+     * Reject cyclic / self-referential {@code onDelete=CASCADE}. Only CASCADE recurses through
+     * {@code deleteByIds}, so as long as the CASCADE graph — edge "deleting the referenced model cascades
+     * to its referrer" — is acyclic, the recursion is bounded and the runtime needs <b>no</b> cycle guard.
+     * A cycle (including a self-loop, e.g. a self-referential parent FK) would recurse forever, so it is
+     * forbidden at boot; delete such hierarchies explicitly in application code. (Diamonds are not cycles
+     * and stay allowed: a re-converged row is already gone, so the repeat delete no-ops.) The same pass
+     * also rejects a CASCADE chain longer than {@link BaseConstant#MAX_CASCADE_DEPTH} models — bounding
+     * the runtime recursion depth.
+     */
+    private void validateCascadeAcyclic() {
+        Map<String, List<String>> cascadeGraph = new HashMap<>();
+        for (Map.Entry<String, MetaModel> entry : modelMap().entrySet()) {
+            for (MetaField field : entry.getValue().getOnDeleteRefFields()) {
+                if (OnDelete.CASCADE == field.getOnDelete()) {
+                    // deleting entry.getKey() (the One) cascades to field.getModelName() (the referrer / Many)
+                    cascadeGraph.computeIfAbsent(entry.getKey(), k -> new ArrayList<>()).add(field.getModelName());
+                }
+            }
+        }
+        assertCascadeAcyclic(cascadeGraph);
+    }
+
+    /**
+     * Reject any cycle (including a self-loop) and any CASCADE chain deeper than
+     * {@link BaseConstant#MAX_CASCADE_DEPTH} in the CASCADE graph. Delegates the generic graph algorithms
+     * to {@link GraphUtils} (cycle-find + longest-path) and phrases the CASCADE-specific fail-fast errors
+     * here. Package-visible so the CASCADE validation is unit-testable.
+     *
+     * @param graph model → the models its deletion cascades to (CASCADE edges only)
+     */
+    static void assertCascadeAcyclic(Map<String, List<String>> graph) {
+        List<String> cycle = GraphUtils.findCycle(graph);
+        Assert.isTrue(cycle.isEmpty(),
+                "onDelete=CASCADE forms a cycle [{0}] — cyclic / self-referential cascade delete is not "
+                        + "supported; delete such hierarchies explicitly in application code.",
+                String.join(" -> ", cycle));
+        List<String> longest = GraphUtils.longestPath(graph);
+        Assert.isTrue(longest.size() <= BaseConstant.MAX_CASCADE_DEPTH,
+                "onDelete=CASCADE chain [{0}] is {1} model(s) deep, over the MAX_CASCADE_DEPTH limit ({2}) — "
+                        + "shorten the cascade, or delete deep hierarchies explicitly in application code.",
+                String.join(" -> ", longest), longest.size(), BaseConstant.MAX_CASCADE_DEPTH);
     }
 
     /**
@@ -413,20 +483,6 @@ public class ModelManager {
     }
 
     /**
-     * Validate the model serviceName attribute.
-     * The system model cannot be configured with a serviceName.
-     *
-     * @param metaModel model metadata object
-     */
-    private static void validateModelService(MetaModel metaModel) {
-        String serviceName = metaModel.getServiceName();
-        if (ModelConstant.SYSTEM_MODEL.contains(metaModel.getModelName()) && StringUtils.isNotBlank(serviceName)) {
-            throw new IllegalArgumentException("The system model {0} cannot be configured with a serviceName {1}!",
-                    metaModel.getModelName(), serviceName);
-        }
-    }
-
-    /**
      * Check if the fields exists in the model
      *
      * @param metaModel model metadata object
@@ -457,25 +513,39 @@ public class ModelManager {
                 "{0}:{1} field, the relatedModel `{2}` does not exist in the model metadata!",
                 metaField.getModelName(), metaField.getFieldName(), relatedModel);
         if ((FieldType.TO_ONE_TYPES.contains(metaField.getFieldType()))) {
-            if (StringUtils.isBlank(metaField.getRelatedField())) {
-                // Default join key is the related model's surrogate id.
-                metaField.setRelatedField(ModelConstant.ID);
-            } else if (!ModelConstant.ID.equals(metaField.getRelatedField())) {
-                // A MANY_TO_ONE / ONE_TO_ONE relation may join on
-                // a stable business key of the related model (e.g. `currency.code`) instead of
-                // its surrogate id, so the stored FK value is portable across environments.
-                // The target field must exist, be stored, and uniquely identify one row.
-                String relatedField = metaField.getRelatedField();
-                Assert.isTrue(modelFields().get(relatedModel).containsKey(relatedField),
-                        "{0}:{1} field, the relatedModel `{2}` does not contain the related field `{3}`!",
-                        metaField.getModelName(), metaField.getFieldName(), relatedModel, relatedField);
-                Assert.isTrue(isStored(relatedModel, relatedField),
-                        "{0}:{1} field, the related field `{2}.{3}` must be a stored field to be a join key!",
-                        metaField.getModelName(), metaField.getFieldName(), relatedModel, relatedField);
-                Assert.isTrue(isUniqueKey(relatedModel, relatedField),
-                        "{0}:{1} field, the related field `{2}.{3}` must uniquely identify a related row "
-                                + "(`id` or a single-column businessKey of the related model)!",
-                        metaField.getModelName(), metaField.getFieldName(), relatedModel, relatedField);
+            // A TO_ONE relation joins on the related model's surrogate id ONLY. The earlier
+            // reference-by-code option (a non-id `relatedField`) is removed — rich masters
+            // (Currency / CountryRegion / ...) are code-as-id instead, so the FK still stores the
+            // portable code while the join stays id-native. A declared non-id relatedField is rejected.
+            Assert.isTrue(StringUtils.isBlank(metaField.getRelatedField())
+                            || ModelConstant.ID.equals(metaField.getRelatedField()),
+                    "{0}:{1} field, relatedField `{2}` is not allowed: a TO_ONE relation must join on the "
+                            + "related model `{3}` by its id (reference-by-code was removed; make the "
+                            + "related model code-as-id to store a business code).",
+                    metaField.getModelName(), metaField.getFieldName(), metaField.getRelatedField(), relatedModel);
+            metaField.setRelatedField(ModelConstant.ID);
+            // delete-strategy guards (apply to any TO_ONE onDelete):
+            OnDelete onDelete = metaField.getOnDelete();
+            if (onDelete != null) {
+                Assert.notTrue(OnDelete.SET_NULL == onDelete && metaField.isRequired(),
+                        "{0}:{1} field, onDelete=SET_NULL requires a nullable FK (required=false)!",
+                        metaField.getModelName(), metaField.getFieldName());
+                Assert.notTrue(isTimelineModel(relatedModel),
+                        "{0}:{1} field, onDelete cannot target timeline model `{2}` "
+                                + "(per-slice delete bypasses the delete path)!",
+                        metaField.getModelName(), metaField.getFieldName(), relatedModel);
+                Assert.notTrue(OnDelete.CASCADE == onDelete && isSoftDeleted(relatedModel)
+                                && !isSoftDeleted(metaField.getModelName()),
+                        "{0}:{1} field, onDelete=CASCADE from soft-delete `{2}` to hard-delete `{0}` is not "
+                                + "allowed — a recoverable parent must not trigger an irreversible child delete. "
+                                + "Make `{0}` soft-delete too, or use onDelete=RESTRICT / SET_NULL.",
+                        metaField.getModelName(), metaField.getFieldName(), relatedModel);
+                Assert.notTrue(OnDelete.CASCADE == onDelete && !isMultiTenantModel(relatedModel)
+                                && isMultiTenantModel(metaField.getModelName()),
+                        "{0}:{1} field, onDelete=CASCADE from shared (non-multi-tenant) `{2}` to multi-tenant "
+                                + "`{0}` is not allowed — deleting one shared row would cascade across ALL "
+                                + "tenants. Use onDelete=RESTRICT.",
+                        metaField.getModelName(), metaField.getFieldName(), relatedModel);
             }
         } else if (FieldType.ONE_TO_MANY.equals(metaField.getFieldType())) {
             Assert.notBlank(metaField.getRelatedField(),
@@ -507,27 +577,6 @@ public class ModelManager {
                     "{0}:{1} is a ManyToMany field, the joinModel `{2}` does not contain the joinRight field `{3}`!",
                     metaField.getModelName(), metaField.getFieldName(), metaField.getJoinModel(), metaField.getJoinRight());
         }
-    }
-
-    /**
-     * Whether a field uniquely identifies a single row of the given model, so it is a
-     * safe target for a reference-by-code relation join. True for the surrogate `id`,
-     * or a single-column businessKey (the framework's logical unique identity).
-     *
-     * @param modelName model name
-     * @param fieldName candidate join key field
-     * @return true if the field value uniquely identifies a row
-     */
-    private static boolean isUniqueKey(String modelName, String fieldName) {
-        if (ModelConstant.ID.equals(fieldName)) {
-            return true;
-        }
-        MetaModel model = modelMap().get(modelName);
-        if (model == null) {
-            return false;
-        }
-        List<String> businessKey = model.getBusinessKey();
-        return businessKey != null && businessKey.size() == 1 && businessKey.contains(fieldName);
     }
 
     /**

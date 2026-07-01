@@ -33,6 +33,13 @@ public @interface OptionItem {
     /** Description shown to users in Studio UI; empty = no description. */
     String description() default "";
 
+    /**
+     * The single immediately-prior item code for a declared rename (empty = no rename;
+     * single-step). Materialized into {@code sys_option_item.renamedFrom}; lets the diff pair this item
+     * with it instead of drop+add.
+     */
+    String renamedFrom() default "";
+
     /** Override sequence; -1 = use {@code ordinal() + 1}. */
     int sequence() default -1;
 

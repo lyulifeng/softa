@@ -6,9 +6,6 @@ import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.*;
-import com.googlecode.aviator.AviatorEvaluator;
-import com.googlecode.aviator.AviatorEvaluatorInstance;
-import com.googlecode.aviator.runtime.JavaMethodReflectionFunctionMissing;
 import lombok.extern.slf4j.Slf4j;
 import org.junit.jupiter.api.Assertions;
 import org.junit.jupiter.api.Test;
@@ -18,21 +15,19 @@ import io.softa.framework.orm.compute.ComputeUtils;
 @Slf4j
 class ComputeUtilsTest {
 
+    /**
+     * Security regression: the reflective function-missing handler was removed, so
+     * arbitrary instance-method reflection on scope objects must no longer resolve.
+     * Legitimate functions are reachable only via importFunctions (namespaced form).
+     */
     @Test
-    void reflectMethod() {
-        AviatorEvaluatorInstance instance = AviatorEvaluator.newInstance();
-        instance.setFunctionMissing(JavaMethodReflectionFunctionMissing.getInstance());
-
-        String formula =  "a='abc';length(a)";
-        Object result = instance.execute(formula);
-        Assertions.assertEquals("3", result.toString());
-
-        formula = "getYear(date)";
+    void reflectionVectorsAreBlocked() {
         Map<String, Object> env = new HashMap<>();
-        LocalDate date = LocalDate.now();
-        env.put("date", date);
-        result = instance.execute(formula, env);
-        Assertions.assertEquals(String.valueOf(date.getYear()), result.toString());
+        env.put("s", "abc");
+        Assertions.assertThrows(RuntimeException.class, () -> ComputeUtils.execute("getClass(s)", env));
+        Assertions.assertThrows(RuntimeException.class, () -> ComputeUtils.execute("getBytes(s)", env));
+        Assertions.assertThrows(RuntimeException.class,
+                () -> ComputeUtils.execute("getClassLoader(getClass(s))", env));
     }
 
     /**
@@ -89,7 +84,8 @@ class ComputeUtilsTest {
      */
     @Test
     void computeDateDiff() {
-        String formula = "toEpochDay(toLocalDate(LocalDateTime.now())) - toEpochDay(toLocalDate(dateTime1))";
+        String formula = "LocalDate.toEpochDay(LocalDateTime.toLocalDate(LocalDateTime.now())) "
+                + "- LocalDate.toEpochDay(LocalDateTime.toLocalDate(dateTime1))";
         LocalDateTime dateTime1 = LocalDateTime.now().minusDays(2);
         Map<String, Object> env = new HashMap<>();
         env.put("dateTime1", dateTime1);
@@ -103,28 +99,12 @@ class ComputeUtilsTest {
      */
     @Test
     void computeDateDiffUsingChronUnit() {
-        String formula = "between(ChronoUnit.DAYS, dateTime1, LocalDateTime.now())";
+        String formula = "ChronoUnit.between(ChronoUnit.DAYS, dateTime1, LocalDateTime.now())";
         LocalDateTime dateTime1 = LocalDateTime.now().minusDays(2);
         Map<String, Object> env = new HashMap<>();
         env.put("dateTime1", dateTime1);
         Object days = ComputeUtils.execute(formula, env);
         Assertions.assertEquals(2L, days);
-    }
-
-    /**
-     * Reflect call LocalDate object method
-     */
-    @Test
-    void reflectComputeDateYear() {
-        AviatorEvaluatorInstance instance = AviatorEvaluator.newInstance();
-        instance.setFunctionMissing(JavaMethodReflectionFunctionMissing.getInstance());
-
-        String formula =  "plusYears(date, 5)";
-        LocalDate date = LocalDate.now();
-        Map<String, Object> env = new HashMap<>();
-        env.put("date", date);
-        Object result = instance.execute(formula, env);
-        Assertions.assertEquals(date.plusYears(5), result);
     }
 
     @Test

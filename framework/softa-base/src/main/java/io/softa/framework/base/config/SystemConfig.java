@@ -20,8 +20,8 @@ public class SystemConfig {
     private String name;
 
     /**
-     * Stable application code identifying which app this runtime hosts
-     * (ADR-0015). The cross-system join key: stamped server-side onto
+     * Stable application code identifying which app this runtime hosts.
+     * The cross-system join key: stamped server-side onto
      * metadata catalog rows ({@code sys_*.app_code}) and verified against
      * {@code DesignApp.appCode} on every signed studio call, so an envelope
      * can never land on the wrong app.

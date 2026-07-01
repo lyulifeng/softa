@@ -14,7 +14,6 @@ import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import com.googlecode.aviator.*;
 import com.googlecode.aviator.exception.ExpressionSyntaxErrorException;
-import com.googlecode.aviator.runtime.JavaMethodReflectionFunctionMissing;
 import jakarta.validation.constraints.NotNull;
 import tools.jackson.databind.JsonNode;
 
@@ -40,7 +39,7 @@ public abstract class ComputeUtils {
         // Enable compilation cache mode by default
         ENGINE.setCachedExpressionByDefault(true);
         // Forbid calling methods through reflection, equivalent to closing custom functions
-        ENGINE.setFunctionMissing(JavaMethodReflectionFunctionMissing.getInstance());
+        ENGINE.setFunctionMissing(null);
         // Enable variable syntax sugar, access object data through a.b.c cascade
         ENGINE.setOption(Options.ENABLE_PROPERTY_SYNTAX_SUGAR, true);
         // Forbid modifying env to avoid polluting the original data
