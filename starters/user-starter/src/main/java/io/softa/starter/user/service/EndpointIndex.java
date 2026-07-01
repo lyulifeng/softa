@@ -184,35 +184,61 @@ public class EndpointIndex {
     }
 
     /**
-     * Compute the set of models a permission grants LOOKUP access to via
-     * L1 / L2 derivation. Skips permissions with explicit {@code endpoints}
-     * (those override derivation) and non-lookup-trigger actions.
+     * Compute the set of models a permission grants IMPLICIT ALL scope on.
+     * Feeds {@code PermissionInfoEnricher} — without this, Layer B's post-R5
+     * fail-closed NEVER trips legitimate cross-model queries the permission
+     * would otherwise reach (Known-Issues R13).
      *
-     * <p>Used by {@code PermissionInfoEnricher} to inject implicit ALL
-     * scope for lookup models — without this, a user with only
-     * {@code Employee.view} granted (and no explicit scope on Department)
-     * would fail Layer B (post-R5 fail-closed on empty scope) even though
-     * their permission tree legitimately derives Department access
-     * (Known-Issues R13).
+     * <p>Two branches:
+     * <ul>
+     *   <li><b>Explicit endpoints</b> — parse each {@code VERB /Model/action}
+     *       entry, keep the {@code Model} segment. Applies to custom
+     *       permissions whose endpoints target sibling models (wizard-read
+     *       pattern: {@code roles.view} bundles {@code POST /RoleNavigation/searchList}
+     *       — the sibling has no natural {@code modelScopeMap} entry since
+     *       the nav's primary is {@code Role}).</li>
+     *   <li><b>Standard-derivation endpoints</b> — walk the primary model's
+     *       L1 / L2 lookup fan-out (Department picker under Employee.view,
+     *       etc.). Non-lookup-trigger actions (delete / export / copy) drop
+     *       out empty.</li>
+     * </ul>
+     *
+     * <p>In both branches the nav's own primary model is stripped — it goes
+     * through the normal grant path with the caller's explicit scope rules.
+     * Non-model URL segments ({@code /admin/xxx}, {@code /me/xxx}) drop via
+     * {@link ModelManager#existModel(String)}; that keeps admin-controller
+     * helpers (which don't encode a model in the URL) from silently claiming
+     * a model called "admin".
+     *
+     * <p><b>Safety invariant</b>: {@code PermissionInfoEnricher.enrich} only
+     * writes implicit ALL when {@code modelScopeMap.containsKey(model)} is
+     * false — any explicit scope from another nav's grant on the same model
+     * (own_department etc.) still wins over this injection.
      */
     private Set<String> computeDerivedLookupModels(Permission p) {
-        if (p.getEndpoints() != null && p.getEndpoints().isArray() && !p.getEndpoints().isEmpty()) {
-            // Explicit endpoints override derivation — no lookup propagation.
-            return Set.of();
-        }
         Navigation nav = navResolver.findNavigation(p.getNavigationId());
-        if (nav == null || nav.getModel() == null) return Set.of();
+        String primaryModel = (nav == null) ? null : nav.getModel();
+        JsonNode explicit = p.getEndpoints();
+        if (explicit != null && explicit.isArray() && !explicit.isEmpty()) {
+            Set<String> models = new HashSet<>();
+            for (JsonNode node : explicit) {
+                String ep = node.asString();
+                String model = extractModelFromEndpoint(ep);
+                if (model == null) continue;
+                if (model.equals(primaryModel)) continue;
+                if (!ModelManager.existModel(model)) continue;
+                models.add(model);
+            }
+            return models;
+        }
+        if (primaryModel == null) return Set.of();
         String action = lastSegment(p.getId());
-        List<String> derivedEndpoints = deriveLookupEndpoints(nav.getModel(), action);
+        List<String> derivedEndpoints = deriveLookupEndpoints(primaryModel, action);
         if (derivedEndpoints.isEmpty()) return Set.of();
         Set<String> models = new HashSet<>();
         for (String entry : derivedEndpoints) {
             String model = extractModelFromEndpoint(entry);
-            if (model != null && !model.equals(nav.getModel())) {
-                // Exclude the permission's own primary model — it goes into
-                // the user's modelScopeMap via the normal grant path with the
-                // caller's explicit scope rules. Only derived lookup models
-                // need the implicit ALL treatment.
+            if (model != null && !model.equals(primaryModel)) {
                 models.add(model);
             }
         }
