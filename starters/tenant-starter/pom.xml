@@ -19,7 +19,7 @@
             <version>${project.version}</version>
         </dependency>
 
-        <!-- TenantInfo references currency/country master data by code (ADR-0017) -->
+        <!-- TenantInfo references currency/country master data by code -->
         <dependency>
             <groupId>io.softa</groupId>
             <artifactId>reference-data-starter</artifactId>

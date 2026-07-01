@@ -24,19 +24,20 @@ class CountrySubdivisionServiceImplTest {
 
     @Test
     void findByCodeReturnsEntity() {
+        // code-as-id: findByCode resolves via getById (the ISO 3166-2 code IS the PK).
         CountrySubdivision sub = subdivision("CN-31", "CN", "Shanghai", null, "municipality");
-        doReturn(Optional.of(sub)).when(service).searchOne(any(FlexQuery.class));
+        doReturn(Optional.of(sub)).when(service).getById("CN-31");
 
         Optional<CountrySubdivision> result = service.findByCode("CN-31");
 
         Assertions.assertTrue(result.isPresent());
-        Assertions.assertEquals("CN-31", result.get().getCode());
+        Assertions.assertEquals("CN-31", result.get().getId());
         Assertions.assertEquals("CN", result.get().getCountryCode());
     }
 
     @Test
     void findByCodeReturnsEmptyWhenAbsent() {
-        doReturn(Optional.empty()).when(service).searchOne(any(FlexQuery.class));
+        doReturn(Optional.empty()).when(service).getById("ZZ-99");
         Assertions.assertTrue(service.findByCode("ZZ-99").isEmpty());
     }
 
@@ -81,7 +82,7 @@ class CountrySubdivisionServiceImplTest {
     private static CountrySubdivision subdivision(String code, String countryCode, String name,
                                                   String parentCode, String type) {
         CountrySubdivision s = new CountrySubdivision();
-        s.setCode(code);
+        s.setId(code);   // code-as-id
         s.setCountryCode(countryCode);
         s.setName(name);
         s.setParentCode(parentCode);

@@ -9,7 +9,7 @@ import io.softa.starter.referencedata.entity.Currency;
  * CRUD + lookup service for {@link Currency}. {@link #findByCode(String)}
  * is the primary access path and is cached.
  */
-public interface CurrencyService extends EntityService<Currency, Long> {
+public interface CurrencyService extends EntityService<Currency, String> {
 
     /**
      * Primary lookup by ISO 4217 alpha-3 code. Cached.

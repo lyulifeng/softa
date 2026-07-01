@@ -12,24 +12,24 @@ import io.softa.starter.referencedata.entity.CountrySubdivision;
 import io.softa.starter.referencedata.service.CountrySubdivisionService;
 
 @Service
-public class CountrySubdivisionServiceImpl extends EntityServiceImpl<CountrySubdivision, Long>
+public class CountrySubdivisionServiceImpl extends EntityServiceImpl<CountrySubdivision, String>
         implements CountrySubdivisionService {
 
     @Override
     public Optional<CountrySubdivision> findByCode(String code) {
-        Filters filters = new Filters().eq(CountrySubdivision::getCode, code);
-        return this.searchOne(new FlexQuery(filters));
+        // code-as-id: the ISO 3166-2 full code IS the primary key.
+        return this.getById(code);
     }
 
     @Override
     public List<CountrySubdivision> findByCountryCode(String countryCode) {
         Filters filters = new Filters().eq(CountrySubdivision::getCountryCode, countryCode);
-        return this.searchList(new FlexQuery(filters, Orders.ofAsc(CountrySubdivision::getCode)));
+        return this.searchList(new FlexQuery(filters, Orders.ofAsc(CountrySubdivision::getId)));
     }
 
     @Override
     public List<CountrySubdivision> findByParentCode(String parentCode) {
         Filters filters = new Filters().eq(CountrySubdivision::getParentCode, parentCode);
-        return this.searchList(new FlexQuery(filters, Orders.ofAsc(CountrySubdivision::getCode)));
+        return this.searchList(new FlexQuery(filters, Orders.ofAsc(CountrySubdivision::getId)));
     }
 }

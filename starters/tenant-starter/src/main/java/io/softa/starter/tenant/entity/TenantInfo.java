@@ -20,7 +20,7 @@ import io.softa.starter.tenant.enums.TenantStatus;
 
 /**
  * TenantInfo Model — the platform tenant registry. Lives in tenant-starter so it can
- * reference the reference-data master tables by code (ADR-0017). The framework only
+ * reference the reference-data master tables by code. The framework only
  * depends on the {@code TenantInfoService} SPI (active ids / isTenantActive / deactivate),
  * never on this entity.
  */
@@ -65,14 +65,14 @@ public class TenantInfo extends AuditableModel {
     @Field
     private Timezone defaultTimezone;
 
-    @Field(fieldType = FieldType.MANY_TO_ONE, relatedModel = Currency.class, relatedField = "code",
-            description = "Default billing/display currency — reference-by-code FK to currency.code "
-                    + "(ISO 4217 alpha-3). Seed default for new invoices/orders.")
+    @Field(fieldType = FieldType.MANY_TO_ONE, relatedModel = Currency.class,
+            description = "Default billing/display currency — FK to currency.id (ISO 4217 alpha-3, "
+                    + "code-as-id). Seed default for new invoices/orders.")
     private String defaultCurrency;
 
-    @Field(fieldType = FieldType.MANY_TO_ONE, relatedModel = CountryRegion.class, relatedField = "code",
-            description = "Default country/region — reference-by-code FK to country_region.code "
-                    + "(ISO 3166-1 alpha-2). Seed default for new users, billing addresses, locale hints.")
+    @Field(fieldType = FieldType.MANY_TO_ONE, relatedModel = CountryRegion.class,
+            description = "Default country/region — FK to country_region.id (ISO 3166-1 alpha-2, "
+                    + "code-as-id). Seed default for new users, billing addresses, locale hints.")
     private String defaultCountry;
 
     @Field(description = "Data-residency region this tenant's data is hosted in (platform-fixed set)")

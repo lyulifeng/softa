@@ -5,38 +5,36 @@ import lombok.Data;
 import lombok.EqualsAndHashCode;
 
 import io.softa.framework.orm.annotation.Field;
-import io.softa.framework.orm.annotation.Index;
 import io.softa.framework.orm.annotation.Model;
 import io.softa.framework.orm.entity.AuditableModel;
+import io.softa.framework.orm.enums.IdStrategy;
 
 /**
  * Platform-level currency master keyed by ISO 4217 alpha-3 code.
  * Read-only reference data — same rows serve all tenants. Seed loaded from
  * {@code data-system/Currency.AllCurrencies.json}.
  *
- * <p>Natural key is {@link #code} (ISO 4217 alpha-3). The
- * {@link #decimalPlaces} field is <b>critical</b> for monetary arithmetic
- * — JPY/KRW use 0 fraction digits, USD/EUR/CNY use 2, BHD/KWD use 3.
- * Mismatching these breaks currency rendering and rounding for that country.
+ * <p>Code-as-id: the primary key {@link #id} <b>is</b> the ISO 4217 alpha-3 code
+ * (EXTERNAL_ID), so references store the human/portable code and the picker stays id-native.
+ * The {@link #decimalPlaces} field is <b>critical</b> for monetary arithmetic — JPY/KRW use 0
+ * fraction digits, USD/EUR/CNY use 2, BHD/KWD use 3. Mismatching these breaks currency
+ * rendering and rounding for that country.
  */
 @Data
 @EqualsAndHashCode(callSuper = true)
 @Model(
-        businessKey = {"code"},
+        idStrategy = IdStrategy.EXTERNAL_ID,
+        businessKey = {"id"},
         description = "ISO 4217 currency master"
 )
-@Index(indexName = "uk_code", fields = {"code"}, unique = true)
 public class Currency extends AuditableModel {
 
     @Serial
     private static final long serialVersionUID = 1L;
 
-    @Field(label = "ID")
-    private Long id;
-
-    @Field(label = "ISO 4217 alpha-3", required = true, length = 3, copyable = false,
-            description = "ISO 4217 alpha-3 code (USD/CNY/EUR/...); natural key")
-    private String code;
+    @Field(label = "ID", length = 3,
+            description = "ISO 4217 alpha-3 code (USD/CNY/EUR/...); primary key = the code")
+    private String id;
 
     @Field(required = true, length = 3,
             description = "ISO 4217 numeric, 3 digits with leading zero (840/156/048)")

@@ -11,7 +11,7 @@ import io.softa.starter.referencedata.entity.CountrySubdivision;
  * place this PR; data tables are empty until address/tax features populate
  * them.
  */
-public interface CountrySubdivisionService extends EntityService<CountrySubdivision, Long> {
+public interface CountrySubdivisionService extends EntityService<CountrySubdivision, String> {
 
     /** Primary lookup by ISO 3166-2 full code (e.g. "CN-31", "US-CA"). */
     Optional<CountrySubdivision> findByCode(String code);

@@ -8,6 +8,7 @@ import io.softa.framework.orm.annotation.Field;
 import io.softa.framework.orm.annotation.Model;
 import io.softa.framework.orm.entity.AuditableModel;
 import io.softa.framework.orm.enums.FieldType;
+import io.softa.framework.orm.enums.OnDelete;
 
 /**
  * ExportTemplateField Model
@@ -23,7 +24,9 @@ public class ExportTemplateField extends AuditableModel {
     @Field(label = "ID")
     private Long id;
 
-    @Field(label = "Export Template ID", fieldType = FieldType.MANY_TO_ONE, relatedModel = ExportTemplate.class)
+    // onDelete = CASCADE: field mappings are owned by the template — deleting the template removes them.
+    @Field(label = "Export Template ID", fieldType = FieldType.MANY_TO_ONE, relatedModel = ExportTemplate.class,
+            onDelete = OnDelete.CASCADE)
     private Long templateId;
 
     @Field(required = true)

@@ -9,29 +9,29 @@ import io.softa.framework.orm.annotation.Index;
 import io.softa.framework.orm.annotation.Model;
 import io.softa.framework.orm.entity.AuditableModel;
 import io.softa.framework.orm.enums.FieldType;
+import io.softa.framework.orm.enums.IdStrategy;
 
 /**
  * ISO 3166-2 country subdivisions (provinces, states, prefectures, etc.).
- * Platform-level reference data; {@link #countryCode} is a reference-by-code FK
- * to {@code country_region.code} (ADR-0017): the column stores the ISO alpha-2
- * code, joins/validates against the country master, and renders a picker.
+ * Platform-level reference data.
  *
- * <p>Table and entity are created in this PR but <b>data is not seeded</b>
- * — populated when address/tax/shipping features land. {@code CountryRegion}
- * exposes a {@code hasSubdivisions} boolean as the runtime indicator of
- * whether this table has data for a given country.
+ * <p>Code-as-id: the primary key {@link #id} <b>is</b> the ISO 3166-2 full code
+ * (EXTERNAL_ID). {@link #countryCode} is an FK to {@code country_region.id} (ISO alpha-2).
  *
- * <p>Hierarchical subdivisions (e.g. Chinese {@code 省→市} or Japanese
- * {@code 都道府県→市}) use {@link #parentCode} as a reference-by-code FK to
- * this table's own {@code code} (a self-relation).
+ * <p>Table and entity are created but <b>data is not seeded</b> — populated when
+ * address/tax/shipping features land. {@code CountryRegion} exposes a {@code hasSubdivisions}
+ * boolean as the runtime indicator of whether this table has data for a given country.
+ *
+ * <p>Hierarchical subdivisions (e.g. Chinese {@code 省→市} or Japanese {@code 都道府県→市})
+ * use {@link #parentCode} as an FK to this table's own {@code id} (a self-relation).
  */
 @Data
 @EqualsAndHashCode(callSuper = true)
 @Model(
-        businessKey = {"code"},
+        idStrategy = IdStrategy.EXTERNAL_ID,
+        businessKey = {"id"},
         description = "ISO 3166-2 country subdivisions"
 )
-@Index(indexName = "uk_code", fields = {"code"}, unique = true)
 @Index(indexName = "idx_country", fields = {"countryCode"})
 @Index(indexName = "idx_parent", fields = {"parentCode"})
 public class CountrySubdivision extends AuditableModel {
@@ -39,26 +39,21 @@ public class CountrySubdivision extends AuditableModel {
     @Serial
     private static final long serialVersionUID = 1L;
 
-    @Field(label = "ID")
-    private Long id;
+    @Field(label = "ID", length = 10,
+            description = "ISO 3166-2 full code (CN-31 / US-CA / JP-13); primary key = the code")
+    private String id;
 
-    @Field(required = true, fieldType = FieldType.MANY_TO_ONE,
-            relatedModel = CountryRegion.class, relatedField = "code",
-            description = "Owning country — reference-by-code FK to country_region.code (ISO 3166-1 alpha-2)")
+    @Field(required = true, fieldType = FieldType.MANY_TO_ONE, relatedModel = CountryRegion.class,
+            description = "Owning country — FK to country_region.id (ISO 3166-1 alpha-2, code-as-id)")
     private String countryCode;
-
-    @Field(required = true, length = 10, copyable = false,
-            description = "ISO 3166-2 full code (CN-31 / US-CA / JP-13); natural key")
-    private String code;
 
     @Field(required = true, length = 100,
             description = "English name")
     private String name;
 
-    @Field(fieldType = FieldType.MANY_TO_ONE,
-            relatedModel = CountrySubdivision.class, relatedField = "code",
-            description = "Parent subdivision for hierarchical regions — reference-by-code FK to "
-                    + "country_subdivision.code (self-relation); null for top-level")
+    @Field(fieldType = FieldType.MANY_TO_ONE, relatedModel = CountrySubdivision.class,
+            description = "Parent subdivision for hierarchical regions — FK to country_subdivision.id "
+                    + "(self-relation); null for top-level")
     private String parentCode;
 
     @Field(length = 20,

@@ -24,7 +24,7 @@ import io.softa.starter.referencedata.service.CountryRegionService;
 @Tag(name = "CountryRegion")
 @RestController
 @RequestMapping("/CountryRegion")
-public class CountryRegionController extends EntityController<CountryRegionService, CountryRegion, Long> {
+public class CountryRegionController extends EntityController<CountryRegionService, CountryRegion, String> {
 
     @Operation(summary = "List dial codes",
             description = "Returns one row per country for phone-input / SMS-region selectors. "
@@ -42,7 +42,7 @@ public class CountryRegionController extends EntityController<CountryRegionServi
 
     private static DialCodeItemDTO toDialCodeItem(CountryRegion c) {
         DialCodeItemDTO item = new DialCodeItemDTO();
-        item.setCode(c.getCode());
+        item.setCode(c.getId());
         item.setName(c.getName());
         item.setDialCode(c.getDialCode());
         item.setAlpha3Code(c.getAlpha3Code());

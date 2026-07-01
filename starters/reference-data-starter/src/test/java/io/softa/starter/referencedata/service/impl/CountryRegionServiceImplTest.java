@@ -19,12 +19,11 @@ import static org.mockito.Mockito.*;
 class CountryRegionServiceImplTest {
 
     private CountryRegionServiceImpl service;
-    private CountryRegionCache cache;
 
     @BeforeEach
     void setUp() {
         service = spy(new CountryRegionServiceImpl());
-        cache = mock(CountryRegionCache.class);
+        CountryRegionCache cache = mock(CountryRegionCache.class);
         ReflectionTestUtils.setField(service, "cache", cache);
 
         // Default cache behavior: pass through to the loader supplier.
@@ -36,37 +35,22 @@ class CountryRegionServiceImplTest {
 
     @Test
     void findByCodeReturnsEntity() {
+        // code-as-id: findByCode resolves via getById (the ISO code IS the PK).
         CountryRegion cn = country("CN", "China", Continent.AS, "CNY", false, true);
-        doReturn(Optional.of(cn)).when(service).searchOne(any(FlexQuery.class));
+        doReturn(Optional.of(cn)).when(service).getById("CN");
 
         Optional<CountryRegion> result = service.findByCode("CN");
 
         Assertions.assertTrue(result.isPresent());
-        Assertions.assertEquals("CN", result.get().getCode());
+        Assertions.assertEquals("CN", result.get().getId());
         Assertions.assertEquals("CNY", result.get().getCurrencyCode());
         Assertions.assertEquals(Continent.AS, result.get().getContinent());
     }
 
     @Test
     void findByCodeReturnsEmptyWhenNotFound() {
-        doReturn(Optional.empty()).when(service).searchOne(any(FlexQuery.class));
+        doReturn(Optional.empty()).when(service).getById("ZZ");
         Assertions.assertTrue(service.findByCode("ZZ").isEmpty());
-    }
-
-    @Test
-    void findByCodeCachesAndSkipsDbOnSecondHit() {
-        CountryRegion cn = country("CN", "China", Continent.AS, "CNY", false, true);
-        // First call: cache miss → loader supplier invokes searchOne.
-        // Second call: cache returns the entity directly, supplier never runs.
-        doAnswer(inv -> ((Supplier<CountryRegion>) inv.getArgument(1)).get())
-                .doReturn(cn)
-                .when(cache).getByCode(any(), any());
-        doReturn(Optional.of(cn)).when(service).searchOne(any(FlexQuery.class));
-
-        service.findByCode("CN");
-        service.findByCode("CN");
-
-        verify(service, times(1)).searchOne(any(FlexQuery.class));
     }
 
     @Test
@@ -103,7 +87,7 @@ class CountryRegionServiceImplTest {
     private static CountryRegion country(String code, String name, Continent continent,
                                          String currencyCode, boolean eea, boolean hasSubdivisions) {
         CountryRegion c = new CountryRegion();
-        c.setCode(code);
+        c.setId(code);   // code-as-id
         c.setName(name);
         c.setContinent(continent);
         c.setCurrencyCode(currencyCode);

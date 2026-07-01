@@ -11,7 +11,7 @@ import io.softa.starter.referencedata.enums.Continent;
  * CRUD + lookup service for {@link CountryRegion}. {@link #findByCode(String)}
  * is the primary access path and is cached.
  */
-public interface CountryRegionService extends EntityService<CountryRegion, Long> {
+public interface CountryRegionService extends EntityService<CountryRegion, String> {
 
     /**
      * Primary lookup by ISO 3166-1 alpha-2 code. Cached.

@@ -9,6 +9,7 @@ import io.softa.framework.orm.annotation.Index;
 import io.softa.framework.orm.annotation.Model;
 import io.softa.framework.orm.entity.AuditableModel;
 import io.softa.framework.orm.enums.FieldType;
+import io.softa.framework.orm.enums.IdStrategy;
 import io.softa.starter.referencedata.enums.Continent;
 
 /**
@@ -17,23 +18,21 @@ import io.softa.starter.referencedata.enums.Continent;
  * {@code data-system/CountryRegion.AllCountries.json} via metadata-starter's
  * {@code POST /SysPreData/loadPreSystemData}.
  *
- * <p>Natural key is {@link #code} (ISO 3166-1 alpha-2). Tables reference a country
- * by this code: {@code TenantInfo.defaultCountry} is a reference-by-code FK (ADR-0017 —
- * validated + picker), while looser uses like {@code SmsProviderRegion.regionCode} just
- * store the alpha-2 string as a documented concept FK validated at the service layer.
+ * <p>Code-as-id: the primary key {@link #id} <b>is</b> the ISO 3166-1 alpha-2 code
+ * (EXTERNAL_ID). Tables reference a country by storing this code in an id-FK
+ * ({@code TenantInfo.defaultCountry}, {@code SmsProviderRegion.regionCode}). Mainland China (CN),
+ * Taiwan (TW), Hong Kong (HK), Macau (MO) are distinct entries.
  *
- * <p>The {@link #currencyCode} field is a reference-by-code FK to {@code currency.code}
- * (ADR-0017 — picker + validation + join). Mainland China (CN), Taiwan (TW), Hong Kong
- * (HK), Macau (MO) are distinct entries.
+ * <p>The {@link #currencyCode} field is an FK to {@code currency.id} (ISO 4217 alpha-3, code-as-id).
  */
 @Data
 @EqualsAndHashCode(callSuper = true)
 @Model(
         label = "Country / Region",
-        businessKey = {"code"},
+        idStrategy = IdStrategy.EXTERNAL_ID,
+        businessKey = {"id"},
         description = "ISO 3166-1 alpha-2 country/region master"
 )
-@Index(indexName = "uk_code", fields = {"code"}, unique = true)
 @Index(indexName = "idx_continent", fields = {"continent"})
 @Index(indexName = "idx_currency_code", fields = {"currencyCode"})
 @Index(indexName = "idx_eea", fields = {"eea"})
@@ -42,12 +41,9 @@ public class CountryRegion extends AuditableModel {
     @Serial
     private static final long serialVersionUID = 1L;
 
-    @Field(label = "ID")
-    private Long id;
-
-    @Field(label = "ISO 3166-1 alpha-2", required = true, length = 2, copyable = false,
-            description = "ISO 3166-1 alpha-2 code (CN/US/TW/...); natural key")
-    private String code;
+    @Field(label = "ID", length = 2,
+            description = "ISO 3166-1 alpha-2 code (CN/US/TW/...); primary key = the code")
+    private String id;
 
     @Field(required = true, length = 100,
             description = "ISO 3166-1 standard English short name")
@@ -61,9 +57,8 @@ public class CountryRegion extends AuditableModel {
             description = "ITU-T E.164 country dial code, digits only (no leading +)")
     private String dialCode;
 
-    @Field(required = true, fieldType = FieldType.MANY_TO_ONE,
-            relatedModel = Currency.class, relatedField = "code",
-            description = "Default currency — reference-by-code FK to currency.code (ISO 4217 alpha-3)")
+    @Field(required = true, fieldType = FieldType.MANY_TO_ONE, relatedModel = Currency.class,
+            description = "Default currency — FK to currency.id (ISO 4217 alpha-3, code-as-id)")
     private String currencyCode;
 
     @Field(required = true,
