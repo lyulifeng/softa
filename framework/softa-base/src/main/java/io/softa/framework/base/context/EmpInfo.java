@@ -46,9 +46,9 @@ public class EmpInfo implements Serializable {
     /**
      * Departments the employee directly manages — populated by the
      * application's {@code ContextEnricher} (typically employee.id matching
-     * a Department's pic-employee or HRBP-employee column). Subtree expansion
-     * happens at scope-evaluation time via the {@code CHILD_OF_ID} filter
-     * operator; this field carries only the directly-headed roots.
+     * a Department's pic-employee or HRBP-employee column). Subtree
+     * expansion happens at scope-evaluation time in the consuming module's
+     * scope contributor; this field carries only the directly-headed roots.
      *
      * <p>Empty (or null) means the user is not a department head — the
      * {@code MANAGED_DEPARTMENTS} scope degrades to fail-closed for that user.
