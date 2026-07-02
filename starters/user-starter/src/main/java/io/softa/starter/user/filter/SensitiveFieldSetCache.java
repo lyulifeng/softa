@@ -23,10 +23,10 @@ import io.softa.starter.user.util.JsonArrayUtils;
  * stack:
  *
  * <ul>
- *   <li>{@link FieldFilter} — Layer C, response-side masking
+ *   <li>{@link FieldFilter} — response field mask
  *       ({@code @RestControllerAdvice}).</li>
- *   <li>{@link FieldWriteGuardAspect} — Layer D, request-side write
- *       rejection (AOP around ModelService write methods).</li>
+ *   <li>{@link FieldWriteGuardAspect} — request-side write guard that
+ *       rejects blocked fields (AOP around ModelService write methods).</li>
  * </ul>
  *
  * <p>The cache fills at {@link PostConstruct} — once, before the embedded
@@ -37,9 +37,10 @@ import io.softa.starter.user.util.JsonArrayUtils;
  * <p>{@code @PostConstruct} (not {@code @EventListener(ApplicationReadyEvent)})
  * matters because {@code ApplicationReadyEvent} fires AFTER the server is
  * already accepting requests — leaving a brief fail-OPEN window where
- * Layer C/D would see an empty {@code allSensitiveByModel} and skip
- * masking / write rejection. {@code @PostConstruct} runs during bean init
- * (before the web context exposes endpoints), closing that window.
+ * the mask + write guard would see an empty {@code allSensitiveByModel}
+ * and skip masking / write rejection. {@code @PostConstruct} runs during
+ * bean init (before the web context exposes endpoints), closing that
+ * window.
  *
  * <p>Why this is a separate component (not inline on FieldFilter): so the
  * read advice and the write aspect read the SAME snapshot. Splitting the
@@ -103,13 +104,13 @@ public class SensitiveFieldSetCache {
             sets = modelService.searchList(
                     "SensitiveFieldSet", new FlexQuery(), SensitiveFieldSet.class);
         } catch (Throwable t) {
-            // Known-Issues M5: fail-LOUD, not fail-OPEN. Previously we caught
-            // and left the caches empty — Layer C mask (`hasSensitiveFieldsOn`
-            // returns false for every model) and Layer D write guard (same
-            // signal) both silently turn OFF, so every sensitive field
-            // becomes readable and writable for the lifetime of this pod
-            // (until the next redeploy — {@code sensitive_field_set} is
-            // seed data with no runtime reload).
+            // Fail-LOUD, not fail-OPEN. Previously we caught and left the
+            // caches empty — the field mask (`hasSensitiveFieldsOn` returns
+            // false for every model) and write guard (same signal) both
+            // silently turn OFF, so every sensitive field becomes readable
+            // and writable for the lifetime of this pod (until the next
+            // redeploy — {@code sensitive_field_set} is seed data with no
+            // runtime reload).
             //
             // Throwing here causes Spring bean init to fail → pod fails its
             // readiness probe → doesn't accept traffic → K8s rolls it back
@@ -119,7 +120,7 @@ public class SensitiveFieldSetCache {
             // leave a working-looking pod with sensitive-field enforcement
             // permanently disabled.
             log.error("SensitiveFieldSetCache.reload — failed to load sensitive_field_set rows; "
-                    + "refusing to start with an empty cache (would disable Layer C mask + Layer D write guard). "
+                    + "refusing to start with an empty cache (would disable the field mask + write guard). "
                     + "Fix the DB / migration and restart.", t);
             throw new IllegalStateException(
                     "SensitiveFieldSetCache load failed — cannot start with sensitive-field enforcement disabled", t);
@@ -235,8 +236,9 @@ public class SensitiveFieldSetCache {
     /**
      * Per-model "fields the caller does NOT have access to" = all sensitive
      * field codes on the model − granted set's field codes. Used by both
-     * Layer C ({@link FieldFilter} — what to mask in the response) and
-     * Layer D ({@link FieldWriteGuardAspect} — what to reject on write).
+     * the field mask ({@link FieldFilter} — what to mask in the response)
+     * and the write guard ({@link FieldWriteGuardAspect} — what to reject
+     * on write).
      *
      * <p>Returns empty set when the model registers no sensitive fields,
      * or when the granted sets cover everything sensitive on the model.

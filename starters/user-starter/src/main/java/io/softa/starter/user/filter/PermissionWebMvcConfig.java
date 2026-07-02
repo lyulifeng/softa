@@ -14,8 +14,9 @@ import lombok.RequiredArgsConstructor;
  * {@code WebMvcConfigurer.addInterceptors} hook to wire a
  * {@link org.springframework.web.servlet.HandlerInterceptor} into the
  * request lifecycle. (This was the gap that let unprivileged users hit
- * mutating endpoints like {@code /api/Role/updateOne} with a 200 — Layer A
- * existed in code but wasn't actually on the request path.)
+ * mutating endpoints like {@code /api/Role/updateOne} with a 200 — the
+ * endpoint-gate interceptor existed in code but wasn't actually on the
+ * request path.)
  *
  * <p>{@code addPathPatterns("/**")} — interceptor sees every request; the
  * interceptor itself short-circuits on public URI patterns (via

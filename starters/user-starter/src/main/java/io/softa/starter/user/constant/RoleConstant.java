@@ -17,9 +17,11 @@ public final class RoleConstant {
     /**
      * Reserved code for the system Super-Admin role.
      *
-     * <p>Holders short-circuit Layer A (PermissionInterceptor), Layer B
-     * (ScopeFilterAspect), Layer C (FieldFilter) and Layer D
-     * (FieldWriteGuardAspect) — every check consults
+     * <p>Holders short-circuit every permission check — the endpoint gate
+     * ({@code PermissionInterceptor}), the row-scope filter
+     * ({@code ScopeFilterAspect}), the response field mask
+     * ({@code FieldFilter}) and the field write guard
+     * ({@code FieldWriteGuardAspect}) all consult
      * {@code PermissionInfo.isSuperAdmin(pi)} which tests this code.
      *
      * <p>The role row itself cannot be deleted / renamed / made inactive;

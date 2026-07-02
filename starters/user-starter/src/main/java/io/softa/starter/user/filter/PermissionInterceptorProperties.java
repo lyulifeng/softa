@@ -28,7 +28,7 @@ public class PermissionInterceptorProperties {
     /** Truly public endpoints — no authentication required at all
      *  (login / oauth callback / health).
      *
-     *  <p><b>Two-layer configuration</b> (Known-Issues M3): this list only
+     *  <p><b>Two-layer configuration</b>: this list only
      *  bypasses the <em>permission-check</em> layer ({@code PermissionInterceptor}).
      *  The upstream {@code ContextScopeFilter} — which runs at
      *  {@code HIGHEST_PRECEDENCE} — requires the path also be declared as

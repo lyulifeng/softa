@@ -93,7 +93,7 @@ public class Principal {
         if (type.isInstance(value)) return type.cast(value);
         try {
             T typed = JsonUtils.getMapper().convertValue(value, type);
-            // Known-Issues L4: Jackson convertValue is reflection-heavy —
+            // Jackson convertValue is reflection-heavy —
             // several contributors read the same slot on each request (e.g.
             // SelfScopeContributor, DirectReportsScopeContributor,
             // LegalEntityScopeContributor all read extensions["employee"]).

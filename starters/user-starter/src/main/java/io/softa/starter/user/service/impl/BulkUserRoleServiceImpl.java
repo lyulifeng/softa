@@ -44,7 +44,7 @@ public class BulkUserRoleServiceImpl implements BulkUserRoleService {
     private final UserRoleRelService userRoleRelService;
     private final PermissionCacheInvalidator permissionCacheInvalidator;
     /** Load UserAccount / Role rows scoped by caller's tenant to reject
-     *  cross-tenant user_role_rel writes (Known-Issues H2). Both services
+     *  cross-tenant user_role_rel writes. Both services
      *  are multi-tenant models — their {@code searchList} auto-appends
      *  {@code tenant_id = caller.tenantId} via WhereBuilder, so a probe
      *  {@code IN(userIds)} returns only ids native to caller's tenant. */
@@ -76,7 +76,7 @@ public class BulkUserRoleServiceImpl implements BulkUserRoleService {
             roleIds.add(p.getRoleId());
         }
 
-        // Tenant validation (Known-Issues H2): the caller's payload can carry
+        // Tenant validation: the caller's payload can carry
         // arbitrary userIds / roleIds. Without this check, tenant A admin
         // could POST a tenant B userId and land a user_role row in tenant A
         // that references a foreign-tenant user — next time that foreign

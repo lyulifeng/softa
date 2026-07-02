@@ -19,7 +19,7 @@ import io.softa.starter.user.service.EndpointIndex;
 import io.softa.starter.user.service.PermissionInfoEnricher;
 
 /**
- * Layer A — request-level access control.
+ * Endpoint gate — request-level access control.
  *
  * Flow:
  *   1. Match request URI against permission.public-uri-patterns (yml).
@@ -29,7 +29,8 @@ import io.softa.starter.user.service.PermissionInfoEnricher;
  *      Unmapped endpoints → 403 (defaults to denying unknown URLs).
  *   4. PermissionInfo.permissions.contains(permissionId) → 403 when missing.
  *
- * Layers B (ScopeFilterAspect) and C (FieldFilter) run after this passes.
+ * The row-scope filter (ScopeFilterAspect) and response field mask
+ * (FieldFilter) run after this passes.
  */
 @Slf4j
 @Component

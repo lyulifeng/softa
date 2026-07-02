@@ -37,8 +37,9 @@ public class SensitiveFieldSet extends AuditableModel {
      * UI-only hint: extra MetaModel names whose Wizard nav rows should also
      * list this SFS as configurable (in addition to {@link #model}). Pure
      * UX aggregation — does NOT change the mask engine's authority. The
-     * canonical {@code model} field still drives Layer C masking, Layer D
-     * write-rejection, and the {@code SensitiveFieldSetCache} grouping.
+     * canonical {@code model} field still drives the response field mask,
+     * the field write guard's rejection, and the
+     * {@code SensitiveFieldSetCache} grouping.
      *
      * <p>Typical use: a SFS bound to {@code EmpBankAccount} can declare
      * {@code attachedTo: ["Employee"]} so admins can check it on the

@@ -65,7 +65,7 @@ public class DynamicRoleSyncJobImpl implements DynamicRoleSyncJob {
     private final ModelService<?> modelService;
     /** Explicit tx boundary for {@link #syncRoleInternal} — see the method's
      *  Javadoc for why this doesn't rely on Spring's {@code @Transactional}
-     *  proxy interception. Known-Issues Lat3.
+     *  proxy interception.
      *
      *  <p>Built from the container's {@link PlatformTransactionManager}
      *  (Spring Boot auto-registers one; {@code TransactionTemplate} is not
@@ -112,7 +112,7 @@ public class DynamicRoleSyncJobImpl implements DynamicRoleSyncJob {
      * (delete succeeds, insert fails) would leave the role with zero
      * DYNAMIC members until the next sync.
      *
-     * <h3>Explicit {@code TransactionTemplate} boundary (Known-Issues Lat3)</h3>
+     * <h3>Explicit {@code TransactionTemplate} boundary</h3>
      * Not annotated {@code @Transactional}: Spring's proxy-based AOP does
      * not intercept private methods, and {@code @Transactional} on public
      * callers ({@link #syncRole}, {@link #syncRoleEntity}) is fragile —
@@ -204,8 +204,8 @@ public class DynamicRoleSyncJobImpl implements DynamicRoleSyncJob {
      * rewrites {@code user_role} DYNAMIC rows.
      *
      * <h3>⚠️ DO NOT annotate {@code @CrossTenant}</h3>
-     * <b>Known-Issues Lat1</b>: adding {@code @CrossTenant} looks
-     * innocuous (cron typically wants "all tenants"), but the
+     * Adding {@code @CrossTenant} looks innocuous (cron typically wants
+     * "all tenants"), but the
      * {@link io.softa.framework.orm.aspect.TenantAspect#crossTenant}
      * side-effect also flips {@code skipPermissionCheck=true} on the
      * context — which propagates through the {@code applyPerRole} path

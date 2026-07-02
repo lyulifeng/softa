@@ -69,10 +69,10 @@ public class PermissionCacheInvalidatorImpl implements PermissionCacheInvalidato
     public void evictOne(Long tenantId, Long userId) {
         if (userId == null) return;
         if (tenantId == null) {
-            // Known-Issues H10: publisher lost tenant context. Cache stays
-            // stale for this user until 1h TTL. Log at WARN so ops has a
-            // trail — silent no-op (pre-R8 behaviour) masked broken
-            // scheduled-job / async-pool paths.
+            // Publisher lost tenant context. Cache stays stale for this
+            // user until 1h TTL. Log at WARN so ops has a trail — the
+            // old silent no-op would mask broken scheduled-job /
+            // async-pool paths.
             log.warn("PermissionInfo cache evict skipped — null tenantId (userId={}); "
                     + "publisher missing ContextHolder.callWith(bootstrapCtx, ...)", userId);
             return;
@@ -125,7 +125,7 @@ public class PermissionCacheInvalidatorImpl implements PermissionCacheInvalidato
 
     /**
      * {@code @TransactionalEventListener(AFTER_COMMIT)} — fire only after
-     * the publishing transaction commits (Known-Issues H9 fix). Plain
+     * the publishing transaction commits. Plain
      * {@code @EventListener} would run synchronously inside
      * {@code publishEvent()}, which is called from inside a
      * {@code @Transactional} controller method — the eviction fires
@@ -171,7 +171,7 @@ public class PermissionCacheInvalidatorImpl implements PermissionCacheInvalidato
      * publisher's scope. Without this, a non-super-admin who edits a role
      * would only invalidate the subset of holders their own scope rules
      * allow them to see; the remaining holders keep stale PermissionInfo
-     * for up to the 1h Redis TTL (Known-Issues H3).
+     * for up to the 1h Redis TTL.
      *
      * <p>Tenant filter is <em>not</em> skipped — {@code evictByRole} takes
      * a {@code tenantId} and expects per-tenant scoping. Only scope /

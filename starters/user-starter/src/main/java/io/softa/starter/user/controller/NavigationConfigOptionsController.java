@@ -50,11 +50,12 @@ import io.softa.starter.user.service.NavigationModelResolver;
  * total SFS / model count.
  *
  * <h3>Grant ceiling</h3>
- * Current policy: only super-admin can hit this endpoint (Layer A gate on
- * {@code /admin/*} wizard endpoints). Every caller here therefore sees the
- * full option set for each nav — no per-editor filtering. If non-super-admin
- * role editing is reintroduced, restore {@code GrantCeilingValidator} to
- * trim scope / SFS / nav options per editor's own grants (Known-Issues C3).
+ * Current policy: only super-admin can hit this endpoint (endpoint-gate
+ * check on {@code /admin/*} wizard endpoints). Every caller here therefore
+ * sees the full option set for each nav — no per-editor filtering. If
+ * non-super-admin role editing is reintroduced, restore
+ * {@code GrantCeilingValidator} to trim scope / SFS / nav options per
+ * editor's own grants (grant-ceiling gap).
  */
 @Slf4j
 @Tag(name = "Admin Navigation Config Options")

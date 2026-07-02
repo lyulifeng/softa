@@ -111,7 +111,7 @@ public class UserRoleRelServiceImpl extends EntityServiceImpl<UserRoleRel, Long>
         Long tenantId = ContextHolder.getContext() == null ? null
                 : ContextHolder.getContext().getTenantId();
         if (tenantId == null) {
-            // Known-Issues H10: publisher without a bound tenant context.
+            // Publisher without a bound tenant context.
             // Downstream evictBatch (see PermissionCacheInvalidatorImpl) skips
             // when tenantId is null → cache stays stale for the affected
             // users up to 1h TTL. Log loudly so operators can trace which

@@ -46,7 +46,7 @@ import io.softa.starter.user.scope.ScopeContributor;
  * Leaving a {@code "$principal.xxx"} literal would silently match
  * arbitrary string rows, so we drop the whole conjunction.
  *
- * <p>OR-composites (Known-Issues M7): substituted per-disjunct. A
+ * <p>OR-composites: substituted per-disjunct. A
  * disjunct that fails to resolve is dropped; sibling disjuncts continue.
  * This preserves the "at least one of these is my row" fallback pattern
  * — e.g. {@code [["createdId","=","$principal.userId"], "OR",

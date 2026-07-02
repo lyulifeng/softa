@@ -155,7 +155,7 @@ public class RoleNavigationServiceImpl extends EntityServiceImpl<RoleNavigation,
         Long tenantId = ContextHolder.getContext() == null ? null
                 : ContextHolder.getContext().getTenantId();
         if (tenantId == null) {
-            // Known-Issues H10: publisher without a bound tenant context.
+            // Publisher without a bound tenant context.
             // Downstream evictByRole (see PermissionCacheInvalidatorImpl)
             // skips when tenantId is null → cache stays stale until 1h TTL.
             // Log loudly so operators can find the missing
