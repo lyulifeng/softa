@@ -10,9 +10,9 @@ import java.util.Set;
  *       users whose role set changed</li>
  *   <li>{@code RoleNavigationChangedEvent} → {@link #evictByRole} for the
  *       role whose nav / permission / scope grants changed</li>
- *   <li>{@code EmployeeChangedEvent}       → {@link #evictOne} for the
- *       linked user (employeeContext may have shifted without any
- *       user_role_rel mutation)</li>
+ *   <li>Domain events that shift {@code Principal.extensions} → business
+ *       modules subscribe to their own events and call {@link #evictOne}
+ *       directly (the framework knows no such events)</li>
  * </ul>
  *
  * <p>Batch operations (e.g. after BulkUserRoleService) use {@link #evictBatch}

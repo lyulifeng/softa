@@ -47,13 +47,12 @@ import io.softa.starter.user.service.UserRoleRelService;
  *       whose nav/permission/scope grant changed.</li>
  * </ul>
  *
- * <p>Domain-flavored triggers (e.g. HR events like "employee transferred"
- * that should also evict the affected user's snapshot because the cached
- * {@code Principal.extensions["employee"]} shape may have shifted) do NOT
- * live here — the framework has no business knowing what an Employee is.
- * Instead, business modules add their own bridge bean that listens to
- * their domain event and calls {@link #evictOne} on this API. See
- * {@code HrEventBridge} in the HR module.
+ * <p>Domain-flavored triggers (business events that shift the cached
+ * {@code Principal.extensions} shape without touching user_role_rel) do
+ * NOT live here — the framework has no business knowing what specific
+ * domain events exist. Instead, business modules add their own bridge
+ * bean that listens to their domain event and calls {@link #evictOne} on
+ * this API.
  */
 @Slf4j
 @Service

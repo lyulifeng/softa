@@ -9,18 +9,18 @@ import io.softa.starter.user.dto.Principal;
  * returns the domain-specific context object; {@code PermissionInfoEnricher}
  * stores the result under {@code principal.extensions[key]}.
  *
- * <h3>Example — HR module</h3>
+ * <h3>Example</h3>
  * <pre>
  * &#64;Component
- * public class EmployeeContextEnricher implements PrincipalEnrichmentContributor {
- *     &#64;Override public String key() { return "employee"; }
+ * public class SalesTerritoryEnricher implements PrincipalEnrichmentContributor {
+ *     &#64;Override public String key() { return "salesTerritory"; }
  *     &#64;Override public Object loadFor(Long userId, Long tenantId) {
- *         return employeeRelationsService.loadFor(userId);
+ *         return territoryService.loadFor(userId);
  *     }
  * }
  *
  * // Scope contributor consumes it:
- * EmployeeContext ec = (EmployeeContext) principal.getExtensions().get("employee");
+ * SalesTerritory st = (SalesTerritory) principal.getExtensions().get("salesTerritory");
  * </pre>
  *
  * <h3>Lifecycle</h3>

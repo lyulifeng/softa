@@ -12,19 +12,18 @@ import io.softa.starter.user.dto.Principal;
  *
  * <h3>Why pluggable</h3>
  * {@code $principal.userId} is universal (it's on {@link Principal}
- * itself). But {@code $principal.employeeId} / {@code $principal.departmentId}
- * etc. are HR-domain refs whose value lives in the
- * {@code principal.extensions["employee"]} slot — only the HR module knows
- * how to read that. Plugging the resolution behind this SPI keeps
- * user-starter generic while allowing HCM (or any future domain) to
- * advertise its own refs.
+ * itself). But domain-specific refs (e.g. an app-defined
+ * {@code $principal.<domainId>}) resolve against a slot in
+ * {@code principal.extensions} that only the owning module knows how to
+ * read. Plugging the resolution behind this SPI keeps user-starter
+ * generic while allowing any consuming module to advertise its own refs.
  *
  * <h3>Failure semantics</h3>
  * Return {@code null} when the ref is known but the underlying value is
- * missing (e.g. {@code $principal.employeeId} for a pure user with no
- * employee context). {@code CustomScopeContributor} treats any null
+ * missing (e.g. an app-defined ref for a user that has no matching
+ * domain context). {@code CustomScopeContributor} treats any null
  * resolution as fail-closed for the whole rule — partial substitution
- * would silently let a literal {@code "$principal.employeeId"} string
+ * would silently let a literal {@code "$principal.<ref>"} string
  * compare leak rows.
  */
 public interface PrincipalRefResolver {

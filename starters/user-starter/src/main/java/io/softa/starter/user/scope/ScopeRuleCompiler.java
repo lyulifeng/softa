@@ -30,10 +30,10 @@ import io.softa.starter.user.enums.ScopeType;
  *
  * <h3>Why this design</h3>
  * The framework's three generic scope types (ALL, CUSTOM,
- * CREATED_BY_SELF) ship with user-starter. Five HR-flavored types
+ * CREATED_BY_SELF) ship with user-starter. Domain-specific types
  * (SELF, DIRECT_REPORTS, DEPT_SUBTREE, MANAGED_DEPARTMENTS, LEGAL_ENTITY)
- * live in the consuming module (zingkey-hcm) as their own
- * {@link ScopeContributor} beans. The compiler doesn't import HR
+ * live in the consuming business module as their own
+ * {@link ScopeContributor} beans. The compiler doesn't import business
  * concepts; it just dispatches by ScopeType.
  *
  * <h3>Fail-closed semantics</h3>
@@ -132,7 +132,7 @@ public final class ScopeRuleCompiler {
             return contributor.compile(rule, principal, modelName);
         } catch (IllegalStateException ise) {
             // Contributors throw IllegalStateException for config errors
-            // (e.g. DeptCascadePathResolver returning empty for a model
+            // (e.g. DepartmentCascadePathResolver returning empty for a model
             // that ApplicabilityResolver accepted). Propagate so it
             // surfaces at the first request.
             throw ise;

@@ -60,10 +60,9 @@ public interface DynamicRoleSyncJob {
      * clears {@code crossTenant} / {@code skipPermissionCheck} before
      * running the body, so the param truly scopes the execution.
      *
-     * <p>Framework has no idea what "HR change" means — callers are
-     * expected to be domain-specific bridges (e.g. {@code HrEventBridge}
-     * in an HR business module) that translate their own domain events
-     * into this call.
+     * <p>Framework has no idea what a "domain change" means — callers are
+     * expected to be domain-specific bridges that translate their own
+     * business events into this call.
      *
      * @return count of inserts + deletes performed
      */

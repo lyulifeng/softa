@@ -40,12 +40,10 @@ import io.softa.starter.user.util.ModelRefIds;
  *      tenant-wide rescan that catches employee data changes between role
  *      saves.
  *   3. {@link #syncMembershipForUser} — per-user re-evaluation, invoked
- *      by domain-specific bridges when they see an HR-side change that
- *      might shift dynamic-role membership (e.g. an
- *      {@code HrEventBridge} listening on the HR module's own
- *      {@code EmployeeChangedEvent}). The framework knows nothing about
- *      HR events; the bridge translates its own domain event into this
- *      generic {@code (tenantId, userId)} call.
+ *      by domain-specific bridges when they see a business change that
+ *      might shift dynamic-role membership. The framework knows nothing
+ *      about business events; the bridge translates its own domain event
+ *      into this generic {@code (tenantId, userId)} call.
  *
  * MANUAL rows are never touched. Each pass:
  *   - DELETE WHERE role_id = R AND source = 'Dynamic'

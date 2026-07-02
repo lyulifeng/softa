@@ -21,12 +21,12 @@ import io.softa.framework.base.utils.JsonUtils;
  * <h3>Domain extensions (opt-in per module)</h3>
  * The {@link #extensions} map is the framework's hook for domain modules
  * to attach their own context. Each
- * {@code PrincipalEnrichmentContributor} bean writes its own slot — e.g.
- * the HR module's {@code EmployeeContextEnricher} stores an
- * {@code EmployeeContext} under {@code extensions["employee"]}. Consumers
- * (typically {@link io.softa.starter.user.scope.ScopeContributor}
- * implementations) read their slot by key and degrade fail-closed when
- * the slot is missing.
+ * {@code PrincipalEnrichmentContributor} bean writes its own slot; the
+ * slot's value is a domain-defined DTO keyed by the contributor's
+ * {@code key()}. Consumers (typically
+ * {@link io.softa.starter.user.scope.ScopeContributor} implementations)
+ * read their slot by key and degrade fail-closed when the slot is
+ * missing.
  *
  * <p>The framework itself never reads any specific extension — only
  * domain code that knows the key + type does. Keep this map a
@@ -49,8 +49,8 @@ public class Principal {
 
     /**
      * Domain-specific context slots, keyed by {@code PrincipalEnrichmentContributor.key()}.
-     * Values are domain-defined DTOs (e.g. {@code EmployeeContext} under
-     * key {@code "employee"} when the HR module is wired). Empty map when
+     * Values are domain-defined DTOs supplied by the contributor bean.
+     * Empty map when
      * no contributor matched the user.
      */
     @Schema(description = "Domain-specific context slots (e.g. employee, salesTerritory) keyed by contributor name")

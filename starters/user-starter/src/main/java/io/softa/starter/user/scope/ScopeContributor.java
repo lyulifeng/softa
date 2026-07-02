@@ -15,12 +15,12 @@ import io.softa.starter.user.enums.ScopeType;
  *
  * <h3>Why a registry, not a switch</h3>
  * The framework's three generic scope types (ALL, CUSTOM, CREATED_BY_SELF)
- * are domain-agnostic — they live in user-starter. The HR-flavored types
+ * are domain-agnostic — they live in user-starter. Domain-specific types
  * (SELF, DIRECT_REPORTS, DEPT_SUBTREE, MANAGED_DEPARTMENTS, LEGAL_ENTITY)
- * carry semantics that depend on the consuming app's domain shape — they
- * live in the consuming module (zingkey-hcm). Dispatching through this
- * registry lets the same compiler handle both, without user-starter
- * importing HR concepts.
+ * carry semantics that depend on the consuming app's business shape — they
+ * live in the consuming business module. Dispatching through this registry
+ * lets the same compiler handle both, without user-starter importing
+ * business concepts.
  *
  * <h3>How to register</h3>
  * Mark your implementation as {@code @Component}. Spring collects all
@@ -105,13 +105,13 @@ public interface ScopeContributor {
      *
      * <p>The {@code principal} carries userId, tenantId, roles, and the
      * domain-specific extension map ({@link Principal#getExtensions()}).
-     * Domain-specific contributors should read their own extension by
-     * key (e.g. {@code (EmployeeContext) principal.getExtensions().get("employee")})
-     * — the generic compiler doesn't pre-resolve domain context for you.
+     * Domain-specific contributors should read their own extension by the
+     * key their matching {@code PrincipalEnrichmentContributor} wrote —
+     * the generic compiler doesn't pre-resolve domain context for you.
      *
-     * <p>The {@code modelName} is the queried model in PascalCase
-     * (e.g. {@code "Employee"} / {@code "LeaveRequest"}). Contributors
-     * use this to pick the right anchor column when a model deviates
+     * <p>The {@code modelName} is the queried model in PascalCase.
+     * Contributors use this to pick the right anchor column when a model
+     * deviates
      * from the default convention.
      */
     Filters compile(ScopeRule rule, Principal principal, String modelName);

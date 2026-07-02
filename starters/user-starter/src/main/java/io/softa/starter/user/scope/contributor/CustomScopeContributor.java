@@ -35,9 +35,8 @@ import io.softa.starter.user.scope.ScopeContributor;
  * <ul>
  *   <li>{@code userId} — always (read directly from {@link Principal})</li>
  *   <li>Whatever {@link PrincipalRefResolver} beans contribute via
- *       {@link PrincipalRefResolver#refKeys()} — e.g. the HR module
- *       contributes {@code employeeId}, {@code departmentId},
- *       {@code legalEntityId}</li>
+ *       {@link PrincipalRefResolver#refKeys()} — each consuming module
+ *       advertises its own ref keys</li>
  * </ul>
  *
  * <h3>Failure semantics</h3>

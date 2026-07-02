@@ -64,8 +64,8 @@ import io.softa.starter.user.util.JsonArrayUtils;
  * <h3>DB load chain</h3>
  * <ol>
  *   <li>Principal — userId + domain-specific extensions populated by every
- *       registered {@link PrincipalEnrichmentContributor} bean (e.g. the HCM
- *       module's {@code EmployeeContextEnricher} writes {@code extensions["employee"]});
+ *       registered {@link PrincipalEnrichmentContributor} bean (each writes
+ *       to its own slot in {@code principal.extensions[contributor.key()]});
  *       no contributors → Principal carries only generic identity, and any
  *       ScopeContributor that depends on a missing extension degrades
  *       fail-closed at compile time.</li>
@@ -117,12 +117,10 @@ public class PermissionInfoEnricher {
     private final RoleNavigationService roleNavigationService;
     private final NavigationModelResolver navigationModelResolver;
     private final SensitiveFieldSetCache sensitiveFieldSetCache;
-    /** Pluggable per-domain enricher beans (e.g. HR module's
-     *  EmployeeContextEnricher contributes the {@code "employee"} slot).
-     *  Each contributor writes its result into
-     *  {@code principal.extensions[contributor.key()]}. List is empty
-     *  when no domain module is wired — Principal carries only
-     *  generic identity. */
+    /** Pluggable per-domain enricher beans. Each contributor writes its
+     *  result into {@code principal.extensions[contributor.key()]}. List
+     *  is empty when no domain module registers a contributor — Principal
+     *  then carries only generic identity. */
     private final List<PrincipalEnrichmentContributor> enrichmentContributors;
 
     // Cache layer.
@@ -227,10 +225,9 @@ public class PermissionInfoEnricher {
     private PermissionInfo loadFromDb(Long tenantId, Long userId) {
         // 1. Principal — userId + domain extensions (loaded via the
         //    PrincipalEnrichmentContributor SPI). Each contributor stores
-        //    its result under its own key in principal.extensions — e.g.
-        //    HR module's EmployeeContextEnricher writes "employee" →
-        //    EmployeeContext. List may be empty when no domain module is
-        //    wired; Principal then carries only generic identity.
+        //    its result under its own key in principal.extensions. List
+        //    may be empty when no domain module registers a contributor;
+        //    Principal then carries only generic identity.
         Principal principal = new Principal();
         principal.setUserId(userId);
         for (PrincipalEnrichmentContributor contributor : enrichmentContributors) {
