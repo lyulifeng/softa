@@ -140,6 +140,115 @@ class DynamicRoleSyncJobImplTest {
         assertThat(out).isZero();
     }
 
+    // ─── syncRoleInternal (delete + insert transaction body) ───
+
+    @Test
+    void syncRoleInternal_nullDynamicFilter_wipesButInsertsNothing() {
+        Role role = new Role();
+        role.setId(500L);
+        role.setDynamicFilter(null);   // rule cleared — expect wipe only
+        when(roleService.getById(500L)).thenReturn(Optional.of(role));
+        when(userRoleRelService.searchList(any(Filters.class))).thenReturn(List.of());
+        when(userRoleRelService.deleteByFilters(any())).thenReturn(true);
+
+        int count = ContextHolder.callWith(ctx(10L), () -> job.syncRole(500L));
+
+        assertThat(count).isZero();
+        // Wipe still ran once.
+        verify(userRoleRelService, times(1)).deleteByFilters(any());
+        verify(userRoleRelService, never()).createList(any());
+    }
+
+    @Test
+    void syncRoleInternal_dynamicFilterMatchesEmployees_insertsDynamicRows() {
+        Role role = roleWithDynamic(500L, "OnCall");
+        when(roleService.getById(500L)).thenReturn(Optional.of(role));
+        when(userRoleRelService.searchList(any(Filters.class))).thenReturn(List.of());
+        when(userRoleRelService.deleteByFilters(any())).thenReturn(true);
+        when(modelService.searchList(org.mockito.ArgumentMatchers.eq("Employee"),
+                any(io.softa.framework.orm.domain.FlexQuery.class)))
+                .thenReturn(List.of(
+                        java.util.Map.of("userId", 1L),
+                        java.util.Map.of("userId", 2L)));
+
+        int count = ContextHolder.callWith(ctx(10L), () -> job.syncRole(500L));
+
+        assertThat(count).isEqualTo(2);
+        @SuppressWarnings("unchecked")
+        org.mockito.ArgumentCaptor<java.util.List<io.softa.starter.user.entity.UserRoleRel>> cap =
+                org.mockito.ArgumentCaptor.forClass(java.util.List.class);
+        verify(userRoleRelService).createList(cap.capture());
+        assertThat(cap.getValue()).hasSize(2)
+                .allSatisfy(r -> {
+                    assertThat(r.getRoleId()).isEqualTo(500L);
+                    assertThat(r.getSource()).isEqualTo(
+                            io.softa.starter.user.enums.RoleSource.DYNAMIC);
+                });
+    }
+
+    @Test
+    void syncRoleInternal_userWithManualRow_skippedFromDynamicInsert() {
+        // Manual takes precedence — user 1 has a MANUAL row on this role,
+        // so even though the dynamic filter matches them, no DYNAMIC row
+        // is written for them.
+        Role role = roleWithDynamic(500L, "OnCall");
+        when(roleService.getById(500L)).thenReturn(Optional.of(role));
+        io.softa.starter.user.entity.UserRoleRel manual = new io.softa.starter.user.entity.UserRoleRel();
+        manual.setUserId(1L);
+        when(userRoleRelService.searchList(any(Filters.class))).thenReturn(List.of(manual));
+        when(userRoleRelService.deleteByFilters(any())).thenReturn(true);
+        when(modelService.searchList(org.mockito.ArgumentMatchers.eq("Employee"),
+                any(io.softa.framework.orm.domain.FlexQuery.class)))
+                .thenReturn(List.of(
+                        java.util.Map.of("userId", 1L),
+                        java.util.Map.of("userId", 2L)));
+
+        int count = ContextHolder.callWith(ctx(10L), () -> job.syncRole(500L));
+
+        // 2 matched, 1 (manual) skipped → 1 dynamic row inserted.
+        assertThat(count).isEqualTo(1);
+        @SuppressWarnings("unchecked")
+        org.mockito.ArgumentCaptor<java.util.List<io.softa.starter.user.entity.UserRoleRel>> cap =
+                org.mockito.ArgumentCaptor.forClass(java.util.List.class);
+        verify(userRoleRelService).createList(cap.capture());
+        assertThat(cap.getValue().getFirst().getUserId()).isEqualTo(2L);
+    }
+
+    @Test
+    void syncRoleInternal_noMatchedEmployees_wipesWithoutInsert() {
+        Role role = roleWithDynamic(500L, "Empty");
+        when(roleService.getById(500L)).thenReturn(Optional.of(role));
+        when(userRoleRelService.searchList(any(Filters.class))).thenReturn(List.of());
+        when(userRoleRelService.deleteByFilters(any())).thenReturn(true);
+        when(modelService.searchList(org.mockito.ArgumentMatchers.eq("Employee"),
+                any(io.softa.framework.orm.domain.FlexQuery.class)))
+                .thenReturn(List.of());   // no matches
+
+        int count = ContextHolder.callWith(ctx(10L), () -> job.syncRole(500L));
+
+        assertThat(count).isZero();
+        verify(userRoleRelService).deleteByFilters(any());   // wipe happened
+        verify(userRoleRelService, never()).createList(any());
+    }
+
+    @Test
+    void syncRoleInternal_employeeWithNullUserId_skipped() {
+        Role role = roleWithDynamic(500L, "PureEmployeeFilter");
+        when(roleService.getById(500L)).thenReturn(Optional.of(role));
+        when(userRoleRelService.searchList(any(Filters.class))).thenReturn(List.of());
+        when(userRoleRelService.deleteByFilters(any())).thenReturn(true);
+        // Pure-employee row has userId == null.
+        java.util.Map<String, Object> pureEmployee = new java.util.HashMap<>();
+        pureEmployee.put("userId", null);
+        when(modelService.searchList(org.mockito.ArgumentMatchers.eq("Employee"),
+                any(io.softa.framework.orm.domain.FlexQuery.class)))
+                .thenReturn(List.of(pureEmployee, java.util.Map.of("userId", 5L)));
+
+        int count = ContextHolder.callWith(ctx(10L), () -> job.syncRole(500L));
+
+        assertThat(count).isEqualTo(1);   // pure-employee dropped, active one kept
+    }
+
     // ─── helpers ───
 
     private static Context ctx(Long tenantId) {
@@ -153,8 +262,13 @@ class DynamicRoleSyncJobImplTest {
         Role r = new Role();
         r.setId(id);
         r.setName(name);
-        r.setDynamicFilter(tools.jackson.databind.node.JsonNodeFactory.instance
-                .objectNode().put("field", "status").put("value", "Active"));
+        // dynamicFilter must be a non-empty ARRAY (Filters tuple form). The
+        // impl checks `rule.isArray()` and Filters.of(list) returns null for
+        // an empty list — so at least one leaf must be present.
+        tools.jackson.databind.node.ArrayNode leaf =
+                tools.jackson.databind.node.JsonNodeFactory.instance.arrayNode();
+        leaf.add("status").add("=").add("Active");
+        r.setDynamicFilter(leaf);
         return r;
     }
 }

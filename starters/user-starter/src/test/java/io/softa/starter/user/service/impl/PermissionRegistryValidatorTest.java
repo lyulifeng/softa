@@ -237,11 +237,298 @@ class PermissionRegistryValidatorTest {
         }
     }
 
+    // ─── Rule ⑪ — SFS.attachedTo integrity ───
+
+    @Test
+    void checkSensitiveFieldSetRows_attachedToUnknownModel_reportsError() throws Exception {
+        try (MockedStatic<ModelManager> mm = Mockito.mockStatic(ModelManager.class)) {
+            mm.when(() -> ModelManager.existModel("EmpBankAccount")).thenReturn(true);
+            mm.when(() -> ModelManager.existField(eqAny(), eqAny())).thenReturn(true);
+            mm.when(() -> ModelManager.existModel("Ghost")).thenReturn(false);
+
+            SensitiveFieldSet s = new SensitiveFieldSet();
+            s.setId("bank");
+            s.setModel("EmpBankAccount");
+            s.setFieldCodes(JsonNodeFactory.instance.arrayNode().add("acct"));
+            ArrayNode attached = JsonNodeFactory.instance.arrayNode();
+            attached.add("Ghost");
+            s.setAttachedTo(attached);
+
+            List<String> errors = new ArrayList<>();
+            callCheckSensitiveFieldSetRows(List.of(s), errors);
+            assertThat(errors).anyMatch(e ->
+                    e.contains("attachedTo references unknown MetaModel 'Ghost'"));
+        }
+    }
+
+    @Test
+    void checkSensitiveFieldSetRows_attachedToDuplicatesOwnModel_reportsError() throws Exception {
+        try (MockedStatic<ModelManager> mm = Mockito.mockStatic(ModelManager.class)) {
+            mm.when(() -> ModelManager.existModel("Employee")).thenReturn(true);
+            mm.when(() -> ModelManager.existField(eqAny(), eqAny())).thenReturn(true);
+
+            SensitiveFieldSet s = new SensitiveFieldSet();
+            s.setId("comp");
+            s.setModel("Employee");
+            s.setFieldCodes(JsonNodeFactory.instance.arrayNode().add("salary"));
+            ArrayNode attached = JsonNodeFactory.instance.arrayNode();
+            attached.add("Employee");   // redundant with `model`
+            s.setAttachedTo(attached);
+
+            List<String> errors = new ArrayList<>();
+            callCheckSensitiveFieldSetRows(List.of(s), errors);
+            assertThat(errors).anyMatch(e ->
+                    e.contains("duplicates its own `model`"));
+        }
+    }
+
+    // ─── Rules ③⑩ — RoleNavigation integrity ───
+
+    @Test
+    void checkRoleNavigationRows_navMissing_reportsError() throws Exception {
+        List<String> errors = runRoleNavCheck(
+                List.of(rn(1L, 100L, "missing.nav", null, null, null)),
+                Map.of(),
+                Map.of(),
+                java.util.Set.of());
+
+        assertThat(errors).anyMatch(e -> e.contains("references missing Navigation"));
+    }
+
+    @Test
+    void checkRoleNavigationRows_nonGrantableNavType_reportsError() throws Exception {
+        // Grant on a GROUP nav — GROUP isn't grantable.
+        Navigation group = nav("hr", NavigationType.GROUP, null);
+        List<String> errors = runRoleNavCheck(
+                List.of(rn(1L, 100L, "hr", null, null, null)),
+                Map.of("hr", group),
+                Map.of(),
+                java.util.Set.of());
+
+        assertThat(errors).anyMatch(e ->
+                e.contains("non-grantable nav") && e.contains("type=GROUP"));
+    }
+
+    @Test
+    void checkRoleNavigationRows_navWithNullModel_reportsError() throws Exception {
+        Navigation containerMenu = nav("hr.menu", NavigationType.MENU, null);   // model=null
+        List<String> errors = runRoleNavCheck(
+                List.of(rn(1L, 100L, "hr.menu", null, null, null)),
+                Map.of("hr.menu", containerMenu),
+                Map.of(),
+                java.util.Set.of());
+
+        assertThat(errors).anyMatch(e -> e.contains("null model"));
+    }
+
+    @Test
+    void checkRoleNavigationRows_permissionFromDifferentNav_reportsError() throws Exception {
+        // Grant on hr.employee references permission "leave.view" mounted at hr.leave —
+        // rule ③ rejects cross-nav grants.
+        Navigation empNav = nav("hr.employee", NavigationType.MENU, "Employee");
+        Map<String, Navigation> byId = Map.of("hr.employee", empNav,
+                "hr.leave", nav("hr.leave", NavigationType.MENU, "LeaveRequest"));
+        Map<String, String> permNav = Map.of("leave.view", "hr.leave");
+
+        ArrayNode permIds = JsonNodeFactory.instance.arrayNode();
+        permIds.add("leave.view");
+        List<String> errors = runRoleNavCheck(
+                List.of(rn(1L, 100L, "hr.employee", permIds, null, null)),
+                byId,
+                permNav,
+                java.util.Set.of());
+
+        assertThat(errors).anyMatch(e ->
+                e.contains("cross-nav grant rejected"));
+    }
+
+    @Test
+    void checkRoleNavigationRows_missingPermissionId_reportsError() throws Exception {
+        Navigation empNav = nav("hr.employee", NavigationType.MENU, "Employee");
+        ArrayNode permIds = JsonNodeFactory.instance.arrayNode();
+        permIds.add("employee.view");
+        List<String> errors = runRoleNavCheck(
+                List.of(rn(1L, 100L, "hr.employee", permIds, null, null)),
+                Map.of("hr.employee", empNav),
+                Map.of(),      // permission does not exist
+                java.util.Set.of());
+
+        assertThat(errors).anyMatch(e ->
+                e.contains("references missing Permission[id=employee.view]"));
+    }
+
+    @Test
+    void checkRoleNavigationRows_missingSfsId_reportsError() throws Exception {
+        Navigation empNav = nav("hr.employee", NavigationType.MENU, "Employee");
+        ArrayNode sfsIds = JsonNodeFactory.instance.arrayNode();
+        sfsIds.add("ghost-sfs");
+        List<String> errors = runRoleNavCheck(
+                List.of(rn(1L, 100L, "hr.employee", null, sfsIds, null)),
+                Map.of("hr.employee", empNav),
+                Map.of(),
+                java.util.Set.of("real-sfs"));
+
+        assertThat(errors).anyMatch(e ->
+                e.contains("references missing SensitiveFieldSet[id=ghost-sfs]"));
+    }
+
+    // ─── Rule ⑨ — CUSTOM scopeExpr field references must exist ───
+
+    @Test
+    void checkRoleNavigationRows_customScopeFieldRefExists_noError() throws Exception {
+        try (MockedStatic<ModelManager> mm = Mockito.mockStatic(ModelManager.class)) {
+            mm.when(() -> ModelManager.existField("Employee", "userId")).thenReturn(true);
+
+            Navigation empNav = nav("hr.employee", NavigationType.MENU, "Employee");
+            ArrayNode scopes = JsonNodeFactory.instance.arrayNode();
+            scopes.add(JsonNodeFactory.instance.objectNode()
+                    .put("scopeType", "CUSTOM")
+                    .set("scopeExpr", filterTuple("userId", "=", "42")));
+
+            List<String> errors = runRoleNavCheck(
+                    List.of(rn(1L, 100L, "hr.employee", null, null, scopes)),
+                    Map.of("hr.employee", empNav),
+                    Map.of(),
+                    java.util.Set.of());
+
+            assertThat(errors).isEmpty();
+        }
+    }
+
+    @Test
+    void checkRoleNavigationRows_customScopeFieldRefMissing_reportsError() throws Exception {
+        try (MockedStatic<ModelManager> mm = Mockito.mockStatic(ModelManager.class)) {
+            mm.when(() -> ModelManager.existField("Employee", "userIdTypo")).thenReturn(false);
+
+            Navigation empNav = nav("hr.employee", NavigationType.MENU, "Employee");
+            ArrayNode scopes = JsonNodeFactory.instance.arrayNode();
+            scopes.add(JsonNodeFactory.instance.objectNode()
+                    .put("scopeType", "CUSTOM")
+                    .set("scopeExpr", filterTuple("userIdTypo", "=", "42")));
+
+            List<String> errors = runRoleNavCheck(
+                    List.of(rn(1L, 100L, "hr.employee", null, null, scopes)),
+                    Map.of("hr.employee", empNav),
+                    Map.of(),
+                    java.util.Set.of());
+
+            assertThat(errors).anyMatch(e ->
+                    e.contains("missing field 'userIdTypo'") && e.contains("Employee"));
+        }
+    }
+
+    // ─── Reserved role code check (bonus rule) ───
+
+    @Test
+    void checkReservedRoleCodes_nonReservedCode_reportsError() throws Exception {
+        io.softa.starter.user.service.RoleService roleService =
+                org.mockito.Mockito.mock(io.softa.starter.user.service.RoleService.class);
+        io.softa.starter.user.entity.Role squatter = new io.softa.starter.user.entity.Role();
+        squatter.setId(42L);
+        squatter.setName("Squatter");
+        squatter.setCode("HR_BP");   // not in the reserved set
+        org.mockito.Mockito.when(roleService.searchList(
+                org.mockito.ArgumentMatchers.any(io.softa.framework.orm.domain.Filters.class)))
+                .thenReturn(List.of(squatter));
+
+        PermissionRegistryValidator validator = newValidatorWith(roleService);
+        List<String> errors = new ArrayList<>();
+        Method m = PermissionRegistryValidator.class.getDeclaredMethod(
+                "checkReservedRoleCodes", List.class);
+        m.setAccessible(true);
+        m.invoke(validator, errors);
+        assertThat(errors).anyMatch(e -> e.contains("HR_BP"));
+    }
+
+    @Test
+    void checkReservedRoleCodes_reservedCode_noError() throws Exception {
+        io.softa.starter.user.service.RoleService roleService =
+                org.mockito.Mockito.mock(io.softa.starter.user.service.RoleService.class);
+        io.softa.starter.user.entity.Role sa = new io.softa.starter.user.entity.Role();
+        sa.setId(1L);
+        sa.setName("Super Admin");
+        sa.setCode(io.softa.starter.user.constant.RoleConstant.CODE_SUPER_ADMIN);
+        org.mockito.Mockito.when(roleService.searchList(
+                org.mockito.ArgumentMatchers.any(io.softa.framework.orm.domain.Filters.class)))
+                .thenReturn(List.of(sa));
+
+        PermissionRegistryValidator validator = newValidatorWith(roleService);
+        List<String> errors = new ArrayList<>();
+        Method m = PermissionRegistryValidator.class.getDeclaredMethod(
+                "checkReservedRoleCodes", List.class);
+        m.setAccessible(true);
+        m.invoke(validator, errors);
+        assertThat(errors).isEmpty();
+    }
+
     // ─── helpers ───
+
+    private static String eqAny() {
+        return org.mockito.ArgumentMatchers.anyString();
+    }
 
     private static Map<String, Navigation> index(List<Navigation> navs) {
         Map<String, Navigation> m = new HashMap<>();
         for (Navigation n : navs) m.put(n.getId(), n);
         return m;
+    }
+
+    /** Build a RoleNavigation row for role-nav integrity tests. */
+    private static io.softa.starter.user.entity.RoleNavigation rn(
+            Long id, Long roleId, String navId,
+            tools.jackson.databind.JsonNode permIds,
+            tools.jackson.databind.JsonNode sfsIds,
+            tools.jackson.databind.JsonNode dataScopes) {
+        io.softa.starter.user.entity.RoleNavigation r = new io.softa.starter.user.entity.RoleNavigation();
+        r.setId(id);
+        r.setRoleId(roleId);
+        r.setNavigationId(navId);
+        if (permIds != null) r.setPermissionIds(permIds);
+        if (sfsIds != null) r.setSensitiveFieldSetIds(sfsIds);
+        if (dataScopes != null) r.setDataScopes(dataScopes);
+        return r;
+    }
+
+    /** Build a filter tuple like {@code ["field","=","value"]}. */
+    private static ArrayNode filterTuple(String field, String op, String value) {
+        ArrayNode arr = JsonNodeFactory.instance.arrayNode();
+        arr.add(field).add(op).add(value);
+        return arr;
+    }
+
+    /** Instantiate the validator with a specific RoleService (other deps mocked). */
+    private static PermissionRegistryValidator newValidatorWith(
+            io.softa.starter.user.service.RoleService roleService) {
+        @SuppressWarnings({"unchecked", "rawtypes"})
+        io.softa.framework.orm.service.ModelService modelService =
+                org.mockito.Mockito.mock(io.softa.framework.orm.service.ModelService.class);
+        io.softa.starter.user.service.RoleNavigationService rns =
+                org.mockito.Mockito.mock(io.softa.starter.user.service.RoleNavigationService.class);
+        io.softa.starter.user.service.NavigationModelResolver navRes =
+                org.mockito.Mockito.mock(io.softa.starter.user.service.NavigationModelResolver.class);
+        io.softa.starter.user.service.EndpointIndex ei =
+                org.mockito.Mockito.mock(io.softa.starter.user.service.EndpointIndex.class);
+        io.softa.starter.user.filter.PermissionInterceptorProperties props =
+                new io.softa.starter.user.filter.PermissionInterceptorProperties();
+        return new PermissionRegistryValidator(
+                modelService, roleService, rns, navRes, ei, props, List.of());
+    }
+
+    /** Invoke the private non-static {@code checkRoleNavigationRows}. */
+    @SuppressWarnings({"unchecked", "rawtypes"})
+    private static List<String> runRoleNavCheck(
+            List<io.softa.starter.user.entity.RoleNavigation> grants,
+            Map<String, Navigation> navById,
+            Map<String, String> permNavById,
+            java.util.Set<String> sfsIds) throws Exception {
+        PermissionRegistryValidator validator = newValidatorWith(
+                org.mockito.Mockito.mock(io.softa.starter.user.service.RoleService.class));
+        Method m = PermissionRegistryValidator.class.getDeclaredMethod(
+                "checkRoleNavigationRows",
+                List.class, Map.class, Map.class, java.util.Set.class, List.class);
+        m.setAccessible(true);
+        List<String> errors = new ArrayList<>();
+        m.invoke(validator, grants, navById, permNavById, sfsIds, errors);
+        return errors;
     }
 }
