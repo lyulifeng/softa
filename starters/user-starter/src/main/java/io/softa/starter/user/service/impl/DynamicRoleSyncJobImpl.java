@@ -11,11 +11,13 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.transaction.support.TransactionTemplate;
-import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import tools.jackson.databind.JsonNode;
 
+import io.softa.framework.base.context.Context;
+import io.softa.framework.base.context.ContextHolder;
 import io.softa.framework.base.enums.Operator;
+import io.softa.framework.base.utils.Assert;
 import io.softa.framework.base.utils.JsonUtils;
 import io.softa.framework.orm.domain.Filters;
 import io.softa.framework.orm.domain.FlexQuery;
@@ -84,8 +86,9 @@ public class DynamicRoleSyncJobImpl implements DynamicRoleSyncJob {
 
     @Override
     @Transactional
-    public int syncRole(Long tenantId, Long roleId) {
+    public int syncRole(Long roleId) {
         if (roleId == null) return 0;
+        assertActiveTenantContext("syncRole");
         Optional<Role> roleOpt = roleService.getById(roleId);
         if (roleOpt.isEmpty()) {
             log.warn("DynamicRoleSyncJob.syncRole — role {} not found", roleId);
@@ -227,10 +230,16 @@ public class DynamicRoleSyncJobImpl implements DynamicRoleSyncJob {
      */
     @Override
     public void syncAll() {
-        // Walk every role with a non-null dynamicFilter. Active flag is NOT
-        // checked here — inactive roles still get their user_role rows kept
-        // in sync; PermissionInfoEnricher skips inactive roles during ACL
-        // evaluation.
+        // Single-tenant execution. Fail-loud when tenant context is missing —
+        // silently no-op'ing on the empty result set would hide misconfigured
+        // callers (cron missing the per-tenant fan-out, admin trigger outside
+        // an HTTP request, etc.).
+        assertActiveTenantContext("syncAll");
+
+        // Walk every role with a non-null dynamicFilter under this tenant.
+        // Active flag is NOT checked here — inactive roles still get their
+        // user_role rows kept in sync; PermissionInfoEnricher skips inactive
+        // roles during ACL evaluation.
         List<Role> roles = roleService.searchList(
                 new Filters().isSet(Role::getDynamicFilter));
         log.info("DynamicRoleSyncJob.syncAll — {} role(s) with a dynamic rule", roles.size());
@@ -246,17 +255,27 @@ public class DynamicRoleSyncJobImpl implements DynamicRoleSyncJob {
     }
 
     @Override
-    @Transactional
     public int syncMembershipForUser(Long tenantId, Long userId) {
         if (userId == null) return 0;
+        Assert.notNull(tenantId, "syncMembershipForUser requires an explicit tenantId — bridges are expected to resolve it from the event payload before calling");
 
-        // Load every dynamic role scoped to this tenant. Cross-tenant roles
-        // can't apply to this user — their tenantId scopes them out. When
-        // tenantId is null we fall back to a global scan (bridge failed to
-        // resolve tenant; the safe move is to check every role).
-        Filters roleFilter = new Filters().isSet(Role::getDynamicFilter);
-        if (tenantId != null) roleFilter.eq(Role::getTenantId, tenantId);
-        List<Role> roles = roleService.searchList(roleFilter);
+        // Force the param tenantId onto the running context so every internal
+        // query (Role / Employee / UserRoleRel) filters by it. Bridges are
+        // invoked from Pulsar consumers where the incoming Context may not
+        // carry a tenant, so treating the param as authoritative — rather
+        // than filtering-by-value only — is what actually enforces isolation.
+        Context ctx = ContextHolder.cloneContext();
+        ctx.setTenantId(tenantId);
+        ctx.setCrossTenant(false);
+        ctx.setSkipPermissionCheck(false);
+        return ContextHolder.callWith(ctx, () -> syncMembershipForUserInternal(tenantId, userId));
+    }
+
+    @Transactional
+    protected int syncMembershipForUserInternal(Long tenantId, Long userId) {
+        // Tenant filter now comes from context (see syncMembershipForUser).
+        // No need to filter by role.tenantId here — TenantAspect adds it.
+        List<Role> roles = roleService.searchList(new Filters().isSet(Role::getDynamicFilter));
         if (roles.isEmpty()) return 0;
 
         int added = 0;
@@ -320,6 +339,21 @@ public class DynamicRoleSyncJobImpl implements DynamicRoleSyncJob {
         row.setSource(RoleSource.DYNAMIC);
         userRoleRelService.createOne(row);
         return true;
+    }
+
+    /**
+     * Enforce that the running context has a non-null {@code tenantId} —
+     * otherwise the framework's multi-tenant filter would either short-circuit
+     * to zero rows or (worse) with {@code crossTenant=true} return
+     * cross-tenant data. Fail-loud so a misconfigured caller notices
+     * immediately rather than looking at silently empty logs.
+     */
+    private void assertActiveTenantContext(String methodName) {
+        Context ctx = ContextHolder.getContext();
+        Long tid = ctx == null ? null : ctx.getTenantId();
+        Assert.notNull(tid,
+                "DynamicRoleSyncJob.{0} requires an active tenant context — set Context.tenantId before invoking (cron: use DynamicRoleSyncCronHandler's per-tenant fan-out).",
+                methodName);
     }
 
     /** Remove the {@code (userId, roleId, DYNAMIC)} row if one exists. Manual

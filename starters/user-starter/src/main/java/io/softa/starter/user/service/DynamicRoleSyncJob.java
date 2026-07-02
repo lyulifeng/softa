@@ -20,12 +20,25 @@ public interface DynamicRoleSyncJob {
 
     /**
      * Sync a specific role's dynamic membership immediately (admin-triggered).
+     *
+     * <p>Runs under the caller's {@code Context.tenantId} — the role is
+     * resolved and all downstream queries (Employee, UserRoleRel) filter by
+     * that tenant. Callers arriving from an HTTP request already have a
+     * populated tenant context; other callers must set it themselves.
+     *
      * @return count of inserts + deletes performed
      */
-    int syncRole(Long tenantId, Long roleId);
+    int syncRole(Long roleId);
 
     /**
-     * Sync all roles in all tenants. Invoked by the Spring scheduler.
+     * Sync every dynamic role in the caller's tenant. Assumes
+     * {@code Context.tenantId} is set — throws when it isn't (fail-loud
+     * rather than silently no-op on empty results).
+     *
+     * <p>Cron-triggered execution uses {@code DynamicRoleSyncCronHandler}
+     * (in hcm-app) as the fan-out point: the handler enumerates active
+     * tenants once, then invokes this method under a per-tenant cloned
+     * context so every query inside runs single-tenant.
      */
     void syncAll();
 
@@ -40,6 +53,12 @@ public interface DynamicRoleSyncJob {
      * checks whether this user satisfies each rule now vs. the current
      * {@code user_role_rel.DYNAMIC} rows, inserts / deletes accordingly.
      * MANUAL rows are never touched.
+     *
+     * <p>{@code tenantId} is required — bridges call this from Pulsar
+     * consumers where the incoming {@code Context} may not carry a tenant.
+     * The impl clones the context, forces {@code tenantId=<param>} and
+     * clears {@code crossTenant} / {@code skipPermissionCheck} before
+     * running the body, so the param truly scopes the execution.
      *
      * <p>Framework has no idea what "HR change" means — callers are
      * expected to be domain-specific bridges (e.g. {@code HrEventBridge}

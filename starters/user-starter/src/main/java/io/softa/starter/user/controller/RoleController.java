@@ -65,7 +65,7 @@ public class RoleController {
         // Inline DYNAMIC sync — same in-transaction guarantee. The cron
         // job covers the in-between drift (employee data changes between
         // role saves) once it's running.
-        dynamicRoleSyncJob.syncRole(role.getTenantId(), newId);
+        dynamicRoleSyncJob.syncRole(newId);
         return ApiResponse.success(newId);
     }
 
@@ -104,7 +104,7 @@ public class RoleController {
         userRoleRelService.deleteByFilters(
                 new Filters().eq(UserRoleRel::getRoleId, id));
         writeManualUserRoleRels(id, body.userIds());
-        dynamicRoleSyncJob.syncRole(role.getTenantId(), id);
+        dynamicRoleSyncJob.syncRole(id);
         return ApiResponse.success();
     }
 
