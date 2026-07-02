@@ -16,6 +16,7 @@ import io.softa.framework.base.context.ContextHolder;
 import io.softa.framework.orm.domain.Filters;
 import io.softa.framework.orm.service.CacheService;
 import io.softa.starter.user.entity.UserRoleRel;
+import io.softa.starter.user.event.RoleGrantChangedEvent;
 import io.softa.starter.user.event.RoleNavigationChangedEvent;
 import io.softa.starter.user.event.UserRoleRelChangedEvent;
 import io.softa.starter.user.service.PermissionCacheInvalidator;
@@ -156,6 +157,18 @@ public class PermissionCacheInvalidatorImpl implements PermissionCacheInvalidato
     public void onRoleNavigationChanged(RoleNavigationChangedEvent ev) {
         if (ev.roleId() == null) return;
         // evictByRole resolves the user set + batch-clears internally.
+        evictByRole(ev.tenantId(), ev.roleId());
+    }
+
+    /**
+     * Data-dimension grant change (role_data_scope / role_sensitive_field_set).
+     * Same per-role eviction as {@link #onRoleNavigationChanged} — kept as a
+     * separate listener so the scope/SFS write path stays decoupled from the
+     * nav/permission one.
+     */
+    @TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT, fallbackExecution = true)
+    public void onRoleGrantChanged(RoleGrantChangedEvent ev) {
+        if (ev.roleId() == null) return;
         evictByRole(ev.tenantId(), ev.roleId());
     }
 

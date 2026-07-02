@@ -358,14 +358,9 @@ class PermissionRegistryValidatorTest {
     }
 
     @Test
-    void checkRoleNavigationRows_missingSfsId_reportsError() throws Exception {
-        Navigation empNav = nav("hr.employee", NavigationType.MENU, "Employee");
-        ArrayNode sfsIds = JsonNodeFactory.instance.arrayNode();
-        sfsIds.add("ghost-sfs");
-        List<String> errors = runRoleNavCheck(
-                List.of(rn(1L, 100L, "hr.employee", null, sfsIds, null)),
-                Map.of("hr.employee", empNav),
-                Map.of(),
+    void checkRoleSensitiveFieldSetRows_missingSfsId_reportsError() throws Exception {
+        List<String> errors = runSfsGrantCheck(
+                List.of(rsfs(1L, 100L, "ghost-sfs")),
                 java.util.Set.of("real-sfs"));
 
         assertThat(errors).anyMatch(e ->
@@ -375,42 +370,36 @@ class PermissionRegistryValidatorTest {
     // ─── Rule ⑨ — CUSTOM scopeExpr field references must exist ───
 
     @Test
-    void checkRoleNavigationRows_customScopeFieldRefExists_noError() throws Exception {
+    void checkRoleDataScopeRows_customScopeFieldRefExists_noError() throws Exception {
         try (MockedStatic<ModelManager> mm = Mockito.mockStatic(ModelManager.class)) {
+            mm.when(() -> ModelManager.existModel("Employee")).thenReturn(true);
             mm.when(() -> ModelManager.existField("Employee", "userId")).thenReturn(true);
 
-            Navigation empNav = nav("hr.employee", NavigationType.MENU, "Employee");
             ArrayNode scopes = JsonNodeFactory.instance.arrayNode();
             scopes.add(JsonNodeFactory.instance.objectNode()
                     .put("scopeType", "CUSTOM")
                     .set("scopeExpr", filterTuple("userId", "=", "42")));
 
-            List<String> errors = runRoleNavCheck(
-                    List.of(rn(1L, 100L, "hr.employee", null, null, scopes)),
-                    Map.of("hr.employee", empNav),
-                    Map.of(),
-                    java.util.Set.of());
+            List<String> errors = runDataScopeCheck(
+                    List.of(rds(1L, 100L, "Employee", scopes)));
 
             assertThat(errors).isEmpty();
         }
     }
 
     @Test
-    void checkRoleNavigationRows_customScopeFieldRefMissing_reportsError() throws Exception {
+    void checkRoleDataScopeRows_customScopeFieldRefMissing_reportsError() throws Exception {
         try (MockedStatic<ModelManager> mm = Mockito.mockStatic(ModelManager.class)) {
+            mm.when(() -> ModelManager.existModel("Employee")).thenReturn(true);
             mm.when(() -> ModelManager.existField("Employee", "userIdTypo")).thenReturn(false);
 
-            Navigation empNav = nav("hr.employee", NavigationType.MENU, "Employee");
             ArrayNode scopes = JsonNodeFactory.instance.arrayNode();
             scopes.add(JsonNodeFactory.instance.objectNode()
                     .put("scopeType", "CUSTOM")
                     .set("scopeExpr", filterTuple("userIdTypo", "=", "42")));
 
-            List<String> errors = runRoleNavCheck(
-                    List.of(rn(1L, 100L, "hr.employee", null, null, scopes)),
-                    Map.of("hr.employee", empNav),
-                    Map.of(),
-                    java.util.Set.of());
+            List<String> errors = runDataScopeCheck(
+                    List.of(rds(1L, 100L, "Employee", scopes)));
 
             assertThat(errors).anyMatch(e ->
                     e.contains("missing field 'userIdTypo'") && e.contains("Employee"));
@@ -508,13 +497,19 @@ class PermissionRegistryValidatorTest {
                 org.mockito.Mockito.mock(io.softa.starter.user.service.NavigationModelResolver.class);
         io.softa.starter.user.service.EndpointIndex ei =
                 org.mockito.Mockito.mock(io.softa.starter.user.service.EndpointIndex.class);
+        io.softa.starter.user.service.RoleDataScopeService rds =
+                org.mockito.Mockito.mock(io.softa.starter.user.service.RoleDataScopeService.class);
+        io.softa.starter.user.service.RoleSensitiveFieldSetService rsfsSvc =
+                org.mockito.Mockito.mock(io.softa.starter.user.service.RoleSensitiveFieldSetService.class);
         io.softa.starter.user.filter.PermissionInterceptorProperties props =
                 new io.softa.starter.user.filter.PermissionInterceptorProperties();
         return new PermissionRegistryValidator(
-                modelService, roleService, rns, navRes, ei, props, List.of());
+                modelService, roleService, rns, rds, rsfsSvc, navRes, ei, props, List.of());
     }
 
-    /** Invoke the private non-static {@code checkRoleNavigationRows}. */
+    /** Invoke the private non-static {@code checkRoleNavigationRows}. The
+     *  {@code sfsIds} param is retained for call-site compatibility but is no
+     *  longer forwarded — SFS existence moved to {@link #runSfsGrantCheck}. */
     @SuppressWarnings({"unchecked", "rawtypes"})
     private static List<String> runRoleNavCheck(
             List<io.softa.starter.user.entity.RoleNavigation> grants,
@@ -525,10 +520,59 @@ class PermissionRegistryValidatorTest {
                 org.mockito.Mockito.mock(io.softa.starter.user.service.RoleService.class));
         Method m = PermissionRegistryValidator.class.getDeclaredMethod(
                 "checkRoleNavigationRows",
-                List.class, Map.class, Map.class, java.util.Set.class, List.class);
+                List.class, Map.class, Map.class, List.class);
         m.setAccessible(true);
         List<String> errors = new ArrayList<>();
-        m.invoke(validator, grants, navById, permNavById, sfsIds, errors);
+        m.invoke(validator, grants, navById, permNavById, errors);
+        return errors;
+    }
+
+    /** Build a role_data_scope row for scope-integrity tests. */
+    private static io.softa.starter.user.entity.RoleDataScope rds(
+            Long id, Long roleId, String model, tools.jackson.databind.JsonNode dataScopes) {
+        io.softa.starter.user.entity.RoleDataScope r = new io.softa.starter.user.entity.RoleDataScope();
+        r.setId(id);
+        r.setRoleId(roleId);
+        r.setModel(model);
+        r.setDataScopes(dataScopes);
+        return r;
+    }
+
+    /** Build a role_sensitive_field_set row for SFS-grant tests. */
+    private static io.softa.starter.user.entity.RoleSensitiveFieldSet rsfs(
+            Long id, Long roleId, String sid) {
+        io.softa.starter.user.entity.RoleSensitiveFieldSet r =
+                new io.softa.starter.user.entity.RoleSensitiveFieldSet();
+        r.setId(id);
+        r.setRoleId(roleId);
+        r.setSensitiveFieldSetId(sid);
+        return r;
+    }
+
+    /** Invoke the private non-static {@code checkRoleDataScopeRows}. */
+    private static List<String> runDataScopeCheck(
+            List<io.softa.starter.user.entity.RoleDataScope> grants) throws Exception {
+        PermissionRegistryValidator validator = newValidatorWith(
+                org.mockito.Mockito.mock(io.softa.starter.user.service.RoleService.class));
+        Method m = PermissionRegistryValidator.class.getDeclaredMethod(
+                "checkRoleDataScopeRows", List.class, List.class);
+        m.setAccessible(true);
+        List<String> errors = new ArrayList<>();
+        m.invoke(validator, grants, errors);
+        return errors;
+    }
+
+    /** Invoke the private non-static {@code checkRoleSensitiveFieldSetRows}. */
+    private static List<String> runSfsGrantCheck(
+            List<io.softa.starter.user.entity.RoleSensitiveFieldSet> grants,
+            java.util.Set<String> registryIds) throws Exception {
+        PermissionRegistryValidator validator = newValidatorWith(
+                org.mockito.Mockito.mock(io.softa.starter.user.service.RoleService.class));
+        Method m = PermissionRegistryValidator.class.getDeclaredMethod(
+                "checkRoleSensitiveFieldSetRows", List.class, java.util.Set.class, List.class);
+        m.setAccessible(true);
+        List<String> errors = new ArrayList<>();
+        m.invoke(validator, grants, registryIds, errors);
         return errors;
     }
 }

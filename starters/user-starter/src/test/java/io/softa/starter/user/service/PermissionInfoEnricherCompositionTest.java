@@ -18,7 +18,9 @@ import io.softa.starter.user.dto.PermissionInfo;
 import io.softa.starter.user.dto.ScopeRule;
 import io.softa.starter.user.entity.Navigation;
 import io.softa.starter.user.entity.Role;
+import io.softa.starter.user.entity.RoleDataScope;
 import io.softa.starter.user.entity.RoleNavigation;
+import io.softa.starter.user.entity.RoleSensitiveFieldSet;
 import io.softa.starter.user.entity.UserRoleRel;
 import io.softa.starter.user.enums.NavigationType;
 import io.softa.starter.user.enums.ScopeType;
@@ -43,9 +45,14 @@ class PermissionInfoEnricherCompositionTest {
     private RoleService roleService;
     private UserRoleRelService userRoleRelService;
     private RoleNavigationService roleNavigationService;
+    private RoleDataScopeService roleDataScopeService;
+    private RoleSensitiveFieldSetService roleSensitiveFieldSetService;
     private NavigationModelResolver navResolver;
     private SensitiveFieldSetCache sfsCache;
     private CacheService cacheService;
+
+    private final List<RoleDataScope> dataScopeGrants = new java.util.ArrayList<>();
+    private final List<RoleSensitiveFieldSet> sfsGrants = new java.util.ArrayList<>();
 
     @BeforeEach
     void setUp() {
@@ -53,10 +60,17 @@ class PermissionInfoEnricherCompositionTest {
         roleService = mock(RoleService.class);
         userRoleRelService = mock(UserRoleRelService.class);
         roleNavigationService = mock(RoleNavigationService.class);
+        roleDataScopeService = mock(RoleDataScopeService.class);
+        roleSensitiveFieldSetService = mock(RoleSensitiveFieldSetService.class);
         navResolver = mock(NavigationModelResolver.class);
         sfsCache = mock(SensitiveFieldSetCache.class);
         cacheService = mock(CacheService.class);
         when(cacheService.get(anyString(), eq(PermissionInfo.class))).thenReturn(null);
+        // Defaults — scope/SFS now come from their own services; return the
+        // per-test lists (mutated by the dataScope()/sfsGrant() helpers).
+        when(roleNavigationService.searchList(any(FlexQuery.class))).thenReturn(List.of());
+        when(roleDataScopeService.searchList(any(FlexQuery.class))).thenReturn(dataScopeGrants);
+        when(roleSensitiveFieldSetService.searchList(any(FlexQuery.class))).thenReturn(sfsGrants);
     }
 
     @org.junit.jupiter.api.AfterEach
@@ -67,6 +81,7 @@ class PermissionInfoEnricherCompositionTest {
     private PermissionInfoEnricher enricher(List<PrincipalEnrichmentContributor> contributors) {
         PermissionInfoEnricher e = new PermissionInfoEnricher(
                 roleService, userRoleRelService, roleNavigationService,
+                roleDataScopeService, roleSensitiveFieldSetService,
                 navResolver, sfsCache, contributors, cacheService);
         ReflectionTestUtils.invokeMethod(e, "initAncestorIndex");
         return e;
@@ -123,15 +138,39 @@ class PermissionInfoEnricherCompositionTest {
         return new ScopeRule(type, null);
     }
 
+    /** Seed a role_data_scope row (post-refactor scope source). */
+    private RoleDataScope dataScope(Long roleId, String model, ScopeType... types) {
+        ArrayNode arr = JSON.arrayNode();
+        for (ScopeType t : types) {
+            ObjectNode obj = JSON.objectNode();
+            obj.put("scopeType", t.name());
+            arr.add(obj);
+        }
+        RoleDataScope r = new RoleDataScope();
+        r.setRoleId(roleId);
+        r.setModel(model);
+        r.setDataScopes(arr);
+        dataScopeGrants.add(r);
+        return r;
+    }
+
+    /** Seed role_sensitive_field_set rows (post-refactor SFS source). */
+    private void sfsGrant(Long roleId, String... sids) {
+        for (String sid : sids) {
+            RoleSensitiveFieldSet r = new RoleSensitiveFieldSet();
+            r.setRoleId(roleId);
+            r.setSensitiveFieldSetId(sid);
+            sfsGrants.add(r);
+        }
+    }
+
     // ─── modelScopeMap grouping ───
 
     @Test
     void modelScopeMap_twoGrantsOnSameModel_orCombined() {
         primeUserWithRoles(42L, 100L);
-        when(navResolver.resolvePrimaryModel("hr.employee")).thenReturn("Employee");
-        when(roleNavigationService.searchList(any(FlexQuery.class))).thenReturn(List.of(
-                grant(100L, "hr.employee", List.of(scope(ScopeType.SELF)), null, null),
-                grant(100L, "hr.employee", List.of(scope(ScopeType.CREATED_BY_SELF)), null, null)));
+        dataScope(100L, "Employee", ScopeType.SELF);
+        dataScope(100L, "Employee", ScopeType.CREATED_BY_SELF);
 
         PermissionInfo pi = enricher(List.of()).enrich(10L, 42L);
         Map<String, List<ScopeRule>> map = pi.getModelScopeMap();
@@ -144,11 +183,8 @@ class PermissionInfoEnricherCompositionTest {
     @Test
     void modelScopeMap_grantsAcrossDifferentModels_areKeyedSeparately() {
         primeUserWithRoles(42L, 100L);
-        when(navResolver.resolvePrimaryModel("hr.employee")).thenReturn("Employee");
-        when(navResolver.resolvePrimaryModel("hr.leave")).thenReturn("LeaveRequest");
-        when(roleNavigationService.searchList(any(FlexQuery.class))).thenReturn(List.of(
-                grant(100L, "hr.employee", List.of(scope(ScopeType.SELF)), null, null),
-                grant(100L, "hr.leave", List.of(scope(ScopeType.CREATED_BY_SELF)), null, null)));
+        dataScope(100L, "Employee", ScopeType.SELF);
+        dataScope(100L, "LeaveRequest", ScopeType.CREATED_BY_SELF);
 
         Map<String, List<ScopeRule>> map = enricher(List.of()).enrich(10L, 42L).getModelScopeMap();
         assertThat(map.keySet()).containsExactlyInAnyOrder("Employee", "LeaveRequest");
@@ -157,13 +193,11 @@ class PermissionInfoEnricherCompositionTest {
     }
 
     @Test
-    void modelScopeMap_navWithNullPrimaryModel_skipped() {
-        // A GROUP nav or a pure-container MENU has null model — grants against
-        // it can't populate modelScopeMap.
+    void modelScopeMap_rowWithBlankModel_skipped() {
+        // A role_data_scope row with a null/blank model can't populate
+        // modelScopeMap — the enricher skips it defensively.
         primeUserWithRoles(42L, 100L);
-        when(navResolver.resolvePrimaryModel("hr.group")).thenReturn(null);
-        when(roleNavigationService.searchList(any(FlexQuery.class))).thenReturn(List.of(
-                grant(100L, "hr.group", List.of(scope(ScopeType.ALL)), null, null)));
+        dataScope(100L, "", ScopeType.ALL);
 
         PermissionInfo pi = enricher(List.of()).enrich(10L, 42L);
         assertThat(pi.getModelScopeMap()).isEmpty();
@@ -176,11 +210,9 @@ class PermissionInfoEnricherCompositionTest {
         // Grant is on hr.employee (Employee nav), but the SFS "bank" is
         // bound to EmpBankAccount. Result must key by "EmpBankAccount".
         primeUserWithRoles(42L, 100L);
-        when(navResolver.resolvePrimaryModel("hr.employee")).thenReturn("Employee");
         when(sfsCache.modelOf("comp")).thenReturn("Employee");
         when(sfsCache.modelOf("bank")).thenReturn("EmpBankAccount");
-        when(roleNavigationService.searchList(any(FlexQuery.class))).thenReturn(List.of(
-                grant(100L, "hr.employee", null, List.of("comp", "bank"), null)));
+        sfsGrant(100L, "comp", "bank");
 
         Map<String, Set<String>> map = enricher(List.of()).enrich(10L, 42L)
                 .getModelSensitiveFieldSetsMap();
@@ -192,11 +224,9 @@ class PermissionInfoEnricherCompositionTest {
     void sfsMap_unknownSetIdSkippedSilently() {
         // SFS row removed but grant still references it — enricher must not throw.
         primeUserWithRoles(42L, 100L);
-        when(navResolver.resolvePrimaryModel("hr.employee")).thenReturn("Employee");
         when(sfsCache.modelOf("comp")).thenReturn("Employee");
         when(sfsCache.modelOf("ghost")).thenReturn(null);
-        when(roleNavigationService.searchList(any(FlexQuery.class))).thenReturn(List.of(
-                grant(100L, "hr.employee", null, List.of("comp", "ghost"), null)));
+        sfsGrant(100L, "comp", "ghost");
 
         Map<String, Set<String>> map = enricher(List.of()).enrich(10L, 42L)
                 .getModelSensitiveFieldSetsMap();

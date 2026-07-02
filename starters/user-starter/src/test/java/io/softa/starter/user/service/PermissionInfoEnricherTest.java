@@ -29,6 +29,8 @@ class PermissionInfoEnricherTest {
     private RoleService roleService;
     private UserRoleRelService userRoleRelService;
     private RoleNavigationService roleNavigationService;
+    private RoleDataScopeService roleDataScopeService;
+    private RoleSensitiveFieldSetService roleSensitiveFieldSetService;
     private NavigationModelResolver navResolver;
     private SensitiveFieldSetCache sfsCache;
     private CacheService cacheService;
@@ -39,11 +41,14 @@ class PermissionInfoEnricherTest {
         roleService = mock(RoleService.class);
         userRoleRelService = mock(UserRoleRelService.class);
         roleNavigationService = mock(RoleNavigationService.class);
+        roleDataScopeService = mock(RoleDataScopeService.class);
+        roleSensitiveFieldSetService = mock(RoleSensitiveFieldSetService.class);
         navResolver = mock(NavigationModelResolver.class);
         sfsCache = mock(SensitiveFieldSetCache.class);
         cacheService = mock(CacheService.class);
         enricher = new PermissionInfoEnricher(
                 roleService, userRoleRelService, roleNavigationService,
+                roleDataScopeService, roleSensitiveFieldSetService,
                 navResolver, sfsCache, List.of(), cacheService);
         RequestContextHolder.resetRequestAttributes();
     }

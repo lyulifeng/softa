@@ -39,13 +39,19 @@ import tools.jackson.databind.JsonNode;
  *       (DYNAMIC rows are rebuilt by DynamicRoleSyncJob in the same tx)</li>
  * </ul>
  */
-@Schema(description = "Wizard save body — Role basics + role_navigation set + manual member user ids")
+@Schema(description = "Wizard save body — Role basics + role_navigation (menu/permission) + role_data_scope + role_sensitive_field_set + manual member ids")
 public record WizardSaveDTO(
         @Schema(description = "Role basic info update (name / description / active / dynamicFilter)")
         JsonNode roleUpdate,
 
-        @Schema(description = "Full role_navigation rows for this role (replaces existing)")
+        @Schema(description = "Step 1 — role_navigation rows: [{navigationId, permissionIds}]. Menu access + button permissions only (scope/SFS moved out). Replaces existing.")
         JsonNode roleNavigations,
+
+        @Schema(description = "Step 2a — role_data_scope rows: [{model, dataScopes}], one per queryable model. Replaces existing. Scope rules are OR-combined.")
+        JsonNode roleDataScopes,
+
+        @Schema(description = "Step 2b — role_sensitive_field_set grants: [\"<setId>\", ...], role-wide flat list (each SFS carries its own model). Replaces existing.")
+        JsonNode roleSensitiveFieldSetIds,
 
         @Schema(description = "User account ids to assign with source=MANUAL (replaces existing MANUAL rows; DYNAMIC rows untouched)")
         JsonNode userIds

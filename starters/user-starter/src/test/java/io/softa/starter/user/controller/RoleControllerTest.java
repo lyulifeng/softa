@@ -21,7 +21,9 @@ import io.softa.starter.user.entity.RoleNavigation;
 import io.softa.starter.user.entity.UserRoleRel;
 import io.softa.starter.user.enums.RoleSource;
 import io.softa.starter.user.service.DynamicRoleSyncJob;
+import io.softa.starter.user.service.RoleDataScopeService;
 import io.softa.starter.user.service.RoleNavigationService;
+import io.softa.starter.user.service.RoleSensitiveFieldSetService;
 import io.softa.starter.user.service.RoleService;
 import io.softa.starter.user.service.UserRoleRelService;
 
@@ -46,6 +48,8 @@ class RoleControllerTest {
 
     private RoleService roleService;
     private RoleNavigationService roleNavigationService;
+    private RoleDataScopeService roleDataScopeService;
+    private RoleSensitiveFieldSetService roleSensitiveFieldSetService;
     private UserRoleRelService userRoleRelService;
     private DynamicRoleSyncJob dynamicRoleSyncJob;
     @SuppressWarnings({"rawtypes", "unchecked"})
@@ -57,12 +61,15 @@ class RoleControllerTest {
     void setUp() {
         roleService = mock(RoleService.class);
         roleNavigationService = mock(RoleNavigationService.class);
+        roleDataScopeService = mock(RoleDataScopeService.class);
+        roleSensitiveFieldSetService = mock(RoleSensitiveFieldSetService.class);
         userRoleRelService = mock(UserRoleRelService.class);
         dynamicRoleSyncJob = mock(DynamicRoleSyncJob.class);
         modelService = mock(ModelService.class);
         controller = new RoleController(
-                roleService, roleNavigationService, userRoleRelService,
-                dynamicRoleSyncJob, modelService);
+                roleService, roleNavigationService,
+                roleDataScopeService, roleSensitiveFieldSetService,
+                userRoleRelService, dynamicRoleSyncJob, modelService);
     }
 
     // ─── createWithWizard ───
@@ -75,7 +82,7 @@ class RoleControllerTest {
         ArrayNode navs = JSON.arrayNode();
         navs.add(JSON.objectNode().put("navigationId", "hr.employee"));
         ArrayNode userIds = JSON.arrayNode().add(1L).add(2L);
-        WizardSaveDTO body = new WizardSaveDTO(roleUpdate, navs, userIds);
+        WizardSaveDTO body = new WizardSaveDTO(roleUpdate, navs, null, null, userIds);
 
         ApiResponse<Long> resp = controller.createWithWizard(body);
 
@@ -105,7 +112,7 @@ class RoleControllerTest {
         when(roleService.createOne(any(Role.class))).thenReturn(1L);
 
         WizardSaveDTO body = new WizardSaveDTO(
-                JSON.objectNode().put("name", "R"), JSON.arrayNode(), JSON.arrayNode());
+                JSON.objectNode().put("name", "R"), JSON.arrayNode(), null, null, JSON.arrayNode());
         controller.createWithWizard(body);
 
         verify(userRoleRelService, never()).createList(any());
@@ -258,7 +265,7 @@ class RoleControllerTest {
     // ─── helpers ───
 
     private static WizardSaveDTO wizardBody(JsonNode roleUpdate, JsonNode navs, JsonNode userIds) {
-        return new WizardSaveDTO(roleUpdate, navs, userIds);
+        return new WizardSaveDTO(roleUpdate, navs, null, null, userIds);
     }
 
     private static ArrayNode arrOf(Object... items) {

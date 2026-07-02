@@ -29,7 +29,9 @@ import io.softa.starter.user.dto.Principal;
 import io.softa.starter.user.dto.ScopeRule;
 import io.softa.starter.user.entity.Navigation;
 import io.softa.starter.user.entity.Role;
+import io.softa.starter.user.entity.RoleDataScope;
 import io.softa.starter.user.entity.RoleNavigation;
+import io.softa.starter.user.entity.RoleSensitiveFieldSet;
 import io.softa.starter.user.entity.UserRoleRel;
 import io.softa.starter.user.enums.ScopeType;
 import io.softa.starter.user.filter.SensitiveFieldSetCache;
@@ -115,6 +117,8 @@ public class PermissionInfoEnricher {
     private final RoleService roleService;
     private final UserRoleRelService userRoleRelService;
     private final RoleNavigationService roleNavigationService;
+    private final RoleDataScopeService roleDataScopeService;
+    private final RoleSensitiveFieldSetService roleSensitiveFieldSetService;
     private final NavigationModelResolver navigationModelResolver;
     private final SensitiveFieldSetCache sensitiveFieldSetCache;
     /** Pluggable per-domain enricher beans. Each contributor writes its
@@ -130,6 +134,8 @@ public class PermissionInfoEnricher {
             RoleService roleService,
             UserRoleRelService userRoleRelService,
             RoleNavigationService roleNavigationService,
+            RoleDataScopeService roleDataScopeService,
+            RoleSensitiveFieldSetService roleSensitiveFieldSetService,
             NavigationModelResolver navigationModelResolver,
             SensitiveFieldSetCache sensitiveFieldSetCache,
             List<PrincipalEnrichmentContributor> enrichmentContributors,
@@ -137,6 +143,8 @@ public class PermissionInfoEnricher {
         this.roleService = roleService;
         this.userRoleRelService = userRoleRelService;
         this.roleNavigationService = roleNavigationService;
+        this.roleDataScopeService = roleDataScopeService;
+        this.roleSensitiveFieldSetService = roleSensitiveFieldSetService;
         this.navigationModelResolver = navigationModelResolver;
         this.sensitiveFieldSetCache = sensitiveFieldSetCache;
         this.enrichmentContributors = enrichmentContributors;
@@ -260,67 +268,58 @@ public class PermissionInfoEnricher {
             return emptyGrantsSnapshot(principal, roleCodes);
         }
         List<Long> roleIds = activeRoles.stream().map(Role::getId).toList();
-        // Only the four columns below are read in the loop that follows.
-        // Limiting via setFields cuts the cache-miss path's serialization
-        // cost roughly in half — the role_navigation table carries audit
-        // fields, tenantId, source, etc. that the enricher never touches.
-        List<RoleNavigation> grants = roleNavigationService.searchList(new FlexQuery(
-                List.of("navigationId", "permissionIds", "dataScopes", "sensitiveFieldSetIds"),
-                new Filters().in(RoleNavigation::getRoleId, roleIds)));
 
+        // 4a. Navigation + permission grants (role_navigation). Menu access +
+        //     button permissions only — scope/SFS moved to their own tables.
+        //     permissionIds JSON can hold strings or numeric ids in historical
+        //     seeds — coerceNumeric=true keeps the old parser's behaviour.
+        List<RoleNavigation> navGrants = roleNavigationService.searchList(new FlexQuery(
+                List.of("navigationId", "permissionIds"),
+                new Filters().in(RoleNavigation::getRoleId, roleIds)));
         Set<String> navigations = new HashSet<>();
         Set<String> permissions = new HashSet<>();
-        Map<String, List<ScopeRule>> modelScopeMap = new HashMap<>();
-        Map<String, Set<String>> modelSensitiveFieldSetsMap = new HashMap<>();
-
-        for (RoleNavigation rn : grants) {
-            String navId = rn.getNavigationId();
-            if (navId == null) continue;
-            navigations.add(navId);
-
-            // permissions — union across all rows. Backend doesn't sub-bucket
-            // permissions per nav for enforcement; the interceptor just needs
-            // "does the user have permission X".
-            // permissionIds JSON can hold either strings or numeric ids in
-            // historical seeds — coerceNumeric=true preserves the
-            // backward-compatible behaviour the old in-class parser had.
+        for (RoleNavigation rn : navGrants) {
+            if (rn.getNavigationId() == null) continue;
+            navigations.add(rn.getNavigationId());
             permissions.addAll(JsonArrayUtils.toStringList(rn.getPermissionIds(), true));
+        }
 
-            // Model-keyed aggregates. GROUP / container MENU rows have no
-            // primary model — Validator ⑩ rejects them but be defensive.
-            String model = navigationModelResolver.resolvePrimaryModel(navId);
-            if (model == null) continue;
-
-            List<ScopeRule> scopes = parseScopeRules(rn.getDataScopes());
+        // 4b. Row-scope grants (role_data_scope), keyed directly by model —
+        //     no nav→model resolution needed anymore. When multiple of the
+        //     user's roles contribute rules for the same model they OR-combine
+        //     (addAll); the per-role OR-union across navs is already
+        //     materialised in one row per (role, model).
+        Map<String, List<ScopeRule>> modelScopeMap = new HashMap<>();
+        List<RoleDataScope> scopeGrants = roleDataScopeService.searchList(new FlexQuery(
+                List.of("model", "dataScopes"),
+                new Filters().in(RoleDataScope::getRoleId, roleIds)));
+        for (RoleDataScope rds : scopeGrants) {
+            String model = rds.getModel();
+            if (model == null || model.isBlank()) continue;
+            List<ScopeRule> scopes = parseScopeRules(rds.getDataScopes());
             if (!scopes.isEmpty()) {
                 modelScopeMap.computeIfAbsent(model, k -> new ArrayList<>()).addAll(scopes);
             }
-            // Route each granted setId into modelSensitiveFieldSetsMap
-            // keyed by the SFS's CANONICAL model — not by the granting
-            // nav's primary model. Two scenarios this gets right:
-            //
-            //   1. SFS bound to a model X granted on a nav whose primary
-            //      model is X → conceptually identical to the old
-            //      `model` keying, but goes through the cache lookup
-            //      uniformly.
-            //   2. SFS bound to model A but declared `attachedTo: [B]`
-            //      (UI hint) — admin checks it on a B-rooted nav row.
-            //      The grant must land in map[A] so the FieldFilter
-            //      recursion (which switches to A's mask context when
-            //      it hits an A-typed sub-object under B's response)
-            //      finds the grant. Old code keyed it under B → invisible
-            //      at A's mask context → unintended masking.
-            //
-            // Unknown setIds (cache miss = SFS deleted but grant lingers
-            // → dangling ref) skip silently. PermissionRegistryValidator
-            // surfaces those as warnings on startup.
-            for (String sid : JsonArrayUtils.toStringList(rn.getSensitiveFieldSetIds())) {
-                String sfsModel = sensitiveFieldSetCache.modelOf(sid);
-                if (sfsModel == null) continue;
-                modelSensitiveFieldSetsMap
-                        .computeIfAbsent(sfsModel, k -> new HashSet<>())
-                        .add(sid);
-            }
+        }
+
+        // 4c. Sensitive-field-set grants (role_sensitive_field_set). Each
+        //     granted setId routes into modelSensitiveFieldSetsMap keyed by
+        //     the SFS's CANONICAL model (SensitiveFieldSetCache.modelOf) — so
+        //     a child/sub-object SFS (e.g. EmpBankAccount surfaced under
+        //     Employee) lands under its OWN model, where the field-mask
+        //     recursion switches context and looks it up. Unknown setIds
+        //     (dangling ref = SFS deleted but grant lingers) skip silently;
+        //     PermissionRegistryValidator surfaces those on startup.
+        Map<String, Set<String>> modelSensitiveFieldSetsMap = new HashMap<>();
+        List<RoleSensitiveFieldSet> sfsGrants = roleSensitiveFieldSetService.searchList(new FlexQuery(
+                List.of("sensitiveFieldSetId"),
+                new Filters().in(RoleSensitiveFieldSet::getRoleId, roleIds)));
+        for (RoleSensitiveFieldSet g : sfsGrants) {
+            String sid = g.getSensitiveFieldSetId();
+            if (sid == null) continue;
+            String sfsModel = sensitiveFieldSetCache.modelOf(sid);
+            if (sfsModel == null) continue;
+            modelSensitiveFieldSetsMap.computeIfAbsent(sfsModel, k -> new HashSet<>()).add(sid);
         }
 
         // 5. Ancestor expansion — a granted child implies its container is

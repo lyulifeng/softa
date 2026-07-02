@@ -22,12 +22,16 @@ import io.softa.framework.orm.domain.Filters;
 import io.softa.framework.web.response.ApiResponse;
 import io.softa.starter.user.dto.WizardSaveDTO;
 import io.softa.starter.user.entity.Role;
+import io.softa.starter.user.entity.RoleDataScope;
 import io.softa.starter.user.entity.RoleNavigation;
+import io.softa.starter.user.entity.RoleSensitiveFieldSet;
 import io.softa.starter.user.entity.UserRoleRel;
 import io.softa.starter.user.enums.RoleSource;
 import io.softa.starter.user.service.DynamicRoleSyncJob;
+import io.softa.starter.user.service.RoleDataScopeService;
 import io.softa.starter.user.service.RoleNavigationService;
 import io.softa.framework.orm.service.ModelService;
+import io.softa.starter.user.service.RoleSensitiveFieldSetService;
 import io.softa.starter.user.service.RoleService;
 import io.softa.starter.user.service.UserRoleRelService;
 import io.softa.starter.user.util.JsonArrayUtils;
@@ -45,6 +49,8 @@ public class RoleController {
 
     private final RoleService roleService;
     private final RoleNavigationService roleNavigationService;
+    private final RoleDataScopeService roleDataScopeService;
+    private final RoleSensitiveFieldSetService roleSensitiveFieldSetService;
     private final UserRoleRelService userRoleRelService;
     private final DynamicRoleSyncJob dynamicRoleSyncJob;
     /** Used for explicit-null column updates that bypass the entity-based
@@ -61,6 +67,8 @@ public class RoleController {
         role.setId(null);
         Long newId = roleService.createOne(role);
         writeRoleNavigations(newId, body.roleNavigations());
+        writeRoleDataScopes(newId, body.roleDataScopes());
+        writeRoleSensitiveFieldSets(newId, body.roleSensitiveFieldSetIds());
         writeManualUserRoleRels(newId, body.userIds());
         // Inline DYNAMIC sync — same in-transaction guarantee. The cron
         // job covers the in-between drift (employee data changes between
@@ -93,6 +101,13 @@ public class RoleController {
         }
         roleNavigationService.deleteByFilters(new Filters().eq(RoleNavigation::getRoleId, id));
         writeRoleNavigations(id, body.roleNavigations());
+        // Rewrite the data-dimension grants (scope + SFS). Same delete-then-
+        // insert pattern, each scoped to THIS role's rows only. Whole save is
+        // one @Transactional so observers never see the empty intermediate state.
+        roleDataScopeService.deleteByFilters(new Filters().eq(RoleDataScope::getRoleId, id));
+        writeRoleDataScopes(id, body.roleDataScopes());
+        roleSensitiveFieldSetService.deleteByFilters(new Filters().eq(RoleSensitiveFieldSet::getRoleId, id));
+        writeRoleSensitiveFieldSets(id, body.roleSensitiveFieldSetIds());
         // Wipe ALL existing user_role rows for this role — both Manual and
         // Dynamic — then rebuild from scratch. By application convention
         // there's at most one row per (user, role): Manual takes precedence,
@@ -162,9 +177,12 @@ public class RoleController {
         userRoleRelService.createList(rows);
     }
 
-    /** Writes one role_navigation row per entry in the wizard payload. Incoming
-     *  `id` and `roleId` from the frontend are ignored — id is auto-assigned,
-     *  roleId is bound from the path / newly-created id by the caller. */
+    /** Writes one role_navigation row per entry in the wizard payload — now
+     *  menu + permission only ({navigationId, permissionIds}); data scope and
+     *  sensitive-field-set moved to their own tables (see
+     *  {@link #writeRoleDataScopes} / {@link #writeRoleSensitiveFieldSets}).
+     *  Incoming `id` / `roleId` from the frontend are ignored — id is
+     *  auto-assigned, roleId is bound by the caller. */
     private void writeRoleNavigations(Long roleId, JsonNode rowsJson) {
         if (rowsJson == null || !rowsJson.isArray() || rowsJson.isEmpty()) return;
         List<RoleNavigation> rows = new ArrayList<>(rowsJson.size());
@@ -174,11 +192,44 @@ public class RoleController {
             JsonNode navIdNode = row.get("navigationId");
             rn.setNavigationId(navIdNode == null || navIdNode.isNull() ? null : navIdNode.asString());
             rn.setPermissionIds(row.get("permissionIds"));
-            rn.setDataScopes(row.get("dataScopes"));
-            rn.setSensitiveFieldSetIds(row.get("sensitiveFieldSetIds"));
             rows.add(rn);
         }
         roleNavigationService.createList(rows);
+    }
+
+    /** Writes one role_data_scope row per {@code {model, dataScopes}} entry
+     *  (one per queryable model). Entries without a model are skipped.
+     *  Incoming id/roleId ignored — id auto-assigned, roleId bound by caller. */
+    private void writeRoleDataScopes(Long roleId, JsonNode rowsJson) {
+        if (rowsJson == null || !rowsJson.isArray() || rowsJson.isEmpty()) return;
+        List<RoleDataScope> rows = new ArrayList<>(rowsJson.size());
+        for (JsonNode row : rowsJson) {
+            JsonNode modelNode = row.get("model");
+            if (modelNode == null || modelNode.isNull() || modelNode.asString().isBlank()) continue;
+            RoleDataScope rds = new RoleDataScope();
+            rds.setRoleId(roleId);
+            rds.setModel(modelNode.asString());
+            rds.setDataScopes(row.get("dataScopes"));
+            rows.add(rds);
+        }
+        if (!rows.isEmpty()) roleDataScopeService.createList(rows);
+    }
+
+    /** Writes one role_sensitive_field_set row per granted setId (de-duped).
+     *  Payload is a flat JSON string array (role-wide) — each SFS carries its
+     *  own canonical model, so no model is stored here. */
+    private void writeRoleSensitiveFieldSets(Long roleId, JsonNode idsJson) {
+        java.util.Set<String> setIds = new java.util.LinkedHashSet<>(JsonArrayUtils.toStringList(idsJson));
+        if (setIds.isEmpty()) return;
+        List<RoleSensitiveFieldSet> rows = new ArrayList<>(setIds.size());
+        for (String sid : setIds) {
+            if (sid == null || sid.isBlank()) continue;
+            RoleSensitiveFieldSet r = new RoleSensitiveFieldSet();
+            r.setRoleId(roleId);
+            r.setSensitiveFieldSetId(sid);
+            rows.add(r);
+        }
+        if (!rows.isEmpty()) roleSensitiveFieldSetService.createList(rows);
     }
 
 }

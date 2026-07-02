@@ -16,7 +16,9 @@ import io.softa.framework.orm.service.ModelService;
 import io.softa.starter.user.entity.Navigation;
 import io.softa.starter.user.entity.Permission;
 import io.softa.starter.user.entity.Role;
+import io.softa.starter.user.entity.RoleDataScope;
 import io.softa.starter.user.entity.RoleNavigation;
+import io.softa.starter.user.entity.RoleSensitiveFieldSet;
 import io.softa.starter.user.entity.SensitiveFieldSet;
 import io.softa.starter.user.entity.UserRoleRel;
 import io.softa.starter.user.enums.NavigationType;
@@ -30,7 +32,9 @@ import io.softa.starter.user.scope.contributor.CustomScopeContributor;
 import io.softa.starter.user.service.EndpointIndex;
 import io.softa.starter.user.service.NavigationModelResolver;
 import io.softa.starter.user.service.PermissionInfoEnricher;
+import io.softa.starter.user.service.RoleDataScopeService;
 import io.softa.starter.user.service.RoleNavigationService;
+import io.softa.starter.user.service.RoleSensitiveFieldSetService;
 import io.softa.starter.user.service.RoleService;
 import io.softa.starter.user.service.UserRoleRelService;
 import io.softa.starter.user.service.impl.NavigationModelResolverImpl;
@@ -59,6 +63,8 @@ public final class PermissionFlowFixture {
     public final List<Permission> permissions = new ArrayList<>();
     public final List<Role> roles = new ArrayList<>();
     public final List<RoleNavigation> grants = new ArrayList<>();
+    public final List<RoleDataScope> dataScopeGrants = new ArrayList<>();
+    public final List<RoleSensitiveFieldSet> sfsGrants = new ArrayList<>();
     public final List<UserRoleRel> userRoleRels = new ArrayList<>();
     public final List<SensitiveFieldSet> sensitiveFieldSets = new ArrayList<>();
 
@@ -77,6 +83,8 @@ public final class PermissionFlowFixture {
     public RoleService roleService;
     public UserRoleRelService userRoleRelService;
     public RoleNavigationService roleNavigationService;
+    public RoleDataScopeService roleDataScopeService;
+    public RoleSensitiveFieldSetService roleSensitiveFieldSetService;
 
     // Optional contributor list — defaults to Created + Custom.
     public List<ScopeContributor> scopeContributors = new ArrayList<>();
@@ -145,7 +153,44 @@ public final class PermissionFlowFixture {
             rn.setDataScopes(arr);
         }
         grants.add(rn);
+
+        // Split-table mirror — post-refactor these are the enricher's source
+        // of truth for scope/SFS. model is resolved from the seeded nav.
+        String model = modelForNav(navId);
+        if (scopeFixtures != null && !scopeFixtures.isEmpty() && model != null) {
+            ArrayNode arr = JSON.arrayNode();
+            for (ScopeRuleFixture s : scopeFixtures) {
+                ObjectNode obj = JSON.objectNode();
+                obj.put("scopeType", s.type.name());
+                if (s.expr != null) obj.set("scopeExpr", s.expr);
+                arr.add(obj);
+            }
+            RoleDataScope rds = new RoleDataScope();
+            rds.setId((long) (dataScopeGrants.size() + 1));
+            rds.setRoleId(roleId);
+            rds.setModel(model);
+            rds.setDataScopes(arr);
+            dataScopeGrants.add(rds);
+        }
+        if (sfsIds != null) {
+            for (String sid : sfsIds) {
+                RoleSensitiveFieldSet g = new RoleSensitiveFieldSet();
+                g.setId((long) (sfsGrants.size() + 1));
+                g.setRoleId(roleId);
+                g.setSensitiveFieldSetId(sid);
+                sfsGrants.add(g);
+            }
+        }
         return rn;
+    }
+
+    /** Look up the primary model of a seeded navigation (nav must be added
+     *  before the grant that references it). */
+    private String modelForNav(String navId) {
+        for (Navigation n : navigations) {
+            if (n.getId() != null && n.getId().equals(navId)) return n.getModel();
+        }
+        return null;
     }
 
     public UserRoleRel bindUserToRole(Long relId, Long userId, Long roleId) {
@@ -200,6 +245,8 @@ public final class PermissionFlowFixture {
         roleService = mock(RoleService.class);
         userRoleRelService = mock(UserRoleRelService.class);
         roleNavigationService = mock(RoleNavigationService.class);
+        roleDataScopeService = mock(RoleDataScopeService.class);
+        roleSensitiveFieldSetService = mock(RoleSensitiveFieldSetService.class);
 
         // ModelService-level seeds — used by NavigationModelResolverImpl,
         // SensitiveFieldSetCache, EndpointIndex.
@@ -239,6 +286,22 @@ public final class PermissionFlowFixture {
             }
             return out;
         });
+        when(roleDataScopeService.searchList(any(FlexQuery.class))).thenAnswer(inv -> {
+            Set<Long> roleIds = extractInLongSetFromFlex(inv.getArgument(0), "roleId");
+            List<RoleDataScope> out = new ArrayList<>();
+            for (RoleDataScope r : dataScopeGrants) {
+                if (roleIds == null || roleIds.contains(r.getRoleId())) out.add(r);
+            }
+            return out;
+        });
+        when(roleSensitiveFieldSetService.searchList(any(FlexQuery.class))).thenAnswer(inv -> {
+            Set<Long> roleIds = extractInLongSetFromFlex(inv.getArgument(0), "roleId");
+            List<RoleSensitiveFieldSet> out = new ArrayList<>();
+            for (RoleSensitiveFieldSet r : sfsGrants) {
+                if (roleIds == null || roleIds.contains(r.getRoleId())) out.add(r);
+            }
+            return out;
+        });
 
         // Cache: always MISS so we exercise the DB-load path.
         when(cacheService.get(any(String.class), eq(io.softa.starter.user.dto.PermissionInfo.class)))
@@ -265,6 +328,7 @@ public final class PermissionFlowFixture {
 
         enricher = new PermissionInfoEnricher(
                 roleService, userRoleRelService, roleNavigationService,
+                roleDataScopeService, roleSensitiveFieldSetService,
                 navResolver, sfsCache, List.of(), cacheService);
         ReflectionTestUtils.invokeMethod(enricher, "initAncestorIndex");
     }

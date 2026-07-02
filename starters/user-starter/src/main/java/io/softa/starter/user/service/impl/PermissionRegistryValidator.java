@@ -29,14 +29,18 @@ import io.softa.starter.user.entity.Navigation;
 import io.softa.starter.user.entity.Permission;
 import io.softa.starter.user.constant.RoleConstant;
 import io.softa.starter.user.entity.Role;
+import io.softa.starter.user.entity.RoleDataScope;
 import io.softa.starter.user.entity.RoleNavigation;
+import io.softa.starter.user.entity.RoleSensitiveFieldSet;
 import io.softa.starter.user.entity.SensitiveFieldSet;
 import io.softa.starter.user.enums.NavigationType;
 import io.softa.starter.user.enums.ScopeType;
 import io.softa.starter.user.filter.PermissionInterceptorProperties;
 import io.softa.starter.user.service.EndpointIndex;
 import io.softa.starter.user.service.NavigationModelResolver;
+import io.softa.starter.user.service.RoleDataScopeService;
 import io.softa.starter.user.service.RoleNavigationService;
+import io.softa.starter.user.service.RoleSensitiveFieldSetService;
 import io.softa.starter.user.service.RoleService;
 
 /**
@@ -102,6 +106,8 @@ public class PermissionRegistryValidator {
     private final ModelService<?> modelService;
     private final RoleService roleService;
     private final RoleNavigationService roleNavigationService;
+    private final RoleDataScopeService roleDataScopeService;
+    private final RoleSensitiveFieldSetService roleSensitiveFieldSetService;
     private final NavigationModelResolver navigationModelResolver;
     private final EndpointIndex endpointIndex;
     private final PermissionInterceptorProperties bypassProperties;
@@ -153,7 +159,14 @@ public class PermissionRegistryValidator {
         checkReservedRoleCodes(errors);
 
         List<RoleNavigation> grants = loadRoleNavigationGrants(errors);
-        checkRoleNavigationRows(grants, navById, permNavById, sensitiveFieldSetIds, errors);
+        checkRoleNavigationRows(grants, navById, permNavById, errors);
+
+        // Data-dimension grants now live in their own tables — validate scope
+        // (rule ⑨, keyed by the row's own model) and SFS existence there.
+        List<RoleDataScope> scopeGrants = loadRoleDataScopeGrants(errors);
+        checkRoleDataScopeRows(scopeGrants, errors);
+        List<RoleSensitiveFieldSet> sfsGrants = loadRoleSensitiveFieldSetGrants(errors);
+        checkRoleSensitiveFieldSetRows(sfsGrants, sensitiveFieldSetIds, errors);
 
         // ① Spring MVC handler URLs not covered by any permission (i.e. callable
         // but no permission gate). Skipped when the starter is consumed without
@@ -326,16 +339,15 @@ public class PermissionRegistryValidator {
         }
     }
 
-    /** Rules ③⑩⑨ — RoleNavigation grant integrity: nav exists + grantable
+    /** Rules ③⑩ — RoleNavigation grant integrity: nav exists + grantable
      *  + has model (rule ⑩); each permissionId exists and belongs to the
-     *  same nav (rule ③); sensitive_field_set ids exist (defensive);
-     *  CUSTOM scopeExpr field refs exist on the nav's primary model
-     *  (rule ⑨). */
+     *  same nav (rule ③). Scope (⑨) + SFS existence moved to
+     *  {@link #checkRoleDataScopeRows} / {@link #checkRoleSensitiveFieldSetRows}
+     *  now that those grants live in their own tables. */
     private void checkRoleNavigationRows(
             List<RoleNavigation> grants,
             Map<String, Navigation> navById,
             Map<String, String> permNavById,
-            Set<String> sensitiveFieldSetIds,
             List<String> errors) {
         for (RoleNavigation rn : grants) {
             String navId = rn.getNavigationId();
@@ -379,50 +391,86 @@ public class PermissionRegistryValidator {
                             rn.getId(), navId, pid, permNav));
                 }
             }
-
-            // sensitive_field_set ids exist (defensive, beyond the design's 10).
-            for (String sid : extractStringList(rn.getSensitiveFieldSetIds())) {
-                if (!sensitiveFieldSetIds.contains(sid)) {
-                    errors.add(String.format(
-                            "RoleNavigation[id=%d] references missing SensitiveFieldSet[id=%s]",
-                            rn.getId(), sid));
-                }
-            }
-
-            // ⑨ CUSTOM scopeExpr field references must exist on the nav's
-            // primary model. We parse scopeExpr through the framework's
-            // Filters deserialiser (same one ScopeRuleCompiler.customFilter
-            // uses at runtime) and walk the FilterUnit tree.
-            checkCustomScopeExprFields(rn, nav, errors);
         }
     }
 
-    /** Rule ⑨ — CUSTOM scopeExpr field references must exist on the nav's
-     *  primary model. Extracted from the per-row loop above so the parsing
-     *  + tree walk is its own readable unit. */
-    private void checkCustomScopeExprFields(RoleNavigation rn, Navigation nav, List<String> errors) {
-        JsonNode dataScopes = rn.getDataScopes();
+    /** Pull all RoleDataScope rows, fail-soft (matches loadRoleNavigationGrants). */
+    private List<RoleDataScope> loadRoleDataScopeGrants(List<String> errors) {
+        try {
+            return roleDataScopeService.searchList();
+        } catch (Throwable t) {
+            errors.add("PermissionRegistryValidator could not load RoleDataScope rows: "
+                    + t.getMessage() + " — scope checks (⑨) will be skipped");
+            log.error("PermissionRegistryValidator — roleDataScopeService.searchList() threw", t);
+            return List.of();
+        }
+    }
+
+    /** Pull all RoleSensitiveFieldSet rows, fail-soft. */
+    private List<RoleSensitiveFieldSet> loadRoleSensitiveFieldSetGrants(List<String> errors) {
+        try {
+            return roleSensitiveFieldSetService.searchList();
+        } catch (Throwable t) {
+            errors.add("PermissionRegistryValidator could not load RoleSensitiveFieldSet rows: "
+                    + t.getMessage() + " — SFS existence checks will be skipped");
+            log.error("PermissionRegistryValidator — roleSensitiveFieldSetService.searchList() threw", t);
+            return List.of();
+        }
+    }
+
+    /** role_data_scope integrity: model exists (rule ⑩ analogue for scope
+     *  rows) + CUSTOM scopeExpr field refs exist on that model (rule ⑨,
+     *  now keyed by the row's own model rather than a nav's primary model). */
+    private void checkRoleDataScopeRows(List<RoleDataScope> grants, List<String> errors) {
+        for (RoleDataScope rds : grants) {
+            String model = rds.getModel();
+            if (model == null || model.isBlank()) {
+                errors.add(String.format("RoleDataScope[id=%d] has null/blank model", rds.getId()));
+                continue;
+            }
+            if (!ModelManager.existModel(model)) {
+                errors.add(String.format(
+                        "RoleDataScope[id=%d] references missing model '%s'", rds.getId(), model));
+                continue;
+            }
+            checkCustomScopeExprFields(rds.getId(), model, rds.getDataScopes(), errors);
+        }
+    }
+
+    /** role_sensitive_field_set integrity: each granted setId must exist. */
+    private void checkRoleSensitiveFieldSetRows(
+            List<RoleSensitiveFieldSet> grants, Set<String> sensitiveFieldSetIds, List<String> errors) {
+        for (RoleSensitiveFieldSet g : grants) {
+            String sid = g.getSensitiveFieldSetId();
+            if (sid == null || sid.isBlank()) {
+                errors.add(String.format(
+                        "RoleSensitiveFieldSet[id=%d] has null/blank sensitiveFieldSetId", g.getId()));
+            } else if (!sensitiveFieldSetIds.contains(sid)) {
+                errors.add(String.format(
+                        "RoleSensitiveFieldSet[id=%d] references missing SensitiveFieldSet[id=%s]",
+                        g.getId(), sid));
+            }
+        }
+    }
+
+    /** Rule ⑨ — CUSTOM scopeExpr field references must exist on {@code model}.
+     *  Parses scopeExpr through the framework's {@link Filters} deserialiser
+     *  (same one the runtime CUSTOM contributor uses) and walks the
+     *  FilterUnit tree. Shared by {@link #checkRoleDataScopeRows}. */
+    private void checkCustomScopeExprFields(Long rowId, String model, JsonNode dataScopes, List<String> errors) {
         if (dataScopes == null || !dataScopes.isArray() || dataScopes.isEmpty()) return;
-        String navId = rn.getNavigationId();
-        String navModel = nav == null ? null : nav.getModel();
         for (JsonNode scopeRule : dataScopes) {
             if (scopeRule == null || !scopeRule.isObject()) continue;
             JsonNode typeNode = scopeRule.get("scopeType");
             if (typeNode == null || !ScopeType.CUSTOM.name().equals(typeNode.asString())) continue;
             JsonNode expr = scopeRule.get("scopeExpr");
             if (expr == null || !expr.isArray() || expr.isEmpty()) continue;
-            if (navModel == null || navModel.isEmpty()) {
-                errors.add(String.format(
-                        "RoleNavigation[id=%d] has CUSTOM scope on nav '%s' with no bound model — can't validate field refs",
-                        rn.getId(), navId));
-                continue;
-            }
-            Set<String> fieldRefs = extractFieldRefs(expr, rn.getId(), errors);
+            Set<String> fieldRefs = extractFieldRefs(expr, rowId, errors);
             for (String fieldRef : fieldRefs) {
-                if (!ModelManager.existField(navModel, fieldRef)) {
+                if (!ModelManager.existField(model, fieldRef)) {
                     errors.add(String.format(
-                            "RoleNavigation[id=%d,nav=%s] CUSTOM scopeExpr references missing field '%s' on model '%s'",
-                            rn.getId(), navId, fieldRef, navModel));
+                            "RoleDataScope[id=%d] CUSTOM scopeExpr references missing field '%s' on model '%s'",
+                            rowId, fieldRef, model));
                 }
             }
         }
@@ -465,7 +513,7 @@ public class PermissionRegistryValidator {
             parsed = Filters.of(expr.toString());
         } catch (Throwable t) {
             errors.add(String.format(
-                    "RoleNavigation[id=%d] CUSTOM scopeExpr failed to parse: %s",
+                    "RoleDataScope[id=%d] CUSTOM scopeExpr failed to parse: %s",
                     ruleId, t.getMessage()));
             return Set.of();
         }
