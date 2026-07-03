@@ -580,8 +580,14 @@ public class PermissionRegistryValidator {
                     ? Set.of()
                     : info.getPathPatternsCondition().getPatternValues();
             if (patterns.isEmpty()) continue;
+            // A mapping with no explicit method condition actually serves
+            // EVERY verb, so probe them all — otherwise an uncovered
+            // PUT/DELETE/PATCH route silently escapes rule ① (it would still
+            // fail-closed at runtime, but the startup coverage signal is the
+            // point).
             Set<HttpMethod> methods = info.getMethodsCondition().getMethods().isEmpty()
-                    ? Set.of(HttpMethod.GET, HttpMethod.POST)  // unspecified = accept both common verbs
+                    ? Set.of(HttpMethod.GET, HttpMethod.POST, HttpMethod.PUT,
+                            HttpMethod.PATCH, HttpMethod.DELETE)
                     : info.getMethodsCondition().getMethods().stream()
                             .map(rm -> HttpMethod.valueOf(rm.name()))
                             .collect(java.util.stream.Collectors.toSet());
