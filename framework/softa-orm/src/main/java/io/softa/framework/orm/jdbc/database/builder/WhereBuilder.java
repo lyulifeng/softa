@@ -39,7 +39,6 @@ public class WhereBuilder extends BaseBuilder implements SqlClauseBuilder {
         filters = this.handleActiveControl(filters);
         // Multi-tenant model, add tenant filtering conditions
         filters = this.handleMultiTenant(filters);
-        // filters
         if (!Filters.isEmpty(filters)) {
             sqlWrapper.where(handleFilters(filters));
         }
