@@ -87,7 +87,7 @@ class CustomScopeContributorTest {
         Filters out = contributor.compile(new ScopeRule(ScopeType.CUSTOM, expr), principal, "AnyModel");
 
         assertThat(Filters.isEmpty(out)).isFalse();
-        assertThat(Filters.isNever(out)).isFalse();
+        assertThat(java.util.Objects.equals(out, io.softa.starter.user.scope.ScopeRuleCompiler.matchNone())).isFalse();
     }
 
     @Test
@@ -137,7 +137,7 @@ class CustomScopeContributorTest {
         Filters out = contributor.compile(new ScopeRule(ScopeType.CUSTOM, expr), principal, "AnyModel");
 
         assertThat(Filters.isEmpty(out)).isFalse();
-        assertThat(Filters.isNever(out)).isFalse();
+        assertThat(java.util.Objects.equals(out, io.softa.starter.user.scope.ScopeRuleCompiler.matchNone())).isFalse();
     }
 
     @Test
@@ -156,7 +156,7 @@ class CustomScopeContributorTest {
         Filters out = contributor.compile(new ScopeRule(ScopeType.CUSTOM, expr), principal, "AnyModel");
 
         assertThat(Filters.isEmpty(out)).isFalse();
-        assertThat(Filters.isNever(out)).isFalse();
+        assertThat(java.util.Objects.equals(out, io.softa.starter.user.scope.ScopeRuleCompiler.matchNone())).isFalse();
     }
 
     @Test
@@ -171,7 +171,7 @@ class CustomScopeContributorTest {
         Filters out = contributor.compile(new ScopeRule(ScopeType.CUSTOM, expr), principal, "AnyModel");
 
         assertThat(Filters.isEmpty(out)).isFalse();
-        assertThat(Filters.isNever(out)).isFalse();
+        assertThat(java.util.Objects.equals(out, io.softa.starter.user.scope.ScopeRuleCompiler.matchNone())).isFalse();
     }
 
     @Test
@@ -210,6 +210,6 @@ class CustomScopeContributorTest {
 
         // Cannot easily peek into Filters internals; assert no degrade.
         assertThat(Filters.isEmpty(out)).isFalse();
-        assertThat(Filters.isNever(out)).isFalse();
+        assertThat(java.util.Objects.equals(out, io.softa.starter.user.scope.ScopeRuleCompiler.matchNone())).isFalse();
     }
 }

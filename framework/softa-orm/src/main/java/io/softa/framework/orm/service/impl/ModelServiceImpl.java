@@ -547,11 +547,6 @@ public class ModelServiceImpl<K extends Serializable> implements ModelService<K>
         filters = timelineService.appendTimelineFilters(modelName, filters);
         // Append permission data range filters
         filters = permissionService.appendScopeAccessFilters(modelName, filters);
-        // NEVER sentinel from scope compilation → caller has no visible rows;
-        // skip DB entirely.
-        if (Filters.isNever(filters)) {
-            return Collections.emptyList();
-        }
         FlexQuery flexQuery = new FlexQuery(filters);
         return jdbcService.getIds(modelName, ModelConstant.ID, flexQuery);
     }
@@ -612,10 +607,6 @@ public class ModelServiceImpl<K extends Serializable> implements ModelService<K>
         filters = timelineService.appendTimelineFilters(modelName, filters);
         // Append permission data range filters
         filters = permissionService.appendScopeAccessFilters(modelName, filters);
-        // NEVER sentinel from scope compilation → caller has no visible rows.
-        if (Filters.isNever(filters)) {
-            return Collections.emptyList();
-        }
         FlexQuery flexQuery = new FlexQuery(filters);
         // Automatic distinct when querying relational field ids
         flexQuery.setDistinct(true);
@@ -1079,10 +1070,6 @@ public class ModelServiceImpl<K extends Serializable> implements ModelService<K>
         Filters filters = timelineService.appendTimelineFilters(modelName, flexQuery);
         // Append permission data range filters
         filters = permissionService.appendScopeAccessFilters(modelName, filters);
-        // NEVER sentinel from scope compilation → caller has no visible rows.
-        if (Filters.isNever(filters)) {
-            return Collections.emptyList();
-        }
         flexQuery.setFilters(filters);
         List<Map<String, Object>> rows = jdbcService.selectByFilter(modelName, flexQuery);
         if (rows.size() > BaseConstant.MAX_BATCH_SIZE) {
@@ -1159,14 +1146,6 @@ public class ModelServiceImpl<K extends Serializable> implements ModelService<K>
         Filters filters = timelineService.appendTimelineFilters(modelName, flexQuery);
         // Append permission data range filters
         filters = permissionService.appendScopeAccessFilters(modelName, filters);
-        // NEVER sentinel from scope compilation → caller has no visible rows.
-        if (Filters.isNever(filters)) {
-            page.setRows(Collections.emptyList());
-            if (page.isCount()) {
-                page.setTotalCount(0L);
-            }
-            return page;
-        }
         flexQuery.setFilters(filters);
         Page<Map<String, Object>> result = jdbcService.selectByPage(modelName, flexQuery, page);
         // Mask blocked-field values on the response (Layer C POST)
@@ -1239,10 +1218,6 @@ public class ModelServiceImpl<K extends Serializable> implements ModelService<K>
         filters = timelineService.appendTimelineFilters(modelName, filters);
         // Append permission data range filters
         filters = permissionService.appendScopeAccessFilters(modelName, filters);
-        // NEVER sentinel from scope compilation → caller has no visible rows.
-        if (Filters.isNever(filters)) {
-            return 0L;
-        }
         return jdbcService.count(modelName, new FlexQuery(filters));
     }
 

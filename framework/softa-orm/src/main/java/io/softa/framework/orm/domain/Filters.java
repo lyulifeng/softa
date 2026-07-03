@@ -189,43 +189,6 @@ public class Filters implements Serializable {
     }
 
     /**
-     * Fail-closed sentinel — matches no rows. Dominates AND-combine, absorbs
-     * into OR-combine, causes WhereBuilder to emit {@code 1=0}. Emitted by
-     * scope compilation when every rule degrades (missing principal state,
-     * misconfigured contributor, etc.) so callers signal "no rows visible"
-     * without hitting the database.
-     *
-     * <h3>Load-bearing — DO NOT REMOVE</h3>
-     * This is the fail-closed half of row-level data scope (permissions R5).
-     * It exists precisely because the alternative — a bare {@code new Filters()}
-     * (FilterType.EMPTY) — is silently DROPPED by {@code combine} /
-     * {@code WhereBuilder}, so an EMPTY "no rows" filter collapses to "no WHERE"
-     * = the whole (tenant) table. That is the C1 full-table-leak bug this
-     * sentinel closes: NEVER survives combine and forces 0 rows.
-     *
-     * <p>Its main runtime trigger is NOT "the admin configured no scope for
-     * this model" — it is a DYNAMIC scope degrading (SELF / DIRECT_REPORTS /
-     * DEPT_SUBTREE / MANAGED_DEPARTMENTS / LEGAL_ENTITY when the caller has no
-     * linked employee context: pure users, pre-hires, service accounts), plus
-     * the {@code PermissionServiceImpl.appendScopeAccessFilters} catch-all
-     * (any exception → NEVER). Those paths MUST return zero rows, never all
-     * rows — so this cannot be replaced by the wizard defaulting models to ALL,
-     * nor by any UI-side change. Removing it re-opens C1.
-     */
-    public static Filters never() {
-        Filters filters = new Filters();
-        filters.setType(FilterType.NEVER);
-        return filters;
-    }
-
-    /**
-     * @return {@code true} iff {@code filters} is the NEVER sentinel.
-     */
-    public static boolean isNever(Filters filters) {
-        return filters != null && FilterType.NEVER.equals(filters.getType());
-    }
-
-    /**
      * Add a filterUnit to the current Filters object.
      *
      * @param method method reference of the field
@@ -704,11 +667,6 @@ public class Filters implements Serializable {
         if (filters == null) {
             return true;
         }
-        // NEVER is a real fail-closed predicate — never treated as empty,
-        // otherwise combine() and WhereBuilder would drop it.
-        if (FilterType.NEVER.equals(filters.getType())) {
-            return false;
-        }
         if (EMPTY.equals(filters.getType()) || (filters.getFilterUnit() == null && filters.getChildren().isEmpty())) {
             return true;
         } else if (filters.getChildren().size() == 1) {
@@ -850,31 +808,6 @@ public class Filters implements Serializable {
         if (Filters.isEmpty(filters)) {
             return this;
         }
-        // NEVER semantics:
-        //   AND: any NEVER operand → whole expression is NEVER
-        //   OR : NEVER operand absorbs (drops), whole expression is the other side
-        boolean isAnd = LogicOperator.AND.equals(logicOperator);
-        if (Filters.isNever(filters) || Filters.isNever(this)) {
-            if (isAnd) {
-                this.setType(FilterType.NEVER);
-                this.setFilterUnit(null);
-                this.children.clear();
-                this.setLogicOperator(null);
-                return this;
-            }
-            // OR mode
-            if (Filters.isNever(filters)) {
-                // this OR NEVER = this — drop the NEVER operand, no state change.
-                return this;
-            }
-            // NEVER OR filters = filters — mutate this to become filters.
-            this.setType(filters.getType());
-            this.setFilterUnit(filters.getFilterUnit());
-            this.children.clear();
-            this.children.addAll(filters.getChildren());
-            this.setLogicOperator(filters.getLogicOperator());
-            return this;
-        }
         if (EMPTY.equals(this.getType())) {
             this.setType(FilterType.TREE);
             this.setLogicOperator(logicOperator);
@@ -903,25 +836,16 @@ public class Filters implements Serializable {
      * @return new filters object after combined
      */
     private static Filters combine(LogicOperator logicOperator, Filters filters1, Filters filters2, Filters... filtersArray) {
-        // NEVER semantics:
-        //   AND: any NEVER operand → whole expression is NEVER
-        //   OR : NEVER operand absorbs (dropped alongside EMPTY below)
-        if (LogicOperator.AND.equals(logicOperator)) {
-            if (Filters.isNever(filters1) || Filters.isNever(filters2)
-                    || Arrays.stream(filtersArray).anyMatch(Filters::isNever)) {
-                return Filters.never();
-            }
-        }
-        // Just combine filters which are not empty (and drop NEVER in OR-mode — reached only when no AND-NEVER).
+        // Combine filters which are not empty.
         List<Filters> filtersList = new ArrayList<>();
-        if (!Filters.isEmpty(filters1) && !Filters.isNever(filters1)) {
+        if (!Filters.isEmpty(filters1)) {
             filtersList.add(filters1);
         }
-        if (!Filters.isEmpty(filters2) && !Filters.isNever(filters2)) {
+        if (!Filters.isEmpty(filters2)) {
             filtersList.add(filters2);
         }
         filtersList.addAll(Arrays.stream(filtersArray)
-                .filter(f -> !Filters.isEmpty(f) && !Filters.isNever(f)).toList());
+                .filter(f -> !Filters.isEmpty(f)).toList());
         // If all filters are empty, return null.
         if (filtersList.isEmpty()) {
             return null;

@@ -63,14 +63,31 @@ class ScopeRuleCompilerTest {
     void compile_nullRules_returnsNever() {
         ScopeRuleCompiler compiler = new ScopeRuleCompiler(applicabilityAllowingAll(), List.of());
         Filters out = compiler.compile(null, samplePi(), "Employee");
-        assertThat(Filters.isNever(out)).isTrue();
+        assertThat(java.util.Objects.equals(out, ScopeRuleCompiler.matchNone())).isTrue();
     }
 
     @Test
     void compile_emptyRules_returnsNever() {
         ScopeRuleCompiler compiler = new ScopeRuleCompiler(applicabilityAllowingAll(), List.of());
         Filters out = compiler.compile(List.of(), samplePi(), "Employee");
-        assertThat(Filters.isNever(out)).isTrue();
+        assertThat(java.util.Objects.equals(out, ScopeRuleCompiler.matchNone())).isTrue();
+    }
+
+    @Test
+    void matchNone_rendersAsOneEqualsZero() {
+        Filters mn = ScopeRuleCompiler.matchNone();
+        io.softa.framework.orm.domain.FilterUnit unit = mn.getFilterUnit();
+        // matchNone() is an empty-tuple IN leaf: [id, id] IN ()
+        assertThat(unit.isTuple()).isTrue();
+        assertThat(unit.getOperator()).isEqualTo(io.softa.framework.base.enums.Operator.IN);
+        assertThat((java.util.Collection<?>) unit.getValue()).isEmpty();
+        // ...which the SQL builder (FilterUnitParser.parseTuple) renders as the
+        // fail-closed literal "1 = 0". The empty-value branch returns before any
+        // SqlWrapper use, so a null wrapper is fine here.
+        java.util.List<String> aliases = unit.getFields().stream().map(f -> "t." + f).toList();
+        StringBuilder sql = io.softa.framework.orm.jdbc.database.parser.FilterUnitParser
+                .parseTuple(null, aliases, unit);
+        assertThat(sql.toString()).isEqualTo("1 = 0");
     }
 
     @Test
@@ -99,7 +116,7 @@ class ScopeRuleCompilerTest {
         // means the compile output is Filters.never().
         ScopeRuleCompiler compiler = new ScopeRuleCompiler(applicabilityAllowingAll(), List.of());
         Filters out = compiler.compile(List.of(rule(ScopeType.SELF)), samplePi(), "Employee");
-        assertThat(Filters.isNever(out)).isTrue();
+        assertThat(java.util.Objects.equals(out, ScopeRuleCompiler.matchNone())).isTrue();
     }
 
     @Test
@@ -111,7 +128,7 @@ class ScopeRuleCompilerTest {
         Filters out = compiler.compile(List.of(rule(ScopeType.SELF)), samplePi(), "Employee");
 
         assertThat(out).isNotNull();
-        assertThat(Filters.isNever(out)).isFalse();
+        assertThat(java.util.Objects.equals(out, ScopeRuleCompiler.matchNone())).isFalse();
         assertThat(self.calls).isEqualTo(1);
     }
 
@@ -129,7 +146,7 @@ class ScopeRuleCompilerTest {
                 samplePi(), "Employee");
 
         assertThat(out).isNotNull();
-        assertThat(Filters.isNever(out)).isFalse();
+        assertThat(java.util.Objects.equals(out, ScopeRuleCompiler.matchNone())).isFalse();
         assertThat(self.calls).isEqualTo(1);
         assertThat(created.calls).isEqualTo(1);
     }
@@ -148,7 +165,7 @@ class ScopeRuleCompilerTest {
 
         // The one rule degrades → compile output collapses to Filters.never().
         Filters out = compiler.compile(List.of(rule(ScopeType.SELF)), samplePi(), "Employee");
-        assertThat(Filters.isNever(out)).isTrue();
+        assertThat(java.util.Objects.equals(out, ScopeRuleCompiler.matchNone())).isTrue();
     }
 
     @Test
@@ -180,7 +197,7 @@ class ScopeRuleCompilerTest {
 
         Filters out = compiler.compile(List.of(rule(ScopeType.SELF)), samplePi(), "Employee");
 
-        assertThat(Filters.isNever(out)).isTrue();
+        assertThat(java.util.Objects.equals(out, ScopeRuleCompiler.matchNone())).isTrue();
         assertThat(self.calls).isZero();
     }
 

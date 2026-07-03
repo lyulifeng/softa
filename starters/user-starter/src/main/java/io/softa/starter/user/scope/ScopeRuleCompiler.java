@@ -1,5 +1,6 @@
 package io.softa.starter.user.scope;
 
+import java.util.Collections;
 import java.util.EnumMap;
 import java.util.List;
 import java.util.Map;
@@ -7,6 +8,8 @@ import java.util.Map;
 import org.springframework.stereotype.Component;
 import lombok.extern.slf4j.Slf4j;
 
+import io.softa.framework.base.enums.Operator;
+import io.softa.framework.orm.constant.ModelConstant;
 import io.softa.framework.orm.domain.Filters;
 import io.softa.starter.user.dto.PermissionInfo;
 import io.softa.starter.user.dto.Principal;
@@ -40,13 +43,13 @@ import io.softa.starter.user.enums.ScopeType;
  * Contributors signal "this rule degraded" by returning
  * {@code new Filters()} (EMPTY-typed). The OR-merge in
  * {@link #compile(java.util.List, PermissionInfo, String)} skips those. If
- * every rule degrades, {@code compile} emits {@link Filters#never()}
- * (NEVER-typed) at its exit — a guaranteed-false predicate that
- * {@code ModelServiceImpl} short-circuits into an empty result before
- * hitting the DB, and that {@code WhereBuilder} otherwise emits as
- * {@code 1=0}. This closes the C1 gap where {@link Filters#EMPTY} was
- * silently dropped by {@code combine}/{@code WhereBuilder}, leaking the
- * whole table.
+ * every rule degrades (or the rule list is empty), {@code compile} emits a
+ * "match no rows" filter ({@link #matchNone()}) — an ordinary empty-tuple
+ * {@code IN} leaf that renders {@code WHERE 1=0}. Being a normal leaf it
+ * AND-combines with the caller's query like any predicate, so the query runs
+ * and the DB returns zero rows. This closes the C1 gap where
+ * {@link Filters#EMPTY} was silently dropped by {@code combine}/{@code WhereBuilder},
+ * leaking the whole table.
  */
 @Slf4j
 @Component
@@ -90,14 +93,13 @@ public final class ScopeRuleCompiler {
      * Compile the rules into one OR-combined Filters. Returns:
      * <ul>
      *   <li>{@code null} — any rule is ALL → no scope filter (caller appends nothing).</li>
-     *   <li>{@link Filters#never()} — rules list is empty OR every rule degraded.
-     *       Caller ({@code ModelServiceImpl}) short-circuits into an empty result
-     *       before hitting the DB.</li>
+     *   <li>{@link #matchNone()} — rules list is empty OR every rule degraded:
+     *       a {@code 1=0} leaf so the query returns zero rows.</li>
      *   <li>otherwise — OR-merged Filters expression.</li>
      * </ul>
      */
     public Filters compile(List<ScopeRule> rules, PermissionInfo pi, String modelName) {
-        if (rules == null || rules.isEmpty()) return Filters.never();
+        if (rules == null || rules.isEmpty()) return matchNone();
         for (ScopeRule r : rules) {
             if (r.getScopeType() == ScopeType.ALL) return null;
         }
@@ -110,7 +112,7 @@ public final class ScopeRuleCompiler {
             if (Filters.isEmpty(one)) continue;
             out = (out == null) ? one : out.or(one);
         }
-        return out == null ? Filters.never() : out;
+        return out == null ? matchNone() : out;
     }
 
     private Filters compileOne(ScopeRule rule, Principal principal, String modelName) {
@@ -145,11 +147,21 @@ public final class ScopeRuleCompiler {
     /**
      * Internal degraded-rule marker (EMPTY-typed) — signals "this single rule
      * degraded" to the OR-merge loop in {@link #compile}, which skips it via
-     * {@link Filters#isEmpty}. NOT a fail-closed sentinel — if every rule
-     * degrades, {@code compile}'s exit converts to {@link Filters#never()}.
-     * Callers outside this class must use {@code Filters.never()} directly.
+     * {@link Filters#isEmpty}. NOT fail-closed on its own — if every rule
+     * degrades, {@code compile}'s exit converts to {@link #matchNone()}.
      */
     private static Filters emptyFilter() {
         return new Filters();
+    }
+
+    /**
+     * Fail-closed "match no rows" filter — an ordinary empty-tuple {@code IN}
+     * leaf that renders {@code WHERE 1=0}. A normal leaf (not a special type),
+     * so it AND-combines with the caller's filters like any predicate: the
+     * query runs and the DB returns zero rows. The {@code id} anchor exists on
+     * every model, so this is model-agnostic and joins nothing.
+     */
+    public static Filters matchNone() {
+        return Filters.of(List.of(ModelConstant.ID, ModelConstant.ID), Operator.IN, Collections.emptyList());
     }
 }

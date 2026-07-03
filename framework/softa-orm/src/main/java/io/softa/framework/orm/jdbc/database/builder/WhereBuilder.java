@@ -33,26 +33,12 @@ public class WhereBuilder extends BaseBuilder implements SqlClauseBuilder {
     }
 
     public void build() {
-        // Defense-in-depth: caller (ModelServiceImpl) is expected to short-circuit
-        // to an empty result before reaching WhereBuilder when scope compilation
-        // yields NEVER. If a caller passes NEVER directly (test code, manual
-        // Filters construction), emit `1=0` and skip JOINs / subqueries.
-        if (Filters.isNever(flexQuery.getFilters())) {
-            sqlWrapper.where(new StringBuilder("1=0"));
-            return;
-        }
         // SoftDelete filter processing
         Filters filters = this.handleSoftDeleted(flexQuery.getFilters());
         // Access control filter processing
         filters = this.handleActiveControl(filters);
         // Multi-tenant model, add tenant filtering conditions
         filters = this.handleMultiTenant(filters);
-        // filters — NEVER can also surface here if softa/multi-tenant handlers
-        // AND-combined it in via Filters.and(...); that combine returns NEVER too.
-        if (Filters.isNever(filters)) {
-            sqlWrapper.where(new StringBuilder("1=0"));
-            return;
-        }
         if (!Filters.isEmpty(filters)) {
             sqlWrapper.where(handleFilters(filters));
         }

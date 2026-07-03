@@ -63,7 +63,7 @@ class CreatedBySelfScopeContributorTest {
         Filters out = contributor.compile(rule(), p, "AnyModel");
 
         assertThat(Filters.isEmpty(out)).isFalse();
-        assertThat(Filters.isNever(out)).isFalse();
+        assertThat(java.util.Objects.equals(out, io.softa.starter.user.scope.ScopeRuleCompiler.matchNone())).isFalse();
         // Verify the anchor field is createdId — string form contains it.
         String s = out.toString();
         assertThat(s).contains("createdId");
