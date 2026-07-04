@@ -32,10 +32,11 @@ CREATE TABLE sys_model(
 
 ALTER TABLE sys_model ADD UNIQUE INDEX uniq_modelname (model_name);
 
-CREATE TABLE sys_language(
+CREATE TABLE language_profile(
     id BIGINT(32) NOT NULL AUTO_INCREMENT  COMMENT 'ID' ,
+    tenant_id VARCHAR(32)    COMMENT 'Tenant ID' ,
     name VARCHAR(64) NOT NULL  DEFAULT '' COMMENT 'Language Name' ,
-    code VARCHAR(64) NOT NULL  DEFAULT '' COMMENT 'Language Code' ,
+    language VARCHAR(64) NOT NULL  DEFAULT '' COMMENT 'Language' ,
     date_format VARCHAR(32)    COMMENT 'Date Format' ,
     time_format VARCHAR(32)    COMMENT 'Time Format' ,
     decimal_separator VARCHAR(32)    COMMENT 'Decimal Separator' ,
@@ -48,7 +49,7 @@ CREATE TABLE sys_language(
     updated_by VARCHAR(32)    COMMENT 'Updated By' ,
     active TINYINT(1)   DEFAULT 1 COMMENT 'Active' ,
     PRIMARY KEY (id)
-) ENGINE=InnoDB AUTO_INCREMENT=1 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT = 'System Language';
+) ENGINE=InnoDB AUTO_INCREMENT=1 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT = 'Language Profile';
 
 CREATE TABLE sys_model_trans(
     id BIGINT(32) NOT NULL AUTO_INCREMENT  COMMENT 'ID' ,
@@ -165,7 +166,8 @@ CREATE TABLE sys_option_item(
     item_code VARCHAR(64) NOT NULL  DEFAULT '' COMMENT 'Item Code' ,
     item_name VARCHAR(64) NOT NULL  DEFAULT '' COMMENT 'Item Name' ,
     parent_item_code VARCHAR(64)   DEFAULT '' COMMENT 'Parent Item Code' ,
-    item_color VARCHAR(64)   DEFAULT '' COMMENT 'Item Color' ,
+    item_tone VARCHAR(64)   DEFAULT '' COMMENT 'Item Tone' ,
+    item_icon VARCHAR(64)   DEFAULT '' COMMENT 'Item Icon' ,
     description VARCHAR(256)   DEFAULT '' COMMENT 'Description' ,
     created_time DATETIME    COMMENT 'Created Time' ,
     created_id VARCHAR(32)    COMMENT 'Created ID' ,
@@ -331,7 +333,6 @@ CREATE TABLE sys_model_index(
     id BIGINT(32) NOT NULL AUTO_INCREMENT  COMMENT 'ID' ,
     app_id BIGINT(32)   DEFAULT 0 COMMENT 'APP ID' ,
     name VARCHAR(64) NOT NULL  DEFAULT '' COMMENT 'Index Title' ,
-    code VARCHAR(64)   DEFAULT '' COMMENT 'Index Code' ,
     model_name VARCHAR(64) NOT NULL  DEFAULT '' COMMENT 'Model Name' ,
     model_id BIGINT(32) NOT NULL  DEFAULT 0 COMMENT 'Model ID' ,
     index_name VARCHAR(64)   DEFAULT '' COMMENT 'Index Name' ,
@@ -451,3 +452,26 @@ CREATE TABLE change_log(
     changed_by VARCHAR(64)    COMMENT 'Changed By' ,
     changed_time DATETIME    COMMENT 'Changed Time'
 ) ENGINE=InnoDB AUTO_INCREMENT=1 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT = 'Change Log';
+
+
+CREATE TABLE metadata_upgrade_history(
+    id BIGINT(32) NOT NULL AUTO_INCREMENT  COMMENT 'ID' ,
+    env_id BIGINT(32)    COMMENT 'Env ID' ,
+    callback_token VARCHAR(64) NOT NULL  DEFAULT '' COMMENT 'Callback Token' ,
+    status VARCHAR(64)   DEFAULT '' COMMENT 'Status' ,
+    error_message TEXT(20000)    COMMENT 'Error Message' ,
+    start_time DATETIME    COMMENT 'Execution Start Time' ,
+    end_time DATETIME    COMMENT 'Execution End Time' ,
+    duration_time DOUBLE(24,3)    COMMENT 'Duration Time (s)' ,
+    package_summary MEDIUMTEXT    COMMENT 'Package Summary' ,
+    created_time DATETIME    COMMENT 'Created Time' ,
+    created_id BIGINT(32)    COMMENT 'Created ID' ,
+    created_by VARCHAR(64)    COMMENT 'Created By' ,
+    updated_time DATETIME    COMMENT 'Updated Time' ,
+    updated_id BIGINT(32)    COMMENT 'Updated ID' ,
+    updated_by VARCHAR(64)    COMMENT 'Updated By' ,
+    PRIMARY KEY (id)
+) ENGINE=InnoDB AUTO_INCREMENT=1 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT = 'Metadata Upgrade History';
+
+ALTER TABLE metadata_upgrade_history ADD UNIQUE INDEX uniq_metadata_upgrade_history_callback_token (callback_token);
+ALTER TABLE metadata_upgrade_history ADD INDEX idx_metadata_upgrade_history_status_start_time (status, start_time);

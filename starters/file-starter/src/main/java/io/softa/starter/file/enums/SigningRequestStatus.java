@@ -4,8 +4,14 @@ import com.fasterxml.jackson.annotation.JsonValue;
 import lombok.AllArgsConstructor;
 import lombok.Getter;
 
+import io.softa.framework.base.annotation.OptionSet;
+
+/**
+ * Signing request status.
+ */
 @Getter
 @AllArgsConstructor
+@OptionSet
 public enum SigningRequestStatus {
     DRAFT("Draft"),
     SENT("Sent"),

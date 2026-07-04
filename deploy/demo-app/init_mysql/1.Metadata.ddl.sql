@@ -47,10 +47,11 @@ CREATE TABLE sys_field_trans(
     PRIMARY KEY (id)
 ) ENGINE=InnoDB AUTO_INCREMENT=1 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT = 'System Field Translation';
 
-CREATE TABLE sys_language(
+CREATE TABLE language_profile(
     id BIGINT(32) NOT NULL AUTO_INCREMENT  COMMENT 'ID' ,
+    tenant_id VARCHAR(32)    COMMENT 'Tenant ID' ,
     name VARCHAR(64) NOT NULL  DEFAULT '' COMMENT 'Language Name' ,
-    code VARCHAR(64) NOT NULL  DEFAULT '' COMMENT 'Language Code' ,
+    language VARCHAR(64) NOT NULL  DEFAULT '' COMMENT 'Language' ,
     date_format VARCHAR(32)    COMMENT 'Date Format' ,
     time_format VARCHAR(32)    COMMENT 'Time Format' ,
     decimal_separator VARCHAR(32)    COMMENT 'Decimal Separator' ,
@@ -63,7 +64,7 @@ CREATE TABLE sys_language(
     updated_by VARCHAR(32)    COMMENT 'Updated By' ,
     active TINYINT(1)   DEFAULT 1 COMMENT 'Active' ,
     PRIMARY KEY (id)
-) ENGINE=InnoDB AUTO_INCREMENT=1 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT = 'System Language';
+) ENGINE=InnoDB AUTO_INCREMENT=1 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT = 'Language Profile';
 
 CREATE TABLE sys_model_trans(
     id BIGINT(32) NOT NULL AUTO_INCREMENT  COMMENT 'ID' ,
@@ -168,7 +169,8 @@ CREATE TABLE sys_option_item(
     item_code VARCHAR(64) NOT NULL  DEFAULT '' COMMENT 'Item Code' ,
     item_name VARCHAR(64) NOT NULL  DEFAULT '' COMMENT 'Item Name' ,
     parent_item_code VARCHAR(64)   DEFAULT '' COMMENT 'Parent Item Code' ,
-    item_color VARCHAR(64)   DEFAULT '' COMMENT 'Item Color' ,
+    item_tone VARCHAR(64)   DEFAULT '' COMMENT 'Item Tone' ,
+    item_icon VARCHAR(64)   DEFAULT '' COMMENT 'Item Icon' ,
     description VARCHAR(256)   DEFAULT '' COMMENT 'Description' ,
     created_time DATETIME    COMMENT 'Created Time' ,
     created_id VARCHAR(32)    COMMENT 'Created ID' ,
@@ -682,6 +684,7 @@ CREATE TABLE design_app_env(
     env_status VARCHAR(32) NOT NULL DEFAULT 'Stable' COMMENT 'Env runtime status — deployment mutex (Stable / Deploying)' ,
     protected_env TINYINT(1)    COMMENT 'Protected Env' ,
     current_version_id BIGINT(32)    COMMENT 'Current Version' ,
+    last_deployment_id BIGINT(32)    COMMENT 'Last Deployment' ,
     active TINYINT(1)    DEFAULT 1 COMMENT 'Active' ,
     upgrade_endpoint VARCHAR(128) NOT NULL  DEFAULT '' COMMENT 'Upgrade API EndPoint' ,
     public_key VARCHAR(256)   DEFAULT '' COMMENT 'Public Key;Base64-encoded X.509 SubjectPublicKeyInfo' ,
@@ -703,7 +706,7 @@ CREATE TABLE design_app_env_snapshot(
     app_id BIGINT(32) NOT NULL  DEFAULT 0 COMMENT 'App ID' ,
     env_id BIGINT(32) NOT NULL   COMMENT 'Env ID' ,
     deployment_id BIGINT(32) NOT NULL   COMMENT 'Deployment ID' ,
-    snapshot TEXT    COMMENT 'Snapshot' ,
+    snapshot MEDIUMTEXT    COMMENT 'Snapshot' ,
     created_time DATETIME    COMMENT 'Created Time' ,
     created_id BIGINT(32)    COMMENT 'Created ID' ,
     created_by VARCHAR(64)    COMMENT 'Created By' ,
@@ -967,7 +970,8 @@ CREATE TABLE design_option_item(
     item_code VARCHAR(64) NOT NULL  DEFAULT '' COMMENT 'Item Code' ,
     item_name VARCHAR(64) NOT NULL  DEFAULT '' COMMENT 'Item Name' ,
     parent_item_code VARCHAR(64)   DEFAULT '' COMMENT 'Parent Item Code' ,
-    item_color VARCHAR(64)   DEFAULT '' COMMENT 'Item Color' ,
+    item_tone VARCHAR(64)   DEFAULT '' COMMENT 'Item Tone' ,
+    item_icon VARCHAR(64)   DEFAULT '' COMMENT 'Item Icon' ,
     description VARCHAR(256)   DEFAULT '' COMMENT 'Description' ,
     active TINYINT(1)   DEFAULT 1 COMMENT 'Active' ,
     created_time DATETIME    COMMENT 'Created Time' ,
@@ -1007,7 +1011,6 @@ CREATE TABLE design_model_index(
     id BIGINT(32) NOT NULL AUTO_INCREMENT  COMMENT 'ID' ,
     app_id BIGINT(32)   DEFAULT 0 COMMENT 'APP ID' ,
     name VARCHAR(64) NOT NULL  DEFAULT '' COMMENT 'Index Title' ,
-    code VARCHAR(64)   DEFAULT '' COMMENT 'Index Code' ,
     model_name VARCHAR(64) NOT NULL  DEFAULT '' COMMENT 'Model Name' ,
     model_id BIGINT(32) NOT NULL  DEFAULT 0 COMMENT 'Model ID' ,
     index_name VARCHAR(64)   DEFAULT '' COMMENT 'Index Name' ,
@@ -1390,8 +1393,8 @@ CREATE TABLE tenant_info(
     closed_time DATETIME    COMMENT 'Closed Time' ,
     default_language VARCHAR(64)    COMMENT 'Default Language' ,
     default_timezone VARCHAR(64)    COMMENT 'Default Timezone' ,
-    default_currency VARCHAR(64)    COMMENT 'Default Currency' ,
-    default_country BIGINT(32)    COMMENT 'Default Country' ,
+    default_currency VARCHAR(4)    COMMENT 'Default Currency — ISO 4217 alpha-3; FK to currency.code in reference-data-starter' ,
+    default_country VARCHAR(4)    COMMENT 'Default Country — ISO 3166-1 alpha-2; FK to country_region.code in reference-data-starter' ,
     data_region VARCHAR(64)    COMMENT 'Data Region' ,
     plan_id BIGINT(32)    COMMENT 'Plan ID' ,
     subscription_id BIGINT(32)    COMMENT 'Subscription ID' ,
@@ -1450,7 +1453,8 @@ CREATE TABLE tenant_option_item(
     sequence INT(11)   DEFAULT 1 COMMENT 'Sequence' ,
     item_code VARCHAR(64) NOT NULL  DEFAULT '' COMMENT 'Item Code' ,
     item_name VARCHAR(64) NOT NULL  DEFAULT '' COMMENT 'Item Name' ,
-    item_color VARCHAR(64)   DEFAULT '' COMMENT 'Item Color' ,
+    item_tone VARCHAR(64)   DEFAULT '' COMMENT 'Item Tone' ,
+    item_icon VARCHAR(64)   DEFAULT '' COMMENT 'Item Icon' ,
     description VARCHAR(256)   DEFAULT '' COMMENT 'Description' ,
     created_time DATETIME    COMMENT 'Created Time' ,
     created_id VARCHAR(32)    COMMENT 'Created ID' ,
@@ -1495,6 +1499,29 @@ CREATE TABLE tenant_config(
     active TINYINT(1)   DEFAULT 1 COMMENT 'Active' ,
     PRIMARY KEY (id)
 ) ENGINE=InnoDB AUTO_INCREMENT=1 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT = 'Tenant Config';
+
+
+CREATE TABLE metadata_upgrade_history(
+    id BIGINT(32) NOT NULL AUTO_INCREMENT  COMMENT 'ID' ,
+    env_id BIGINT(32)    COMMENT 'Env ID' ,
+    callback_token VARCHAR(64) NOT NULL  DEFAULT '' COMMENT 'Callback Token' ,
+    status VARCHAR(64)   DEFAULT '' COMMENT 'Status' ,
+    error_message TEXT(20000)    COMMENT 'Error Message' ,
+    start_time DATETIME    COMMENT 'Execution Start Time' ,
+    end_time DATETIME    COMMENT 'Execution End Time' ,
+    duration_time DOUBLE(24,3)    COMMENT 'Duration Time (s)' ,
+    package_summary MEDIUMTEXT    COMMENT 'Package Summary' ,
+    created_time DATETIME    COMMENT 'Created Time' ,
+    created_id BIGINT(32)    COMMENT 'Created ID' ,
+    created_by VARCHAR(64)    COMMENT 'Created By' ,
+    updated_time DATETIME    COMMENT 'Updated Time' ,
+    updated_id BIGINT(32)    COMMENT 'Updated ID' ,
+    updated_by VARCHAR(64)    COMMENT 'Updated By' ,
+    PRIMARY KEY (id)
+) ENGINE=InnoDB AUTO_INCREMENT=1 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT = 'Metadata Upgrade History';
+
+ALTER TABLE metadata_upgrade_history ADD UNIQUE INDEX uniq_metadata_upgrade_history_callback_token (callback_token);
+ALTER TABLE metadata_upgrade_history ADD INDEX idx_metadata_upgrade_history_status_start_time (status, start_time);
 
 CREATE TABLE sys_sequence(
                              id BIGINT(32) NOT NULL   COMMENT 'ID' ,

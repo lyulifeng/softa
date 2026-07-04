@@ -4,12 +4,14 @@ import com.fasterxml.jackson.annotation.JsonValue;
 import lombok.AllArgsConstructor;
 import lombok.Getter;
 
+import io.softa.framework.base.annotation.OptionSet;
 
 /**
  * User Layout Density
  */
 @Getter
 @AllArgsConstructor
+@OptionSet
 public enum UserLayoutDensity {
     DEFAULT("Default"),
     COMPACT("Compact"),
@@ -17,5 +19,4 @@ public enum UserLayoutDensity {
 
     @JsonValue
     private final String value;
-
 }

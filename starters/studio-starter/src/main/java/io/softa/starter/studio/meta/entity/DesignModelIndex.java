@@ -2,50 +2,59 @@ package io.softa.starter.studio.meta.entity;
 
 import java.io.Serial;
 import java.util.List;
-import io.swagger.v3.oas.annotations.media.Schema;
 import lombok.Data;
 import lombok.EqualsAndHashCode;
 
+import io.softa.framework.orm.annotation.Field;
+import io.softa.framework.orm.annotation.Model;
 import io.softa.framework.orm.entity.AuditableModel;
+import io.softa.framework.orm.enums.IdStrategy;
 
 /**
  * DesignModelIndex Model
  */
 @Data
-@Schema(name = "DesignModelIndex")
 @EqualsAndHashCode(callSuper = true)
+@Model(
+        idStrategy = IdStrategy.DISTRIBUTED_LONG,
+        // hard delete (no softDelete) — lets the per-env UNIQUE(env_id, …) index work. See DesignModel.
+        copyable = false,   // copy disabled (would clone the per-env business key) — see DesignModel.
+        // envId scopes the businessKey (see DesignModel).
+        businessKey = {"envId", "modelName", "indexName"}
+)
 public class DesignModelIndex extends AuditableModel {
 
     @Serial
     private static final long serialVersionUID = 1L;
 
-    @Schema(description = "ID")
+    @Field(label = "ID")
     private Long id;
 
-    @Schema(description = "Portfolio")
-    private Long portfolioId;
-
-    @Schema(description = "APP ID")
+    @Field(label = "APP ID")
     private Long appId;
 
-    @Schema(description = "Model ID")
+    @Field(label = "Model ID", required = true)
     private Long modelId;
 
-    @Schema(description = "Model Name")
+    // Per-env design: envId scopes the row (NOT NULL, V19). Identity = per-env business key
+    // (env_id + modelName + indexName); no logicalId.
+    @Field(label = "Env ID")
+    private Long envId;
+
+    @Field(required = true)
     private String modelName;
 
-    @Schema(description = "Index Title")
-    private String name;
-
-    @Schema(description = "Index Name")
+    // Globally unique across all models; capped at 60 chars (mirror of SysModelIndex).
+    @Field(length = 60)
     private String indexName;
 
-    @Schema(description = "Index Fields")
+    @Field
     private List<String> indexFields;
 
-    @Schema(description = "Is Unique Index")
+    @Field(label = "Is Unique Index")
     private Boolean uniqueIndex;
 
-    @Schema(description = "Deleted")
-    private Boolean deleted;
+    // End-user message for a violation of this unique constraint (mirror of SysModelIndex.message).
+    @Field(length = 256)
+    private String message;
 }

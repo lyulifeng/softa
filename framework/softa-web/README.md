@@ -6,7 +6,7 @@ and the ORM layer caches them for fast lookup.
 
 ### Data Source
 Option items are stored in the metadata table `SysOptionItem`. Each item belongs to an `optionSetCode` and has an
-`itemCode`, `itemName`, and a `sequence` used for ordering.
+`itemCode`, `label`, and a `sequence` used for ordering.
 
 ### Cache Behavior
 At application startup, `OptionManager.init()` loads all `SysOptionItem` rows, ordered by `sequence`, and stores them
@@ -32,21 +32,22 @@ Use `OptionManager` in service code:
 ```java
 List<MetaOptionItem> items = OptionManager.getMetaOptionItems("OrderStatus");
 MetaOptionItem pending = OptionManager.getMetaOptionItem("OrderStatus", "PENDING");
-String pendingName = OptionManager.getItemNameByCode("OrderStatus", "PENDING");
+String pendingName = OptionManager.getLabelByCode("OrderStatus", "PENDING");
 boolean exists = OptionManager.existsItemCode("OrderStatus", "PENDING");
 ```
 
 ### Localization
-`MetaOptionItem.getItemName()` returns a translated name if a translation exists for the current language in context.
-If no translation exists, it returns the original `itemName`.
+`MetaOptionItem.getLabel()` returns a translated name if a translation exists for the current language in context.
+If no translation exists, it returns the original `label`.
 
 ### OptionReference Structure
 When option values are expanded or returned as references, they use `OptionReference`.
 
 Fields:
 - `itemCode`: option item code.
-- `itemName`: option item display name.
-- `itemColor`: optional color string.
+- `label`: option item display name.
+- `itemTone`: optional semantic tone (e.g. `success`, `warning`, `error`, `info`, `neutral`).
+- `itemIcon`: optional icon code (e.g. `check`, `x`, `ban`, `alert`, `pause`, `info`, `eye`, `loader`, `clock`, `pending`, `undo`, `lock`).
 
 ### Notes
 - `OptionManager` throws if `optionSetCode` does not exist in cache. Validate with
@@ -139,7 +140,7 @@ Unless stated otherwise, the descriptions below refer to service-level `FlexQuer
 | `ORIGINAL` | Raw stored item code. | Raw stored string (comma-separated). |
 | `TYPE_CAST` | Item code string. | `List<String>` of item codes. |
 | `DISPLAY` | Item display name. | Comma-joined display names (string). |
-| `REFERENCE` | `OptionReference` (`itemCode`, `itemName`, `itemColor`). | `List<OptionReference>`. |
+| `REFERENCE` | `OptionReference` (`itemCode`, `label`, `itemTone`, `itemIcon`). | `List<OptionReference>`. |
 
 ### ManyToOne / OneToOne
 1. No SubQuery:
@@ -236,13 +237,13 @@ By default, ModelController uses `ConvertType.REFERENCE`.
 Default API return (`REFERENCE`):
 1. `Option` -> `OptionReference` object:
 ```json
-{ "itemCode": "ACTIVE", "itemName": "Active", "itemColor": "green" }
+{ "itemCode": "Active", "label": "Active", "itemTone": "success", "itemIcon": "check" }
 ```
 2. `MultiOption` -> `List<OptionReference>`:
 ```json
 [
-  { "itemCode": "A", "itemName": "Tag A", "itemColor": "" },
-  { "itemCode": "B", "itemName": "Tag B", "itemColor": "" }
+  { "itemCode": "A", "label": "Tag A", "itemTone": "", "itemIcon": "" },
+  { "itemCode": "B", "label": "Tag B", "itemTone": "", "itemIcon": "" }
 ]
 ```
 
@@ -357,3 +358,148 @@ Rules:
    - OneToMany: `CREATE/UPDATE/DELETE` or `Create/Update/Delete`
    - ManyToMany: `ADD/REMOVE` or `Add/Remove`
 3. Unknown patch key or non-list patch value will fail fast with parameter validation error.
+
+## Service-to-Service RPC
+
+### When to use it
+
+When an entity model is owned by a different app (e.g. `Order` lives in the
+`payments` app but is read from this app), the framework redirects ORM calls for
+that model over HTTP to the owning app. Routing is automatic and keyed on the
+model's `appCode` (ADR-0015, projected from `sys_model.app_code`): when a model's
+`appCode` differs from this runtime's `system.app-code`, the call is routed to
+the owning app; otherwise it runs locally. There is no per-model routing flag to
+set. Your code keeps calling `JdbcService` as if the model were local.
+
+This is not a general-purpose RPC mechanism — only `JdbcService` methods on
+metadata-driven models are RPC-able. For arbitrary cross-service calls, use a
+plain `RestClient`.
+
+### Quick start
+
+1. Nothing to annotate — a model's owning app is its `appCode`, stamped
+   server-side (ADR-0015). The caller only needs to know which apps it routes to.
+
+2. Configure the **caller's** `application.yml`, keyed by the **owning app's
+   `appCode`** (its `system.app-code`):
+
+   ```yaml
+   rpc:
+     enable: true
+     services:
+       payments:                     # key = owning app's appCode
+         api-url: http://payments.internal:8080
+         api-key: <shared>
+         api-secret: <shared>
+   ```
+
+3. Configure the **receiver's** `application.yml` (only this line is needed):
+
+   ```yaml
+   rpc:
+     enable: true
+   ```
+
+4. Call `JdbcService` normally — the framework auto-routes:
+
+   ```java
+   List<Map<String, Object>> rows = jdbcService.getList("Order", filters);
+   // model's appCode == this runtime's system.app-code → local;
+   // differs → HTTP POST to the owning app
+   ```
+
+**How it works**: `SwitchServiceAspect` intercepts `JdbcService` calls; when the
+model's `appCode` differs from this runtime's `system.app-code`, the call is
+POSTed to `/rpc/{modelName}/{methodName}` on the owning app (resolved via
+`rpc.services.<appCode>`). The caller's request `Context` (tenant / user /
+language) is propagated so the remote invocation runs with the same identity.
+
+### Configuration
+
+#### Minimal (caller)
+
+```yaml
+rpc:
+  enable: true
+  services:
+    payments:                       # key = owning app's appCode (system.app-code)
+      api-url: http://payments.internal:8080
+      api-key: <shared>
+      api-secret: <shared>
+```
+
+Receiver only needs `rpc.enable: true`.
+
+With this minimal config you get framework defaults: 3 retries with exponential
+backoff (300 ms → 3 s cap), per-host circuit breaker, 3 s connect / 30 s read
+timeout.
+
+#### Full (caller, custom resilience policies)
+
+```yaml
+rpc:
+  enable: true
+  services:
+    payments:
+      api-url: http://payments.internal:8080
+      api-key: <shared>
+      api-secret: <shared>
+    fast-dfs:
+      api-url: http://fast-dfs.internal:8888
+      api-key: <shared>
+      api-secret: <shared>
+
+resilience4j:
+  retry:
+    instances:
+      softa-rpc:                    # instance name is fixed — applies to all RPC targets
+        max-attempts: 3
+        wait-duration: 300ms
+        enable-exponential-backoff: true
+        exponential-backoff-multiplier: 2
+        exponential-max-wait-duration: 3s
+        retry-exceptions:
+          - io.softa.framework.web.resilience.TransientHttpException
+          - java.io.IOException
+  circuitbreaker:
+    instances:
+      softa-rpc:
+        sliding-window-size: 20
+        failure-rate-threshold: 50
+        wait-duration-in-open-state: 15s
+```
+
+#### Field reference
+
+| Field | Required | Description |
+|---|---|---|
+| `rpc.enable` | yes | Gates the dispatcher (caller) and the `/rpc` endpoint (receiver) |
+| `rpc.services.<appCode>.api-url` | yes (caller) | Base URL; framework appends `/rpc/{model}/{method}` |
+| `rpc.services.<appCode>.api-key` | yes (caller) | Sent as `X-Api-Key` header |
+| `rpc.services.<appCode>.api-secret` | yes (caller) | Sent as `X-Api-Secret` header |
+| `resilience4j.retry.instances.softa-rpc.*` | no | Overrides the default retry policy |
+| `resilience4j.circuitbreaker.instances.softa-rpc.*` | no | Overrides the default circuit-breaker policy |
+
+### Constraints
+
+- **Single endpoint shape**: only methods on `JdbcServiceImpl` are RPC-targetable,
+  and the first argument must be `String modelName`. Custom service methods are
+  not transparently RPC-able.
+- **Java serialization on the wire**: all method arguments and return values
+  must implement `Serializable`. Cross-language consumers are not supported.
+- **Static service registry**: appCode → URL is resolved from YAML only;
+  no service discovery. Switch per environment via `application-{profile}.yml`.
+- **One Resilience4j policy for all targets**: every RPC call shares the
+  `softa-rpc` retry + circuit-breaker instance — you can't tune SLAs per target.
+- **System models never redirect**: `sys_*` catalog rows always serve locally,
+  regardless of `appCode`. Prevents circular routing during bootstrap.
+
+### Failure handling
+
+- RPC failures (non-success `ApiResponse`, null body, or deserialization error)
+  surface as `io.softa.framework.base.exception.ExternalException`.
+- HTTP-layer errors (status codes, network timeouts) bubble up as
+  `RestClientResponseException` after being logged with target URL + status +
+  body.
+- Retry / circuit-breaker activity is exposed at `/actuator/retries` and
+  `/actuator/circuitbreakers` (via the Resilience4j Spring Boot starter).

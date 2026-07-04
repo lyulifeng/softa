@@ -1,13 +1,14 @@
 package io.softa.starter.studio.template.ddl;
 
+import java.util.List;
 import java.util.Map;
 import org.junit.jupiter.api.Test;
 
 import io.softa.framework.base.placeholder.TemplateEngine;
 import io.softa.framework.orm.enums.FieldType;
-import io.softa.starter.studio.template.ddl.context.FieldDdlCtx;
-import io.softa.starter.studio.template.ddl.context.IndexDdlCtx;
-import io.softa.starter.studio.template.ddl.context.ModelDdlCtx;
+import io.softa.starter.metadata.ddl.context.FieldDdlCtx;
+import io.softa.starter.metadata.ddl.context.IndexDdlCtx;
+import io.softa.starter.metadata.ddl.context.ModelDdlCtx;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 
@@ -54,6 +55,43 @@ class PebbleSqlTemplateWhitespaceTest {
                     DROP COLUMN removed_at,
                     MODIFY COLUMN amount DECIMAL(10,2) NOT NULL DEFAULT 0 COMMENT 'Amount',
                     CHANGE COLUMN old_status status VARCHAR(20) NOT NULL DEFAULT '' COMMENT 'Status';
+                """.stripTrailing(), sql.stripTrailing());
+    }
+
+    @Test
+    void mysqlAlterTableDescriptionOnlyKeepsSemicolonAttached() {
+        // Regression: when only descriptionChanged is true and all field lists are empty,
+        // the trailing ';' must be on the same line as the COMMENT clause.
+        ModelDdlCtx model = baseModel("user_role", "User Role", "id", false);
+        model.setDescriptionChanged(true);
+
+        String sql = render("templates/sql/mysql/AlterTable.peb", model);
+
+        assertEquals("""
+                /* Alter table for model: User Role */
+                /* Review for large tables: MySQL ALTER TABLE may rewrite the table and lock it.
+                   Prefer `ALGORITHM=INPLACE, LOCK=NONE` or an online DDL tool when applicable. */
+                ALTER TABLE user_role COMMENT 'User Role';
+                """.stripTrailing(), sql.stripTrailing());
+    }
+
+    @Test
+    void mysqlAlterTableTrailingSemicolonAttachesWhenLastNonEmptyLoopIsNotRenamed() {
+        // Regression: when the last non-empty field loop is not renamedFields,
+        // ';' must still be attached to the last clause (not on its own line).
+        ModelDdlCtx model = baseModel("dept_info2", "Dept", "id", false);
+        model.getDeletedFields().add(field("alias", "VARCHAR", "VARCHAR(64)", false, false, null, ""));
+        model.getUpdatedFields().add(field("dept_rank", "VARCHAR", "VARCHAR(64)", false, false, null, ""));
+
+        String sql = render("templates/sql/mysql/AlterTable.peb", model);
+
+        assertEquals("""
+                /* Alter table for model: Dept */
+                /* Review for large tables: MySQL ALTER TABLE may rewrite the table and lock it.
+                   Prefer `ALGORITHM=INPLACE, LOCK=NONE` or an online DDL tool when applicable. */
+                ALTER TABLE dept_info2
+                    DROP COLUMN alias,
+                    MODIFY COLUMN dept_rank VARCHAR(64) COMMENT '';
                 """.stripTrailing(), sql.stripTrailing());
     }
 
@@ -165,7 +203,7 @@ class PebbleSqlTemplateWhitespaceTest {
     private ModelDdlCtx baseModel(String tableName, String description, String pkColumn, boolean autoIncrementPrimaryKey) {
         ModelDdlCtx model = new ModelDdlCtx();
         model.setModelName(tableName);
-        model.setLabelName(description);
+        model.setLabel(description);
         model.setTableName(tableName);
         model.setDescription(description);
         model.setPkColumn(pkColumn);
@@ -188,6 +226,9 @@ class PebbleSqlTemplateWhitespaceTest {
         field.setRequired(required);
         field.setAutoIncrement(autoIncrement);
         field.setDefaultValue(defaultValue);
+        // This test drives the templates directly (no dialect prepare step), so the
+        // rendered literal — what the templates actually interpolate — is set verbatim.
+        field.setDefaultValueLiteral(defaultValue);
         field.setDescription(description);
         return field;
     }
@@ -209,7 +250,7 @@ class PebbleSqlTemplateWhitespaceTest {
         IndexDdlCtx index = new IndexDdlCtx();
         index.setIndexName(indexName);
         index.setUnique(unique);
-        index.setColumns(java.util.List.of(columns));
+        index.setColumns(List.of(columns));
         return index;
     }
 

@@ -1,5 +1,10 @@
 package io.softa.framework.orm.jdbc.database.builder;
 
+import java.util.Arrays;
+import java.util.List;
+import java.util.stream.Collectors;
+import org.apache.commons.lang3.StringUtils;
+
 import io.softa.framework.base.constant.BaseConstant;
 import io.softa.framework.base.exception.IllegalArgumentException;
 import io.softa.framework.base.utils.Assert;
@@ -9,11 +14,6 @@ import io.softa.framework.orm.enums.FieldType;
 import io.softa.framework.orm.jdbc.database.SqlWrapper;
 import io.softa.framework.orm.meta.MetaField;
 import io.softa.framework.orm.meta.ModelManager;
-import org.apache.commons.lang3.StringUtils;
-
-import java.util.Arrays;
-import java.util.List;
-import java.util.stream.Collectors;
 
 /**
  * Base Builder
@@ -33,6 +33,9 @@ public abstract class BaseBuilder {
      * Parse logic field, support OneToOne and ManyToOne cascade fields, such as deptId.managerId.name.
      * The cascade level does not exceed 3 levels (BaseConstant.CASCADE_LEVEL).
      * Note: OneToMany and ManyToMany fields are not supported here.
+     * Dynamic cascaded field aliases declared on the model (`dynamic=true && cascadedField`)
+     * are auto-expanded to their underlying `a.b` path before joining/aliasing,
+     * so they are usable in ORDER BY (and any other clause routing through this method).
      *
      * @param logicField logic field
      * @param isSelect   whether it is a select field
@@ -109,6 +112,13 @@ public abstract class BaseBuilder {
     private String parseStoredField(String storedField, boolean isSelect) {
         if (ModelManager.existField(this.mainModelName, storedField)) {
             MetaField metaField = ModelManager.getModelField(this.mainModelName, storedField);
+            if (metaField.isDynamicCascadedField()) {
+                // Rewrite alias to its `a.b` cascade path and reuse the cascade resolution
+                // (LEFT JOIN + final-column alias). Records the alias access for permission tracking;
+                // the recursive call will additionally record each level on the cascade path.
+                sqlWrapper.accessModelField(this.mainModelName, storedField);
+                return this.parseLogicField(metaField.getCascadedField(), isSelect);
+            }
             sqlWrapper.accessModelField(this.mainModelName, storedField);
             if (metaField.isTranslatable()) {
                 // Construct the SQL segment of the translation field

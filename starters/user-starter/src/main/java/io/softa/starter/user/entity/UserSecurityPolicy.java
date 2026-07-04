@@ -2,84 +2,88 @@ package io.softa.starter.user.entity;
 
 import java.io.Serial;
 import java.util.List;
-import io.swagger.v3.oas.annotations.media.Schema;
 import lombok.Data;
 import lombok.EqualsAndHashCode;
 
+import io.softa.framework.orm.annotation.Field;
+import io.softa.framework.orm.annotation.Model;
 import io.softa.framework.orm.entity.AuditableModel;
+import io.softa.framework.orm.enums.IdStrategy;
 import io.softa.starter.user.enums.LoginMethod;
 
 /**
  * UserSecurityPolicy Model
  */
 @Data
-@Schema(name = "UserSecurityPolicy")
 @EqualsAndHashCode(callSuper = true)
+@Model(
+        idStrategy = IdStrategy.DISTRIBUTED_LONG
+)
 public class UserSecurityPolicy extends AuditableModel {
 
     @Serial
     private static final long serialVersionUID = 1L;
 
-    @Schema(description = "ID")
+    @Field(label = "ID")
     private Long id;
 
-    @Schema(description = "Tenant ID")
+    @Field(label = "Tenant ID")
     private Long tenantId;
 
-    @Schema(description = "Policy Name")
+    @Field(label = "Policy Name")
     private String name;
 
-    @Schema(description = "Policy Code")
+    @Field(label = "Policy Code")
     private String code;
 
-    @Schema(description = "Login Methods")
+    @Field
     private List<LoginMethod> loginMethods;
 
-    @Schema(description = "Active Device Limit")
+    @Field
     private Integer activeDeviceLimit;
 
-    @Schema(description = "Server Session Duration")
+    @Field(label = "Server Session Duration")
     private Integer sessionDuration;
 
-    @Schema(description = "Client Cookie-Session Idle Duration")
+    @Field(label = "Client Cookie-Session Idle Duration")
     private Integer sessionIdleDuration;
 
-    @Schema(description = "Force Change Initial Password")
+    @Field
     private Boolean forceChangeInitialPassword;
 
-    @Schema(description = "Password Valid Days")
+    @Field
     private Integer passwordValidDays;
 
-    @Schema(description = "Password Retry Interval")
+    @Field
     private Integer passwordRetryInterval;
 
-    @Schema(description = "Password Retry Limit")
+    @Field
     private Integer passwordRetryLimit;
 
-    @Schema(description = "Password Complexity Prompt")
+    @Field(length = 128)
     private String passwordComplexityPrompt;
 
-    @Schema(description = "Passwords Not Duplicate")
+    @Field(label = "Passwords Not Duplicate")
     private Integer passwordNotDuplicate;
 
-    @Schema(description = "Minimum Character Length")
+    @Field(label = "Minimum Character Length")
     private Integer minLength;
 
-    @Schema(description = "Minimum Lowercase Characters")
+    @Field(label = "Minimum Lowercase Characters")
     private Integer minLowercase;
 
-    @Schema(description = "Minimum Uppercase Characters")
+    @Field(label = "Minimum Uppercase Characters")
     private Integer minUppercase;
 
-    @Schema(description = "Minimum Digits")
+    @Field(label = "Minimum Digits")
     private Integer minDigits;
 
-    @Schema(description = "Minimum Modified Characters")
+    @Field(label = "Minimum Modified Characters")
     private Integer minModifiedChars;
 
-    @Schema(description = "Minimum Special Characters")
+    @Field(label = "Minimum Special Characters")
     private Integer minSpecialChars;
 
-    @Schema(description = "Active")
+    @Field
     private Boolean active;
 }

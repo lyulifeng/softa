@@ -4,23 +4,33 @@ import com.fasterxml.jackson.annotation.JsonValue;
 import lombok.AllArgsConstructor;
 import lombok.Getter;
 
+import io.softa.framework.base.annotation.OptionItem;
+import io.softa.framework.base.annotation.OptionSet;
+
 /**
  * Cron status
  */
 @Getter
 @AllArgsConstructor
+@OptionSet
 public enum CronStatus {
-    Scheduled("Scheduled", "Scheduled for a specified time."),
-    RUNNING("Running", "Currently executing."),
-    COMPLETED("Completed", "Finished successfully."),
-    PAUSED("Paused", "Temporarily paused."),
-    CANCELLED("Cancelled", "Cancelled before completion."),
-    SKIPPED("Skipped", "Skipped due to unmet execution conditions."),
-    TIMEOUT("Timeout", "Interrupted by execution timeout."),
-    FAILED("Failed", "Execution failed.");
+    @OptionItem(description = "Scheduled for a specified time.")
+    SCHEDULED("Scheduled"),
+    @OptionItem(description = "Currently executing.")
+    RUNNING("Running"),
+    @OptionItem(description = "Finished successfully.")
+    COMPLETED("Completed"),
+    @OptionItem(description = "Temporarily paused.")
+    PAUSED("Paused"),
+    @OptionItem(description = "Cancelled before completion.")
+    CANCELLED("Cancelled"),
+    @OptionItem(description = "Skipped due to unmet execution conditions.")
+    SKIPPED("Skipped"),
+    @OptionItem(description = "Interrupted by execution timeout.")
+    TIMEOUT("Timeout"),
+    @OptionItem(description = "Execution failed.")
+    FAILED("Failed");
 
     @JsonValue
     private final String status;
-
-    private final String description;
 }

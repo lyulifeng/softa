@@ -4,6 +4,7 @@ import java.util.List;
 import jakarta.servlet.http.HttpServletRequest;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.lang3.StringUtils;
+import org.springframework.beans.factory.SmartInitializingSingleton;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 
@@ -18,14 +19,18 @@ import io.softa.framework.base.enums.Timezone;
 import io.softa.framework.base.exception.UserNotFoundException;
 import io.softa.framework.base.utils.Assert;
 import io.softa.framework.orm.service.CacheService;
+import io.softa.framework.orm.service.TenantInfoService;
 import io.softa.framework.web.utils.CookieUtils;
 
 @Slf4j
 @Component
-public class ContextBuilder {
+public class ContextBuilder implements SmartInitializingSingleton {
 
     @Autowired
     private CacheService cacheService;
+
+    @Autowired(required = false)
+    private TenantInfoService tenantInfoService;
 
     @Autowired(required = false)
     private List<ContextEnricher> contextEnrichers;
@@ -37,18 +42,20 @@ public class ContextBuilder {
      * @return the UserInfo associated with the session
      * @throws UserNotFoundException if the session ID is missing or invalid, or if user info is not found
      */
-    private UserInfo getUserInfo(HttpServletRequest request) throws UserNotFoundException {
+    private String getSessionId(HttpServletRequest request) throws UserNotFoundException {
         String sessionId = CookieUtils.getCookie(request, BaseConstant.SESSION_ID);
         if (sessionId == null) {
             // If sessionId is not found in cookies, get it from the request header
             sessionId = request.getHeader(BaseConstant.SESSION_ID_HEADER);
         }
-
         if (sessionId == null) {
             log.warn("Session ID is missing");
             throw new UserNotFoundException("Session ID is missing");
         }
+        return sessionId;
+    }
 
+    private UserInfo getUserInfo(String sessionId) throws UserNotFoundException {
         Long userId = cacheService.get(RedisConstant.SESSION + sessionId, Long.class);
         if (userId == null) {
             // Session provided but invalid -> "missing user"
@@ -65,13 +72,13 @@ public class ContextBuilder {
 
     /**
      * Setup user context with user info.
-     * Extract the `debug` parameter from the URI to enable debug mode.
+     * Extract the `debug` parameter or debug headers from the request to enable debug mode.
      *
      * @param request the current HTTP request
      */
     public Context buildUserContext(HttpServletRequest request) throws UserNotFoundException {
-        // UserInfo userInfo = new UserInfo();
-        UserInfo userInfo = this.getUserInfo(request);
+        String sessionId = this.getSessionId(request);
+        UserInfo userInfo = this.getUserInfo(sessionId);
         // Create Context with TraceID from the request header
         String traceId = request.getHeader(BaseConstant.X_B3_TRACEID);
         Context context = new Context(traceId);
@@ -82,7 +89,7 @@ public class ContextBuilder {
         context.setTimezone(userInfo.getTimezone());
         context.setUserInfo(userInfo);
         if (SystemConfig.env.isEnableMultiTenancy()) {
-            this.setMultiTenancyEnv(context, userInfo);
+            this.setMultiTenancyEnv(context, userInfo, sessionId);
         }
         context.setCorrelationId(request.getHeader(BaseConstant.X_CORRELATION_ID));
         // HTTP requests for users are never allowed to use cross-tenant mode
@@ -107,6 +114,30 @@ public class ContextBuilder {
                         enricher.getClass().getSimpleName(), context.getUserId(), e.getMessage());
             }
         }
+    }
+
+    /**
+     * Build a context for service-to-service calls that authenticate via request
+     * signing rather than a logged-in user (e.g. studio → runtime metadata upgrade).
+     * No user identity is bound; tenant filtering is bypassed via {@code crossTenant}
+     * because the calling service may target tenants the request itself didn't name.
+     * TraceId/correlationId/language/debug are still propagated so the downstream
+     * handler keeps the same observability surface as a normal request.
+     */
+    public Context buildServiceContext(HttpServletRequest request) {
+        String traceId = request.getHeader(BaseConstant.X_B3_TRACEID);
+        Context context = new Context(traceId);
+        Language language = this.getCurrentLanguage(request, null);
+        context.setLanguage(language);
+        String timezone = request.getHeader("X-Timezone");
+        if (StringUtils.isNotBlank(timezone)) {
+            context.setTimezone(Timezone.of(timezone));
+        }
+        context.setCorrelationId(request.getHeader(BaseConstant.X_CORRELATION_ID));
+        context.setCrossTenant(true);
+        context.setSkipPermissionCheck(true);
+        this.setDebugModeFromRequest(request, context);
+        return context;
     }
 
     /**
@@ -162,9 +193,30 @@ public class ContextBuilder {
      * @param context the current context
      */
     private void setDebugModeFromRequest(HttpServletRequest request, Context context) {
-        String debug = request.getParameter(BaseConstant.DEBUG);
-        if (Boolean.parseBoolean(debug) || "1".equals(debug)) {
+        if (isDebugEnabled(request.getParameter(BaseConstant.DEBUG))
+                || isDebugEnabled(request.getHeader(BaseConstant.DEBUG))
+                || isDebugEnabled(request.getHeader(BaseConstant.X_DEBUG))) {
             context.setDebug(true);
+        }
+    }
+
+    private boolean isDebugEnabled(String debug) {
+        return Boolean.parseBoolean(debug) || "1".equals(debug);
+    }
+
+    /**
+     * Boot-time invariant: when multi-tenancy is enabled, a {@link TenantInfoService}
+     * provider (tenant-starter) MUST be on the classpath. Enforced once after all singletons
+     * are initialized, so a missing provider fails fast with a clear message instead of
+     * surfacing per-request as a misleading "tenant not active" rejection in
+     * {@link #setMultiTenancyEnv}.
+     */
+    @Override
+    public void afterSingletonsInstantiated() {
+        if (SystemConfig.env.isEnableMultiTenancy() && tenantInfoService == null) {
+            throw new IllegalStateException(
+                    "system.enable-multi-tenancy=true but no TenantInfoService bean is present; "
+                            + "add tenant-starter to the classpath.");
         }
     }
 
@@ -175,12 +227,18 @@ public class ContextBuilder {
      * @param context the current context
      * @param userInfo the user info
      */
-    private void setMultiTenancyEnv(Context context, UserInfo userInfo) {
+    private void setMultiTenancyEnv(Context context, UserInfo userInfo, String sessionId) {
         Long tenantId = userInfo.getTenantId();
         Assert.notNull(tenantId, "User tenantId cannot be null in multi-tenancy mode.");
-//        TenantInfo tenantInfo = tenantInfoService.getTenantInfo(tenantId);
-//        Assert.notNull(tenantInfo, "Tenant info not found for tenantId: {0}", tenantId);
-//        Assert.isEqual(TenantStatus.ACTIVE, tenantInfo.getStatus(), "Tenant with tenantId {0} is not active", tenantId);
+        // Tenant lifecycle gate: only ACTIVE tenants may operate. When a tenant leaves ACTIVE,
+        // TenantInfoService.deactivate() evicts the cache so isTenantActive() flips immediately;
+        // here we force-logout the user — drop the session and bounce to re-login (fail-closed:
+        // a missing provider in multi-tenancy mode also rejects rather than letting the user in).
+        if (tenantInfoService == null || !tenantInfoService.isTenantActive(tenantId)) {
+            cacheService.clear(RedisConstant.SESSION + sessionId);
+            throw new UserNotFoundException(
+                    "Tenant " + tenantId + " is not active or cannot be verified; session terminated.");
+        }
         context.setTenantId(tenantId);
     }
 

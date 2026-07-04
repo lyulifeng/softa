@@ -19,11 +19,18 @@
             <version>${project.version}</version>
         </dependency>
 
+        <!-- TenantInfo references currency/country master data by code -->
+        <dependency>
+            <groupId>io.softa</groupId>
+            <artifactId>reference-data-starter</artifactId>
+            <version>${project.version}</version>
+        </dependency>
+
         <!-- https://mvnrepository.com/artifact/com.stripe/stripe-java -->
         <dependency>
             <groupId>com.stripe</groupId>
             <artifactId>stripe-java</artifactId>
-            <version>32.0.0</version>
+            <version>32.1.0</version>
         </dependency>
     </dependencies>
 

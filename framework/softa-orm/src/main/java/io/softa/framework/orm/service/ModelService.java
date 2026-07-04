@@ -207,6 +207,18 @@ public interface ModelService<K extends Serializable> {
     List<K> getIds(String modelName, Filters filters);
 
     /**
+     * Get up to {@code limitSize} IDs matching the given filters — a {@code LIMIT}-ed {@link #getIds}.
+     * Bounds the result set, so callers can detect/guard high-fanout (fetch limit+1) without loading
+     * the full (possibly huge) list into memory.
+     *
+     * @param modelName the name of the model
+     * @param filters filtering conditions
+     * @param limitSize max number of IDs to return
+     * @return up to {@code limitSize} matching IDs
+     */
+    List<K> getIds(String modelName, Filters filters, int limitSize);
+
+    /**
      * Get a distinct list of IDs for a ManyToOne/OneToOne relationship field
      * based on the given filters.
      *
@@ -306,7 +318,7 @@ public interface ModelService<K extends Serializable> {
      * @param value a map of field-value pairs to update
      * @return the number of rows affected
      */
-    Integer updateByFilter(String modelName, Filters filters, Map<String, Object> value);
+    int updateByFilter(String modelName, Filters filters, Map<String, Object> value);
 
     /**
      * Deletes a single row by its ID.

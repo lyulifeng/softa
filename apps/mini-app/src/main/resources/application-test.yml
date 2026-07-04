@@ -1,6 +1,9 @@
 debug: false
 system:
   name: Mini Application
+  # RPC routing identity read by SwitchServiceAspect (self vs. owning appCode);
+  # mini-app has no metadata-starter, so this is not the fail-fast field.
+  app-code: mini-app
 security:
   encryption:
     password: 12345678

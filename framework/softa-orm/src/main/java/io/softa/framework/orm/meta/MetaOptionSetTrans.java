@@ -22,7 +22,7 @@ public class MetaOptionSetTrans implements Serializable {
 
     private Long rowId;
 
-    private String name;
+    private String label;
 
     private String description;
 }

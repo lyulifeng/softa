@@ -2,9 +2,10 @@ package io.softa.framework.orm.service.impl;
 
 import java.io.Serializable;
 import java.util.*;
-import java.util.stream.Collectors;
 import com.google.common.collect.Sets;
 import jakarta.validation.constraints.NotNull;
+import java.math.BigDecimal;
+import java.util.stream.Collectors;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.lang3.StringUtils;
 import org.jspecify.annotations.NonNull;
@@ -34,6 +35,7 @@ import io.softa.framework.orm.meta.ModelManager;
 import io.softa.framework.orm.service.ModelService;
 import io.softa.framework.orm.service.PermissionService;
 import io.softa.framework.orm.service.TimelineService;
+import io.softa.framework.orm.service.relation.RelationDeleteHandler;
 import io.softa.framework.orm.utils.BeanTool;
 import io.softa.framework.orm.utils.IdUtils;
 
@@ -56,6 +58,9 @@ public class ModelServiceImpl<K extends Serializable> implements ModelService<K>
 
     @Autowired
     private TimelineService timelineService;
+
+    @Autowired
+    private RelationDeleteHandler relationDeleteHandler;
 
     private void checkTenantId(String modelName, List<Map<String, Object>> rows) {
         if (ModelManager.isMultiTenantControl(modelName)) {
@@ -311,7 +316,7 @@ public class ModelServiceImpl<K extends Serializable> implements ModelService<K>
             case INTEGER -> value instanceof Number number ? number.intValue() : Integer.parseInt(value.toString());
             case LONG, STRING -> IdUtils.formatId(fieldType, value);
             case DOUBLE -> value instanceof Number number ? number.doubleValue() : Double.parseDouble(value.toString());
-            case BIG_DECIMAL -> value instanceof java.math.BigDecimal decimal ? decimal : new java.math.BigDecimal(value.toString());
+            case BIG_DECIMAL -> value instanceof BigDecimal decimal ? decimal : new BigDecimal(value.toString());
             default -> value;
         };
     }
@@ -453,6 +458,8 @@ public class ModelServiceImpl<K extends Serializable> implements ModelService<K>
      */
     @Override
     public Map<String, Object> getCopyableFields(String modelName, K id) {
+        Assert.isTrue(ModelManager.isCopyableModel(modelName),
+                "Model {0} is not copyable, the copy APIs are disabled for it!", modelName);
         Map<String, Object> value = this.getById(modelName, id, Collections.emptyList())
                 .orElseThrow(() -> new IllegalArgumentException("The data of model {0} with id {1} does not exist!", modelName, id));
         List<String> copyableFields = ModelManager.getModelCopyableFields(modelName);
@@ -489,7 +496,7 @@ public class ModelServiceImpl<K extends Serializable> implements ModelService<K>
         Set<String> getFields = new HashSet<>(displayFields);
         FlexQuery flexQuery = new FlexQuery(getFields, filters);
         // If the `displayName` config consists of an Option field or a ManyToOne/OneToOne field,
-        // get the optionItemName or cascaded displayName value as its field value.
+        // get the option label or cascaded displayName value as its field value.
         flexQuery.setConvertType(ConvertType.DISPLAY);
         List<Map<String, Object>> rows = this.searchList(modelName, flexQuery);
         Map<K, String> displayNames = new HashMap<>();
@@ -548,6 +555,15 @@ public class ModelServiceImpl<K extends Serializable> implements ModelService<K>
         // Append permission data range filters
         filters = permissionService.appendScopeAccessFilters(modelName, filters);
         FlexQuery flexQuery = new FlexQuery(filters);
+        return jdbcService.getIds(modelName, ModelConstant.ID, flexQuery);
+    }
+
+    @Override
+    public List<K> getIds(String modelName, Filters filters, int limitSize) {
+        filters = timelineService.appendTimelineFilters(modelName, filters);
+        filters = permissionService.appendScopeAccessFilters(modelName, filters);
+        FlexQuery flexQuery = new FlexQuery(filters);
+        flexQuery.setLimitSize(limitSize);   // LIMIT applied by SqlBuilderFactory.buildSelectSql
         return jdbcService.getIds(modelName, ModelConstant.ID, flexQuery);
     }
 
@@ -816,7 +832,7 @@ public class ModelServiceImpl<K extends Serializable> implements ModelService<K>
      */
     @Override
     @Transactional(rollbackFor = Exception.class)
-    public Integer updateByFilter(String modelName, Filters filters, Map<String, Object> value) {
+    public int updateByFilter(String modelName, Filters filters, Map<String, Object> value) {
         Assert.notTrue(value.containsKey(ModelConstant.ID),
                 "When batch editing data through Filters, `value` parameter cannot contains the key of `id`!");
         List<K> ids = this.getIds(modelName, filters);
@@ -829,7 +845,7 @@ public class ModelServiceImpl<K extends Serializable> implements ModelService<K>
             }).collect(Collectors.toList());
             updateList(modelName, rowBatch);
         }
-        return null;
+        return ids.size();
     }
 
     /**
@@ -874,6 +890,17 @@ public class ModelServiceImpl<K extends Serializable> implements ModelService<K>
     @Transactional(rollbackFor = Exception.class)
     public boolean deleteByIds(String modelName, List<K> ids) {
         Assert.allNotNull(ids, "The ids to be deleted cannot be empty! {0}", ids);
+        // Chunk large id lists to bound the SELECT / DELETE statement + IN-clause size (Tier 3a). Each
+        // batch runs in THIS same @Transactional (REQUIRED), so all batches commit/roll back together —
+        // chunking bounds statement size, not lock duration / transaction scope.
+        if (ids.size() > BaseConstant.DEFAULT_BATCH_SIZE) {
+            boolean deleted = false;
+            for (int i = 0; i < ids.size(); i += BaseConstant.DEFAULT_BATCH_SIZE) {
+                deleted |= deleteByIds(modelName,
+                        ids.subList(i, Math.min(i + BaseConstant.DEFAULT_BATCH_SIZE, ids.size())));
+            }
+            return deleted;
+        }
         permissionService.checkIdsAccess(modelName, ids, AccessType.DELETE);
         // Get the pre-delete data, to check whether the ids data have been deleted and collect changeLogs.
         List<Map<String, Object>> originalRows = jdbcService.selectByIds(modelName, ids, Collections.emptyList(), ConvertType.ORIGINAL);
@@ -887,10 +914,16 @@ public class ModelServiceImpl<K extends Serializable> implements ModelService<K>
             }
             return true;
         }).collect(Collectors.toList());
-        List<Serializable> deletableIds = deletableRows.stream().map(m -> (Serializable) m.get(ModelConstant.ID)).toList();
-        if (CollectionUtils.isEmpty(deletableIds)) {
+        if (CollectionUtils.isEmpty(deletableRows)) {
             return false;
         }
+        List<Serializable> deletableIds = deletableRows.stream().map(m -> (Serializable) m.get(ModelConstant.ID)).toList();
+        // Enforce the inbound-FK delete strategy (RESTRICT / CASCADE / SET_NULL) before the physical delete.
+        // CASCADE recurses through deleteByIds with NO runtime cycle guard: ModelManager validates the
+        // CASCADE graph acyclic at boot (cyclic / self-referential CASCADE is rejected), so the recursion
+        // is bounded; a diamond re-converging on an already-deleted row no-ops here (selectByIds empty /
+        // soft-delete idempotency above).
+        relationDeleteHandler.handle(modelName, deletableIds);
         return jdbcService.deleteByIds(modelName, Cast.of(deletableIds), deletableRows);
     }
 
@@ -998,6 +1031,8 @@ public class ModelServiceImpl<K extends Serializable> implements ModelService<K>
     @Override
     @Transactional(rollbackFor = Exception.class)
     public List<K> copyByIds(String modelName, List<K> ids) {
+        Assert.isTrue(ModelManager.isCopyableModel(modelName),
+                "Model {0} is not copyable, the copy APIs are disabled for it!", modelName);
         List<Map<String, Object>> rows = this.getByIds(modelName, ids, null);
         List<String> copyableFields = ModelManager.getModelCopyableFields(modelName);
         rows.forEach(row -> row.keySet().retainAll(copyableFields));

@@ -40,7 +40,7 @@ public class OrderByBuilder extends BaseBuilder implements SqlClauseBuilder {
      */
     public void handleOrderBy() {
         Orders orders = flexQuery.getOrders();
-        if (orders == null) {
+        if (orders == null && !flexQuery.isAggregate()) {
             // When `orders` in flexQuery is empty, using the `defaultOrder` configuration of model.
             Orders defaultOrder = ModelManager.getModel(mainModelName).getDefaultOrder();
             if (defaultOrder != null && !defaultOrder.isEmpty()) {
@@ -52,7 +52,8 @@ public class OrderByBuilder extends BaseBuilder implements SqlClauseBuilder {
         }
         if (orders != null) {
             for (List<String> order : orders.getOrderList()) {
-                // Support for cascade fields, such as deptId.managerId.name
+                // Support cascade fields (e.g. deptId.managerId.name) and dynamic cascaded
+                // field aliases declared on the model (auto-expanded by parseLogicField).
                 String aliasField = this.parseLogicField(order.get(0), false);
                 sqlWrapper.orderBy(aliasField, order.get(1));
             }

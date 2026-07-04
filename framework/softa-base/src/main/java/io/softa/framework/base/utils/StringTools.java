@@ -329,6 +329,47 @@ public class StringTools {
     }
 
     /**
+     * Humanize a programmatic identifier into a Title-Cased, space-separated
+     * display label. Splits both CamelCase and {@code UPPER_SNAKE}/{@code snake}
+     * boundaries, then Title-Cases each word.
+     * <p>
+     * Examples: {@code DeptInfo -> "Dept Info"}, {@code deptId -> "Dept Id"},
+     * {@code MULTI_FILE -> "Multi File"}, {@code code -> "Code"},
+     * {@code TenantStatus -> "Tenant Status"}.
+     * <p>
+     * Used as the empty-label fallback for {@code @Model} / {@code @Field} /
+     * {@code @OptionSet} / {@code @OptionItem}. Acronyms (e.g. {@code MySQL},
+     * {@code JSON}) won't round-trip perfectly — supply an explicit label for those.
+     *
+     * @param value identifier (class / field / enum / constant name)
+     * @return humanized Title-Case label, or the input unchanged if blank
+     */
+    public static String humanize(String value) {
+        if (value == null || value.isBlank()) {
+            return value;
+        }
+        String spaced = value
+                .replaceAll("([a-z0-9])([A-Z])", "$1 $2")
+                .replaceAll("([A-Z]+)([A-Z][a-z])", "$1 $2")
+                .replace('_', ' ')
+                .replace('-', ' ');
+        StringBuilder sb = new StringBuilder(spaced.length());
+        for (String word : spaced.trim().split("\\s+")) {
+            if (word.isEmpty()) {
+                continue;
+            }
+            if (sb.length() > 0) {
+                sb.append(' ');
+            }
+            sb.append(Character.toUpperCase(word.charAt(0)));
+            if (word.length() > 1) {
+                sb.append(word.substring(1).toLowerCase());
+            }
+        }
+        return sb.toString();
+    }
+
+    /**
      * Convert the first letter of the string to the lowercase
      * @param str string
      * @return string with the first letter in the lowercase

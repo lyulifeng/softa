@@ -1,6 +1,262 @@
 # Softa ORM
 
-## Common Annotations
+## Metadata Annotations
+
+> **Requires `metadata-starter`** as a dependency of your app for these
+> annotations to take effect. `softa-orm` defines the annotations;
+> `metadata-starter` contains the scanner and checker that read them and
+> reconcile with `sys_*`. Without `metadata-starter` the annotations exist
+> on your classes but no scanner consumes them — `sys_*` rows are never
+> written and no DDL is generated.
+
+Softa describes models, fields, option sets, option items, and indexes
+through Java annotations on the entity classes. A boot-time scanner reads
+these annotations, reconciles them with the `sys_*` catalog tables managed
+by `metadata-starter`, and (for packages in `scanner-scope`) applies the matching DDL.
+
+**Five annotations**, all in `io.softa.framework.orm.annotation`:
+
+| Annotation | Target | `sys_*` table written | Purpose |
+|---|---|---|---|
+| `@Model` | class | `sys_model` | Describes an entity (table, business key, multi-tenancy, soft delete, etc.) |
+| `@Field` | field | `sys_field` | Describes a column (label, type, length, required, relations, etc.) |
+| `@OptionSet` | enum class | `sys_option_set` | Marks an enum as a managed option set |
+| `@OptionItem` | enum constant | `sys_option_item` | Per-constant display attributes |
+| `@Index` | class (`@Repeatable`) | `sys_model_index` | Declares a database index |
+
+```java
+@Data
+@EqualsAndHashCode(callSuper = true)
+@Model(
+    label = "Customer",
+    businessKey = {"code"},
+    description = "Customer master"
+)
+@Index(indexName = "uk_customer_code", fields = {"code"}, unique = true)
+@Index(fields = {"status", "createdTime"})
+public class Customer extends AuditableModel {
+
+    @Field(label = "ID")
+    private Long id;
+
+    @Field(label = "Customer Code", required = true, length = 32)
+    private String code;
+
+    @Field(label = "Customer Tier")
+    private CustomerTier tier;   // enum → FieldType.OPTION (inferred)
+}
+
+@OptionSet(label = "Customer Tier")
+public enum CustomerTier {
+    @OptionItem(label = "VIP Gold") GOLD("g"),   // explicit: "VIP Gold" ≠ humanize("GOLD")
+    SILVER("s");                                 // bare: label defaults to humanize("SILVER") = "Silver"
+
+    @JsonValue private final String code;       // itemCode = @JsonValue
+    CustomerTier(String code) { this.code = code; }
+}
+```
+
+### Inference rules (no annotation needed)
+
+| Concept | Derived from | Override |
+|---|---|---|
+| `modelName` | class simple name | — (no override) |
+| `fieldName` | Java field name | — (no override) |
+| `optionSetCode` | enum class simple name | — (no override) |
+| `itemCode` | `@JsonValue` field value (fallback `enum.name()`) | — (no override) |
+| `tableName` | `snake_case(modelName)` | `@Model.tableName` |
+| `columnName` | `snake_case(fieldName)` | `@Field.columnName` |
+| `fieldType` | Java type via `TypeInference` (e.g. `String`→`STRING`, enum→`OPTION`, `List<enum>`→`MULTI_OPTION`, `@Model` POJO→`MANY_TO_ONE`) | `@Field.fieldType = FieldType.X` (single value, no braces); **`OPTION` / `MULTI_OPTION` cannot be written explicitly** |
+| index `indexName` | `idx_<table>_<col>...` / `uk_<table>_<col>...` for unique; **globally unique** (boot-enforced), ≤60 chars | `@Index.indexName` |
+
+### `@Model` ↔ `SysModel`
+
+| `@Model` attribute | Type | Default | `SysModel` column | Notes |
+|---|---|---|---|---|
+| (class simple name) | — | — | `modelName` | inferred, no override |
+| `label` | String | `""` | `label` | empty → humanized class name (`DeptInfo`→"Dept Info"); i18n translations override by id |
+| `tableName` | String | `""` | `tableName` | empty → `snake_case(modelName)` |
+| `description` | String | `""` | `description` | |
+| `displayName` | String[] | `{}` | `displayName` | list-display defaults |
+| `searchName` | String[] | `{}` | `searchName` | search-field defaults |
+| `defaultOrder` | String[] | `{}` | `defaultOrder` | e.g. `"createdTime:desc"` |
+| `softDelete` | boolean | `false` | `softDelete` | |
+| `softDeleteField` | String | `"deleted"` | `softDeleteField` | effective only when `softDelete = true` |
+| `activeControl` | boolean | `false` | `activeControl` | adds `active` gate column |
+| `timeline` | boolean | `false` | `timeline` | effective-dated rows (see Timeline Model) |
+| `idStrategy` | `IdStrategy` | `DB_AUTO_ID` | `idStrategy` | |
+| `storageType` | `StorageType` | `RDBMS` | `storageType` | |
+| `versionLock` | boolean | `false` | `versionLock` | optimistic-lock column |
+| `multiTenant` | boolean | `false` | `multiTenant` | requires a `tenantId` field on the class |
+| `copyable` | boolean | `true` | `copyable` | `false` ⇒ copy APIs reject the model; UI hides Duplicate |
+| `dataSource` | String | `""` | `dataSource` | empty → primary datasource |
+| `businessKey` | String[] | `{}` | `businessKey` | composite supported |
+| `partitionField` | String | `""` | `partitionField` | |
+| (scanner sets) | — | — | `appCode` | stamped server-side from `system.app-code` |
+| (DB auto) | — | — | `id` | primary key |
+
+Audit fields (`createdTime` / `createdBy` / `createdId` / `updatedTime` /
+`updatedBy` / `updatedId`) come from `AuditableModel` and are **not** declared
+via `@Field` — they are auto-injected by `DdlGenerator` when the class
+extends `AuditableModel`.
+
+### `@Field` ↔ `SysField`
+
+| `@Field` attribute | Type | Default | `SysField` column | Notes |
+|---|---|---|---|---|
+| (Java field name) | — | — | `fieldName` | inferred, no override |
+| (Java type) | — | — | `fieldType` | inferred via `TypeInference` |
+| `label` | String | `""` | `label` | empty → humanized field name (`deptId`→"Dept Id"); i18n translations override by id |
+| `description` | String | `""` | `description` | |
+| `fieldType` | `FieldType[]` | `{}` | `fieldType` | single value, no braces (e.g. `fieldType = FieldType.MULTI_FILE`); `OPTION`/`MULTI_OPTION` **cannot** be written explicitly |
+| `columnName` | String | `""` | `columnName` | empty → `snake_case(fieldName)` |
+| `length` | int | `0` | `length` | `0` → type default: STRING/OPTION 64, MULTI_STRING/ORDERS 256, DOUBLE 24 (measurements), BIG_DECIMAL 32 (money); declare explicitly for anything else. MySQL renders `length > 16383` as TEXT |
+| `scale` | int | `0` | `scale` | `0` → type default: DOUBLE 2, BIG_DECIMAL 8 (DECIMAL scale) |
+| `required` | boolean | `false` | `required` | NOT NULL constraint |
+| `readonly` | boolean | `false` | `readonly` | UI hint |
+| `translatable` | boolean | `false` | `translatable` | i18n-aware column |
+| `copyable` | boolean | `true` | `copyable` | `false` ⇒ value not carried over by `copyById` (business keys, credentials, runtime state) |
+| `unsearchable` | boolean | `false` | `unsearchable` | excluded from default search |
+| `computed` | boolean | `false` | `computed` | requires `expression` |
+| `expression` | String | `""` | `expression` | AviatorScript |
+| `dynamic` | boolean | `false` | `dynamic` | not physically stored |
+| `encrypted` | boolean | `false` | `encrypted` | at-rest encryption |
+| `maskingType` | `MaskingType[]` | `{}` | `maskingType` | single element |
+| `defaultValue` | String | `""` | `defaultValue` | |
+| `relatedModel` | `Class<?>` | `Void.class` | `relatedModel` | Class ref (compile-checked), e.g. `Foo.class`; `Void.class` → inferred from POJO type; **required** for `Long` FK. Use `relatedModelName` (String) for cross-module/dynamic models |
+| `relatedModelName` | String | `""` | `relatedModel` | String fallback to `relatedModel` (cross-module/dynamic) |
+| `relatedField` | String | `""` | `relatedField` | TO_ONE: always `id` — leave empty (a non-id value is rejected at boot, ADR-0024; to store a business code make the related model code-as-id). ONE_TO_MANY: names the child FK column |
+| `onDelete` | `OnDelete[]` | `{}` | `on_delete` | TO_ONE FK delete strategy: `RESTRICT` / `CASCADE` / `SET_NULL`; `{}`/unset = KEEP (default — do nothing). App-level (no DB FK). See "Delete strategy" below + ADR-0022 |
+| `joinModel` | `Class<?>` | `Void.class` | `joinModel` | M2M join model class; `joinModelName` (String) fallback |
+| `joinLeft` | String | `""` | `joinLeft` | |
+| `joinRight` | String | `""` | `joinRight` | |
+| `cascadedField` | String | `""` | `cascadedField` | dotted path, e.g. `"owner.name"` |
+| `filters` | String | `""` | `filters` | filter expression for relations |
+| `widgetType` | `WidgetType[]` | `{}` | `widgetType` | single-element override |
+| (scanner sets) | — | — | `modelName` | from enclosing `@Model` class |
+| (scanner sets) | — | — | `optionSetCode` | derived from enum type when fieldType is `OPTION`/`MULTI_OPTION` |
+| (scanner sets) | — | — | `appCode` / `id` | |
+| (FK fixup post-init) | — | — | `modelId` | |
+| (not exposed via `@Field`) | — | — | `hidden` | UI-only flag set via Studio |
+
+#### Delete strategy (`onDelete`)
+
+On a `MANY_TO_ONE` / `ONE_TO_ONE` FK, `onDelete` declares what happens to the **referencing** rows when
+the referenced ("One") row is deleted. Enforced application-level in `ModelServiceImpl.deleteByIds` — no
+physical DB `FOREIGN KEY ... ON DELETE` is ever emitted (relations are app-level):
+
+- `RESTRICT` — block the delete if any live (`deleted=false`) referrer exists.
+- `CASCADE` — delete the referrers in the same transaction (each follows its own soft/hard delete).
+  **Rejected at boot** if a soft-delete One would cascade to a hard-delete Many (a recoverable parent
+  must not irreversibly delete children — make the Many soft-delete too, or use RESTRICT/SET_NULL).
+- `SET_NULL` — null the referrer FK; **only on a hard delete** of the One (no-op on soft delete, so a
+  restore still resolves the link). Requires a nullable FK (`required = false`).
+- unset (`{}` / `on_delete` NULL) = **KEEP** (default) — the framework does nothing.
+
+**CASCADE soft/hard-delete matrix** — the cascade on each Many follows the *Many's* own delete mode
+(not the One's); the one unsafe combination is rejected at boot:
+
+| One (referenced / parent) | Many (referrer / child) | CASCADE result |
+|---|---|---|
+| soft-delete | soft-delete | Many **soft-deleted** (both recoverable) |
+| soft-delete | hard-delete | **rejected at boot** — a recoverable parent must not irreversibly delete children |
+| hard-delete | soft-delete | Many **soft-deleted** |
+| hard-delete | hard-delete | Many **hard-deleted** |
+
+A `CASCADE` from a **shared (non-multi-tenant) parent to a multi-tenant child** is likewise rejected at
+boot — one delete would cascade across all tenants (use RESTRICT).
+
+**Runtime safety** — a `CASCADE` / `SET_NULL` affecting more than `MAX_BATCH_SIZE` referrers *per cascade
+level* is rejected: `referrerIds` fetches at most `MAX_BATCH_SIZE + 1` ids in one `LIMIT`-ed query, so an
+over-limit delete fails fast **without loading the full set** (bounded memory, no extra `count`). Large
+deletes are chunked to `DEFAULT_BATCH_SIZE` to bound the SELECT/DELETE statement + IN-clause size (same
+transaction — chunking bounds statement size, not lock duration).
+
+For a OneToMany "delete parent → delete children", put `CASCADE` on the **child's back-reference FK**
+(the FK is the single source of truth; `onDelete` is not declared on `ONE_TO_MANY`).
+
+Boot-time guards (fail-fast): `onDelete` is valid only on TO_ONE; `SET_NULL` requires a nullable FK; the
+target may not be a timeline model; a **cyclic / self-referential `CASCADE`** is rejected (delete such
+hierarchies — org trees, BOM, category trees — in application code); a **`CASCADE` chain deeper than
+`MAX_CASCADE_DEPTH` models** is rejected (bounds recursion; the error names the full chain); and a
+`CASCADE` from a **soft-delete parent to a hard-delete child**, or from a **shared parent to a
+multi-tenant child**, is rejected (see the matrix above).
+
+### `@OptionSet` ↔ `SysOptionSet`
+
+| `@OptionSet` attribute | Type | Default | `SysOptionSet` column | Notes |
+|---|---|---|---|---|
+| (enum simple name) | — | — | `optionSetCode` | inferred, no override |
+| `name` | String | `""` | `name` | display label; empty → humanized enum name (`TenantStatus`→"Tenant Status") |
+| `description` | String | `""` | `description` | |
+| (scanner sets) | — | — | `appCode` / `id` | |
+| (Studio toggle) | — | — | `deleted` / `optionItems` | runtime aggregation |
+
+### `@OptionItem` ↔ `SysOptionItem`
+
+| `@OptionItem` attribute | Type | Default | `SysOptionItem` column | Notes |
+|---|---|---|---|---|
+| (`@JsonValue` field value on enum) | — | — | `itemCode` | fallback to `enum.name()` when no `@JsonValue` |
+| (enclosing enum simple name) | — | — | `optionSetCode` | inferred |
+| `label` | String | `""` | `label` | defaults to humanized constant name (`MULTI_FILE`→"Multi File"); declare explicitly to customize. Omit when it equals the humanized name (and omit the whole `@OptionItem` if nothing else remains) |
+| `description` | String | `""` | `description` | |
+| `sequence` | int | `-1` | `sequence` | `-1` → use `ordinal() + 1` |
+| `parentItemCode` | String | `""` | `parentItemCode` | hierarchy |
+| `itemTone` | `OptionItemTone[]` | `{}` | `itemTone` | single element |
+| `itemIcon` | `OptionItemIcon[]` | `{}` | `itemIcon` | single element |
+| (scanner sets) | — | — | `appCode` / `id` / `optionSetId` | |
+| (Studio toggle) | — | — | `active` | |
+
+### `@Index` ↔ `SysModelIndex`
+
+`@Index` is `@Repeatable` — stack multiple declarations on one `@Model` class.
+
+| `@Index` attribute | Type | Default | `SysModelIndex` column | Notes |
+|---|---|---|---|---|
+| (enclosing class) | — | — | `modelName` | inferred |
+| `indexName` (or auto-derived) | String | `""` | `indexName` | `idx_<table>_<col>...` / `uk_<table>_<col>...` for unique; **globally unique** (boot-enforced), ≤60 chars |
+| `fields` | String[] | required | `indexFields` | **camelCase Java field names**, not column names |
+| `unique` | boolean | `false` | `uniqueIndex` | |
+| `message` | String | `""` | `message` | end-user text on a unique-constraint violation (**only when `unique`**); its own i18n key; empty → composed from the member fields' labels |
+| (scanner sets) | — | — | `appCode` / `id` | |
+| (FK fixup post-init) | — | — | `modelId` | |
+
+**Note**: `@Model.businessKey` does **not** auto-create a UNIQUE index.
+Multi-tenant models typically want `UNIQUE (tenant_id, businessKey...)`
+which has tenant-aware semantics not expressible by `@Index` alone —
+declare such indexes explicitly:
+```java
+@Index(fields = {"tenantId", "code"}, unique = true)
+```
+
+## Runtime catalog identity (`app_code`)
+
+Rows in `sys_model` / `sys_field` / `sys_option_set` / `sys_option_item` /
+`sys_model_index` are scoped by **`app_code`**, stamped server-side from
+`system.app-code` (ADR-0015). The retired `ownership` tier column is gone from
+the baseline — the annotation lane and the Studio no-code lane reconcile the
+**same rows matched by business key** (`modelName` / `fieldName` /
+`optionSetCode` / `itemCode`, plus `renamedFrom`).
+
+In development, packages listed in `scanner-scope` reconcile annotation-derived
+metadata into `sys_*` for this app. In production, Studio/connector publish
+applies the app-scoped design catalog. Per-tenant runtime metadata
+customization is not represented as separate `sys_*` rows (ADR-0013).
+
+Verify after boot:
+
+```sql
+SELECT model_name, app_code FROM sys_model WHERE app_code = '<system.app-code>';
+```
+
+The `Ownership` enum (`io.softa.framework.orm.enums.Ownership`) remains in code
+as a reserved business-data concept; nothing reads or writes an `ownership`
+column on current runtime `sys_*` tables.
+
+See [`starters/metadata-starter/README.md`](../../starters/metadata-starter/README.md)
+for scanner-scope, DDL policy, and `renamedFrom` handling.
+
+## Runtime control annotations
 ### `@DataSource`
 Switch the current method or class to a named datasource.
 
@@ -90,7 +346,12 @@ Recommendation:
 - Use them when building framework-level JDBC wrappers or custom low-level SQL executors.
 
 ### Less Common Annotations
-- `@RPCCheckpoint`: service-switch / RPC interception hook.
+- `@RPCCheckpoint`: framework-internal AOP hook used by `JdbcServiceImpl` to
+  redirect ORM calls to the app that owns the model — `SwitchServiceAspect`
+  routes by the model's `appCode` (ADR-0015) when it differs from this runtime's
+  `system.app-code`. Application services do not apply this annotation themselves.
+  See [Service-to-Service RPC](../architecture/rpc.md) for
+  the mechanism, wire format, and configuration.
 - `@CrossTenant` and `@PerTenant`: covered in the multi-tenancy section below.
 
 ## Multi-Tenancy
@@ -322,19 +583,19 @@ Example timeline slices (same logical department `id`):
 #### 1) Model Definition
 ```java
 @Data
-@Schema(name = "ProductPrice")
 @EqualsAndHashCode(callSuper = true)
+@Model(label = "Product Price", timeline = true)
 public class ProductPrice extends TimelineModel {
     @Serial
     private static final long serialVersionUID = 1L;
 
-    @Schema(description = "Business ID")
+    @Field(label = "ID")
     private Long id;
 
-    @Schema(description = "Product ID")
+    @Field(label = "Product ID")
     private Long productId;
 
-    @Schema(description = "Price")
+    @Field(label = "Price")               // BigDecimal → DECIMAL(32,8) by default (money)
     private BigDecimal price;
 }
 ```

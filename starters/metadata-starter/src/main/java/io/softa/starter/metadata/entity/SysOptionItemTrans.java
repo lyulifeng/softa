@@ -1,35 +1,42 @@
 package io.softa.starter.metadata.entity;
 
-import io.softa.framework.orm.entity.AuditableModel;
-import io.swagger.v3.oas.annotations.media.Schema;
+import java.io.Serial;
 import lombok.Data;
 import lombok.EqualsAndHashCode;
 
-import java.io.Serial;
+import io.softa.framework.orm.annotation.Field;
+import io.softa.framework.orm.annotation.Model;
+import io.softa.framework.orm.entity.AuditableModel;
 
 /**
- * SysOptionItemTrans Model
+ * SysOptionItemTrans — i18n translations of {@link SysOptionItem} display attributes.
+ *
+ * <p>Self-described via {@code @Model} + per-field {@code @Field}.
  */
 @Data
-@Schema(name = "SysOptionItemTrans")
 @EqualsAndHashCode(callSuper = true)
+@Model(
+        label = "System Option Item Translation",
+        businessKey = {"rowId", "languageCode"},
+        description = "Translations for sys_option_item"
+)
 public class SysOptionItemTrans extends AuditableModel {
 
     @Serial
     private static final long serialVersionUID = 1L;
 
-    @Schema(description = "ID")
+    @Field(label = "ID")
     private Long id;
 
-    @Schema(description = "Language Code")
+    @Field(required = true)
     private String languageCode;
 
-    @Schema(description = "Row ID")
+    @Field(label = "Row ID", required = true)
     private Long rowId;
 
-    @Schema(description = "Item Name")
-    private String itemName;
+    @Field
+    private String label;
 
-    @Schema(description = "Description")
+    @Field(length = 256)
     private String description;
 }

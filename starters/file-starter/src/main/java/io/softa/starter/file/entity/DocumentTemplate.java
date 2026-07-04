@@ -1,10 +1,11 @@
 package io.softa.starter.file.entity;
 
 import java.io.Serial;
-import io.swagger.v3.oas.annotations.media.Schema;
 import lombok.Data;
 import lombok.EqualsAndHashCode;
 
+import io.softa.framework.orm.annotation.Field;
+import io.softa.framework.orm.annotation.Model;
 import io.softa.framework.orm.entity.AuditableModel;
 import io.softa.starter.file.enums.DocumentTemplateType;
 
@@ -12,37 +13,37 @@ import io.softa.starter.file.enums.DocumentTemplateType;
  * DocumentTemplate Model
  */
 @Data
-@Schema(name = "DocumentTemplate")
 @EqualsAndHashCode(callSuper = true)
+@Model
 public class DocumentTemplate extends AuditableModel {
 
     @Serial
     private static final long serialVersionUID = 1L;
 
-    @Schema(description = "ID")
+    @Field(label = "ID")
     private Long id;
 
-    @Schema(description = "Tenant ID")
+    @Field(label = "Tenant ID")
     private Long tenantId;
 
-    @Schema(description = "Model Name")
+    @Field
     private String modelName;
 
-    @Schema(description = "File Name")
+    @Field(length = 128)
     private String fileName;
 
-    @Schema(description = "Template Type")
+    @Field
     private DocumentTemplateType templateType;
 
-    @Schema(description = "File Template ID")
+    @Field(label = "File Template ID")
     private Long fileId;
 
-    @Schema(description = "HTML Template Content")
+    @Field(label = "HTML Template Content", length = 20000)
     private String htmlTemplate;
 
-    @Schema(description = "Convert To PDF")
+    @Field(label = "Convert To PDF")
     private Boolean convertToPdf;
 
-    @Schema(description = "Description")
+    @Field(length = 256)
     private String description;
 }

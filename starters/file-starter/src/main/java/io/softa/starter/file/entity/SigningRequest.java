@@ -3,10 +3,12 @@ package io.softa.starter.file.entity;
 import java.io.Serial;
 import java.time.LocalDateTime;
 import java.util.List;
-import io.swagger.v3.oas.annotations.media.Schema;
 import lombok.Data;
 import lombok.EqualsAndHashCode;
 
+import io.softa.framework.orm.annotation.Field;
+import io.softa.framework.orm.annotation.Model;
+import io.softa.framework.orm.enums.FieldType;
 import io.softa.framework.orm.entity.AuditableModel;
 import io.softa.starter.file.enums.SigningRequestStatus;
 
@@ -14,37 +16,37 @@ import io.softa.starter.file.enums.SigningRequestStatus;
  * SigningRequest Model
  */
 @Data
-@Schema(name = "SigningRequest")
 @EqualsAndHashCode(callSuper = true)
+@Model(copyable = false)
 public class SigningRequest extends AuditableModel {
 
     @Serial
     private static final long serialVersionUID = 1L;
 
-    @Schema(description = "ID")
+    @Field(label = "ID")
     private Long id;
 
-    @Schema(description = "Tenant ID")
+    @Field(label = "Tenant ID", length = 32)
     private String tenantId;
 
-    @Schema(description = "Model Name")
+    @Field
     private String modelName;
 
-    @Schema(description = "title")
+    @Field(length = 256)
     private String title;
 
-    @Schema(description = "Code")
+    @Field
     private String code;
 
-    @Schema(description = "Status")
+    @Field
     private SigningRequestStatus status;
 
-    @Schema(description = "Recipient User")
+    @Field(label = "Recipient User")
     private Long recipient;
 
-    @Schema(description = "Expires Time")
+    @Field
     private LocalDateTime expiresTime;
 
-    @Schema(description = "Signing Documents")
+    @Field(fieldType = FieldType.ONE_TO_MANY, relatedField = "signingRequestId")
     private List<SigningDocument> signingDocuments;
 }

@@ -1,6 +1,10 @@
 package io.softa.starter.studio.release.enums;
 
 import com.fasterxml.jackson.annotation.JsonValue;
+
+import io.softa.framework.base.annotation.OptionItem;
+import io.softa.framework.base.annotation.OptionSet;
+
 import lombok.AllArgsConstructor;
 import lombok.Getter;
 
@@ -15,15 +19,23 @@ import lombok.Getter;
  */
 @Getter
 @AllArgsConstructor
+@OptionSet
 public enum DesignAppEnvStatus {
     /** No deployment in progress — ready to accept a new deployment. */
-    STABLE("Stable", "Stable"),
+    @OptionItem(description = "Stable")
+    STABLE("Stable"),
     /** A deployment is currently running against this env. */
-    DEPLOYING("Deploying", "Deploying"),
+    @OptionItem(description = "Deploying")
+    DEPLOYING("Deploying"),
+
+    @OptionItem(description = "Importing from runtime")
+    IMPORTING("Importing"),
+
+    /** An env↔env merge is writing this (target) env's design (Phase 3). */
+    @OptionItem(description = "Merging from another env")
+    MERGING("Merging")
     ;
 
     @JsonValue
     private final String status;
-
-    private final String description;
 }

@@ -11,7 +11,7 @@ public interface ModelConstant {
 
     /** Model attribute constants */
     String ID = "id";
-    // External ID, used for external system data synchronization, nonCopyable
+    // External ID, used for external system data synchronization, excluded from copy
     String EXTERNAL_ID = "externalId";
     String UUID = "uuid";
     String CODE = "code";

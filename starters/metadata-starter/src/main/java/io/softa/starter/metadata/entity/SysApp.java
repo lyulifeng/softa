@@ -1,39 +1,40 @@
 package io.softa.starter.metadata.entity;
 
-import io.softa.framework.orm.entity.AuditableModel;
-import io.softa.framework.orm.enums.DatabaseType;
-import io.swagger.v3.oas.annotations.media.Schema;
+import java.io.Serial;
 import lombok.Data;
 import lombok.EqualsAndHashCode;
 
-import java.io.Serial;
+import io.softa.framework.orm.annotation.Field;
+import io.softa.framework.orm.annotation.Model;
+import io.softa.framework.orm.entity.AuditableModel;
+import io.softa.framework.orm.enums.DatabaseType;
 
 /**
  * SysApp Model
  */
 @Data
-@Schema(name = "SysApp")
 @EqualsAndHashCode(callSuper = true)
+@Model(label = "System App")
 public class SysApp extends AuditableModel {
 
     @Serial
     private static final long serialVersionUID = 1L;
 
-    @Schema(description = "ID")
+    @Field(label = "ID")
     private Long id;
 
-    @Schema(description = "App Name")
+    @Field(required = true)
     private String name;
 
-    @Schema(description = "App Code")
+    @Field(required = true)
     private String appCode;
 
-    @Schema(description = "App Type")
+    @Field
     private String appType;
 
-    @Schema(description = "Database Type")
+    @Field
     private DatabaseType databaseType;
 
-    @Schema(description = "Description")
+    @Field(length = 256)
     private String description;
 }

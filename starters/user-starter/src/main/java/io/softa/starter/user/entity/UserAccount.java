@@ -2,57 +2,62 @@ package io.softa.starter.user.entity;
 
 import java.io.Serial;
 import java.time.LocalDateTime;
-import io.swagger.v3.oas.annotations.media.Schema;
 import lombok.Data;
 import lombok.EqualsAndHashCode;
 
+import io.softa.framework.orm.annotation.Field;
+import io.softa.framework.orm.annotation.Model;
 import io.softa.framework.orm.entity.AuditableModel;
+import io.softa.framework.orm.enums.IdStrategy;
 import io.softa.starter.user.enums.AccountStatus;
 
 /**
  * UserAccount Model
  */
 @Data
-@Schema(name = "UserAccount")
 @EqualsAndHashCode(callSuper = true)
+@Model(
+        idStrategy = IdStrategy.DISTRIBUTED_LONG,
+        searchName = {"nickname", "username"}
+)
 public class UserAccount extends AuditableModel {
 
     @Serial
     private static final long serialVersionUID = 1L;
 
-    @Schema(description = "ID")
+    @Field(label = "ID")
     private Long id;
 
-    @Schema(description = "Tenant ID")
+    @Field(label = "Tenant ID")
     private Long tenantId;
 
-    @Schema(description = "Nickname")
+    @Field
     private String nickname;
 
-    @Schema(description = "Username")
+    @Field
     private String username;
 
-    @Schema(description = "Password")
+    @Field(length = 256, copyable = false)
     private String password;
 
-    @Schema(description = "Password Salt")
+    @Field(copyable = false)
     private String passwordSalt;
 
-    @Schema(description = "email")
+    @Field
     private String email;
 
-    @Schema(description = "Mobile")
+    @Field
     private String mobile;
 
-    @Schema(description = "Activation Time")
+    @Field(copyable = false)
     private LocalDateTime activationTime;
 
-    @Schema(description = "Policy ID")
+    @Field(label = "Policy ID")
     private Long policyId;
 
-    @Schema(description = "Locked")
+    @Field(copyable = false)
     private Boolean locked;
 
-    @Schema(description = "Status")
+    @Field
     private AccountStatus status;
 }

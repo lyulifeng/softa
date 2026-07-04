@@ -3,7 +3,6 @@ package io.softa.framework.orm.meta;
 import java.util.*;
 import java.util.concurrent.locks.ReentrantLock;
 import java.util.stream.Collectors;
-import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.lang3.StringUtils;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
@@ -22,13 +21,14 @@ import io.softa.framework.orm.constant.ModelConstant;
 import io.softa.framework.orm.domain.Orders;
 import io.softa.framework.orm.enums.FieldType;
 import io.softa.framework.orm.enums.IdStrategy;
+import io.softa.framework.orm.enums.OnDelete;
 import io.softa.framework.orm.jdbc.JdbcService;
+import io.softa.framework.orm.utils.GraphUtils;
 
 /**
  * Model Manager, maintaining model metadata and field metadata in memory.
  */
 @Component
-@Slf4j
 public class ModelManager {
 
     private static volatile MetadataSnapshot snapshot = MetadataSnapshot.empty();
@@ -39,9 +39,13 @@ public class ModelManager {
     @Autowired
     private JdbcService<?> jdbcService;
 
-    private record MetadataSnapshot(Map<String, MetaModel> modelMap, Map<String, Map<String, MetaField>> modelFields) {
+    // indexMap is an independent registry keyed by the globally-unique index name — NOT mounted
+    // under a model — so a violated index name resolves in one hop (see getIndex / the friendly
+    // duplicate-key resolver).
+    private record MetadataSnapshot(Map<String, MetaModel> modelMap, Map<String, Map<String, MetaField>> modelFields,
+                                    Map<String, MetaIndex> indexMap) {
         private static MetadataSnapshot empty() {
-            return new MetadataSnapshot(Map.of(), Map.of());
+            return new MetadataSnapshot(Map.of(), Map.of(), Map.of());
         }
     }
 
@@ -58,15 +62,20 @@ public class ModelManager {
         return currentSnapshot().modelFields();
     }
 
+    private static Map<String, MetaIndex> indexMap() {
+        return currentSnapshot().indexMap();
+    }
+
     private static MetadataSnapshot createMutableSnapshot() {
-        return new MetadataSnapshot(new HashMap<>(200), new HashMap<>(200));
+        return new MetadataSnapshot(new HashMap<>(200), new HashMap<>(200), new HashMap<>(64));
     }
 
     private static MetadataSnapshot freezeSnapshot(MetadataSnapshot draft) {
         Map<String, MetaModel> frozenModelMap = Collections.unmodifiableMap(new HashMap<>(draft.modelMap()));
         Map<String, Map<String, MetaField>> frozenModelFields = draft.modelFields().entrySet().stream()
                 .collect(Collectors.toUnmodifiableMap(Map.Entry::getKey, entry -> Map.copyOf(entry.getValue())));
-        return new MetadataSnapshot(frozenModelMap, frozenModelFields);
+        Map<String, MetaIndex> frozenIndexMap = Collections.unmodifiableMap(new HashMap<>(draft.indexMap()));
+        return new MetadataSnapshot(frozenModelMap, frozenModelFields, frozenIndexMap);
     }
 
     /**
@@ -79,6 +88,7 @@ public class ModelManager {
             BUILDING_SNAPSHOT.set(draft);
             List<MetaModel> models = jdbcService.selectMetaEntityList("SysModel", MetaModel.class, null);
             List<MetaField> fields = jdbcService.selectMetaEntityList("SysField", MetaField.class, null);
+            List<MetaIndex> indexes = jdbcService.selectMetaEntityList("SysModelIndex", MetaIndex.class, null);
             if (ListUtils.allNotNull(models, fields)) {
                 this.initModels(models);
                 // Initialize basic field information
@@ -87,8 +97,16 @@ public class ModelManager {
                 this.validateModelAttributes(models);
                 // Validate field attributes
                 this.validateFieldAttributes(fields);
+                // Register indexes into the independent global registry, failing fast on a duplicate name.
+                // Index metadata is secondary (backs the friendly duplicate-key resolver), so a null read
+                // must not block model loading — treat it as no indexes.
+                this.initIndexes(indexes == null ? List.of() : indexes);
                 // Identify composition relationships and build childModels
                 this.identifyChildModels();
+                // Build the inbound TO_ONE reverse-reference index (delete strategy)
+                this.identifyOnDeleteRefs();
+                // Reject cyclic / self-referential CASCADE so the runtime cascade needs no cycle guard
+                this.validateCascadeAcyclic();
                 // Identify the audit fields of the models.
                 this.identifyAuditFields(models);
                 // Seal the model attributes to make them immutable after initialization
@@ -111,6 +129,38 @@ public class ModelManager {
             modelMap().put(model.getModelName(), model);
             modelFields().put(model.getModelName(), new HashMap<>(4));
         });
+    }
+
+    /**
+     * Register every index into the independent global registry (index name &rarr; index).
+     * Index names must be globally unique — PostgreSQL namespaces index / constraint names per
+     * schema, and the friendly duplicate-key resolver keys on the name alone — so a duplicate
+     * fails fast at load, naming both owning models.
+     *
+     * @param indexes index metadata
+     */
+    private void initIndexes(List<MetaIndex> indexes) {
+        assertIndexNamesGloballyUnique(indexes);
+        indexes.forEach(index -> indexMap().put(index.getIndexName(), index));
+    }
+
+    /**
+     * Reject a duplicate index name across models. PostgreSQL namespaces index / constraint names
+     * per schema, and the friendly duplicate-key resolver keys on the name alone, so index names
+     * must be globally unique; a duplicate fails fast, naming both owning models. Package-visible
+     * so the uniqueness validation is unit-testable (mirrors {@link #assertCascadeAcyclic}).
+     *
+     * @param indexes index metadata
+     */
+    static void assertIndexNamesGloballyUnique(List<MetaIndex> indexes) {
+        Map<String, String> nameToModel = new HashMap<>(indexes.size());
+        for (MetaIndex index : indexes) {
+            String previousModel = nameToModel.putIfAbsent(index.getIndexName(), index.getModelName());
+            Assert.isTrue(previousModel == null,
+                    "Duplicate index name ''{0}'' declared on both model ''{1}'' and ''{2}'' — index names "
+                            + "must be globally unique; rename one (or drop the explicit indexName to auto-derive).",
+                    index.getIndexName(), previousModel, index.getModelName());
+        }
     }
 
     /**
@@ -158,8 +208,6 @@ public class ModelManager {
             validateVersionField(metaModel);
             // Check if the model dataSource attribute is valid
             validateModelDataSource(metaModel);
-            // Check if the model serviceName attribute is valid
-            validateModelService(metaModel);
             // Check if the model businessKey attribute is valid
             validateBusinessKey(metaModel);
         }
@@ -186,6 +234,11 @@ public class ModelManager {
             if (FieldType.RELATED_TYPES.contains(metaField.getFieldType())) {
                 validateRelationalField(metaField);
             }
+            // onDelete is meaningful only on TO_ONE relations (reject elsewhere — determinism).
+            Assert.isTrue(metaField.getOnDelete() == null
+                            || FieldType.TO_ONE_TYPES.contains(metaField.getFieldType()),
+                    "{0}:{1}, onDelete is only valid on a MANY_TO_ONE / ONE_TO_ONE field!",
+                    metaField.getModelName(), metaField.getFieldName());
             if (StringUtils.isNotBlank(metaField.getCascadedField())) {
                 // Verify the cascaded field and update the MetaModel object
                 verifyCascadedField(metaField);
@@ -243,6 +296,69 @@ public class ModelManager {
                 }
             }
         }
+    }
+
+    /**
+     * Build the onDelete reverse-reference index: for every TO_ONE field carrying a non-KEEP
+     * {@code onDelete}, register it on the model it points AT, so deleting that model can enforce the
+     * policy without scanning the whole field graph. KEEP ({@code onDelete == null}) fields are skipped
+     * — the default costs nothing.
+     */
+    private void identifyOnDeleteRefs() {
+        for (Map<String, MetaField> fields : modelFields().values()) {
+            for (MetaField field : fields.values()) {
+                if (field.getOnDelete() != null && FieldType.TO_ONE_TYPES.contains(field.getFieldType())) {
+                    MetaModel target = modelMap().get(field.getRelatedModel());
+                    if (target != null) {
+                        target.addOnDeleteRefField(field);
+                    }
+                }
+            }
+        }
+    }
+
+    /**
+     * Reject cyclic / self-referential {@code onDelete=CASCADE}. Only CASCADE recurses through
+     * {@code deleteByIds}, so as long as the CASCADE graph — edge "deleting the referenced model cascades
+     * to its referrer" — is acyclic, the recursion is bounded and the runtime needs <b>no</b> cycle guard.
+     * A cycle (including a self-loop, e.g. a self-referential parent FK) would recurse forever, so it is
+     * forbidden at boot; delete such hierarchies explicitly in application code. (Diamonds are not cycles
+     * and stay allowed: a re-converged row is already gone, so the repeat delete no-ops.) The same pass
+     * also rejects a CASCADE chain longer than {@link BaseConstant#MAX_CASCADE_DEPTH} models — bounding
+     * the runtime recursion depth.
+     */
+    private void validateCascadeAcyclic() {
+        Map<String, List<String>> cascadeGraph = new HashMap<>();
+        for (Map.Entry<String, MetaModel> entry : modelMap().entrySet()) {
+            for (MetaField field : entry.getValue().getOnDeleteRefFields()) {
+                if (OnDelete.CASCADE == field.getOnDelete()) {
+                    // deleting entry.getKey() (the One) cascades to field.getModelName() (the referrer / Many)
+                    cascadeGraph.computeIfAbsent(entry.getKey(), k -> new ArrayList<>()).add(field.getModelName());
+                }
+            }
+        }
+        assertCascadeAcyclic(cascadeGraph);
+    }
+
+    /**
+     * Reject any cycle (including a self-loop) and any CASCADE chain deeper than
+     * {@link BaseConstant#MAX_CASCADE_DEPTH} in the CASCADE graph. Delegates the generic graph algorithms
+     * to {@link GraphUtils} (cycle-find + longest-path) and phrases the CASCADE-specific fail-fast errors
+     * here. Package-visible so the CASCADE validation is unit-testable.
+     *
+     * @param graph model → the models its deletion cascades to (CASCADE edges only)
+     */
+    static void assertCascadeAcyclic(Map<String, List<String>> graph) {
+        List<String> cycle = GraphUtils.findCycle(graph);
+        Assert.isTrue(cycle.isEmpty(),
+                "onDelete=CASCADE forms a cycle [{0}] — cyclic / self-referential cascade delete is not "
+                        + "supported; delete such hierarchies explicitly in application code.",
+                String.join(" -> ", cycle));
+        List<String> longest = GraphUtils.longestPath(graph);
+        Assert.isTrue(longest.size() <= BaseConstant.MAX_CASCADE_DEPTH,
+                "onDelete=CASCADE chain [{0}] is {1} model(s) deep, over the MAX_CASCADE_DEPTH limit ({2}) — "
+                        + "shorten the cascade, or delete deep hierarchies explicitly in application code.",
+                String.join(" -> ", longest), longest.size(), BaseConstant.MAX_CASCADE_DEPTH);
     }
 
     /**
@@ -413,20 +529,6 @@ public class ModelManager {
     }
 
     /**
-     * Validate the model serviceName attribute.
-     * The system model cannot be configured with a serviceName.
-     *
-     * @param metaModel model metadata object
-     */
-    private static void validateModelService(MetaModel metaModel) {
-        String serviceName = metaModel.getServiceName();
-        if (ModelConstant.SYSTEM_MODEL.contains(metaModel.getModelName()) && StringUtils.isNotBlank(serviceName)) {
-            throw new IllegalArgumentException("The system model {0} cannot be configured with a serviceName {1}!",
-                    metaModel.getModelName(), serviceName);
-        }
-    }
-
-    /**
      * Check if the fields exists in the model
      *
      * @param metaModel model metadata object
@@ -457,8 +559,40 @@ public class ModelManager {
                 "{0}:{1} field, the relatedModel `{2}` does not exist in the model metadata!",
                 metaField.getModelName(), metaField.getFieldName(), relatedModel);
         if ((FieldType.TO_ONE_TYPES.contains(metaField.getFieldType()))) {
-            // For OneToOne/ManyToOne fields, the `relatedField` is default to id.
+            // A TO_ONE relation joins on the related model's surrogate id ONLY. The earlier
+            // reference-by-code option (a non-id `relatedField`) is removed — rich masters
+            // (Currency / CountryRegion / ...) are code-as-id instead, so the FK still stores the
+            // portable code while the join stays id-native. A declared non-id relatedField is rejected.
+            Assert.isTrue(StringUtils.isBlank(metaField.getRelatedField())
+                            || ModelConstant.ID.equals(metaField.getRelatedField()),
+                    "{0}:{1} field, relatedField `{2}` is not allowed: a TO_ONE relation must join on the "
+                            + "related model `{3}` by its id (reference-by-code was removed; make the "
+                            + "related model code-as-id to store a business code).",
+                    metaField.getModelName(), metaField.getFieldName(), metaField.getRelatedField(), relatedModel);
             metaField.setRelatedField(ModelConstant.ID);
+            // delete-strategy guards (apply to any TO_ONE onDelete):
+            OnDelete onDelete = metaField.getOnDelete();
+            if (onDelete != null) {
+                Assert.notTrue(OnDelete.SET_NULL == onDelete && metaField.isRequired(),
+                        "{0}:{1} field, onDelete=SET_NULL requires a nullable FK (required=false)!",
+                        metaField.getModelName(), metaField.getFieldName());
+                Assert.notTrue(isTimelineModel(relatedModel),
+                        "{0}:{1} field, onDelete cannot target timeline model `{2}` "
+                                + "(per-slice delete bypasses the delete path)!",
+                        metaField.getModelName(), metaField.getFieldName(), relatedModel);
+                Assert.notTrue(OnDelete.CASCADE == onDelete && isSoftDeleted(relatedModel)
+                                && !isSoftDeleted(metaField.getModelName()),
+                        "{0}:{1} field, onDelete=CASCADE from soft-delete `{2}` to hard-delete `{0}` is not "
+                                + "allowed — a recoverable parent must not trigger an irreversible child delete. "
+                                + "Make `{0}` soft-delete too, or use onDelete=RESTRICT / SET_NULL.",
+                        metaField.getModelName(), metaField.getFieldName(), relatedModel);
+                Assert.notTrue(OnDelete.CASCADE == onDelete && !isMultiTenantModel(relatedModel)
+                                && isMultiTenantModel(metaField.getModelName()),
+                        "{0}:{1} field, onDelete=CASCADE from shared (non-multi-tenant) `{2}` to multi-tenant "
+                                + "`{0}` is not allowed — deleting one shared row would cascade across ALL "
+                                + "tenants. Use onDelete=RESTRICT.",
+                        metaField.getModelName(), metaField.getFieldName(), relatedModel);
+            }
         } else if (FieldType.ONE_TO_MANY.equals(metaField.getFieldType())) {
             Assert.notBlank(metaField.getRelatedField(),
                     "{0}:{1} is a OneToMany field, the `relatedField` cannot be empty!",
@@ -572,6 +706,27 @@ public class ModelManager {
     }
 
     /**
+     * Check if the fields can be referenced in GROUP BY / SPLIT BY contexts.
+     * Allowed: stored fields and dynamic cascaded fields (the latter expand to a stored
+     * column on the related model via LEFT JOIN at SQL build time).
+     * Rejected: dynamic computed fields, OneToMany/ManyToMany, and any other dynamic types.
+     *
+     * @param modelName model name
+     * @param fields field name list
+     */
+    public static void validateGroupableFields(String modelName, List<String> fields) {
+        Set<String> invalidFields = fields.stream()
+                .filter(f -> {
+                    MetaField mf = getModelField(modelName, f);
+                    return mf.isDynamic() && !mf.isDynamicCascadedField();
+                })
+                .collect(Collectors.toSet());
+        Assert.isTrue(CollectionUtils.isEmpty(invalidFields),
+                "Fields {1} of model {0} cannot be used in GROUP BY: only stored fields or dynamic cascaded fields are allowed!",
+                modelName, invalidFields);
+    }
+
+    /**
      * Verify and update the `readonly` attribute of the field.
      * The `readonly` attribute is automatically set for the following fields:
      *     1. Fields in the `AUDIT_FIELDS` list, including audit fields, `version`, `sliceId`, `tenantId`.
@@ -674,6 +829,18 @@ public class ModelManager {
     }
 
     /**
+     * Look up an index by its globally-unique name, or null if none. Backs the friendly
+     * duplicate-key resolver: a violated index name resolves to its member fields and
+     * optional custom message.
+     *
+     * @param indexName the globally-unique index name
+     * @return the index metadata, or null if no such index exists
+     */
+    public static MetaIndex getIndex(String indexName) {
+        return indexMap().get(indexName);
+    }
+
+    /**
      * Get the tableName by model name
      *
      * @param modelName model name
@@ -731,22 +898,45 @@ public class ModelManager {
     }
 
     /**
+     * Check whether the model itself allows copy operations
+     * ({@code @Model(copyable = ...)}). Field-level filtering is a separate
+     * concern handled by {@link #getModelCopyableFields(String)}.
+     *
+     * @param modelName model name
+     * @return true if rows of the model may be duplicated
+     */
+    public static boolean isCopyableModel(String modelName) {
+        validateModel(modelName);
+        return modelMap().get(modelName).isCopyable();
+    }
+
+    /**
      * Get the copyable fields of the specified model.
+     * <p>Excludes fields marked {@code copyable = false}, audit fields, dynamic fields
+     * (OneToMany / ManyToMany / computed / cascaded — they are derived, not stored),
+     * OneToOne fields (the related row is owned by the source row; copying the FK
+     * would make two rows share one exclusively-owned related row), and structural
+     * keys: {@code id} / {@code externalId} for regular models; {@code sliceId} for
+     * timeline models ({@code id} is kept since slices of the same business entity
+     * share it).</p>
      *
      * @param modelName model name
      * @return copyable fields
      */
     public static List<String> getModelCopyableFields(String modelName) {
-        return modelFields().get(modelName).keySet().stream()
-                .filter(fieldName -> {
-                    if (ModelConstant.AUDIT_FIELDS.contains(fieldName)) {
+        boolean isTimeline = isTimelineModel(modelName);
+        return modelFields().get(modelName).values().stream()
+                .filter(metaField -> {
+                    String fieldName = metaField.getFieldName();
+                    if (!metaField.isCopyable() || metaField.isDynamic()
+                            || FieldType.ONE_TO_ONE.equals(metaField.getFieldType())
+                            || ModelConstant.AUDIT_FIELDS.contains(fieldName)) {
                         return false;
-                    } else if (isTimelineModel(modelName)) {
-                        if (ModelConstant.ID.equals(fieldName)) {
-                            return true;
-                        } else return !ModelConstant.SLICE_ID.equals(fieldName);
+                    } else if (isTimeline) {
+                        return !ModelConstant.SLICE_ID.equals(fieldName);
                     } else return !ModelConstant.ID.equals(fieldName) && !ModelConstant.EXTERNAL_ID.equals(fieldName);
                 })
+                .map(MetaField::getFieldName)
                 .toList();
     }
 
@@ -974,27 +1164,30 @@ public class ModelManager {
     /**
      * Get the last field object of the custom cascaded field.
      * Take `field1.field2.field3` as an example, get the `field3` MetaField object.
+     * <p>
+     * Implemented on top of {@link CascadeFieldWalker}, which enforces only the
+     * structural rules (each segment exists, non-last segments are ToOne relations,
+     * depth within {@link BaseConstant#CASCADE_LEVEL}). It is policy-neutral about the
+     * leaf: a dynamic (non-stored) leaf — e.g. a computed field or a dynamic cascaded
+     * field — is resolved and returned, not rejected, so callers such as export-header
+     * and projection resolution can read its type/label. Callers that require a stored
+     * leaf (e.g. SQL filter building in {@code WhereBuilder}) enforce that at their own
+     * call site.
      *
      * @param modelName the main model name
      * @param fullFieldName custom cascaded field name like `field1.field2.field3`
-     * @return last field object
+     * @return last field object (may be a dynamic, non-stored field)
+     * @throws IllegalArgumentException if the path is structurally invalid (missing
+     *         segment, traversal through a non-ToOne field, or exceeds the cascade depth)
      */
     public static MetaField getLastFieldOfCascaded(String modelName, String fullFieldName) {
-        String[] fieldsArray = StringUtils.split(fullFieldName, ".");
-        Assert.isTrue(fieldsArray.length - 1 <  BaseConstant.CASCADE_LEVEL,
-                "Custom cascaded field {0} cannot exceed the max cascaded levels of {1}!",
-                fullFieldName, BaseConstant.CASCADE_LEVEL);
-        MetaField metaField = null;
-        for (int i = 0; i < fieldsArray.length; i ++) {
-            metaField = getModelField(modelName, fieldsArray[i]);
-            if (i < fieldsArray.length - 1) {
-                Assert.isTrue(FieldType.TO_ONE_TYPES.contains(metaField.getFieldType()),
-                        "The field {0} in custom cascaded field {1} must be ManyToOne/OneToOne field!",
-                        metaField.getFieldName(), fullFieldName);
-            }
-            modelName = metaField.getRelatedModel();
+        CascadeFieldWalker.Result result = CascadeFieldWalker.walk(
+                modelName, fullFieldName, BaseConstant.CASCADE_LEVEL, CascadeFieldWalker.Visitor.NOOP);
+        if (result instanceof CascadeFieldWalker.Result.Failure failure) {
+            throw new IllegalArgumentException(
+                    "Custom cascaded field {0} is invalid: {1}", fullFieldName, failure.message());
         }
-        return metaField;
+        return ((CascadeFieldWalker.Result.Ok) result).leaf();
     }
 
     /**

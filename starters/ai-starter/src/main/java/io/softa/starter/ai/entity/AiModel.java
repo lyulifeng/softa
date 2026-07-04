@@ -2,11 +2,13 @@ package io.softa.starter.ai.entity;
 
 import java.io.Serial;
 import java.math.BigDecimal;
-import io.swagger.v3.oas.annotations.media.Schema;
 import lombok.Data;
 import lombok.EqualsAndHashCode;
 
+import io.softa.framework.orm.annotation.Field;
+import io.softa.framework.orm.annotation.Model;
 import io.softa.framework.orm.entity.AuditableModel;
+import io.softa.framework.orm.enums.IdStrategy;
 import io.softa.starter.ai.enums.AiModelProvider;
 import io.softa.starter.ai.enums.AiModelType;
 
@@ -14,40 +16,57 @@ import io.softa.starter.ai.enums.AiModelType;
  * AiModel Model
  */
 @Data
-@Schema(name = "AiModel")
 @EqualsAndHashCode(callSuper = true)
+@Model(
+        label = "AI Model",
+        idStrategy = IdStrategy.DISTRIBUTED_LONG,
+        softDelete = true,
+        activeControl = true
+)
 public class AiModel extends AuditableModel {
 
     @Serial
     private static final long serialVersionUID = 1L;
 
-    @Schema(description = "ID")
+    @Field(label = "ID")
     private Long id;
 
-    @Schema(description = "Model Name")
+    @Field(label = "Model Name", required = true)
     private String name;
 
-    @Schema(description = "Model Code")
+    @Field(label = "Model Code", required = true)
     private String code;
 
-    @Schema(description = "Model Provider")
+    @Field
     private AiModelProvider modelProvider;
 
-    @Schema(description = "Model Type")
+    @Field
     private AiModelType modelType;
 
-    @Schema(description = "Input Price/1M tokens")
+    @Field(label = "Input Price/1M tokens")
     private BigDecimal unitPriceInput;
 
-    @Schema(description = "Output price/1M tokens")
+    @Field(label = "Output price/1M tokens")
     private BigDecimal unitPriceOutput;
 
-    @Schema(description = "Max Context Tokens")
+    @Field(label = "Max Context Tokens")
     private Integer maxTokens;
 
-    @Schema(description = "Description")
+    @Field(label = "API Base URL", length = 256)
+    private String baseUrl;
+
+    @Field(label = "API Key", length = 512, encrypted = true, copyable = false, unsearchable = true)
+    private String apiKey;
+
+    @Field(label = "Request Timeout (ms)")
+    private Integer timeout;
+
+    @Field(length = 256)
     private String description;
 
-    @Schema(description = "Active")
+    @Field
     private Boolean active;
+
+    @Field
+    private Boolean deleted;
 }

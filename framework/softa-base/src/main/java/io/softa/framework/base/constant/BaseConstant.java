@@ -11,6 +11,8 @@ public interface BaseConstant {
 
     /** Debug parameter in request parameter */
     String DEBUG = "debug";
+    /** Debug request header */
+    String X_DEBUG = "X-Debug";
     /** The default top n value */
     Integer DEFAULT_TOP_N = 50;
     Integer DEFAULT_PAGE_NUMBER = 1;
@@ -25,6 +27,10 @@ public interface BaseConstant {
 
     /** Cascading level restriction for cascade fields, for performance consideration, that is f0.f1.f2.f3.f4 */
     Integer CASCADE_LEVEL = 4;
+
+    /** Max onDelete=CASCADE chain length (in models) allowed at boot; a longer chain is rejected by
+     *  {@code ModelManager.validateCascadeAcyclic} — delete deep hierarchies explicitly in app code. */
+    Integer MAX_CASCADE_DEPTH = 4;
 
     Integer DEFAULT_SCALE = 2;
 

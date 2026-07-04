@@ -1,47 +1,48 @@
 package io.softa.starter.metadata.entity;
 
-import io.softa.framework.orm.entity.AuditableModel;
-import io.swagger.v3.oas.annotations.media.Schema;
+import java.io.Serial;
 import lombok.Data;
 import lombok.EqualsAndHashCode;
 
-import java.io.Serial;
+import io.softa.framework.orm.annotation.Field;
+import io.softa.framework.orm.annotation.Model;
+import io.softa.framework.orm.entity.AuditableModel;
 
 /**
  * SysNavigation Model
  */
 @Data
-@Schema(name = "SysNavigation")
 @EqualsAndHashCode(callSuper = true)
+@Model(label = "System Navigation")
 public class SysNavigation extends AuditableModel {
 
     @Serial
     private static final long serialVersionUID = 1L;
 
-    @Schema(description = "ID")
+    @Field(label = "ID")
     private Long id;
 
-    @Schema(description = "App ID")
-    private Long appId;
+    @Field
+    private String appCode;
 
-    @Schema(description = "Name")
+    @Field(required = true)
     private String name;
 
-    @Schema(description = "Type")
+    @Field(required = true)
     private String type;
 
-    @Schema(description = "Code")
+    @Field(required = true)
     private String code;
 
-    @Schema(description = "Model Name")
+    @Field(length = 256)
     private String modelName;
 
-    @Schema(description = "Parent Navigation")
+    @Field(label = "Parent ID")
     private Long parentId;
 
-    @Schema(description = "Description")
+    @Field(length = 256)
     private String description;
 
-    @Schema(description = "Default filters")
+    @Field(length = 256)
     private String filter;
 }

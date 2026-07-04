@@ -22,7 +22,7 @@ public class MetaModelTrans implements Serializable {
 
     private Long rowId;
 
-    private String labelName;
+    private String label;
 
     private String description;
 }

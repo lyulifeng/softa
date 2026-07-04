@@ -5,6 +5,7 @@ import lombok.Data;
 
 import io.softa.framework.orm.enums.FieldType;
 import io.softa.framework.orm.enums.MaskingType;
+import io.softa.framework.orm.enums.OnDelete;
 import io.softa.framework.orm.enums.WidgetType;
 
 /**
@@ -13,7 +14,7 @@ import io.softa.framework.orm.enums.WidgetType;
 @Data
 @Schema(name = "MetaFieldDTO")
 public class MetaFieldDTO {
-    private String labelName;
+    private String label;
     private String fieldName;
     private String modelName;
     private FieldType fieldType;
@@ -26,7 +27,7 @@ public class MetaFieldDTO {
     private Boolean readonly;
     private Boolean hidden;
     private Boolean translatable;
-    private Boolean nonCopyable;
+    private Boolean copyable;
     private Boolean unsearchable;
     private Boolean computed;
     private Boolean dynamic;
@@ -43,4 +44,5 @@ public class MetaFieldDTO {
     private String filters;
     private MaskingType maskingType;
     private WidgetType widgetType;
+    private OnDelete onDelete;
 }

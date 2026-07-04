@@ -10,6 +10,7 @@ import io.softa.framework.base.enums.Operator;
 import io.softa.framework.base.exception.BusinessException;
 import io.softa.framework.base.security.EncryptUtils;
 import io.softa.framework.base.utils.Assert;
+import io.softa.framework.base.utils.JsonUtils;
 import io.softa.framework.orm.constant.ModelConstant;
 import io.softa.framework.orm.domain.FilterControl;
 import io.softa.framework.orm.domain.FilterUnit;
@@ -349,6 +350,9 @@ public class WhereBuilder extends BaseBuilder implements SqlClauseBuilder {
         }
         // When there is no XToMany field, get the field alias normally,
         // including the case where the last field is ManyToOne/OneToOne field.
+        Assert.notTrue(metaField.isDynamic(),
+                "The last field {0} of filter cascade {1} must be a stored field in model {2}!",
+                metaField.getFieldName(), filterUnit.getField(), metaField.getModelName());
         return FilterUnitParser.parse(sqlWrapper, currentAlias, metaField, filterUnit);
     }
 
@@ -450,7 +454,24 @@ public class WhereBuilder extends BaseBuilder implements SqlClauseBuilder {
             }
             filterUnit.setOperator(operator);
             filterUnit.setValue(value);
+        } else {
+            formatFilterUnitValue(filterUnit);
         }
+    }
+
+    private void formatFilterUnitValue(FilterUnit filterUnit) {
+        Object obj = filterUnit.getValue();
+        if (obj instanceof Enum<?> enumValue) {
+            obj = JsonUtils.getMapper().convertValue(enumValue, String.class);
+        } else if (obj instanceof Collection<?> collectionValue) {
+            obj = collectionValue.stream().map(v -> {
+                if (v instanceof Enum<?> vEnum) {
+                    return JsonUtils.getMapper().convertValue(vEnum, String.class);
+                }
+                return v;
+            }).collect(Collectors.toList());
+        }
+        filterUnit.setValue(obj);
     }
 
     private record ResolvedTupleField(String fieldAlias, MetaField metaField) {}

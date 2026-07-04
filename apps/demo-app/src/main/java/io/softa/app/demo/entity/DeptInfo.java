@@ -1,39 +1,41 @@
 package io.softa.app.demo.entity;
 
-import io.softa.framework.orm.entity.AuditableModel;
-import io.swagger.v3.oas.annotations.media.Schema;
+import java.io.Serial;
+import java.util.List;
 import lombok.Data;
 import lombok.EqualsAndHashCode;
 
-import java.io.Serial;
-import java.util.List;
+import io.softa.framework.orm.annotation.Field;
+import io.softa.framework.orm.annotation.Model;
+import io.softa.framework.orm.enums.FieldType;
+import io.softa.framework.orm.entity.AuditableModel;
 
 /**
  * DeptInfo Model
  */
 @Data
-@Schema(name = "DeptInfo")
+@Model(label = "Department", businessKey = {"code"})
 @EqualsAndHashCode(callSuper = true)
 public class DeptInfo extends AuditableModel {
 
     @Serial
     private static final long serialVersionUID = 1L;
 
-    @Schema(description = "ID")
+    @Field(label = "ID")
     private Long id;
 
-    @Schema(description = "Name")
+    @Field(required = true, length = 100)
     private String name;
 
-    @Schema(description = "Code")
+    @Field(copyable = false)
     private String code;
 
-    @Schema(description = "Employees")
+    @Field(label = "Employees", fieldType = FieldType.ONE_TO_MANY, relatedField = "deptId")
     private List<EmpInfo> empIds;
 
-    @Schema(description = "Description")
+    @Field(length = 256)
     private String description;
 
-    @Schema(description = "Active")
+    @Field
     private Boolean active;
 }

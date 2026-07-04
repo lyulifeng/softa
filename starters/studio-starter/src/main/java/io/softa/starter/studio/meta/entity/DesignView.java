@@ -1,67 +1,67 @@
 package io.softa.starter.studio.meta.entity;
 
 import java.io.Serial;
-import io.swagger.v3.oas.annotations.media.Schema;
 import lombok.Data;
 import lombok.EqualsAndHashCode;
 import tools.jackson.databind.JsonNode;
 
+import io.softa.framework.orm.annotation.Field;
+import io.softa.framework.orm.annotation.Model;
 import io.softa.framework.orm.entity.AuditableModel;
+import io.softa.framework.orm.enums.IdStrategy;
 import io.softa.framework.orm.enums.ViewType;
 
 /**
  * DesignView Model
  */
 @Data
-@Schema(name = "DesignView")
 @EqualsAndHashCode(callSuper = true)
+@Model(idStrategy = IdStrategy.DISTRIBUTED_LONG, softDelete = true,
+        businessKey = {"modelName", "code"})
 public class DesignView extends AuditableModel {
 
     @Serial
     private static final long serialVersionUID = 1L;
 
-    @Schema(description = "ID")
+    @Field(label = "ID")
     private Long id;
 
-    @Schema(description = "Portfolio")
-    private Long portfolioId;
-
-    @Schema(description = "App ID")
+    @Field(label = "App ID")
     private Long appId;
 
-    @Schema(description = "Model Name")
+    @Field
     private String modelName;
 
-    @Schema(description = "View Name")
+    @Field(label = "View Name", required = true)
     private String name;
 
-    @Schema(description = "View Code")
+    @Field(label = "View Code")
     private String code;
 
-    @Schema(description = "View Type")
+    @Field(label = "View Type", required = true)
     private ViewType type;
 
-    @Schema(description = "Sequence")
+    @Field(required = true)
     private Integer sequence;
 
-    @Schema(description = "Structure")
+    @Field(required = true)
     private JsonNode structure;
 
-    @Schema(description = "Default Filters")
+    @Field(label = "Default Filters", description = "View level default filter.")
     private JsonNode defaultFilter;
 
-    @Schema(description = "Default Order")
+    @Field(description = "The default sorting condition at the view level.")
     private JsonNode defaultOrder;
 
-    @Schema(description = "Navigation ID")
+    @Field(label = "Navigation ID")
     private Long navId;
 
-    @Schema(description = "Public View")
+    @Field
     private Boolean publicView;
 
-    @Schema(description = "Default View")
+    @Field
     private Boolean defaultView;
 
-    @Schema(description = "Deleted")
+    @Field
     private Boolean deleted;
 }

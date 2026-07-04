@@ -19,21 +19,24 @@
             <version>${project.version}</version>
         </dependency>
 
-        <!--OpenAI SDK-->
+        <!-- Spring AI: ChatClient + portable ChatOptions + chat-memory SPI (brings reactor-core transitively) -->
         <dependency>
-            <groupId>com.github.plexpt</groupId>
-            <artifactId>chatgpt</artifactId>
-            <version>5.1.1</version>
-            <exclusions>
-                <exclusion>
-                    <groupId>com.squareup.okhttp3</groupId>
-                    <artifactId>okhttp</artifactId>
-                </exclusion>
-                <exclusion>
-                    <groupId>cn.hutool</groupId>
-                    <artifactId>hutool-all</artifactId>
-                </exclusion>
-            </exclusions>
+            <groupId>org.springframework.ai</groupId>
+            <artifactId>spring-ai-client-chat</artifactId>
+        </dependency>
+
+        <!-- Spring AI model providers (constructed programmatically per AiModel row; no Boot auto-config) -->
+        <dependency>
+            <groupId>org.springframework.ai</groupId>
+            <artifactId>spring-ai-openai</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.springframework.ai</groupId>
+            <artifactId>spring-ai-deepseek</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.springframework.ai</groupId>
+            <artifactId>spring-ai-anthropic</artifactId>
         </dependency>
     </dependencies>
 </project>

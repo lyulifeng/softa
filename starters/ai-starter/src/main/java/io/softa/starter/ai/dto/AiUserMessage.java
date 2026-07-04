@@ -2,6 +2,7 @@ package io.softa.starter.ai.dto;
 
 import io.swagger.v3.oas.annotations.media.Schema;
 import jakarta.validation.constraints.NotBlank;
+import jakarta.validation.constraints.NotNull;
 import lombok.Data;
 
 /**
@@ -12,7 +13,7 @@ import lombok.Data;
 public class AiUserMessage {
 
     @Schema(description = "Robot ID")
-    @NotBlank(message = "Robot ID cannot be empty!")
+    @NotNull(message = "Robot ID cannot be empty!")
     private Long robotId;
 
     @Schema(description = "Chat Content")

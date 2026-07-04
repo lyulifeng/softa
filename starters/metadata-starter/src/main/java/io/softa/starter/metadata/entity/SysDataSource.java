@@ -1,58 +1,62 @@
 package io.softa.starter.metadata.entity;
 
-import io.softa.framework.orm.entity.AuditableModel;
-import io.swagger.v3.oas.annotations.media.Schema;
+import java.io.Serial;
 import lombok.Data;
 import lombok.EqualsAndHashCode;
 
-import java.io.Serial;
+import io.softa.framework.orm.annotation.Field;
+import io.softa.framework.orm.annotation.Model;
+import io.softa.framework.orm.entity.AuditableModel;
 
 /**
  * SysDataSource Model
  * The default datasource is configured in the spring.datasource configuration.
-This model is used to configure additional external data sources.
+ * This model is used to configure additional external data sources.
  */
 @Data
-@Schema(name = "SysDataSource")
 @EqualsAndHashCode(callSuper = true)
+@Model(
+        label = "External Data Source",
+        description = "Configure additional external data sources (the default is in spring.datasource)."
+)
 public class SysDataSource extends AuditableModel {
 
     @Serial
     private static final long serialVersionUID = 1L;
 
-    @Schema(description = "ID")
+    @Field(label = "ID")
     private Long id;
 
-    @Schema(description = "Data Source Name")
+    @Field(required = true, length = 32)
     private String name;
 
-    @Schema(description = "Data Source Key")
+    @Field(label = "Data Source Key", length = 32)
     private String dsKey;
 
-    @Schema(description = "JDBC URL")
+    @Field(label = "JDBC URL", required = true, length = 256)
     private String jdbcUrl;
 
-    @Schema(description = "Username")
+    @Field(required = true)
     private String username;
 
-    @Schema(description = "Password")
+    @Field(required = true, length = 256)
     private String password;
 
-    @Schema(description = "Initial Pool Size")
+    @Field(required = true)
     private Integer initialSize;
 
-    @Schema(description = "Maximum Pool Size")
+    @Field(required = true)
     private Integer maxActive;
 
-    @Schema(description = "Minimum Idle")
+    @Field(required = true)
     private Integer minIdle;
 
-    @Schema(description = "Connection Timeout")
+    @Field(required = true)
     private Integer maxWait;
 
-    @Schema(description = "Readonly")
+    @Field
     private Boolean readonly;
 
-    @Schema(description = "Description")
+    @Field(length = 256)
     private String description;
 }

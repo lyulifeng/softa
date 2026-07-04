@@ -64,15 +64,17 @@ public class XToOneProcessor extends BaseProcessor {
         checkReadonly(isContain);
         Object value = row.get(fieldName);
         if (isContain && value != null) {
-            Object id;
+            // A TO_ONE FK stores the related row's id. A ModelReference round-trip
+            // carries that id under the `id` key.
+            Object key;
             if (value instanceof Map<?, ?> mapValue && mapValue.containsKey(ModelConstant.ID)) {
-                id = mapValue.get(ModelConstant.ID);
+                key = mapValue.get(ModelConstant.ID);
             } else if (value instanceof AbstractModel entity) {
-                id = entity.getId();
+                key = entity.getId();
             } else {
-                id = row.get(fieldName);
+                key = value;
             }
-            row.put(fieldName, IdUtils.formatId(metaField.getRelatedModel(), (Serializable) id));
+            row.put(fieldName, IdUtils.formatId(metaField.getRelatedModel(), (Serializable) key));
         } else if (AccessType.CREATE.equals(accessType)) {
             checkRequired(value);
             row.computeIfAbsent(fieldName, k -> metaField.getDefaultValueObject());
@@ -85,15 +87,15 @@ public class XToOneProcessor extends BaseProcessor {
      * Expand the ManyToOne/OneToOne field with displayName, or related model row according to subQuery.
      *
      * @param rows Data list
-     * @param relatedRowMap related model row map: {id: {field: value}}
+     * @param relatedRowMap related model row map: {key: {field: value}}
      */
     public void batchProcessOutputRows(List<Map<String, Object>> rows, Map<Serializable, Map<String, Object>> relatedRowMap) {
         if (subQuery != null) {
             // When the subQuery is not null, assign the subQuery result to the ManyToOne/OneToOne field directly.
             rows.forEach(row -> {
-                Serializable id = (Serializable) row.get(fieldName);
-                id = IdUtils.formatId(metaField.getRelatedModel(), id);
-                row.put(fieldName, relatedRowMap.get(id));
+                Serializable key = (Serializable) row.get(fieldName);
+                key = IdUtils.formatId(metaField.getRelatedModel(), key);
+                row.put(fieldName, relatedRowMap.get(key));
             });
         } else if (ConvertType.EXPAND_TYPES.contains(convertType)) {
             // If subQuery is null, but the result need to be expanded, fill in the ManyToOne/OneToOne with displayName.
@@ -106,17 +108,17 @@ public class XToOneProcessor extends BaseProcessor {
      * Fill in the displayName of ManyToOne/OneToOne field.
      *
      * @param row row data
-     * @param displayNameMap the displayName map of the related model: {id: displayName}
+     * @param displayNameMap the displayName map of the related model: {key: displayName}
      */
     public void processOutputRow(Map<String, Object> row, Map<Serializable, String> displayNameMap) {
         if (!row.containsKey(fieldName) || row.get(fieldName) == null) {
             return;
         }
-        Serializable id = (Serializable) row.get(fieldName);
-        Serializable formattedId = IdUtils.formatId(metaField.getRelatedModel(), id);
+        Serializable key = (Serializable) row.get(fieldName);
+        Serializable formattedId = IdUtils.formatId(metaField.getRelatedModel(), key);
         if (formattedId == null) {
             log.warn("Model data {}(id={}) with field {}={}, the field value not exist in related model {}!",
-                    metaField.getModelName(), row.get(ModelConstant.ID), fieldName, id, metaField.getRelatedModel());
+                    metaField.getModelName(), row.get(ModelConstant.ID), fieldName, key, metaField.getRelatedModel());
         }
         Object value = displayNameMap.get(formattedId);
         if (ConvertType.REFERENCE.equals(convertType)) {

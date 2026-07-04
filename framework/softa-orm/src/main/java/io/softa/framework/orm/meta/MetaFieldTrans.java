@@ -22,7 +22,7 @@ public class MetaFieldTrans implements Serializable {
 
     private Long rowId;
 
-    private String labelName;
+    private String label;
 
     private String description;
 }

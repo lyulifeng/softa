@@ -2,11 +2,12 @@ package io.softa.starter.file.entity;
 
 import java.io.Serial;
 import java.time.LocalDateTime;
-import io.swagger.v3.oas.annotations.media.Schema;
 import lombok.Data;
 import lombok.EqualsAndHashCode;
 import tools.jackson.databind.JsonNode;
 
+import io.softa.framework.orm.annotation.Field;
+import io.softa.framework.orm.annotation.Model;
 import io.softa.framework.orm.entity.AuditableModel;
 import io.softa.starter.file.enums.SigningDocumentStatus;
 
@@ -14,52 +15,52 @@ import io.softa.starter.file.enums.SigningDocumentStatus;
  * SigningDocument Model
  */
 @Data
-@Schema(name = "SigningDocument")
 @EqualsAndHashCode(callSuper = true)
+@Model(copyable = false)
 public class SigningDocument extends AuditableModel {
 
     @Serial
     private static final long serialVersionUID = 1L;
 
-    @Schema(description = "ID")
+    @Field(label = "ID")
     private Long id;
 
-    @Schema(description = "Tenant ID")
+    @Field(label = "Tenant ID", length = 32)
     private String tenantId;
 
-    @Schema(description = "Signing Request ID")
+    @Field(label = "Signing Request ID")
     private Long signingRequestId;
 
-    @Schema(description = "Title")
+    @Field(length = 256)
     private String title;
 
-    @Schema(description = "Sequence")
+    @Field
     private Integer sequence;
 
-    @Schema(description = "Status")
+    @Field
     private SigningDocumentStatus status;
 
-    @Schema(description = "Document Template")
+    @Field(label = "Document Template")
     private Long templateId;
 
-    @Schema(description = "Sign Slot Code")
+    @Field
     private String signSlotCode;
 
-    @Schema(description = "Signed Image File")
+    @Field(label = "Signed Image File")
     private Long signedImageId;
 
-    @Schema(description = "Signed PDF File")
+    @Field(label = "Signed PDF File")
     private Long signedPdfId;
 
-    @Schema(description = "Signer User ID")
+    @Field(label = "Signer User ID")
     private Long signerUserId;
 
-    @Schema(description = "Evidence ID")
+    @Field(label = "Evidence ID")
     private String evidenceId;
 
-    @Schema(description = "Signature evidence JSON")
+    @Field(label = "Signature evidence JSON")
     private JsonNode signatureEvidence;
 
-    @Schema(description = "Signed Time")
+    @Field
     private LocalDateTime signedTime;
 }

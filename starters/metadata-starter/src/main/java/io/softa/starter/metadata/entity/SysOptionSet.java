@@ -1,42 +1,61 @@
 package io.softa.starter.metadata.entity;
 
-import io.softa.framework.orm.entity.AuditableModel;
-import io.swagger.v3.oas.annotations.media.Schema;
+import java.io.Serial;
+import java.util.List;
 import lombok.Data;
 import lombok.EqualsAndHashCode;
 
-import java.io.Serial;
-import java.util.List;
+import io.softa.framework.orm.annotation.Field;
+import io.softa.framework.orm.annotation.Model;
+import io.softa.framework.orm.entity.AuditableModel;
+import io.softa.framework.orm.enums.FieldType;
 
 /**
- * SysOptionSet Model
+ * SysOptionSet — metadata catalog row describing an OptionSet (enum domain).
+ *
+ * <p>Self-described via {@code @Model} + per-field {@code @Field}.
  */
 @Data
-@Schema(name = "SysOptionSet")
 @EqualsAndHashCode(callSuper = true)
+@Model(
+        label = "System Option Set",
+        activeControl = true,
+        businessKey = {"optionSetCode"},
+        description = "Metadata catalog of option sets"
+)
 public class SysOptionSet extends AuditableModel {
 
     @Serial
     private static final long serialVersionUID = 1L;
 
-    @Schema(description = "ID")
+    @Field(label = "ID")
     private Long id;
 
-    @Schema(description = "App ID")
-    private Long appId;
+    @Field
+    private String appCode;
 
-    @Schema(description = "Option Set Name")
-    private String name;
+    @Field(required = true)
+    private String label;
 
-    @Schema(description = "Option Set Code")
+    @Field(required = true)
     private String optionSetCode;
 
-    @Schema(description = "Option Items")
-    private List<SysOptionItem> optionItems;
+    /** Single immediately-prior option-set code for a declared rename; excluded from checksum/diff. */
+    @Field
+    private String renamedFrom;
 
-    @Schema(description = "Description")
+    @Field(length = 256)
     private String description;
 
-    @Schema(description = "Deleted")
-    private Boolean deleted;
+    @Field
+    private Boolean active;
+
+    /**
+     * One-to-many to {@link SysOptionItem} (joins on the surrogate FK {@code optionSetId}).
+     * Has NO {@code sys_option_set} column — SysCatalog and the DDL builder both
+     * exclude X-to-many — but is emitted as a {@code sys_field} row. Populated in
+     * memory by {@code OptionManager} (by {@code optionSetCode}).
+     */
+    @Field(fieldType = FieldType.ONE_TO_MANY, relatedModel = SysOptionItem.class, relatedField = "optionSetId")
+    private List<SysOptionItem> optionItems;
 }

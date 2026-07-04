@@ -1,26 +1,29 @@
 package io.softa.starter.studio.release.entity;
 
 import java.io.Serial;
-import io.swagger.v3.oas.annotations.media.Schema;
 import lombok.Data;
 import lombok.EqualsAndHashCode;
 
+import io.softa.framework.orm.annotation.Field;
+import io.softa.framework.orm.annotation.Model;
 import io.softa.framework.orm.entity.AuditableModel;
+import io.softa.framework.orm.enums.DatabaseType;
+import io.softa.framework.orm.enums.IdStrategy;
+import io.softa.starter.studio.release.enums.ConnectorType;
 import io.softa.starter.studio.release.enums.DesignAppEnvStatus;
 import io.softa.starter.studio.release.enums.DesignAppEnvType;
 
 /**
  * DesignAppEnv Model — represents a deployment environment for a DesignApp.
  * <p>
- * Each Env tracks its own version state via {@code currentVersionId}, which points to
- * the latest version that has been successfully deployed to this environment.
- * When deploying a new Version, the system merges released versions in the
- * sealedTime interval {@code (currentVersionId, targetVersion]} to produce the Deployment.
+ * Each env owns a full per-env design set; publishing (converge-to-HEAD) deploys that
+ * design to the env's runtime. There is no version handle — the env's live design IS the deployed
+ * content.
  * <p>
- * Concurrent deployments against the same env are serialized via {@code envStatus}.
- * A deployment may only start when {@code envStatus == STABLE}; it acquires the lock
- * by compare-and-set transitioning the field to {@code DEPLOYING} and releases it on
- * completion (success or failure).
+ * Concurrent deployments against the same env are guarded via {@code envStatus}.
+ * A deployment may only start when {@code envStatus == STABLE}; it transitions the field to
+ * {@code DEPLOYING} for the duration and releases it on completion (success or failure). The guard's
+ * atomicity limits are documented on {@code DesignAppEnvServiceImpl.acquireEnvLock}.
  * <p>
  * Authentication between Studio and the runtime targeted by this Env uses per-env
  * Ed25519 keypairs. Studio signs outgoing upgrade requests with {@code privateKey};
@@ -28,55 +31,76 @@ import io.softa.starter.studio.release.enums.DesignAppEnvType;
  * is one env at a time — reissuing a keypair here does not disturb other runtimes.
  */
 @Data
-@Schema(name = "DesignAppEnv")
 @EqualsAndHashCode(callSuper = true)
+@Model(
+        idStrategy = IdStrategy.DISTRIBUTED_LONG
+)
 public class DesignAppEnv extends AuditableModel {
 
     @Serial
     private static final long serialVersionUID = 1L;
 
-    @Schema(description = "ID")
+    @Field(label = "ID")
     private Long id;
 
-    @Schema(description = "App ID")
+    @Field(label = "App ID", required = true)
     private Long appId;
 
-    @Schema(description = "Current Version ID — the latest version successfully deployed to this env")
-    private Long currentVersionId;
-
-    @Schema(description = "Env runtime status — used as a per-env deployment mutex")
+    @Field
     private DesignAppEnvStatus envStatus;
 
-    @Schema(description = "Env Name")
+    @Field(label = "Env Name", required = true)
     private String name;
 
-    @Schema(description = "Sequence")
+    @Field
     private Integer sequence;
 
-    @Schema(description = "Env Type")
+    @Field
     private DesignAppEnvType envType;
 
-    @Schema(description = "Protected Env")
+    @Field(required = true, description = "Target runtime database flavor (moved here from DesignApp)")
+    private DatabaseType databaseType;
+
+    @Field(description = "Connector kind to the target — Softa runtime or raw JDBC")
+    private ConnectorType connectorType;
+
+    // JDBC connection — used only when connectorType = JDBC; there is no separate DesignConnector
+    // entity. Required-ness is validated per-connectorType at connector build (ConnectorFactory),
+    // not via @Field(required), since which fields are mandatory depends on connectorType.
+    @Field(label = "JDBC URL", length = 256, description = "Raw JDBC connection URL when connectorType = JDBC")
+    private String jdbcUrl;
+
+    @Field(label = "JDBC Username", length = 128)
+    private String jdbcUsername;
+
+    @Field(label = "JDBC Password", length = 512, encrypted = true, copyable = false, unsearchable = true)
+    private String jdbcPassword;
+
+    @Field
     private Boolean protectedEnv;
 
-    @Schema(description = "Active")
+    @Field
     private Boolean active;
 
-    @Schema(description = "Upgrade API EndPoint")
+    // Not @Field(required): mandatory only for connectorType = SOFTA (validated at connector build,
+    // ConnectorFactory) — a JDBC env has no upgrade endpoint.
+    @Field(label = "Upgrade API EndPoint", length = 128)
     private String upgradeEndpoint;
 
-    @Schema(description = "Public Key — Base64-encoded X.509 SubjectPublicKeyInfo; served to the runtime operator when provisioning")
+    @Field(length = 256)
     private String publicKey;
 
-    @Schema(description = "Private Key — Base64-encoded PKCS#8; ORM-layer encrypted at rest, never returned in read responses")
+    // The signing private key is a secret: encrypted at rest, never returned by search, and not
+    // carried by copyById (mirrors jdbcPassword). Encryption inflates the stored value, hence length 512.
+    @Field(length = 512, encrypted = true, copyable = false, unsearchable = true)
     private String privateKey;
 
-    @Schema(description = "Auto Upgrade")
-    private Boolean autoUpgrade;
+    @Field(label = "Auto Execute DDL")
+    private Boolean autoExecuteDDL;
 
-    @Schema(description = "Description")
+    @Field(length = 256)
     private String description;
 
-    @Schema(description = "Deleted")
+    @Field
     private Boolean deleted;
 }

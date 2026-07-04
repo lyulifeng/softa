@@ -4,15 +4,19 @@ import com.fasterxml.jackson.annotation.JsonValue;
 import lombok.AllArgsConstructor;
 import lombok.Getter;
 
+import io.softa.framework.base.annotation.OptionItem;
+import io.softa.framework.base.annotation.OptionSet;
+
 /**
  * Tenant execution mode for cross-tenant scenarios (e.g., scheduled tasks, system jobs).
  */
 @Getter
 @AllArgsConstructor
+@OptionSet
 public enum TenantJobMode {
-    /** Execute once per active tenant, each with its own tenant context */
+    @OptionItem(description = "Execute once per active tenant, each with its own tenant context")
     PER_TENANT("PerTenant"),
-    /** Skip tenant isolation, operate across all tenants */
+    @OptionItem(description = "Skip tenant isolation, operate across all tenants")
     CROSS_TENANT("CrossTenant");
 
     @JsonValue

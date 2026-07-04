@@ -1,9 +1,6 @@
 package io.softa.framework.orm.jdbc;
 
-import io.softa.framework.base.utils.StringTools;
-import io.softa.framework.orm.constant.ModelConstant;
-import io.softa.framework.orm.meta.MetaField;
-import io.softa.framework.orm.meta.ModelManager;
+import java.sql.Date;
 import java.sql.ResultSet;
 import java.sql.ResultSetMetaData;
 import java.sql.SQLException;
@@ -12,6 +9,11 @@ import java.util.Map;
 import java.util.Optional;
 import org.springframework.jdbc.core.RowMapper;
 import org.springframework.jdbc.support.JdbcUtils;
+
+import io.softa.framework.base.utils.StringTools;
+import io.softa.framework.orm.constant.ModelConstant;
+import io.softa.framework.orm.meta.MetaField;
+import io.softa.framework.orm.meta.ModelManager;
 
 /**
  * JDBCTemplate Map structure row data encapsulation.
@@ -50,7 +52,7 @@ public class ModelRowMapper implements RowMapper<Map<String, Object>> {
                 }
             }
             Object value = JdbcUtils.getResultSetValue(rs, i);
-            if (value instanceof java.sql.Date sqlDate) {
+            if (value instanceof Date sqlDate) {
                 // Auto-convert java.sql.Date to LocalDate
                 value = sqlDate.toLocalDate();
             }

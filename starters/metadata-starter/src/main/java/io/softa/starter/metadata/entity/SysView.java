@@ -1,11 +1,12 @@
 package io.softa.starter.metadata.entity;
 
 import java.io.Serial;
-import io.swagger.v3.oas.annotations.media.Schema;
 import lombok.Data;
 import lombok.EqualsAndHashCode;
 import tools.jackson.databind.JsonNode;
 
+import io.softa.framework.orm.annotation.Field;
+import io.softa.framework.orm.annotation.Model;
 import io.softa.framework.orm.domain.Filters;
 import io.softa.framework.orm.domain.Orders;
 import io.softa.framework.orm.entity.AuditableModel;
@@ -15,52 +16,52 @@ import io.softa.framework.orm.enums.ViewType;
  * SysView Model
  */
 @Data
-@Schema(name = "SysView")
 @EqualsAndHashCode(callSuper = true)
+@Model(label = "System View", businessKey = {"modelName", "code"})
 public class SysView extends AuditableModel {
 
     @Serial
     private static final long serialVersionUID = 1L;
 
-    @Schema(description = "ID")
+    @Field(label = "ID")
     private Long id;
 
-    @Schema(description = "App ID")
-    private Long appId;
+    @Field
+    private String appCode;
 
-    @Schema(description = "Model Name")
+    @Field
     private String modelName;
 
-    @Schema(description = "View Name")
+    @Field(required = true)
     private String name;
 
-    @Schema(description = "View Code")
+    @Field
     private String code;
 
-    @Schema(description = "View Type")
+    @Field(required = true)
     private ViewType type;
 
-    @Schema(description = "Sequence")
+    @Field
     private Integer sequence;
 
-    @Schema(description = "Structure")
+    @Field(required = true)
     private JsonNode structure;
 
-    @Schema(description = "Default Filters")
+    @Field
     private Filters defaultFilter;
 
-    @Schema(description = "Default Order")
+    @Field
     private Orders defaultOrder;
 
-    @Schema(description = "Navigation ID")
+    @Field(label = "Nav ID")
     private Long navId;
 
-    @Schema(description = "Public View")
+    @Field
     private Boolean publicView;
 
-    @Schema(description = "Default View")
+    @Field
     private Boolean defaultView;
 
-    @Schema(description = "Deleted")
+    @Field
     private Boolean deleted;
 }

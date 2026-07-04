@@ -1,35 +1,40 @@
 package io.softa.starter.user.entity;
 
 import java.io.Serial;
-import io.swagger.v3.oas.annotations.media.Schema;
 import lombok.Data;
 import lombok.EqualsAndHashCode;
 
+import io.softa.framework.orm.annotation.Field;
+import io.softa.framework.orm.annotation.Model;
 import io.softa.framework.orm.entity.AuditableModel;
+import io.softa.framework.orm.enums.IdStrategy;
 
 /**
  * UserAccountHistory Model
  */
 @Data
-@Schema(name = "UserAccountHistory")
 @EqualsAndHashCode(callSuper = true)
+@Model(
+        idStrategy = IdStrategy.DISTRIBUTED_LONG,
+        copyable = false
+)
 public class UserAccountHistory extends AuditableModel {
 
     @Serial
     private static final long serialVersionUID = 1L;
 
-    @Schema(description = "ID")
+    @Field(label = "ID")
     private Long id;
 
-    @Schema(description = "Tenant ID")
+    @Field(label = "Tenant ID")
     private Long tenantId;
 
-    @Schema(description = "User ID")
+    @Field(label = "User ID")
     private Long userId;
 
-    @Schema(description = "Password")
+    @Field(length = 256)
     private String password;
 
-    @Schema(description = "Password Salt")
+    @Field
     private String passwordSalt;
 }

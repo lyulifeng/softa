@@ -1,17 +1,17 @@
 package io.softa.starter.file.excel.imports.handler;
 
+import java.util.ArrayList;
+import java.util.List;
+import org.apache.commons.lang3.StringUtils;
+
 import io.softa.framework.base.exception.ValidationException;
 import io.softa.framework.orm.meta.MetaField;
 import io.softa.framework.orm.meta.OptionManager;
 import io.softa.starter.file.dto.ImportFieldDTO;
-import org.apache.commons.lang3.StringUtils;
-
-import java.util.ArrayList;
-import java.util.List;
 
 /**
  * MultiOptionHandler
- * Compatible with the itemName and itemCode of OptionItem.
+ * Compatible with the label and itemCode of OptionItem.
  */
 public class MultiOptionHandler extends BaseImportHandler {
 
@@ -33,11 +33,11 @@ public class MultiOptionHandler extends BaseImportHandler {
                 if (OptionManager.existsItemCode(optionSetCode, optionStr)) {
                     codeList.add(optionStr);
                 } else {
-                    // Treat the option string as itemName
-                    String optionItemCode = OptionManager.getItemCodeByName(optionSetCode, optionStr);
+                    // Treat the option string as label
+                    String optionItemCode = OptionManager.getItemCodeByLabel(optionSetCode, optionStr);
                     if (optionItemCode == null) {
                         throw new ValidationException("The multi-option field `{0}` does not exist item `{1}`",
-                                labelName, optionStr);
+                                label, optionStr);
                     }
                     codeList.add(optionItemCode);
                 }

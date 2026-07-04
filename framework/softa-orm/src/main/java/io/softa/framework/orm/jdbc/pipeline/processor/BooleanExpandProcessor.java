@@ -56,7 +56,7 @@ public class BooleanExpandProcessor extends BaseProcessor {
             boolean rawValue = Boolean.TRUE.equals(row.get(fieldName));
             String itemCode = Boolean.toString(rawValue);
             MetaOptionItem metaOptionItem = OptionManager.getMetaOptionItem(BaseConstant.BOOLEAN_OPTION_SET_CODE, itemCode);
-            row.put(fieldName, metaOptionItem.getItemName());
+            row.put(fieldName, metaOptionItem.getLabel());
         }
     }
 }

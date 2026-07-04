@@ -1,32 +1,35 @@
 package io.softa.app.demo.entity;
 
 import java.io.Serial;
-import io.swagger.v3.oas.annotations.media.Schema;
 import lombok.Data;
 import lombok.EqualsAndHashCode;
 
+import io.softa.framework.orm.annotation.Field;
+import io.softa.framework.orm.annotation.Index;
+import io.softa.framework.orm.annotation.Model;
 import io.softa.framework.orm.entity.AuditableModel;
 
 /**
- * EmpProjectRel Model
+ * EmpProjectRel Model — join table backing the Employee &lt;-&gt; Project many-to-many relation.
  */
 @Data
-@Schema(name = "EmpProjectRel")
+@Model(label = "Employee Project Relation")
+@Index(indexName = "uk_emp_project_rel", fields = {"empId", "projectId"}, unique = true)
 @EqualsAndHashCode(callSuper = true)
 public class EmpProjectRel extends AuditableModel {
 
     @Serial
     private static final long serialVersionUID = 1L;
 
-    @Schema(description = "ID")
+    @Field(label = "ID")
     private Long id;
 
-    @Schema(description = "Employee ID")
+    @Field(label = "Employee ID")
     private Long empId;
 
-    @Schema(description = "Project ID")
+    @Field(label = "Project ID")
     private Long projectId;
 
-    @Schema(description = "Tenant ID")
+    @Field(label = "Tenant ID")
     private Long tenantId;
 }

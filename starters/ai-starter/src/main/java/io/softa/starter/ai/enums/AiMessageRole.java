@@ -4,11 +4,14 @@ import com.fasterxml.jackson.annotation.JsonValue;
 import lombok.AllArgsConstructor;
 import lombok.Getter;
 
+import io.softa.framework.base.annotation.OptionSet;
+
 /**
  * AI Message Role Enum
  */
 @Getter
 @AllArgsConstructor
+@OptionSet(label = "AI Message Role")
 public enum AiMessageRole {
     USER("User"),
     ASSISTANT("Assistant"),

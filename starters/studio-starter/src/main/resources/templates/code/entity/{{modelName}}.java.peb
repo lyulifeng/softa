@@ -3,17 +3,17 @@ The variables available in this template include:
 
 - Top-level variables:
   - appName, appCode
-  - labelName, modelName, displayName, searchName, defaultOrder
+  - label, modelName, displayName, searchName, defaultOrder
   - tableName, softDelete, softDeleteField, activeControl, timeline
-  - idStrategy, storageType, versionLock, multiTenant, dataSource, serviceName
+  - idStrategy, storageType, versionLock, multiTenant, copyable, dataSource, serviceName
   - businessKey, partitionField, description, modelFields, modelIndexes, deleted
   - packageName, codeLang, userName, currentDate
 - modelFields[*]:
-  - labelName, fieldName, columnName, modelName
+  - label, fieldName, columnName, modelName
   - description, fieldType, optionSetCode, relatedModel, relatedField
   - joinModel, joinLeft, joinRight, cascadedField, filters
   - defaultValue, length, scale, required, readonly, hidden, translatable
-  - nonCopyable, unsearchable, computed, expression, dynamic, encrypted
+  - copyable, unsearchable, computed, expression, dynamic, encrypted
   - maskingType, widgetType, deleted, javaType
 
 #}
@@ -49,7 +49,7 @@ public class {{ modelName }} extends AuditableModel {
     private static final long serialVersionUID = 1L;
 
 {% for field in modelFields %}
-    @Schema(description = "{{ field.labelName }}")
+    @Schema(description = "{{ field.label }}")
     private {{ field.javaType }} {{ field.fieldName }};
 
 {% endfor %}

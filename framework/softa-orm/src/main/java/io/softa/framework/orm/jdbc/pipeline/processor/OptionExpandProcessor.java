@@ -47,7 +47,7 @@ public class OptionExpandProcessor extends BaseProcessor {
      * The result is a string or an OptionReference object according to the convertType.
      *
      * @param code Option code, compatible with String and Number.
-     * @return itemName or OptionReference object according to the convertType.
+     * @return label or OptionReference object according to the convertType.
      */
     public Object getOptionItemValue(Object code) {
         String itemCode = Objects.toString(code, null);
@@ -59,14 +59,15 @@ public class OptionExpandProcessor extends BaseProcessor {
         if (metaOptionItem == null) {
             log.error("""
                     Model field {}: {} is a Option field, but the itemCode `{}` doesn't exist in option set {}.
-                    using the itemCode instead of ItemName!""",
+                    using the itemCode instead of label!""",
                     metaField.getModelName(), metaField.getFieldName(), itemCode, optionSetCode);
             return ConvertType.REFERENCE.equals(convertType) ?
                     OptionReference.of(itemCode, itemCode) : itemCode;
         } else if (ConvertType.REFERENCE.equals(convertType)) {
-            return OptionReference.of(itemCode, metaOptionItem.getItemName(), metaOptionItem.getItemColor());
+            return OptionReference.of(itemCode, metaOptionItem.getLabel(),
+                    metaOptionItem.getItemTone(), metaOptionItem.getItemIcon());
         } else if (ConvertType.DISPLAY.equals(convertType)) {
-            return metaOptionItem.getItemName();
+            return metaOptionItem.getLabel();
         }
         return itemCode;
     }

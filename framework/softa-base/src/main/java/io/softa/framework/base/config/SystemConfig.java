@@ -1,18 +1,35 @@
 package io.softa.framework.base.config;
 
+import java.net.URI;
 import java.util.List;
 import jakarta.annotation.PostConstruct;
+import jakarta.validation.constraints.AssertTrue;
 import lombok.Data;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.context.properties.ConfigurationProperties;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.util.StringUtils;
+import org.springframework.validation.annotation.Validated;
 
 @Data
 @Configuration
 @ConfigurationProperties(prefix = "system")
+@Validated
 public class SystemConfig {
 
     private String name;
+
+    /**
+     * Stable application code identifying which app this runtime hosts.
+     * The cross-system join key: stamped server-side onto
+     * metadata catalog rows ({@code sys_*.app_code}) and verified against
+     * {@code DesignApp.appCode} on every signed studio call, so an envelope
+     * can never land on the wrong app.
+     * <p>
+     * Optional at the base layer (apps without metadata-starter need no
+     * identity); metadata-starter asserts it non-blank at boot.
+     */
+    private String appCode;
 
     private String defaultLanguage;
 
@@ -33,8 +50,6 @@ public class SystemConfig {
     // For example: - http://localhost:3000/
     private List<String> allowedOrigins;
 
-    private String runtimePublicKey;
-
     /**
      * Publicly-reachable base URL (scheme + host + port) of this application, as
      * seen by other systems. Does NOT include the servlet context path — use
@@ -52,6 +67,9 @@ public class SystemConfig {
      */
     @Value("${server.servlet.context-path:}")
     private String contextPath;
+
+    @Value("${debug:false}")
+    private boolean debug;
 
     // Singleton instance
     public static SystemConfig env;
@@ -84,4 +102,30 @@ public class SystemConfig {
         return host + path;
     }
 
+    @AssertTrue(message = "system.app-code must match [a-z][a-z0-9-]{0,63}, e.g. demo-app")
+    public boolean isAppCodeValid() {
+        if (!StringUtils.hasText(appCode)) {
+            return true; // optional in base; metadata-starter enforces presence
+        }
+        return appCode.matches("[a-z][a-z0-9-]{0,63}");
+    }
+
+    @AssertTrue(message = "system.public-access-url must be an absolute http(s) base URL without context path, e.g. http://localhost:8080")
+    public boolean isPublicAccessUrlValid() {
+        if (!StringUtils.hasText(publicAccessUrl)) {
+            return true; // 在 base 模块里先保持可选
+        }
+        try {
+            URI uri = URI.create(publicAccessUrl);
+            String scheme = uri.getScheme();
+            String path = uri.getPath();
+            return ("http".equalsIgnoreCase(scheme) || "https".equalsIgnoreCase(scheme))
+                    && StringUtils.hasText(uri.getHost())
+                    && uri.getQuery() == null
+                    && uri.getFragment() == null
+                    && (path == null || path.isBlank() || "/".equals(path));
+        } catch (IllegalArgumentException ex) {
+            return false;
+        }
+    }
 }

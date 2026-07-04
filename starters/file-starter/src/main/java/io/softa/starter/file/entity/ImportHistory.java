@@ -1,11 +1,13 @@
 package io.softa.starter.file.entity;
 
 import java.io.Serial;
-import io.swagger.v3.oas.annotations.media.Schema;
 import lombok.Data;
 import lombok.EqualsAndHashCode;
 
+import io.softa.framework.orm.annotation.Field;
+import io.softa.framework.orm.annotation.Model;
 import io.softa.framework.orm.entity.AuditableModel;
+import io.softa.framework.orm.enums.FieldType;
 import io.softa.starter.file.enums.ImportRule;
 import io.softa.starter.file.enums.ImportStatus;
 import io.softa.starter.file.enums.ImportType;
@@ -14,56 +16,56 @@ import io.softa.starter.file.enums.ImportType;
  * ImportHistory Model
  */
 @Data
-@Schema(name = "ImportHistory")
 @EqualsAndHashCode(callSuper = true)
+@Model(copyable = false)
 public class ImportHistory extends AuditableModel {
 
     @Serial
     private static final long serialVersionUID = 1L;
 
-    @Schema(description = "ID")
+    @Field(label = "ID")
     private Long id;
 
-    @Schema(description = "Tenant ID")
+    @Field(label = "Tenant ID")
     private Long tenantId;
 
-    @Schema(description = "Template ID")
+    @Field(label = "Template ID", fieldType = FieldType.MANY_TO_ONE, relatedModel = ImportTemplate.class)
     private Long templateId;
 
-    @Schema(description = "Model Name")
+    @Field
     private String modelName;
 
-    @Schema(description = "Original File ID")
+    @Field(label = "Original File ID", fieldType = FieldType.FILE)
     private Long originalFileId;
 
-    @Schema(description = "Import Type: Import / Validate")
+    @Field
     private ImportType importType;
 
-    @Schema(description = "Import Rule: OnlyCreate / OnlyUpdate / CreateOrUpdate")
+    @Field
     private ImportRule importRule;
 
-    @Schema(description = "Import Status")
+    @Field(label = "Import Status")
     private ImportStatus status;
 
-    @Schema(description = "Failed File ID")
+    @Field(label = "Failed File ID", fieldType = FieldType.FILE)
     private Long failedFileId;
 
-    @Schema(description = "Total Rows")
+    @Field
     private Integer totalRows;
 
-    @Schema(description = "Success Rows")
+    @Field
     private Integer successRows;
 
-    @Schema(description = "Failed Rows")
+    @Field
     private Integer failedRows;
 
-    @Schema(description = "Duration in seconds")
+    @Field(label = "Duration in seconds")
     private Double duration;
 
-    @Schema(description = "Error Message")
+    @Field(length = 1000)
     private String errorMessage;
 
-    @Schema(description = "Deleted")
+    @Field
     private Boolean deleted;
 
     private static final int MAX_ERROR_MESSAGE_LENGTH = 1000;

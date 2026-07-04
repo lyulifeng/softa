@@ -51,3 +51,6 @@ build/
 
 # Claude code
 .claude
+
+# macOS Finder metadata
+.DS_Store

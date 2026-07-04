@@ -1,45 +1,54 @@
 package io.softa.starter.metadata.entity;
 
-import tools.jackson.databind.JsonNode;
-import io.softa.framework.orm.entity.AuditableModel;
-import io.swagger.v3.oas.annotations.media.Schema;
+import java.io.Serial;
 import lombok.Data;
 import lombok.EqualsAndHashCode;
+import tools.jackson.databind.JsonNode;
 
-import java.io.Serial;
+import io.softa.framework.orm.annotation.Field;
+import io.softa.framework.orm.annotation.Model;
+import io.softa.framework.orm.entity.AuditableModel;
+import io.softa.framework.orm.enums.IdStrategy;
 
 /**
  * SysConfig Model
  */
 @Data
-@Schema(name = "SysConfig")
 @EqualsAndHashCode(callSuper = true)
+@Model(
+        label = "System Config",
+        idStrategy = IdStrategy.DISTRIBUTED_LONG,
+        activeControl = true,
+        businessKey = {"code"},
+        displayName = {"name"},
+        searchName = {"name"}
+)
 public class SysConfig extends AuditableModel {
 
     @Serial
     private static final long serialVersionUID = 1L;
 
-    @Schema(description = "ID")
+    @Field(label = "ID")
     private Long id;
 
-    @Schema(description = "App ID")
-    private Long appId;
+    @Field
+    private String appCode;
 
-    @Schema(description = "Name")
+    @Field(required = true)
     private String name;
 
-    @Schema(description = "Code")
+    @Field(required = true, copyable = false)
     private String code;
 
-    @Schema(description = "Value")
+    @Field(required = true)
     private JsonNode value;
 
-    @Schema(description = "Value Data Type")
+    @Field
     private String valueType;
 
-    @Schema(description = "Description")
+    @Field(length = 256)
     private String description;
 
-    @Schema(description = "Active")
+    @Field
     private Boolean active;
 }

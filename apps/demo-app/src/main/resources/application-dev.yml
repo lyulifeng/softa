@@ -1,13 +1,32 @@
 debug: false
 system:
   name: Demo Application
+  # Stable app identity: stamped onto sys_*.app_code and verified
+  # against DesignApp.appCode on every signed studio call.
+  app-code: demo-app
   default-language: en-US
-  enable-multi-tenancy: false
+  enable-multi-tenancy: true
   enable-insert-id: true
-  enable-change-log: false
-  public-access-url: http://localhost:8080
-  # Ed25519 request signing.
-  runtime-public-key: 
+  enable-change-log: true
+  public-access-url: http://localhost
+  # Metadata annotation scanner scope (dev profile).
+  # scanner-scope is a list of regex patterns full-matched against a class's
+  # package name. The scanner reconciles annotation-derived metadata into sys_*
+  # and auto-executes CREATE TABLE / ADD COLUMN / MODIFY COLUMN for in-scope
+  # models only (DROP is NEVER auto-executed; only logged with copy-paste SQL).
+  #   - ["*"]  : manage every package.
+  #   - empty  : manage nothing; the read-only drift checker runs instead.
+  #   - subset : e.g. ["io\\.softa\\.starter\\.referencedata.*"] to reconcile
+  #              only that package's models — use a narrow scope on a SHARED dev
+  #              database so developers don't clobber each other's
+  #              PLATFORM_MAINTAINED rows.
+  # NEVER set a non-empty scanner-scope on a production runtime.
+  metadata:
+    scanner-scope:
+      - "*"
+    # Ed25519 request signing public key (base64 X.509). Blank → signature
+    # verification filter is not registered.
+    public-key: MCowBQYDK2VwAyEA88km0aMzqqI/fkM616VoYkJRr3fKv4N32zaPA4vOMus=
 
 security:
   encryption:

@@ -1,125 +1,160 @@
 package io.softa.starter.studio.meta.entity;
 
 import java.io.Serial;
-import io.swagger.v3.oas.annotations.media.Schema;
 import lombok.Data;
 import lombok.EqualsAndHashCode;
 
+import io.softa.framework.orm.annotation.Field;
+import io.softa.framework.orm.annotation.Model;
 import io.softa.framework.orm.entity.AuditableModel;
 import io.softa.framework.orm.enums.FieldType;
+import io.softa.framework.orm.enums.IdStrategy;
 import io.softa.framework.orm.enums.MaskingType;
+import io.softa.framework.orm.enums.OnDelete;
 import io.softa.framework.orm.enums.WidgetType;
 
 /**
  * DesignField Model
  */
 @Data
-@Schema(name = "DesignField")
 @EqualsAndHashCode(callSuper = true)
+@Model(
+        idStrategy = IdStrategy.DISTRIBUTED_LONG,
+        // hard delete (no softDelete) — a deleted design row is simply absent from the env's
+        // desired state (converge-to-HEAD; recovery is via env↔env merge), and physical delete lets the
+        // per-env UNIQUE(env_id, …) index work (a retained soft-deleted row would block recreate). See DesignModel.
+        copyable = false,   // copy disabled (would clone the per-env business key) — see DesignModel.
+        // envId scopes the businessKey (see DesignModel).
+        businessKey = {"envId", "modelName", "fieldName"},
+        displayName = {"label"}
+)
 public class DesignField extends AuditableModel {
 
     @Serial
     private static final long serialVersionUID = 1L;
 
-    @Schema(description = "ID")
+    @Field(label = "ID")
     private Long id;
 
-    @Schema(description = "Portfolio")
-    private Long portfolioId;
-
-    @Schema(description = "App ID")
+    @Field(label = "App ID")
     private Long appId;
 
-    @Schema(description = "Model ID")
+    @Field(label = "Model ID")
     private Long modelId;
 
-    @Schema(description = "Label Name")
-    private String labelName;
+    // Per-env design: see DesignModel — envId scopes the row (NOT NULL, V19). The per-env
+    // business key (env_id + modelName + fieldName) is the identity (no logicalId).
+    @Field(label = "Env ID")
+    private Long envId;
 
-    @Schema(description = "Field Name")
+    @Field(required = true)
+    private String label;
+
+    @Field(required = true)
     private String fieldName;
 
-    @Schema(description = "Column Name")
+    /** Single immediately-prior field name for a declared rename; excluded from checksum/diff. */
+    @Field
+    private String renamedFrom;
+
+    @Field
     private String columnName;
 
-    @Schema(description = "Model Name")
+    @Field(required = true)
     private String modelName;
 
-    @Schema(description = "Description")
+    @Field(length = 256)
     private String description;
 
-    @Schema(description = "Field Type")
+    @Field(required = true)
     private FieldType fieldType;
 
-    @Schema(description = "Option Set Code")
+    @Field
     private String optionSetCode;
 
-    @Schema(description = "Related Model")
+    @Field
     private String relatedModel;
 
-    @Schema(description = "Related Field")
+    @Field
     private String relatedField;
 
-    @Schema(description = "Join Model")
+    // FK delete strategy for a TO_ONE relation; null = KEEP (default).
+    @Field
+    private OnDelete onDelete;
+
+    @Field
     private String joinModel;
 
-    @Schema(description = "Join Model Left Key")
+    @Field(label = "Join Model Left Key")
     private String joinLeft;
 
-    @Schema(description = "Join Model Right Key")
+    @Field(label = "Join Model Right Key")
     private String joinRight;
 
-    @Schema(description = "Cascaded Field")
+    @Field(length = 256)
     private String cascadedField;
 
-    @Schema(description = "Filters")
+    @Field(length = 256)
     private String filters;
 
-    @Schema(description = "Default Value")
+    @Field(length = 256)
     private String defaultValue;
 
-    @Schema(description = "Length")
+    @Field
     private Integer length;
 
-    @Schema(description = "Scale")
+    @Field
     private Integer scale;
 
-    @Schema(description = "Is Required")
+    @Field(label = "Is Required")
     private Boolean required;
 
-    @Schema(description = "Is Readonly")
+    @Field(label = "Is Readonly")
     private Boolean readonly;
 
-    @Schema(description = "Hidden")
+    @Field
     private Boolean hidden;
 
-    @Schema(description = "Translatable")
+    @Field
     private Boolean translatable;
 
-    @Schema(description = "Non Copyable")
-    private Boolean nonCopyable;
+    // Structural mirror of sys_field.copyable governance; the cross-lane checksum requires
+    // design_* and sys_* to match field-for-field. Initialized true (column is NOT NULL DEFAULT 1).
+    @Field(defaultValue = "true")
+    private Boolean copyable = Boolean.TRUE;
 
-    @Schema(description = "Unsearchable")
+    @Field
     private Boolean unsearchable;
 
-    @Schema(description = "Is Computed")
+    @Field(label = "Is Computed")
     private Boolean computed;
 
-    @Schema(description = "Expression")
+    @Field(length = 20000)
     private String expression;
 
-    @Schema(description = "Dynamic Field")
+    @Field(label = "Dynamic Field")
     private Boolean dynamic;
 
-    @Schema(description = "Is Encrypted")
+    @Field(label = "Is Encrypted")
     private Boolean encrypted;
 
-    @Schema(description = "Masking Type")
+    @Field
     private MaskingType maskingType;
 
-    @Schema(description = "Widget Type")
+    @Field
     private WidgetType widgetType;
 
-    @Schema(description = "Deleted")
-    private Boolean deleted;
+    // Design-time provenance only: which DesignFieldDomain this field was applied from
+    // (a one-time template fill — applyDomain copies the domain's attrs into the columns above). NOT a
+    // live binding (no propagation) and NOT a sys_field column, so it is never checksummed nor shipped to
+    // runtime — the converge engine is domain-agnostic.
+    @Field
+    private Long domainId;
+
+    // System-computed (never user-authored): for a TO_ONE FK, the resolved PHYSICAL type of
+    // the referenced column (STRING / LONG / ...), mirrored so DDL renders VARCHAR(n) / BIGINT.
+    // fieldType stays the logical MANY_TO_ONE / ONE_TO_ONE; resolved width lives in length/scale.
+    // Recomputed on save (own type); null for non-FK fields.
+    @Field
+    private FieldType relatedFieldType;
 }

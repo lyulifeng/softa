@@ -2,44 +2,60 @@ package io.softa.starter.metadata.entity;
 
 import java.io.Serial;
 import java.util.List;
-import io.swagger.v3.oas.annotations.media.Schema;
 import lombok.Data;
 import lombok.EqualsAndHashCode;
 
+import io.softa.framework.orm.annotation.Field;
+import io.softa.framework.orm.annotation.Model;
 import io.softa.framework.orm.entity.AuditableModel;
+import io.softa.framework.orm.enums.FieldType;
 
 /**
- * SysModelIndex Model
+ * SysModelIndex — metadata catalog row describing a model's database index.
+ *
+ * <p>Self-described via {@code @Model} + per-field {@code @Field} so the
+ * scanner manages its schema like any other SYSTEM_MODEL.
  */
 @Data
-@Schema(name = "SysModelIndex")
 @EqualsAndHashCode(callSuper = true)
+@Model(
+        label = "System Model Index",
+        businessKey = {"modelName", "indexName"},
+        description = "Metadata catalog of indexes"
+)
 public class SysModelIndex extends AuditableModel {
 
     @Serial
     private static final long serialVersionUID = 1L;
 
-    @Schema(description = "ID")
+    @Field(label = "ID")
     private Long id;
 
-    @Schema(description = "APP ID")
-    private Long appId;
+    @Field
+    private String appCode;
 
-    @Schema(description = "Index Title")
-    private String name;
-
-    @Schema(description = "Model Name")
+    @Field(required = true)
     private String modelName;
 
-    @Schema(description = "Model ID")
+    // Surrogate FK to the owning model. relatedField defaults to id (BIGINT). Nullable and
+    // EXCLUDED from the scanner diff: resolved post-scan from modelName — see SysReferenceSql.
+    @Field(fieldType = FieldType.MANY_TO_ONE, relatedModel = SysModel.class)
     private Long modelId;
 
-    @Schema(description = "Index Name")
+    // Globally unique across all models (enforced at metadata load). Capped at 60 chars
+    // (safe under both MySQL 64 and PostgreSQL 63); the parser rejects an over-length name.
+    @Field(required = true, length = 60)
     private String indexName;
 
-    @Schema(description = "Index Fields")
+    @Field(required = true)
     private List<String> indexFields;
 
-    @Schema(description = "Is Unique Index")
+    @Field(label = "Is Unique Index")
     private Boolean uniqueIndex;
+
+    // End-user message for a violation of this unique constraint (its own i18n key).
+    // Nullable: null = no custom message (generic composed fallback is used).
+    @Field(length = 256)
+    private String message;
+
 }

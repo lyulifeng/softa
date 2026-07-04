@@ -1,45 +1,50 @@
 package io.softa.starter.user.entity;
 
 import java.io.Serial;
-import io.swagger.v3.oas.annotations.media.Schema;
 import lombok.Data;
 import lombok.EqualsAndHashCode;
 import tools.jackson.databind.JsonNode;
 
+import io.softa.framework.orm.annotation.Field;
+import io.softa.framework.orm.annotation.Model;
 import io.softa.framework.orm.entity.AuditableModel;
+import io.softa.framework.orm.enums.IdStrategy;
 
 /**
  * UserAuthFailure Model
  */
 @Data
-@Schema(name = "UserAuthFailure")
 @EqualsAndHashCode(callSuper = true)
+@Model(
+        idStrategy = IdStrategy.DISTRIBUTED_LONG,
+        copyable = false
+)
 public class UserAuthFailure extends AuditableModel {
 
     @Serial
     private static final long serialVersionUID = 1L;
 
-    @Schema(description = "ID")
+    @Field(label = "ID")
     private Long id;
 
-    @Schema(description = "User ID")
+    @Field(label = "User ID")
     private Long userId;
 
-    @Schema(description = "Request Params")
+    @Field
     private JsonNode requestParams;
 
-    @Schema(description = "Failure Reason")
+    @Field(length = 1000)
     private String failureReason;
 
-    @Schema(description = "Error Stack")
+    @Field(length = 20000)
     private String errorStack;
 
-    @Schema(description = "IP Address")
+    @Field(label = "IP Address")
     private String ipAddress;
 
-    @Schema(description = "User Agent")
+    @Field
     private String userAgent;
 
-    @Schema(description = "Location")
+    @Field
     private String location;
 }

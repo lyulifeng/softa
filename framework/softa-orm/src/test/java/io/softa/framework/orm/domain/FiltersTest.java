@@ -1,13 +1,13 @@
 package io.softa.framework.orm.domain;
 
+import java.util.List;
+import java.util.Set;
 import lombok.extern.slf4j.Slf4j;
 import org.junit.jupiter.api.Assertions;
 import org.junit.jupiter.api.Test;
 
 import io.softa.framework.base.enums.Operator;
 import io.softa.framework.base.exception.IllegalArgumentException;
-
-import java.util.List;
 
 @Slf4j
 class FiltersTest {
@@ -67,7 +67,7 @@ class FiltersTest {
         Filters filters = Filters.of(source);
         assert filters != null;
         Assertions.assertEquals(source, filters.toString());
-        Assertions.assertEquals(java.util.Set.of("modelName", "fieldName"), filters.extractFields());
+        Assertions.assertEquals(Set.of("modelName", "fieldName"), filters.extractFields());
     }
 
     @Test

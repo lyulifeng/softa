@@ -1,6 +1,8 @@
 debug: false
 system:
   name: Mini Application
+  # Stable app identity: stamped onto sys_*.app_code.
+  app-code: mini-app
   default-language: en-US
   enable-multi-tenancy: false
   enable-insert-id: true

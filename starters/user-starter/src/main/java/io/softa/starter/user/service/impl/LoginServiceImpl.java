@@ -9,6 +9,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.util.Assert;
 
+import io.softa.framework.base.config.SystemConfig;
 import io.softa.framework.base.constant.RedisConstant;
 import io.softa.framework.base.context.UserInfo;
 import io.softa.framework.base.enums.Operator;
@@ -17,6 +18,7 @@ import io.softa.framework.base.security.PasswordUtils;
 import io.softa.framework.base.utils.UUIDUtils;
 import io.softa.framework.orm.domain.Filters;
 import io.softa.framework.orm.service.CacheService;
+import io.softa.framework.orm.service.TenantInfoService;
 import io.softa.starter.user.entity.UserAccount;
 import io.softa.starter.user.service.LoginService;
 import io.softa.starter.user.service.UserAccountService;
@@ -37,6 +39,29 @@ public class LoginServiceImpl implements LoginService {
 
     @Autowired
     private UserProfileService profileService;
+
+    @Autowired(required = false)
+    private TenantInfoService tenantInfoService;
+
+    /**
+     * Tenant lifecycle gate at login: only ACTIVE tenants may log in. Enforced at the single
+     * session-issuance choke point ({@link #generateSessionId}), so every login flow — password,
+     * email/mobile code, and OAuth — is covered, and the user gets a clear reason before a
+     * session is issued (rather than a session the per-request gate would immediately reject).
+     * No-op when multi-tenancy is disabled.
+     *
+     * @param userId the user being logged in (its tenantId is resolved here)
+     */
+    private void validateTenantActive(Long userId) {
+        if (!SystemConfig.env.isEnableMultiTenancy()) {
+            return;
+        }
+        UserInfo userInfo = profileService.getUserInfo(userId);
+        Long tenantId = userInfo == null ? null : userInfo.getTenantId();
+        if (tenantInfoService == null || !tenantInfoService.isTenantActive(tenantId)) {
+            throw new BusinessException("Login denied: tenant is not active.");
+        }
+    }
 
     public static String buildLoginCodeKey(String identifier) {
         // Partition by login scenario
@@ -137,6 +162,8 @@ public class LoginServiceImpl implements LoginService {
      * @return Session ID
      */
     public String generateSessionId(Long userId) {
+        // Tenant lifecycle gate — the single choke point all login flows pass through.
+        validateTenantActive(userId);
         String sessionId = UUIDUtils.shortUUID22();
         // Store session ID -> user ID mapping in cache
         String sessionKey = RedisConstant.SESSION + sessionId;

@@ -2,12 +2,11 @@ package io.softa.framework.orm.service;
 
 import java.util.List;
 
-import io.softa.framework.orm.entity.TenantInfo;
-
 /**
- * Provides the list of active tenant IDs.
- * Implementation may use Redis cache with database fallback.
- * Callers do not need to know the underlying data source.
+ * Framework SPI for multi-tenant runtime concerns. Returns only ids / booleans — never the
+ * tenant entity, which lives in tenant-starter. The implementation
+ * ({@code TenantInfoServiceImpl}) is provided by tenant-starter; framework consumers
+ * (TenantAspect, ContextBuilder) depend only on this contract.
  */
 public interface TenantInfoService {
 
@@ -18,7 +17,22 @@ public interface TenantInfoService {
      */
     List<Long> getActiveTenantIds();
 
-    TenantInfo getTenantInfo(Long tenantId);
+    /**
+     * Whether the tenant is currently ACTIVE — the only state permitted to log in / operate.
+     * Backed by the per-tenant cache, so it is cheap enough for a per-request gate.
+     *
+     * @param tenantId tenant id
+     * @return true only if the tenant exists and its status is ACTIVE
+     */
+    boolean isTenantActive(Long tenantId);
 
-    List<TenantInfo> getActiveTenantList();
+    /**
+     * Deactivate a tenant — the single sanctioned path out of ACTIVE: set its status to
+     * SUSPENDED and evict the tenant caches so {@link #isTenantActive} and active-id
+     * filtering reflect it immediately. Existing users are then forced to re-login on their
+     * next request (the per-request tenant gate rejects them and drops their session).
+     *
+     * @param tenantId tenant id
+     */
+    void deactivate(Long tenantId);
 }

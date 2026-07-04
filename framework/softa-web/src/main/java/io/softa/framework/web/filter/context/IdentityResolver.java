@@ -4,6 +4,7 @@ import jakarta.annotation.PostConstruct;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
+import jakarta.annotation.PostConstruct;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.server.PathContainer;
 import org.springframework.stereotype.Component;
@@ -49,9 +50,15 @@ public class IdentityResolver {
             "/swagger-ui/**",
             "/swagger-ui.html",
             "/actuator/**");
-    private static final List<String> ANONYMOUS_PATHS = List.of("/login/**");
+    private static final List<String> ANONYMOUS_PATHS = List.of(
+            "/login/**",
+            // OAuth2 provider browser-redirect endpoint.
+            "/MailOauth2/callback");
     private static final List<String> OPENAPI_PATHS = List.of("/openapi/**");
     private static final List<String> INTERNAL_PATHS = List.of("/internal/**");
+
+    // /upgrade/runtime/** is studio→runtime, signature-authenticated; see SignatureConfig.
+    private static final List<String> OPERATION_PATHS = List.of("/upgrade/**");
 
     private static final PathPatternParser PARSER = new PathPatternParser();
 
@@ -59,6 +66,7 @@ public class IdentityResolver {
     private List<PathPattern> anonymousPathPatterns;
     private List<PathPattern> openApiPathPatterns;
     private List<PathPattern> internalPathPatterns;
+    private List<PathPattern> operationPathPatterns;
 
     @PostConstruct
     private void initPatterns() {
@@ -79,6 +87,7 @@ public class IdentityResolver {
 
         openApiPathPatterns = parsePatterns(prefixPath, OPENAPI_PATHS);
         internalPathPatterns = parsePatterns(prefixPath, INTERNAL_PATHS);
+        operationPathPatterns = parsePatterns(prefixPath, OPERATION_PATHS);
     }
 
     private String normalizeContextPath(String path) {
@@ -97,37 +106,12 @@ public class IdentityResolver {
         return paths.stream().map(path -> prefixPath + path).map(PARSER::parse).toList();
     }
 
-    public boolean isExcludedPath(String path) {
+    private static boolean matchesAny(String path, List<PathPattern> patterns) {
         PathContainer container = PathContainer.parsePath(path);
-        for (PathPattern pattern : excludePathPatterns) {
-            if (pattern.matches(container)) return true;
-        }
-        return false;
-    }
-
-    public boolean isAnonymousPath(String path) {
-        PathContainer container = PathContainer.parsePath(path);
-        for (PathPattern pattern : anonymousPathPatterns) {
-            if (pattern.matches(container))
+        for (PathPattern pattern : patterns) {
+            if (pattern.matches(container)) {
                 return true;
-        }
-        return false;
-    }
-
-    public boolean isOpenApiPath(String path) {
-        PathContainer container = PathContainer.parsePath(path);
-        for (PathPattern pattern : openApiPathPatterns) {
-            if (pattern.matches(container))
-                return true;
-        }
-        return false;
-    }
-
-    public boolean isInternalPath(String path) {
-        PathContainer container = PathContainer.parsePath(path);
-        for (PathPattern pattern : internalPathPatterns) {
-            if (pattern.matches(container))
-                return true;
+            }
         }
         return false;
     }
@@ -140,14 +124,16 @@ public class IdentityResolver {
      * @param path the request path
      */
     public IdentifyType getIdentifyRequired(String path) {
-        if (isExcludedPath(path)) {
+        if (matchesAny(path, excludePathPatterns)) {
             return IdentifyType.NONE;
-        } else if (isAnonymousPath(path)) {
+        } else if (matchesAny(path, anonymousPathPatterns)) {
             return IdentifyType.ANONYMOUS;
-        } else if (isOpenApiPath(path)) {
+        } else if (matchesAny(path, openApiPathPatterns)) {
             return IdentifyType.OPENAPI;
-        } else if (isInternalPath(path)) {
+        } else if (matchesAny(path, internalPathPatterns)) {
             return IdentifyType.INTERNAL;
+        } else if (matchesAny(path, operationPathPatterns)) {
+            return IdentifyType.OPERATION;
         } else {
             return IdentifyType.USER;
         }

@@ -5,11 +5,11 @@ import org.junit.jupiter.api.Test;
 
 import io.softa.framework.orm.enums.FieldType;
 import io.softa.framework.orm.enums.IdStrategy;
+import io.softa.starter.metadata.ddl.dialect.MySqlDdlDialect;
 import io.softa.starter.studio.meta.entity.DesignField;
 import io.softa.starter.studio.meta.entity.DesignModel;
-import io.softa.starter.studio.template.ddl.context.DdlContextBuilder;
-import io.softa.starter.studio.template.ddl.dialect.MySqlDdlDialect;
 import io.softa.starter.studio.template.TestMetadataResolver;
+import io.softa.starter.studio.template.ddl.context.DdlContextBuilder;
 
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -53,7 +53,7 @@ class MySQLDDLTest {
     private DesignModel designModel(String modelName, IdStrategy idStrategy) {
         DesignModel designModel = new DesignModel();
         designModel.setModelName(modelName);
-        designModel.setLabelName(modelName);
+        designModel.setLabel(modelName);
         designModel.setTableName(modelName.toLowerCase());
         designModel.setIdStrategy(idStrategy);
         designModel.setModelFields(List.of(idField()));
@@ -67,14 +67,14 @@ class MySQLDDLTest {
         field.setFieldType(FieldType.LONG);
         field.setLength(32);
         field.setRequired(true);
-        field.setLabelName("ID");
+        field.setLabel("ID");
         return field;
     }
 
     private DesignModel timelineModel(String modelName, IdStrategy idStrategy) {
         DesignModel designModel = new DesignModel();
         designModel.setModelName(modelName);
-        designModel.setLabelName(modelName);
+        designModel.setLabel(modelName);
         designModel.setTableName(modelName.toLowerCase());
         designModel.setTimeline(true);
         designModel.setIdStrategy(idStrategy);
@@ -89,7 +89,7 @@ class MySQLDDLTest {
         field.setFieldType(FieldType.LONG);
         field.setLength(32);
         field.setRequired(true);
-        field.setLabelName("Slice ID");
+        field.setLabel("Slice ID");
         return field;
     }
 }

@@ -4,15 +4,22 @@ import com.fasterxml.jackson.annotation.JsonValue;
 import lombok.AllArgsConstructor;
 import lombok.Getter;
 
+import io.softa.framework.base.annotation.OptionItem;
+import io.softa.framework.base.annotation.OptionSet;
+
 /**
  * WeChat, AliPay, Stripe, PayPal, ApplePay, OfflinePayment,
  */
 @Getter
 @AllArgsConstructor
+@OptionSet
 public enum PaymentMethod {
+    @OptionItem(label = "WeChat Pay")
     WE_CHAT("WeChat"),
+    @OptionItem(label = "Alipay")
     ALI_PAY("AliPay"),
     STRIPE("Stripe"),
+    @OptionItem(label = "PayPal")
     PAY_PAL("PayPal"),
     APPLE_PAY("ApplePay"),
     OFFLINE_PAYMENT("OfflinePayment"),

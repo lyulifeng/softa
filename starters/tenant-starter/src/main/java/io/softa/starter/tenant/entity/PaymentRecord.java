@@ -3,11 +3,13 @@ package io.softa.starter.tenant.entity;
 import java.io.Serial;
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
-import io.swagger.v3.oas.annotations.media.Schema;
 import lombok.Data;
 import lombok.EqualsAndHashCode;
 
+import io.softa.framework.orm.annotation.Field;
+import io.softa.framework.orm.annotation.Model;
 import io.softa.framework.orm.entity.AuditableModel;
+import io.softa.framework.orm.enums.IdStrategy;
 import io.softa.starter.tenant.enums.PaymentMethod;
 import io.softa.starter.tenant.enums.PaymentStatus;
 
@@ -15,34 +17,38 @@ import io.softa.starter.tenant.enums.PaymentStatus;
  * PaymentRecord Model
  */
 @Data
-@Schema(name = "PaymentRecord")
 @EqualsAndHashCode(callSuper = true)
+@Model(
+        idStrategy = IdStrategy.DISTRIBUTED_LONG,
+        softDelete = true,
+        copyable = false
+)
 public class PaymentRecord extends AuditableModel {
 
     @Serial
     private static final long serialVersionUID = 1L;
 
-    @Schema(description = "ID")
+    @Field(label = "ID")
     private Long id;
 
-    @Schema(description = "Order ID")
+    @Field(label = "Order ID")
     private Long orderId;
 
-    @Schema(description = "Payment Method")
+    @Field
     private PaymentMethod paymentMethod;
 
-    @Schema(description = "Payment Status")
+    @Field
     private PaymentStatus paymentStatus;
 
-    @Schema(description = "Paid Amount")
+    @Field
     private BigDecimal paidAmount;
 
-    @Schema(description = "Paid At")
+    @Field
     private LocalDateTime paidAt;
 
-    @Schema(description = "Transaction ID")
+    @Field(label = "Transaction ID")
     private String transactionId;
 
-    @Schema(description = "Deleted")
+    @Field
     private Boolean deleted;
 }

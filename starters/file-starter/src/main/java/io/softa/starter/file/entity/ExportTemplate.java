@@ -2,58 +2,60 @@ package io.softa.starter.file.entity;
 
 import java.io.Serial;
 import java.util.List;
-import io.swagger.v3.oas.annotations.media.Schema;
 import lombok.Data;
 import lombok.EqualsAndHashCode;
 
+import io.softa.framework.orm.annotation.Field;
+import io.softa.framework.orm.annotation.Model;
 import io.softa.framework.orm.domain.Filters;
 import io.softa.framework.orm.domain.Orders;
 import io.softa.framework.orm.entity.AuditableModel;
+import io.softa.framework.orm.enums.FieldType;
 
 /**
  * ExportTemplate Model
  */
 @Data
-@Schema(name = "ExportTemplate")
 @EqualsAndHashCode(callSuper = true)
+@Model(searchName = {"fileName"})
 public class ExportTemplate extends AuditableModel {
 
     @Serial
     private static final long serialVersionUID = 1L;
 
-    @Schema(description = "ID")
+    @Field(label = "ID")
     private Long id;
 
-    @Schema(description = "Tenant ID")
+    @Field(label = "Tenant ID")
     private Long tenantId;
 
-    @Schema(description = "File Name")
+    @Field(required = true)
     private String fileName;
 
-    @Schema(description = "Sheet Name")
+    @Field
     private String sheetName;
 
-    @Schema(description = "Model Name")
+    @Field(required = true)
     private String modelName;
 
-    @Schema(description = "Custom File Template")
+    @Field
     private Boolean customFileTemplate;
 
-    @Schema(description = "File Template ID")
+    @Field(label = "File Template ID", fieldType = FieldType.FILE)
     private Long fileId;
 
-    @Schema(description = "Filters")
+    @Field(length = 256)
     private Filters filters;
 
-    @Schema(description = "Orders")
+    @Field
     private Orders orders;
 
-    @Schema(description = "Custom Export Handler")
+    @Field(label = "Custom Export Handler", length = 128)
     private String customHandler;
 
-    @Schema(description = "Enable Transpose")
+    @Field
     private Boolean enableTranspose;
 
-    @Schema(description = "Export Fields")
+    @Field(fieldType = FieldType.ONE_TO_MANY, relatedField = "templateId")
     private List<ExportTemplateField> exportFields;
 }

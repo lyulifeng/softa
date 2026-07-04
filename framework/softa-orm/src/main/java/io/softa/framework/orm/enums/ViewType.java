@@ -1,32 +1,33 @@
 package io.softa.framework.orm.enums;
 
-import com.fasterxml.jackson.annotation.JsonValue;
-import io.softa.framework.base.utils.Assert;
-import lombok.AllArgsConstructor;
-import lombok.Getter;
-
 import java.util.Map;
 import java.util.function.Function;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
+import com.fasterxml.jackson.annotation.JsonValue;
+import lombok.AllArgsConstructor;
+import lombok.Getter;
+
+import io.softa.framework.base.utils.Assert;
+import io.softa.framework.base.annotation.OptionSet;
 
 /**
  * View type Enum.
  */
 @Getter
 @AllArgsConstructor
+@OptionSet
 public enum ViewType {
-    TABLE("Table", "Table"),
-    FORM("Form", "Form"),
-    CARD("Card", "Card"),
-    KANBAN("Kanban", "Kanban"),
-    CALENDAR("Calendar", "Calendar"),
-    DASHBOARD("Dashboard", "Dashboard"),
+    TABLE("Table"),
+    FORM("Form"),
+    CARD("Card"),
+    KANBAN("Kanban"),
+    CALENDAR("Calendar"),
+    DASHBOARD("Dashboard"),
     ;
 
     @JsonValue
     private final String type;
-    private final String name;
 
     /** type map */
     static private final Map<String, ViewType> TYPE_MAP = Stream.of(values()).collect(Collectors.toMap(ViewType::getType, Function.identity()));

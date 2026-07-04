@@ -23,7 +23,12 @@ public class StringProcessor extends BaseProcessor {
      * @param value String data
      */
     private void checkStringLength(String value) {
-        if (value.length() > metaField.getLength() && metaField.getLength() > 0) {
+        // Null-safe + null-tolerant: a field with no declared/resolved length
+        // (e.g. a no-code STRING the studio resolver hasn't sized) skips the
+        // app-level check and lets the column's own width enforce — never NPEs
+        // on the unboxing. Annotation-lane fields always have a resolved length.
+        if (metaField.getLength() != null && metaField.getLength() > 0
+                && value.length() > metaField.getLength()) {
             throw new BusinessException("""
                     Model field {0}: {1} length exceeds the limit of {2}. The actual length is {3}, value: {4}""",
                     metaField.getModelName(), metaField.getFieldName(), metaField.getLength(), value.length(), value);

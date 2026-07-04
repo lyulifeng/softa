@@ -1,45 +1,46 @@
 package io.softa.starter.file.entity;
 
 import java.io.Serial;
-import io.swagger.v3.oas.annotations.media.Schema;
 import lombok.Data;
 import lombok.EqualsAndHashCode;
 import tools.jackson.databind.JsonNode;
 
+import io.softa.framework.orm.annotation.Field;
+import io.softa.framework.orm.annotation.Model;
 import io.softa.framework.orm.entity.AuditableModel;
 
 /**
  * DocumentTemplateSignSlot Model
  */
 @Data
-@Schema(name = "DocumentTemplateSignSlot")
 @EqualsAndHashCode(callSuper = true)
+@Model
 public class DocumentTemplateSignSlot extends AuditableModel {
 
     @Serial
     private static final long serialVersionUID = 1L;
 
-    @Schema(description = "ID")
+    @Field(label = "ID")
     private Long id;
 
-    @Schema(description = "Tenant ID")
+    @Field(label = "Tenant ID", length = 32)
     private String tenantId;
 
-    @Schema(description = "Document Template")
+    @Field(label = "Document Template")
     private Long templateId;
 
-    @Schema(description = "Slot Name")
+    @Field
     private String slotName;
 
-    @Schema(description = "Slot Code")
+    @Field
     private String slotCode;
 
-    @Schema(description = "sequence")
+    @Field
     private Integer sequence;
 
-    @Schema(description = "Placement")
+    @Field
     private JsonNode placement;
 
-    @Schema(description = "Description")
+    @Field(length = 256)
     private String description;
 }

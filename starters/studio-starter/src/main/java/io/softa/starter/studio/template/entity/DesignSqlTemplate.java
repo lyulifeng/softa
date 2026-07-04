@@ -1,45 +1,50 @@
 package io.softa.starter.studio.template.entity;
 
 import java.io.Serial;
-import io.swagger.v3.oas.annotations.media.Schema;
 import lombok.Data;
 import lombok.EqualsAndHashCode;
 
+import io.softa.framework.orm.annotation.Field;
+import io.softa.framework.orm.annotation.Model;
 import io.softa.framework.orm.entity.AuditableModel;
 import io.softa.framework.orm.enums.DatabaseType;
+import io.softa.framework.orm.enums.IdStrategy;
 
 /**
  * DesignSqlTemplate Model
  */
 @Data
-@Schema(name = "DesignSqlTemplate")
 @EqualsAndHashCode(callSuper = true)
+@Model(
+        label = "Design SQL Template",
+        idStrategy = IdStrategy.DISTRIBUTED_LONG
+)
 public class DesignSqlTemplate extends AuditableModel {
 
     @Serial
     private static final long serialVersionUID = 1L;
 
-    @Schema(description = "ID")
+    @Field(label = "ID")
     private Long id;
 
-    @Schema(description = "Database Type")
+    @Field(required = true)
     private DatabaseType databaseType;
 
-    @Schema(description = "Create Table Template")
+    @Field(required = true, length = 20000)
     private String createTableTemplate;
 
-    @Schema(description = "Alter Index Template")
+    @Field(required = true, length = 20000)
     private String alterIndexTemplate;
 
-    @Schema(description = "Alter Table Template")
+    @Field(required = true, length = 20000)
     private String alterTableTemplate;
 
-    @Schema(description = "Drop Table Template")
+    @Field(required = true, length = 20000)
     private String dropTableTemplate;
 
-    @Schema(description = "Description")
+    @Field(length = 256)
     private String description;
 
-    @Schema(description = "Deleted")
+    @Field
     private Boolean deleted;
 }

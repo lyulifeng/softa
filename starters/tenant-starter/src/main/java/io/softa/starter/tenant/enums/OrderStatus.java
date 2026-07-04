@@ -4,11 +4,14 @@ import com.fasterxml.jackson.annotation.JsonValue;
 import lombok.AllArgsConstructor;
 import lombok.Getter;
 
+import io.softa.framework.base.annotation.OptionSet;
+
 /**
  * PendingPayment, InProgress, Completed, Cancelled, Refunded
  */
 @Getter
 @AllArgsConstructor
+@OptionSet
 public enum OrderStatus {
     PENDING_PAYMENT("PendingPayment"),
     IN_PROGRESS("InProgress"),

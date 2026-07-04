@@ -13,12 +13,14 @@ import io.softa.framework.orm.domain.Orders;
 @Data
 @Schema(name = "MetaModelDTO")
 public class MetaModelDTO {
-    private String labelName;
+    private String label;
     private String modelName;
     private String description;
     private List<String> displayName;
     private List<String> searchName;
     private Orders defaultOrder;
     private boolean timeline;
+    /** Model-level copy switch — false ⇒ hide the Duplicate action and reject copy APIs. */
+    private boolean copyable;
     private Map<String, MetaFieldDTO> modelFields;
 }

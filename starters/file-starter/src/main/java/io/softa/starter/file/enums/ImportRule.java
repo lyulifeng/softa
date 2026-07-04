@@ -4,17 +4,19 @@ import com.fasterxml.jackson.annotation.JsonValue;
 import lombok.AllArgsConstructor;
 import lombok.Getter;
 
+import io.softa.framework.base.annotation.OptionSet;
+
 /**
  * Import Rule Enum
  */
 @Getter
 @AllArgsConstructor
+@OptionSet
 public enum ImportRule {
-    CREATE_OR_UPDATE("CreateOrUpdate", "Create or Update"),
-    ONLY_UPDATE("OnlyUpdate", "Only Update"),
-    ONLY_CREATE("OnlyCreate", "Only Create");
+    CREATE_OR_UPDATE("CreateOrUpdate"),
+    ONLY_UPDATE("OnlyUpdate"),
+    ONLY_CREATE("OnlyCreate");
 
     @JsonValue
     private final String code;
-    private final String name;
 }

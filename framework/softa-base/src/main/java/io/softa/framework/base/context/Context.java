@@ -7,6 +7,7 @@ import java.util.UUID;
 import lombok.Data;
 import org.apache.commons.lang3.StringUtils;
 
+import io.softa.framework.base.config.SystemConfig;
 import io.softa.framework.base.constant.BaseConstant;
 import io.softa.framework.base.enums.Language;
 import io.softa.framework.base.enums.Timezone;
@@ -71,7 +72,7 @@ public class Context implements Serializable {
     /**
      * Set by API parameters or @Debug annotation, used to output Debug logs,
      */
-    private boolean debug = false;
+    private boolean debug;
 
     /**
      * The effective date specified when querying timeline data, the default is the current date,
@@ -85,6 +86,7 @@ public class Context implements Serializable {
      */
     public Context() {
         this.traceId = UUID.randomUUID().toString();
+        this.debug = SystemConfig.env != null && SystemConfig.env.isDebug();
     }
 
     /**
@@ -92,6 +94,7 @@ public class Context implements Serializable {
      */
     public Context(String traceId) {
         this.traceId = StringUtils.isBlank(traceId) ? UUID.randomUUID().toString() : traceId;
+        this.debug = SystemConfig.env != null && SystemConfig.env.isDebug();
     }
 
     public void setEffectiveDate(LocalDate effectiveDate) {

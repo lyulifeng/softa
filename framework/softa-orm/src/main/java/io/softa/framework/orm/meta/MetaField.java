@@ -10,6 +10,7 @@ import org.apache.commons.lang3.StringUtils;
 import io.softa.framework.base.context.ContextHolder;
 import io.softa.framework.orm.enums.FieldType;
 import io.softa.framework.orm.enums.MaskingType;
+import io.softa.framework.orm.enums.OnDelete;
 import io.softa.framework.orm.enums.WidgetType;
 
 /**
@@ -26,17 +27,13 @@ public class MetaField implements Serializable {
 
     private Long id;
 
-    private Long appId;
-
-    private String labelName;
+    private String label;
 
     private String fieldName;
 
     private String columnName;
 
     private String modelName;
-
-    private Long modelId;
 
     private String description;
 
@@ -47,6 +44,13 @@ public class MetaField implements Serializable {
     private String relatedModel;
 
     private String relatedField;
+
+    // System-computed mirror of the referenced column's physical type for a TO_ONE FK
+    // (fieldType stays the logical MANY_TO_ONE / ONE_TO_ONE). Loaded from sys_field.
+    private FieldType relatedFieldType;
+
+    // FK delete strategy for a TO_ONE relation; null = KEEP (framework does nothing).
+    private OnDelete onDelete;
 
     private String joinModel;
 
@@ -77,7 +81,9 @@ public class MetaField implements Serializable {
 
     private boolean translatable;
 
-    private boolean nonCopyable;
+    // Default true: the sys_field column is NOT NULL DEFAULT 1; the initializer
+    // covers programmatically constructed instances (tests, in-memory models).
+    private boolean copyable = true;
 
     private boolean unsearchable;
 
@@ -111,18 +117,18 @@ public class MetaField implements Serializable {
 
     /**
      * Get translation by language code from translations.
-     * If the translation is not found, return the original name.
+     * If the translation is not found, return the original label.
      *
-     * @return label name
+     * @return label
      */
-    public String getLabelName() {
+    public String getLabel() {
         String languageCode = ContextHolder.getContext().getLanguage().getCode();
         MetaFieldTrans labelTrans = TranslationCache.getFieldTrans(languageCode, id);
         if (labelTrans == null) {
-            return labelName;
+            return label;
         } else {
-            String translation = labelTrans.getLabelName();
-            return StringUtils.isNotBlank(translation) ? translation : labelName;
+            String translation = labelTrans.getLabel();
+            return StringUtils.isNotBlank(translation) ? translation : label;
         }
     }
 

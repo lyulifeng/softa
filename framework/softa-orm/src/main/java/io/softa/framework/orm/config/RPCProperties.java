@@ -1,11 +1,10 @@
 package io.softa.framework.orm.config;
 
+import java.util.Map;
 import lombok.Data;
 import org.springframework.boot.context.properties.ConfigurationProperties;
 import org.springframework.stereotype.Component;
 import org.springframework.validation.annotation.Validated;
-
-import java.util.Map;
 
 @Data
 @Component
@@ -22,6 +21,7 @@ public class RPCProperties {
 
     private String secretKey;
 
+    // Remote service endpoints, keyed by the owning app's appCode (its system.app-code).
     private Map<String, ServiceConfig> services;
 
     @Data
@@ -31,7 +31,7 @@ public class RPCProperties {
         private String apiSecret;
     }
 
-    public ServiceConfig getServiceConfig(String serviceName) {
-        return services.get(serviceName);
+    public ServiceConfig getServiceConfig(String appCode) {
+        return services.get(appCode);
     }
 }

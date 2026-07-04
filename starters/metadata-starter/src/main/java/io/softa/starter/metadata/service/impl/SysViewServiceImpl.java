@@ -2,7 +2,6 @@ package io.softa.starter.metadata.service.impl;
 
 import java.util.List;
 import java.util.Optional;
-import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 
 import io.softa.framework.base.context.ContextHolder;
@@ -11,9 +10,9 @@ import io.softa.framework.orm.domain.FlexQuery;
 import io.softa.framework.orm.domain.Orders;
 import io.softa.framework.orm.service.impl.EntityServiceImpl;
 import io.softa.starter.metadata.entity.SysView;
-import io.softa.starter.metadata.entity.SysViewDefault;
-import io.softa.starter.metadata.service.SysViewDefaultService;
+import io.softa.starter.metadata.entity.UserDefaultView;
 import io.softa.starter.metadata.service.SysViewService;
+import io.softa.starter.metadata.service.UserDefaultViewService;
 
 /**
  * SysView Model Service Implementation
@@ -21,8 +20,11 @@ import io.softa.starter.metadata.service.SysViewService;
 @Service
 public class SysViewServiceImpl extends EntityServiceImpl<SysView, Long> implements SysViewService {
 
-    @Autowired
-    private SysViewDefaultService viewDefaultService;
+    private final UserDefaultViewService viewDefaultService;
+
+    public SysViewServiceImpl(UserDefaultViewService viewDefaultService) {
+        this.viewDefaultService = viewDefaultService;
+    }
 
     /**
      * Set the default view for current user.
@@ -33,15 +35,15 @@ public class SysViewServiceImpl extends EntityServiceImpl<SysView, Long> impleme
     @Override
     public boolean setDefaultView(String modelName, Long viewId) {
         Long currentUserId = ContextHolder.getContext().getUserId();
-        Filters personalFilters = new Filters().eq(SysViewDefault::getModelName, modelName)
-                .eq(SysViewDefault::getCreatedId, currentUserId);
-        Optional<SysViewDefault> optionalDefaultView = viewDefaultService.searchOne(new FlexQuery(personalFilters));
+        Filters personalFilters = new Filters().eq(UserDefaultView::getModelName, modelName)
+                .eq(UserDefaultView::getCreatedId, currentUserId);
+        Optional<UserDefaultView> optionalDefaultView = viewDefaultService.searchOne(new FlexQuery(personalFilters));
         if (optionalDefaultView.isPresent()) {
-            SysViewDefault defaultView = optionalDefaultView.get();
+            UserDefaultView defaultView = optionalDefaultView.get();
             defaultView.setViewId(viewId);
             return viewDefaultService.updateOne(defaultView);
         } else {
-            SysViewDefault defaultView = new SysViewDefault();
+            UserDefaultView defaultView = new UserDefaultView();
             defaultView.setModelName(modelName);
             defaultView.setViewId(viewId);
             defaultView.setCreatedId(currentUserId);
@@ -65,11 +67,11 @@ public class SysViewServiceImpl extends EntityServiceImpl<SysView, Long> impleme
         Orders orders = Orders.ofDesc(SysView::getPublicView).addAsc(SysView::getSequence);
         List<SysView> views = this.searchList(new FlexQuery(viewFilters, orders));
         // Get the default views of current user
-        Filters personalFilters = new Filters().eq(SysViewDefault::getModelName, modelName)
-                .eq(SysViewDefault::getCreatedId, currentUserId);
-        Optional<SysViewDefault> optionalDefaultView = viewDefaultService.searchOne(new FlexQuery(personalFilters));
-        optionalDefaultView.ifPresent(sysViewDefault ->
-                views.forEach(v -> v.setDefaultView(v.getId().equals(sysViewDefault.getViewId()))));
+        Filters personalFilters = new Filters().eq(UserDefaultView::getModelName, modelName)
+                .eq(UserDefaultView::getCreatedId, currentUserId);
+        Optional<UserDefaultView> optionalDefaultView = viewDefaultService.searchOne(new FlexQuery(personalFilters));
+        optionalDefaultView.ifPresent(userDefaultView ->
+                views.forEach(v -> v.setDefaultView(v.getId().equals(userDefaultView.getViewId()))));
         return views;
     }
 }

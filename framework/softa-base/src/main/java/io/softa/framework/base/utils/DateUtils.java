@@ -5,12 +5,14 @@ import java.math.RoundingMode;
 import java.time.*;
 import java.time.format.DateTimeFormatter;
 import java.time.format.DateTimeParseException;
+import java.time.format.FormatStyle;
 import java.util.Date;
 import java.util.TimeZone;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.lang3.StringUtils;
 
 import io.softa.framework.base.constant.TimeConstant;
+import io.softa.framework.base.enums.Language;
 
 /**
  * Date and time utility class
@@ -19,7 +21,7 @@ import io.softa.framework.base.constant.TimeConstant;
 public abstract class DateUtils {
 
     /**
-     * Get current UTC instant.
+     * Get the current UTC instant.
      */
     public static Instant getInstantNow() {
         return Instant.now();
@@ -43,7 +45,7 @@ public abstract class DateUtils {
     }
 
     /**
-     * Get current date in string format with the specified zone.
+     * Get the current date in string format with the specified zone.
      * @return datetime string
      */
     public static String  getCurrentLocalDateString(String zoneId) {
@@ -51,7 +53,7 @@ public abstract class DateUtils {
     }
 
     /**
-     * Get current date in string format with the system default zone.
+     * Get the current date in string format with the system default zone.
      * @return datetime string
      */
     public static String getCurrentSimpleDateString() {
@@ -59,7 +61,7 @@ public abstract class DateUtils {
     }
 
     /**
-     * Get current time in string format with the specified zone.
+     * Get the current time in string format with the specified zone.
      * @return datetime string
      */
     public static String getCurrentLocalTimeString(String zoneId) {
@@ -67,28 +69,28 @@ public abstract class DateUtils {
     }
 
     /**
-     * Get current year with the specified zone.
+     * Get the current year with the specified zone.
      */
     public static Integer getCurrentYear(String zoneId) {
         return getZonedDateTimeNow(zoneId).getYear();
     }
 
     /**
-     * Get current month with the specified zone.
+     * Get the current month with the specified zone.
      */
     public static Integer getCurrentMonth(String zoneId) {
         return getZonedDateTimeNow(zoneId).getMonthValue();
     }
 
     /**
-     * Get current local day with the specified zone.
+     * Get the current local day with the specified zone.
      */
     public static Integer getCurrentDay(String zoneId) {
         return getZonedDateTimeNow(zoneId).getDayOfMonth();
     }
 
     /**
-     * Get current hour with the specified zone.
+     * Get the current hour with the specified zone.
      */
     public static long getCurrentSeconds() {
         return Instant.now().getEpochSecond();
@@ -124,7 +126,7 @@ public abstract class DateUtils {
     }
 
     /**
-     * String date to specified type date object
+     * String date to a specified type date object
      * @param value date string
      * @param dateType date object type
      * @return date object
@@ -204,6 +206,43 @@ public abstract class DateUtils {
             case null -> null;
             case LocalDateTime localDateTime -> TimeConstant.DATETIME_FORMATTER.format(localDateTime);
             case Date date -> TimeConstant.DATETIME_FORMATTER.format(dateToLocalDateTime(dateTime));
+            default -> dateTime.toString();
+        };
+    }
+
+    /**
+     * Date object to a locale-formatted string (CLDR via the JDK; platform
+     * convention MEDIUM date style), e.g. {@code zh-CN → "2026年6月12日"},
+     * {@code en-US → "Jun 12, 2026"}. Compatible with LocalDate, Date, null.
+     *
+     * <p>For presentation edges only (mail, exports, reports) — wire formats
+     * stay locale-neutral (ISO-8601).
+     *
+     * @param date date object
+     * @param language target language (region-qualified BCP-47 locale)
+     * @return localized date string
+     */
+    public static String dateToLocalString(Object date, Language language) {
+        return dateToString(date,
+                DateTimeFormatter.ofLocalizedDate(FormatStyle.MEDIUM).withLocale(language.toLocale()));
+    }
+
+    /**
+     * DateTime object to a locale-formatted string (CLDR via the JDK; platform
+     * convention MEDIUM date + SHORT time). Compatible with LocalDateTime, Date, null.
+     *
+     * @param dateTime date time object
+     * @param language target language (region-qualified BCP-47 locale)
+     * @return localized date time string
+     */
+    public static String dateTimeToLocalString(Object dateTime, Language language) {
+        DateTimeFormatter formatter = DateTimeFormatter
+                .ofLocalizedDateTime(FormatStyle.MEDIUM, FormatStyle.SHORT)
+                .withLocale(language.toLocale());
+        return switch (dateTime) {
+            case null -> null;
+            case LocalDateTime localDateTime -> formatter.format(localDateTime.atZone(ZoneId.systemDefault()));
+            case Date date -> formatter.format(date.toInstant().atZone(ZoneId.systemDefault()));
             default -> dateTime.toString();
         };
     }

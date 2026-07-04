@@ -1,44 +1,46 @@
 package io.softa.starter.file.entity;
 
 import java.io.Serial;
-import io.swagger.v3.oas.annotations.media.Schema;
 import lombok.Data;
 import lombok.EqualsAndHashCode;
 
+import io.softa.framework.orm.annotation.Field;
+import io.softa.framework.orm.annotation.Model;
 import io.softa.framework.orm.entity.AuditableModel;
+import io.softa.framework.orm.enums.FieldType;
 
 /**
  * ExportHistory Model
  */
 @Data
-@Schema(name = "ExportHistory")
 @EqualsAndHashCode(callSuper = true)
+@Model(copyable = false)
 public class ExportHistory extends AuditableModel {
 
     @Serial
     private static final long serialVersionUID = 1L;
 
-    @Schema(description = "ID")
+    @Field(label = "ID")
     private Long id;
 
-    @Schema(description = "Tenant ID")
+    @Field(label = "Tenant ID")
     private Long tenantId;
 
-    @Schema(description = "Template ID")
+    @Field(label = "Template ID", fieldType = FieldType.MANY_TO_ONE, relatedModel = ExportTemplate.class)
     private Long templateId;
 
-    @Schema(description = "Model Name")
+    @Field
     private String modelName;
 
-    @Schema(description = "Exported File ID")
+    @Field(label = "Exported File ID", fieldType = FieldType.FILE, required = true)
     private Long exportedFileId;
 
-    @Schema(description = "Total Rows")
+    @Field
     private Integer totalRows;
 
-    @Schema(description = "Duration in seconds")
+    @Field(label = "Duration in seconds")
     private Double duration;
 
-    @Schema(description = "Deleted")
+    @Field
     private Boolean deleted;
 }
