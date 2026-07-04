@@ -111,7 +111,7 @@ public class NavigationConfigOptionsController {
             return null;
         }
         MetaModel meta = ModelManager.getModel(model);
-        String label = meta != null && meta.getLabelName() != null ? meta.getLabelName() : model;
+        String label = meta != null && meta.getLabel() != null ? meta.getLabel() : model;
 
         // Applicable scope types = model-column-shape-derived.
         List<String> scopes = scopeApplicability.applicableFor(model).stream()
@@ -220,7 +220,7 @@ public class NavigationConfigOptionsController {
     /** Per-model option row: label + applicable scopes + owned/attached SFS. */
     private RoleModelConfigOption buildModelOption(String model, boolean related) {
         MetaModel meta = ModelManager.getModel(model);
-        String label = meta != null && meta.getLabelName() != null ? meta.getLabelName() : model;
+        String label = meta != null && meta.getLabel() != null ? meta.getLabel() : model;
         List<String> scopes = scopeApplicability.applicableFor(model).stream()
                 .map(ScopeType::name)
                 .sorted()
