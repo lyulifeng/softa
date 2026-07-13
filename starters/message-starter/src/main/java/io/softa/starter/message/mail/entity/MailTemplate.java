@@ -6,6 +6,7 @@ import lombok.Data;
 import lombok.EqualsAndHashCode;
 
 import io.softa.framework.orm.annotation.Field;
+import io.softa.framework.orm.annotation.Index;
 import io.softa.framework.orm.annotation.Model;
 import io.softa.framework.orm.dto.FileInfo;
 import io.softa.framework.orm.entity.AuditableModel;
@@ -32,6 +33,7 @@ import io.softa.starter.message.mail.enums.MailPriority;
         businessKey = {"code"},
         multiTenant = true
 )
+@Index(indexName = "uk_mail_template_tenant_code", fields = {"tenantId", "code"}, unique = true)
 @EqualsAndHashCode(callSuper = true)
 public class MailTemplate extends AuditableModel {
 

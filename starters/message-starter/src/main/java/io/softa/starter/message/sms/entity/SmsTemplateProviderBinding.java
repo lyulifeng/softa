@@ -30,6 +30,8 @@ import io.softa.starter.referencedata.entity.CountryRegion;
 @Data
 @Model(label = "SMS Template Provider Binding", idStrategy = IdStrategy.DISTRIBUTED_LONG, multiTenant = true)
 @Index(indexName = "idx_template_priority", fields = {"templateId", "priority"})
+@Index(indexName = "uk_tenant_tmpl_provider_region", fields = {"tenantId", "templateId", "providerConfigId", "regionCode"}, unique = true)
+@Index(indexName = "idx_template_region", fields = {"templateId", "regionCode"})
 @EqualsAndHashCode(callSuper = true)
 public class SmsTemplateProviderBinding extends AuditableModel {
 

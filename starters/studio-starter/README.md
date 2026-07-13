@@ -16,8 +16,8 @@ Current implementation shape:
   `design_*` rows are the desired state; there is no WorkItem, Version, or
   Deployment model in the current code.
 - `DesignActivity` is the audit record for operations such as publish, import,
-  reverse, and merge. Successful publish/merge activities can carry a
-  `DesignSnapshot` for later restore.
+  reverse, and merge. Every succeeded activity captures a `DesignSnapshot` of
+  the post-operation design for later restore.
 - Publishing is desired-state based: Studio diffs env design rows against the
   target connector, renders DDL for structural changes, projects row changes to
   `MetadataChangeSet`, and lets the connector apply the result.
@@ -35,6 +35,9 @@ than rendered from fixed templates.
 ### DDL Rendering
 
 DDL rendering is shared with metadata-starter's annotation DDL infrastructure.
+The catalog stores only the **logical** type (`fieldType` + `length`/`scale`);
+the physical column type is never stored — it is a connector projection,
+resolved per target dialect at render time.
 
 - `MetadataChangeDdlRenderer` converts row-level metadata changes to
   `DdlTemplateContext`.
@@ -70,12 +73,19 @@ sweeps these env-scoped design models:
 | `DesignOptionSet` | `SysOptionSet` |
 | `DesignOptionItem` | `SysOptionItem` |
 
+The swept tables' topology — design entity ↔ `MetaTable`, business-key attrs,
+parent/FK links, rename-bridge column, checksum attrs, and FK-safe apply/delete
+order — is single-sourced in the `DesignAggregate` descriptor enum
+(`release/dto`); the differ, merger, importer, cloner, env-delete cascade, and
+DTO grouping all derive from it.
+
 The following design models exist, but are not part of the current
 desired-state sweep: `DesignModelTrans`, `DesignFieldTrans`,
 `DesignOptionSetTrans`, `DesignOptionItemTrans`, `DesignView`, and
 `DesignNavigation`. Treat that as an explicit implementation gap until those
-models are added to `DesignRows`, `MetaTable`, connector read/apply paths,
-checksums, merge, import, and tests.
+models are added to the `DesignAggregate` descriptor plus the pieces a new
+table inherently needs: `DesignRows`, `MetaTable`, connector read/apply paths,
+checksums, and tests (merge/import derive from the descriptor).
 
 ## Dependencies
 
@@ -90,9 +100,7 @@ checksums, merge, import, and tests.
 Runtime module dependencies:
 
 - `metadata-starter`: runtime metadata entities, DDL dialects, checksums, and
-  upgrade DTOs.
-- `es-starter`: still declared by the module POM, but the current desired-state
-  release flow no longer uses the old ES-backed WorkItem/Version pipeline.
+  upgrade DTOs. This is the module's only Softa starter dependency.
 
 ## Environment Configuration
 
@@ -112,7 +120,9 @@ Key setup for a SOFTA env:
 1. Call `POST /DesignAppEnv/issueKey?id=<envId>`.
 2. Put the returned public key into the target runtime's
    `system.metadata.public-key`.
-3. Keep Studio's generated private key only in `DesignAppEnv.privateKey`.
+3. Keep Studio's generated private key only in `DesignAppEnv.privateKey` —
+   stored ORM-encrypted at rest, never returned by search, and not carried by
+   `copyById`.
 
 ## Core Data Model
 
@@ -183,7 +193,9 @@ does not undo runtime DDL or metadata already applied.
   state — serving both drift repair and first-time import.
 - `seedFromSource` clones a full env design into an empty target env.
 - `merge` converges one env's design to another env's design for selected
-  aggregate roots or for the whole swept catalog.
+  aggregate roots or for the whole swept catalog. Merge is **single-direction
+  overwrite** (source → target, no three-way merge): target-only edits are
+  overwritten; recovery is restoring the pre-merge activity snapshot.
 
 For JDBC targets, physical reverse currently reads tables and columns. Index
 reverse is still deferred, so incremental JDBC publish to a database that
@@ -193,7 +205,8 @@ already has matching indexes may re-emit index DDL.
 
 `POST /DesignActivity/restore?id=<activityId>` restores the env design from a
 successful activity's snapshot, then publishes that restored design to converge
-the runtime. Only activities with a snapshot can be restored.
+the runtime. Any succeeded activity that captured a snapshot is restorable —
+publish, merge, import, and reverse all snapshot their post-operation design.
 
 ## Key APIs
 
@@ -244,8 +257,10 @@ the runtime. Only activities with a snapshot can be restored.
 `Stable` / `Deploying` / `Importing` / `Merging`
 
 The env status is the per-env mutex. Publish, import, reverse, and merge acquire
-it through conditional update from `Stable` to a busy state and release it back
-to `Stable` when finished or canceled.
+it via an atomic optimistic compare-and-set on the env's `version`
+(`versionLock`): a single guarded `UPDATE` flips `Stable` to the busy state, a
+lost race surfaces as a "busy — retry later" refusal, and the status is released
+back to `Stable` when finished or canceled.
 
 ### `DesignActivityStatus`
 
@@ -273,8 +288,10 @@ Studio operations are synchronous in the current implementation. There is no
   sweep model is expanded.
 - JDBC reverse does not yet read physical indexes, option sets, comments, or
   non-standard constraints.
-- `DesignAppEnv.protectedEnv`, `active`, and some connector policy fields are
-  present on the entity but not fully enforced by every operation.
+- `DesignAppEnv.protectedEnv` is enforced on env delete (a protected env refuses
+  deletion) but not yet consulted by publish/merge; `active` is honored when
+  defaulting a design write's target env; some connector policy fields are not
+  yet enforced by every operation.
 - Runtime restore is implemented as roll-forward publish from a prior design
   snapshot; it is not a database rollback.
 

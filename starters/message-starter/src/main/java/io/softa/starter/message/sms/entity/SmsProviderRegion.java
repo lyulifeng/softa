@@ -56,6 +56,7 @@ import io.softa.starter.referencedata.entity.CountryRegion;
         multiTenant = true
 )
 @Index(indexName = "idx_region_enabled", fields = {"regionCode", "isEnabled"})
+@Index(indexName = "uk_tenant_provider_region", fields = {"tenantId", "providerConfigId", "regionCode"}, unique = true)
 @EqualsAndHashCode(callSuper = true)
 public class SmsProviderRegion extends AuditableModel {
 

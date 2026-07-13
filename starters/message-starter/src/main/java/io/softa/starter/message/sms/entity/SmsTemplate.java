@@ -5,6 +5,7 @@ import lombok.Data;
 import lombok.EqualsAndHashCode;
 
 import io.softa.framework.orm.annotation.Field;
+import io.softa.framework.orm.annotation.Index;
 import io.softa.framework.orm.annotation.Model;
 import io.softa.framework.orm.enums.IdStrategy;
 import io.softa.framework.orm.entity.AuditableModel;
@@ -27,6 +28,7 @@ import io.softa.framework.orm.entity.AuditableModel;
  */
 @Data
 @Model(label = "SMS Template", idStrategy = IdStrategy.DISTRIBUTED_LONG, multiTenant = true)
+@Index(indexName = "uk_sms_template_tenant_code", fields = {"tenantId", "code"}, unique = true)
 @EqualsAndHashCode(callSuper = true)
 public class SmsTemplate extends AuditableModel {
 

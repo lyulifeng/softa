@@ -23,8 +23,10 @@ import io.softa.starter.message.mail.enums.MailSendStatus;
  */
 @Data
 @Model(idStrategy = IdStrategy.DISTRIBUTED_LONG, versionLock = true, copyable = false, multiTenant = true)
-@Index(fields = {"sentAt"})
-@Index(fields = {"status", "nextRetryAt"})
+@Index(indexName = "idx_mail_send_tenant_status", fields = {"tenantId", "status"})
+@Index(indexName = "idx_mail_send_sent_at", fields = {"sentAt"})
+@Index(indexName = "idx_mail_send_status_updated", fields = {"status", "updatedTime"})
+@Index(indexName = "idx_mail_send_status_retry", fields = {"status", "nextRetryAt"})
 @Index(indexName = "idx_message_id", fields = {"messageId"})
 @EqualsAndHashCode(callSuper = true)
 public class MailSendRecord extends AuditableModel {

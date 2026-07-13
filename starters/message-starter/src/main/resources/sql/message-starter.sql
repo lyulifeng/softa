@@ -32,8 +32,7 @@ CREATE TABLE IF NOT EXISTS mail_send_server_config
     created_by            VARCHAR(100)          COMMENT 'Created by username',
     updated_id            BIGINT                COMMENT 'Updated by user ID',
     updated_by            VARCHAR(100)          COMMENT 'Updated by username',
-    INDEX idx_tenant_default (tenant_id, is_default),
-    INDEX idx_tenant (tenant_id)
+    INDEX idx_mail_send_cfg_default (tenant_id, is_default)
 ) COMMENT = 'Outgoing mail server configuration (SMTP/SMTPS)';
 
 CREATE TABLE IF NOT EXISTS mail_receive_server_config
@@ -58,8 +57,7 @@ CREATE TABLE IF NOT EXISTS mail_receive_server_config
     created_by            VARCHAR(100)          COMMENT 'Created by username',
     updated_id            BIGINT                COMMENT 'Updated by user ID',
     updated_by            VARCHAR(100)          COMMENT 'Updated by username',
-    INDEX idx_tenant_default (tenant_id, is_default),
-    INDEX idx_tenant (tenant_id)
+    INDEX idx_mail_recv_cfg_default (tenant_id, is_default)
 ) COMMENT = 'Incoming mail server configuration (IMAP/IMAPS/POP3/POP3S)';
 
 CREATE TABLE IF NOT EXISTS mail_send_record
@@ -97,8 +95,8 @@ CREATE TABLE IF NOT EXISTS mail_send_record
     created_by       VARCHAR(100)          COMMENT 'Created by username',
     updated_id       BIGINT                COMMENT 'Updated by user ID',
     updated_by       VARCHAR(100)          COMMENT 'Updated by username',
-    INDEX idx_tenant_status (tenant_id, status),
-    INDEX idx_sent_at (sent_at)
+    INDEX idx_mail_send_tenant_status (tenant_id, status),
+    INDEX idx_mail_send_sent_at (sent_at)
 ) COMMENT = 'Outgoing mail audit log';
 
 CREATE TABLE IF NOT EXISTS mail_fetch_imap_watermark
@@ -119,7 +117,7 @@ CREATE TABLE IF NOT EXISTS mail_fetch_imap_watermark
     updated_id         BIGINT                COMMENT 'Updated by user ID',
     updated_by         VARCHAR(100)          COMMENT 'Updated by username',
     UNIQUE INDEX uk_config_folder (server_config_id, folder_name),
-    INDEX idx_tenant (tenant_id)
+    INDEX idx_watermark_tenant (tenant_id)
 ) COMMENT = 'Per-(server_config, folder) IMAP UID high-water mark for incremental fetch';
 
 -- ============================================================
@@ -146,7 +144,7 @@ CREATE TABLE IF NOT EXISTS inbox_notification
     updated_id        BIGINT                COMMENT 'Updated by user ID',
     updated_by        VARCHAR(100)          COMMENT 'Updated by username',
     INDEX idx_recipient_read (recipient_id, is_read),
-    INDEX idx_tenant (tenant_id)
+    INDEX idx_inbox_notif_tenant (tenant_id)
 ) COMMENT = 'In-app notifications delivered to specific users';
 
 CREATE TABLE IF NOT EXISTS mail_template
@@ -171,8 +169,7 @@ CREATE TABLE IF NOT EXISTS mail_template
     created_by   VARCHAR(100)          COMMENT 'Created by username',
     updated_id   BIGINT                COMMENT 'Updated by user ID',
     updated_by   VARCHAR(100)          COMMENT 'Updated by username',
-    UNIQUE INDEX uk_tenant_code (tenant_id, code),
-    INDEX idx_tenant (tenant_id)
+    UNIQUE INDEX uk_mail_template_tenant_code (tenant_id, code)
 ) COMMENT = 'Email templates with platform/tenant-level scoping';
 
 CREATE TABLE IF NOT EXISTS mail_receive_record
@@ -211,7 +208,7 @@ CREATE TABLE IF NOT EXISTS mail_receive_record
     updated_id       BIGINT                COMMENT 'Updated by user ID',
     updated_by       VARCHAR(100)          COMMENT 'Updated by username',
     UNIQUE INDEX uk_server_msg (server_config_id, message_id),
-    INDEX idx_tenant_status (tenant_id, status)
+    INDEX idx_mail_recv_tenant_status (tenant_id, status)
 ) COMMENT = 'Incoming mail records fetched from IMAP/POP3';
 
 -- ============================================================
@@ -224,19 +221,19 @@ CREATE TABLE IF NOT EXISTS mail_receive_record
 -- creation: rerun with `ALGORITHM=INPLACE, LOCK=NONE` in a
 -- migration script if data already exists.
 --
--- idx_status_updated_time — ZombieRecordSweeper sweeps every
+-- idx_mail_send_status_updated — ZombieRecordSweeper sweeps every
 --   minute with `WHERE status='Sending' AND updated_time < ?`.
 --   Without this index it degrades to a table scan once the
 --   table grows to seven figures.
--- idx_status_next_retry   — manual / monitoring queries that
+-- idx_mail_send_status_retry   — manual / monitoring queries that
 --   pull stuck rows: `WHERE status IN ('Pending','Retry') AND
 --   next_retry_at <= ?`.
 -- idx_message_id          — bounce + read-receipt linking via
 --   MailSendRecordServiceImpl#findByMessageId; called once per
 --   inbound classified mail. Hot during bounce storms.
 -- ============================================================
-CREATE INDEX idx_status_updated_time ON mail_send_record (status, updated_time);
-CREATE INDEX idx_status_next_retry   ON mail_send_record (status, next_retry_at);
+CREATE INDEX idx_mail_send_status_updated ON mail_send_record (status, updated_time);
+CREATE INDEX idx_mail_send_status_retry   ON mail_send_record (status, next_retry_at);
 CREATE INDEX idx_message_id          ON mail_send_record (message_id);
 
 -- ============================================================

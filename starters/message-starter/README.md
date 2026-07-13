@@ -43,6 +43,7 @@ Apply the following DDL under `src/main/resources/sql/`:
 - `message-starter.sql` — email + inbox tables
 - `message-starter-sms.sql` — SMS tables
 - `message-starter-outbox.sql` — transactional outbox (shared by mail + SMS)
+- `message-starter-dlq.sql` — unified dead-letter store (`dead_letter_message`)
 
 Uses the framework ORM/versionLock path for runtime writes, so outbox publishing
 does not depend on database-specific row-lock SQL.
@@ -68,6 +69,27 @@ let one node burst past the cross-node quota during Redis outages, which on a
 long enough outage can blow through provider day-quotas and cost real money
 (Twilio / Aliyun / SES). It's safer to fail closed at the load-balancer level
 via the readiness probe than to silently fan out under partial failure.
+
+### Multi-tenancy
+
+All messaging business tables (`mail_*`, `sms_*`, `inbox_notification`) are
+`multiTenant` models: when the platform's `system.enable-multi-tenancy` is on,
+reads are isolated to the caller's tenant and writes are auto-stamped by the
+ORM. `tenant_id = 0` rows form the **platform tier**, shared by every tenant:
+
+- Config/template/routing resolution is **overlay-style**: the caller's own
+  rows plus the platform tier (tenant default → platform default; tenant
+  template → platform template; routing = union of both, by priority).
+- Background jobs are cross-tenant scans that execute per-record in the owning
+  tenant's context: the scheduled mail fetch runs each receive config inside
+  its config's tenant, and the zombie sweeper revives each stuck record inside
+  its record's tenant.
+- The transactional outbox and the dead-letter store are shared infrastructure
+  tables; tenant identity travels inside the message payload
+  (`recordId / tenantId / traceId`) and is restored by the consumer.
+
+With multi-tenancy disabled, no filtering or stamping occurs and everything
+behaves single-tenant.
 
 ### Async delivery (the only delivery model)
 
@@ -131,6 +153,11 @@ softa:
         multiplier: 2.0
         jitter: 0.5                 # ±50% randomisation
         quota-floor-seconds: 300    # QUOTA errors wait at least 5 min
+    dlq:
+      topic: dev_demo_message_dlq   # unset = broker-poison archiving disabled
+      max-redeliver: 5              # broker nacks before dead-lettering
+      alert:
+        recipients: ops@example.com # comma-separated; empty = no alert mail
 ```
 
 ### Mail authentication
@@ -158,19 +185,17 @@ Email sending uses the following default lookup order:
 3. BusinessException if nothing is available
 ```
 
-If multiple records are marked as default, the one with the smallest `sortOrder`
+If multiple records are marked as default, the one with the smallest `sequence`
 is used. Config objects are cached in Redis for 5 minutes; updating a config
 via `MailSendServerConfigService.updateOne` / `deleteById` evicts automatically.
 
 #### Template resolution
 
-Email templates use the following fallback logic:
+Email templates are resolved by `code` with a platform fallback:
 
 ```text
-tenant + current language
-  -> tenant + default language
-  -> platform + current language
-  -> platform + default language
+tenant template (code + enabled)
+  -> platform template (tenant_id = 0)
   -> BusinessException
 ```
 
@@ -178,7 +203,7 @@ Template placeholders use the unified Softa syntax: `{{ variable }}`.
 
 #### Delivery pipeline
 
-Every send — synchronous or asynchronous — produces exactly one
+Every accepted send produces exactly one
 `MailSendRecord`. State transitions go through CAS helpers so duplicate broker
 deliveries self-reject without a dedupe table:
 
@@ -314,7 +339,7 @@ Upload bytes through `file-starter` first, then pass the resulting `FileInfo`.
 
 ### Email Templates
 
-Use templates when business content should be reusable or multilingual:
+Use templates when business content should be reusable:
 
 ```java
 @Autowired
@@ -332,8 +357,6 @@ mail.setTemplateVariables(vars);
 messageService.sendMail(mail);
 ```
 
-The current request language is taken from `ContextHolder`.
-
 #### Template example
 
 ```bash
@@ -341,15 +364,12 @@ POST /MailTemplate/createOne
 {
   "code": "USER_WELCOME",
   "name": "User Welcome Email",
-  "language": "en-US",
   "subject": "Welcome, {{ name }}!",
-  "body": "<h1>Welcome, {{ name }}</h1><p><a href='{{ activationUrl }}'>Activate</a></p>",
-  "includePlainText": true,
+  "bodyHtml": "<h1>Welcome, {{ name }}</h1><p><a href='{{ activationUrl }}'>Activate</a></p>",
+  "bodyMode": "HTML",
   "isEnabled": true
 }
 ```
-
-Use `language: "default"` to define a fallback template.
 
 ### Receiving Email
 
@@ -380,7 +400,8 @@ against the send log in a single batched `IN()` query; the matched
 - Scheduled fetch is optional and requires `cron-starter`
 - The current consumer listens to `mq.topics.cron-task.topic`
 - When it receives a cron whose name starts with `mail-fetch`, it polls every
-  enabled receive config with `scheduledFetchEnabled = true`
+  receive config with `isEnabled = true` — across all tenants; each config's
+  fetch runs inside that config's tenant context
 - Cadence is governed by a single global `mail-fetch` cron registered in
   `cron-starter`; per-inbox cadence is not supported in this module
 
@@ -425,19 +446,17 @@ SMS sending uses the following default lookup order:
 3. BusinessException if nothing is available
 ```
 
-If multiple records are marked as default, the one with the smallest `sortOrder`
+If multiple records are marked as default, the one with the smallest `priority`
 is used. Provider configs are cached in Redis (5 min TTL) and evicted on update
 / delete automatically.
 
 #### Template resolution
 
-SMS templates use the following fallback logic:
+SMS templates are resolved by `code` with a platform fallback:
 
 ```text
-tenant + current language
-  -> tenant + default language
-  -> platform + current language
-  -> platform + default language
+tenant template (code + enabled)
+  -> platform template (tenant_id = 0)
   -> BusinessException
 ```
 
@@ -488,7 +507,7 @@ List<Long> ids = messageService.sendSmsBatch(List.of(first, second));
 | Batch | `sendSmsBatch(List<SendSmsDTO>)` | 1..500 independent messages, atomic and ordered |
 | Template | `templateCode` + `templateVariables` on each DTO | Render then send |
 
-### Differentiated Batch Example
+### Per-recipient template variables
 
 ```java
 SendSmsDTO first = new SendSmsDTO();
@@ -523,7 +542,6 @@ POST /SmsTemplate/createOne
 {
   "code": "VERIFY_CODE",
   "name": "Verification Code",
-  "language": "en-US",
   "content": "Your verification code is {{ code }}. Valid for {{ minutes }} minutes.",
   "isEnabled": true
 }
@@ -572,11 +590,11 @@ currency, continent, EEA flag, and subdivisions flag. **`reference-data-starter`
 must be on the classpath** for SMS provider routing to function — `message-starter`
 depends on it as a hard dependency.
 
-`dial_code` is **denormalized** from `country_region.dial_code` and
-auto-populated by `SmsProviderRegionServiceImpl` on every write. It lets
-admin list views render "CN (+86) → Aliyun" without joining `country_region`,
-and survives downstream queries that filter by dial prefix. Operators must
-not edit `dial_code` directly — it is derived from `region_code`.
+`dial_code` is a framework-maintained **stored cascade** of
+`regionCode.dialCode` (`CountryRegion` is code-as-id, so the region FK stores
+the alpha-2 code itself). It lets admin list views render "CN (+86) → Aliyun"
+without joining `country_region`. Operators must not edit `dial_code`
+directly — the framework derives it from `region_code`.
 
 #### Catchall semantics
 
@@ -635,7 +653,8 @@ Dispatch behaviour:
 
 `sms_provider_region.tenant_id` follows the same rule as other tenant tables:
 `0` for platform-level routing (shared by all tenants); `>0` for per-tenant
-overrides (auto-isolated by ORM tenant filter).
+overrides. Routing reads are platform-overlay: the dispatcher sees the union
+of platform rows and the caller's own tenant rows, interleaved by priority.
 
 #### Template-level provider bindings
 
@@ -776,8 +795,9 @@ store plaintext.
 ### Mail transport
 
 Mail sending is SMTP-only. `MailSendServerConfig` is the complete outgoing
-server configuration, and delivery is handled by a single cached SMTP transport
-backed by Jakarta Mail.
+server configuration; `SmtpMailTransport` is stateless and builds a fresh
+Jakarta Mail sender per send, so config changes only need the Redis config
+cache evicted (automatic on update/delete).
 
 ### Mail classification rules
 
@@ -826,4 +846,4 @@ decides the disposition: TRANSIENT / QUOTA / UNKNOWN retry (QUOTA clamped to
 `quota-floor-seconds`) until `default-max-attempts` is reached and the record
 is dead-lettered; PERMANENT / INVALID_INPUT / AUTH fail immediately without
 retry. `RetryDecision` is a sealed type (`Retry` / `Fail` / `DeadLetter`) so the
-send services' `switch` stays exhaustive.
+failure handler's `switch` stays exhaustive.

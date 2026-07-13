@@ -116,6 +116,14 @@ extends `AuditableModel`.
 | `readonly` | boolean | `false` | `readonly` | UI hint |
 | `translatable` | boolean | `false` | `translatable` | i18n-aware column |
 | `copyable` | boolean | `true` | `copyable` | `false` ⇒ value not carried over by `copyById` (business keys, credentials, runtime state) |
+
+Copy field-selection contract (applies regardless of the flag): `ONE_TO_ONE` FKs are **always
+excluded** — copying one would make two rows share an exclusively-owned related row, corrupting the
+1:1 (or hard-failing on its unique index); dynamic fields (`ONE_TO_MANY` / `MANY_TO_MANY` / computed /
+cascaded) are excluded because they are not stored columns; `MANY_TO_ONE` **stays copyable** — a shared
+reference is exactly its semantics. Historical trap: the `nonCopyable` → `copyable` rename was done as a
+migration (V6), NOT via `renamedFrom`, because the rename inverts the value's meaning — a
+value-preserving rename would have carried wrong values.
 | `unsearchable` | boolean | `false` | `unsearchable` | excluded from default search |
 | `computed` | boolean | `false` | `computed` | requires `expression` |
 | `expression` | String | `""` | `expression` | AviatorScript |
@@ -125,8 +133,8 @@ extends `AuditableModel`.
 | `defaultValue` | String | `""` | `defaultValue` | |
 | `relatedModel` | `Class<?>` | `Void.class` | `relatedModel` | Class ref (compile-checked), e.g. `Foo.class`; `Void.class` → inferred from POJO type; **required** for `Long` FK. Use `relatedModelName` (String) for cross-module/dynamic models |
 | `relatedModelName` | String | `""` | `relatedModel` | String fallback to `relatedModel` (cross-module/dynamic) |
-| `relatedField` | String | `""` | `relatedField` | TO_ONE: always `id` — leave empty (a non-id value is rejected at boot, ADR-0024; to store a business code make the related model code-as-id). ONE_TO_MANY: names the child FK column |
-| `onDelete` | `OnDelete[]` | `{}` | `on_delete` | TO_ONE FK delete strategy: `RESTRICT` / `CASCADE` / `SET_NULL`; `{}`/unset = KEEP (default — do nothing). App-level (no DB FK). See "Delete strategy" below + ADR-0022 |
+| `relatedField` | String | `""` | `relatedField` | TO_ONE: always `id` — leave empty (a non-id value is rejected at boot; to store a business code make the related model code-as-id). ONE_TO_MANY: names the child FK column |
+| `onDelete` | `OnDelete[]` | `{}` | `on_delete` | TO_ONE FK delete strategy: `RESTRICT` / `CASCADE` / `SET_NULL`; `{}`/unset = KEEP (default — do nothing). App-level (no DB FK). See "Delete strategy" below |
 | `joinModel` | `Class<?>` | `Void.class` | `joinModel` | M2M join model class; `joinModelName` (String) fallback |
 | `joinLeft` | String | `""` | `joinLeft` | |
 | `joinRight` | String | `""` | `joinRight` | |
@@ -143,7 +151,11 @@ extends `AuditableModel`.
 
 On a `MANY_TO_ONE` / `ONE_TO_ONE` FK, `onDelete` declares what happens to the **referencing** rows when
 the referenced ("One") row is deleted. Enforced application-level in `ModelServiceImpl.deleteByIds` — no
-physical DB `FOREIGN KEY ... ON DELETE` is ever emitted (relations are app-level):
+physical DB `FOREIGN KEY ... ON DELETE` is ever emitted. Why app-level and never a real DB FK: soft
+delete is an `UPDATE`, invisible to a DB `ON DELETE` (the FK would simply never fire); a DB cascade
+bypasses permissions, change logs, audit stamping, soft-delete conversion and tenant scoping; a DB FK
+cannot express "count only `deleted=false` referrers", "block regardless of tenant", or "null only on
+hard delete"; and physical FKs clash with the never-auto-DROP DDL governance. Strategies:
 
 - `RESTRICT` — block the delete if any live (`deleted=false`) referrer exists.
 - `CASCADE` — delete the referrers in the same transaction (each follows its own soft/hard delete).
@@ -233,7 +245,7 @@ declare such indexes explicitly:
 
 Rows in `sys_model` / `sys_field` / `sys_option_set` / `sys_option_item` /
 `sys_model_index` are scoped by **`app_code`**, stamped server-side from
-`system.app-code` (ADR-0015). The retired `ownership` tier column is gone from
+`system.app-code`. The retired `ownership` tier column is gone from
 the baseline — the annotation lane and the Studio no-code lane reconcile the
 **same rows matched by business key** (`modelName` / `fieldName` /
 `optionSetCode` / `itemCode`, plus `renamedFrom`).
@@ -241,7 +253,7 @@ the baseline — the annotation lane and the Studio no-code lane reconcile the
 In development, packages listed in `scanner-scope` reconcile annotation-derived
 metadata into `sys_*` for this app. In production, Studio/connector publish
 applies the app-scoped design catalog. Per-tenant runtime metadata
-customization is not represented as separate `sys_*` rows (ADR-0013).
+customization is not represented as separate `sys_*` rows.
 
 Verify after boot:
 
@@ -348,7 +360,7 @@ Recommendation:
 ### Less Common Annotations
 - `@RPCCheckpoint`: framework-internal AOP hook used by `JdbcServiceImpl` to
   redirect ORM calls to the app that owns the model — `SwitchServiceAspect`
-  routes by the model's `appCode` (ADR-0015) when it differs from this runtime's
+  routes by the model's `appCode` when it differs from this runtime's
   `system.app-code`. Application services do not apply this annotation themselves.
   See [Service-to-Service RPC](../architecture/rpc.md) for
   the mechanism, wire format, and configuration.

@@ -25,6 +25,7 @@ import io.softa.starter.message.inbox.enums.NotificationType;
 @Data
 @Model(idStrategy = IdStrategy.DISTRIBUTED_LONG, copyable = false, multiTenant = true)
 @Index(indexName = "idx_recipient_read", fields = {"recipientId", "isRead"})
+@Index(indexName = "idx_inbox_notif_tenant", fields = {"tenantId"})
 @EqualsAndHashCode(callSuper = true)
 public class InboxNotification extends AuditableModel {
 

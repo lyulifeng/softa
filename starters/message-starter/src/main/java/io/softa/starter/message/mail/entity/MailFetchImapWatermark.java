@@ -41,6 +41,7 @@ import io.softa.framework.orm.entity.AuditableModel;
         multiTenant = true
 )
 @Index(indexName = "uk_config_folder", fields = {"serverConfigId", "folderName"}, unique = true)
+@Index(indexName = "idx_watermark_tenant", fields = {"tenantId"})
 @EqualsAndHashCode(callSuper = true)
 public class MailFetchImapWatermark extends AuditableModel {
 

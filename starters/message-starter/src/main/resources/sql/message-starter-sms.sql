@@ -29,8 +29,7 @@ CREATE TABLE IF NOT EXISTS sms_provider_config
     created_by             VARCHAR(100)          COMMENT 'Created by username',
     updated_id             BIGINT                COMMENT 'Updated by user ID',
     updated_by             VARCHAR(100)          COMMENT 'Updated by username',
-    INDEX idx_tenant_default (tenant_id, is_default),
-    INDEX idx_tenant (tenant_id)
+    INDEX idx_sms_provider_cfg_default (tenant_id, is_default)
 ) COMMENT = 'SMS provider configuration';
 
 CREATE TABLE IF NOT EXISTS sms_provider_region
@@ -67,8 +66,7 @@ CREATE TABLE IF NOT EXISTS sms_template
     created_by           VARCHAR(100)          COMMENT 'Created by username',
     updated_id           BIGINT                COMMENT 'Updated by user ID',
     updated_by           VARCHAR(100)          COMMENT 'Updated by username',
-    UNIQUE INDEX uk_tenant_code (tenant_id, code),
-    INDEX idx_tenant (tenant_id)
+    UNIQUE INDEX uk_sms_template_tenant_code (tenant_id, code)
 ) COMMENT = 'SMS templates with platform/tenant-level scoping';
 
 CREATE TABLE IF NOT EXISTS sms_template_provider_binding
@@ -120,8 +118,8 @@ CREATE TABLE IF NOT EXISTS sms_send_record
     created_by                 VARCHAR(100)          COMMENT 'Created by username',
     updated_id                 BIGINT                COMMENT 'Updated by user ID',
     updated_by                 VARCHAR(100)          COMMENT 'Updated by username',
-    INDEX idx_tenant_status (tenant_id, status),
-    INDEX idx_sent_at (sent_at),
+    INDEX idx_sms_send_tenant_status (tenant_id, status),
+    INDEX idx_sms_send_sent_at (sent_at),
     INDEX idx_provider_msg_id (provider_message_id)
 ) COMMENT = 'SMS send audit log';
 
@@ -132,5 +130,5 @@ CREATE TABLE IF NOT EXISTS sms_send_record
 -- (No idx_message_id needed: provider_message_id is already
 -- indexed via idx_provider_msg_id.)
 -- ============================================================
-CREATE INDEX idx_status_updated_time ON sms_send_record (status, updated_time);
-CREATE INDEX idx_status_next_retry   ON sms_send_record (status, next_retry_at);
+CREATE INDEX idx_sms_send_status_updated ON sms_send_record (status, updated_time);
+CREATE INDEX idx_sms_send_status_retry   ON sms_send_record (status, next_retry_at);

@@ -29,6 +29,8 @@ import io.softa.starter.message.mail.enums.ReceivedMailType;
         multiTenant = true
 )
 @Index(indexName = "uk_server_msg", fields = {"serverConfigId", "messageId"}, unique = true)
+@Index(indexName = "idx_mail_recv_tenant_status", fields = {"tenantId", "status"})
+@Index(indexName = "idx_truncation", fields = {"truncationReason"})
 @EqualsAndHashCode(callSuper = true)
 public class MailReceiveRecord extends AuditableModel {
 

@@ -23,9 +23,11 @@ import io.softa.starter.message.sms.enums.SmsSendStatus;
  */
 @Data
 @Model(label = "SMS Send Record", idStrategy = IdStrategy.DISTRIBUTED_LONG, versionLock = true, copyable = false, multiTenant = true)
-@Index(fields = {"sentAt"})
+@Index(indexName = "idx_sms_send_tenant_status", fields = {"tenantId", "status"})
+@Index(indexName = "idx_sms_send_sent_at", fields = {"sentAt"})
+@Index(indexName = "idx_sms_send_status_updated", fields = {"status", "updatedTime"})
+@Index(indexName = "idx_sms_send_status_retry", fields = {"status", "nextRetryAt"})
 @Index(indexName = "idx_provider_msg_id", fields = {"providerMessageId"})
-@Index(fields = {"status", "nextRetryAt"})
 @EqualsAndHashCode(callSuper = true)
 public class SmsSendRecord extends AuditableModel {
 
