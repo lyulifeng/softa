@@ -2,11 +2,13 @@
 
 ## Overview
 
-Studio Starter is the design-time IDE for Softa metadata. It lets an operator
-design per-environment metadata, preview generated Java/DDL output, publish the
-desired metadata state to a target runtime, import or reverse-engineer runtime
-state back into Studio, merge designs between environments, and restore a prior
-activity snapshot.
+Studio Starter is the metadata control plane for Softa: the design-time IDE plus
+the cross-environment governance engine. It lets an operator design
+per-environment metadata, preview generated DDL, publish the desired metadata
+state to a target runtime, import or reverse-engineer runtime state back into
+Studio, merge designs between environments, and restore a prior activity
+snapshot. It does not generate business code — the runtime is
+annotation/scanner-driven and needs no generated per-entity code.
 
 Current implementation shape:
 
@@ -24,27 +26,11 @@ Current implementation shape:
 
 ## Template Engine
 
-Studio uses Pebble (`{{ var }}` / `{% if %}`) for generated code files and for
-SQL DDL templates resolved through the DDL dialect layer.
-
-### Code Templates
-
-Code generation is handled by `CodeGenerator`.
-
-- Database mode: `DesignCodeTemplate` entries are loaded by `codeLang`, ordered
-  by `sequence`, and rendered into a `ModelCodeDTO.files` list.
-- `DesignFieldCodeMapping` maps Softa field types to language-specific property
-  types.
-- Fallback mode is used when no templates are configured for a language. The
-  classpath fallback files live under:
-
-```text
-starters/studio-starter/src/main/resources/templates/code/
-```
-
-Fallback template paths determine output paths. For example,
-`templates/code/service/{{modelName}}Service.java.peb` renders to
-`service/SysModelService.java`.
+Studio uses Pebble (`{{ var }}` / `{% if %}`) for SQL DDL templates resolved
+through the DDL dialect layer. There is no business-code generator: the runtime
+is annotation/scanner-driven and needs no generated per-entity code, and
+business-code authoring is expected to be AI-assisted from the metadata rather
+than rendered from fixed templates.
 
 ### DDL Rendering
 
@@ -56,7 +42,7 @@ DDL rendering is shared with metadata-starter's annotation DDL infrastructure.
   `DdlDialectFactory`.
 - `SOFTA` connectors use the builtin resolver, matching the boot-time annotation
   scanner.
-- `JDBC` connectors adapt `DesignGenerationMetadataResolver` through
+- `JDBC` connectors adapt `DesignDdlTemplateResolver` through
   `DesignDdlMetadataResolver`, so `DesignFieldDbMapping` and `DesignSqlTemplate`
   can customize external database DDL without becoming global DDL beans.
 - Classpath fallback SQL templates are in metadata-starter, not in
@@ -143,14 +129,12 @@ Key setup for a SOFTA env:
 | `DesignNavigation` | Design-time navigation definition, not swept by publish yet |
 | `Design*Trans` | Design-time translation rows, not swept by publish yet |
 
-### Generation Metadata
+### DDL Template Metadata
 
 | Entity | Purpose |
 | --- | --- |
 | `DesignFieldDbMapping` | Field type to database type mapping for design-backed DDL dialects |
 | `DesignSqlTemplate` | Database-managed SQL template override per database type |
-| `DesignFieldCodeMapping` | Field type to code property type mapping |
-| `DesignCodeTemplate` | Database-managed code template |
 | `DesignFieldDomain` | Reusable one-time field template applied through `DesignField.applyDomain` |
 
 ### Release and Audit
@@ -172,7 +156,7 @@ Key setup for a SOFTA env:
    a JDBC schema if needed.
 4. Edit env-scoped `DesignModel`, `DesignField`, `DesignModelIndex`,
    `DesignOptionSet`, and `DesignOptionItem` rows.
-5. Use `DesignModel` preview APIs for generated DDL and code.
+5. Use `GET /DesignModel/previewDDL` to preview the generated DDL.
 
 ### Publish
 
@@ -195,8 +179,8 @@ does not undo runtime DDL or metadata already applied.
   drift envelope.
 - `previewRuntimeDrift` compares the runtime against the latest successful
   publish snapshot.
-- `applyDrift` accepts the current runtime state as the design truth.
-- `importFromRuntime` refreshes runtime state first, then applies it to design.
+- `applyDrift` overwrites design-time metadata with the env's current runtime
+  state — serving both drift repair and first-time import.
 - `seedFromSource` clones a full env design into an empty target env.
 - `merge` converges one env's design to another env's design for selected
   aggregate roots or for the whole swept catalog.
@@ -218,11 +202,6 @@ the runtime. Only activities with a snapshot can be restored.
 | Endpoint | Description |
 | --- | --- |
 | `GET /DesignModel/previewDDL?id=` | Preview DDL for the current model and its indexes |
-| `GET /DesignModel/previewCode?id=&codeLang=` | Preview generated code for one language |
-| `GET /DesignModel/previewAllCode?id=` | Preview all configured generated code packages |
-| `GET /DesignModel/downloadCode?id=&codeLang=&relativePath=` | Download one generated file |
-| `GET /DesignModel/downloadZip?id=&codeLang=` | Download one language package as ZIP |
-| `GET /DesignModel/downloadAllZip?id=` | Download all generated language packages |
 | `POST /DesignField/applyDomain` | Copy a `DesignFieldDomain` into a field as a one-time template |
 
 ### Environment
@@ -232,8 +211,7 @@ the runtime. Only activities with a snapshot can be restored.
 | `GET /DesignAppEnv/compareDesignWithRuntime?id=` | Live design-vs-runtime drift envelope |
 | `GET /DesignAppEnv/previewRuntimeDrift?id=` | Runtime drift from the last publish snapshot |
 | `POST /DesignAppEnv/issueKey?id=` | Issue or rotate the SOFTA connector signing keypair |
-| `POST /DesignAppEnv/applyDrift?id=` | Accept runtime state as design truth |
-| `POST /DesignAppEnv/importFromRuntime?id=` | Refresh runtime state and import it to design |
+| `POST /DesignAppEnv/applyDrift?id=` | Overwrite design with the env's runtime state (drift repair / first-time import) |
 | `POST /DesignAppEnv/seedFromSource?id=&sourceId=` | Clone an empty env from another env |
 | `POST /DesignAppEnv/publish?id=` | Publish env design to its runtime |
 | `POST /DesignAppEnv/merge?id=&sourceId=` | Merge source env design into target env design |
