@@ -1,6 +1,7 @@
 package io.softa.starter.message.dlq.entity;
 
 import io.softa.framework.orm.entity.AuditableModel;
+import io.softa.starter.message.dlq.enums.DeadLetterSource;
 import io.softa.starter.message.dlq.enums.DeadLetterStatus;
 import io.swagger.v3.oas.annotations.media.Schema;
 import lombok.*;
@@ -27,6 +28,9 @@ public class DeadLetterMessage extends AuditableModel {
 
     @Schema(description = "Source Tenant Id")
     private Long sourceTenantId;
+
+    @Schema(description = "Source: BrokerPoison (Pulsar DLQ) or SendExhausted (mail/sms retry exhausted)")
+    private DeadLetterSource source;
 
     @Schema(description = "Original Topic")
     private String originalTopic;
