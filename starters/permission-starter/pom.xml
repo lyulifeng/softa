@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+    <parent>
+        <groupId>io.softa</groupId>
+        <artifactId>starters</artifactId>
+        <version>2.0.3</version>
+    </parent>
+
+    <name>Softa Permission Starter</name>
+    <artifactId>permission-starter</artifactId>
+    <description>Permission enforce: route-admission interceptor + scope engine + PermissionServiceImpl, split out of user-starter. Domain plugs in via ScopeContributor SPI + DTO/config. Zero login / user-starter.</description>
+
+    <dependencies>
+        <dependency>
+            <groupId>io.softa</groupId>
+            <artifactId>softa-web</artifactId>
+            <version>${project.version}</version>
+        </dependency>
+    </dependencies>
+</project>

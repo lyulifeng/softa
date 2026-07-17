@@ -20,8 +20,8 @@ import io.softa.starter.user.event.RoleGrantChangedEvent;
 import io.softa.starter.user.event.RoleNavigationChangedEvent;
 import io.softa.starter.user.event.UserRoleRelChangedEvent;
 import io.softa.starter.user.service.PermissionCacheInvalidator;
-import io.softa.starter.user.service.PermissionInfoEnricher;
 import io.softa.starter.user.service.UserRoleRelService;
+import io.softa.starter.user.util.PermissionSnapshotKey;
 
 /**
  * Redis-cache invalidator + event listeners that drive it.
@@ -77,7 +77,7 @@ public class PermissionCacheInvalidatorImpl implements PermissionCacheInvalidato
                     + "publisher missing ContextHolder.callWith(bootstrapCtx, ...)", userId);
             return;
         }
-        String key = PermissionInfoEnricher.cacheKey(tenantId, userId);
+        String key = PermissionSnapshotKey.forUser(tenantId, userId);
         try {
             cacheService.clear(key);
             log.debug("PermissionInfo cache evict — key={}", key);
@@ -98,7 +98,7 @@ public class PermissionCacheInvalidatorImpl implements PermissionCacheInvalidato
         }
         List<String> keys = new ArrayList<>(userIds.size());
         for (Long uid : userIds) {
-            if (uid != null) keys.add(PermissionInfoEnricher.cacheKey(tenantId, uid));
+            if (uid != null) keys.add(PermissionSnapshotKey.forUser(tenantId, uid));
         }
         if (keys.isEmpty()) return;
         try {

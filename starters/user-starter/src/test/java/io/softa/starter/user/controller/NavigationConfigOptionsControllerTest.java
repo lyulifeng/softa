@@ -1,7 +1,5 @@
 package io.softa.starter.user.controller;
 
-import java.util.EnumSet;
-import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -13,20 +11,23 @@ import org.junit.jupiter.api.Test;
 import org.mockito.MockedStatic;
 import org.mockito.Mockito;
 import org.springframework.test.util.ReflectionTestUtils;
+import tools.jackson.databind.JsonNode;
+import tools.jackson.databind.node.ArrayNode;
+import tools.jackson.databind.node.JsonNodeFactory;
 
+import io.softa.framework.orm.domain.FlexQuery;
 import io.softa.framework.orm.enums.FieldType;
 import io.softa.framework.orm.meta.MetaField;
 import io.softa.framework.orm.meta.ModelManager;
+import io.softa.framework.orm.service.ModelService;
 import io.softa.starter.user.dto.NavConfigOptions.SfsRef;
 import io.softa.starter.user.dto.RoleModelConfigOption;
-import io.softa.starter.user.enums.ScopeType;
-import io.softa.starter.user.filter.SensitiveFieldSetCache;
-import io.softa.starter.user.scope.ScopeApplicabilityResolver;
 import io.softa.starter.user.service.NavigationModelResolver;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.tuple;
-import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
@@ -36,29 +37,22 @@ import static org.mockito.Mockito.when;
  * derivation (primary + L1/L2 lookup fan-out following ONLY ManyToOne/ManyToMany,
  * with dedup vs primary) and the per-model scope/SFS assembly.
  *
- * <p>Mirrors the mockStatic(ModelManager)+MetaField pattern from
- * {@link io.softa.starter.user.service.EndpointIndexStandardDerivationTest}.
+ * <p>Mirrors the {@code mockStatic(ModelManager)}+{@code MetaField} pattern used
+ * by permission-starter's {@code EndpointIndexStandardDerivationTest}.
  */
 class NavigationConfigOptionsControllerTest {
 
     private NavigationModelResolver navResolver;
-    private ScopeApplicabilityResolver scopeApplicability;
-    private SensitiveFieldSetCache sfsCache;
+    private ModelService<?> modelService;
     private NavigationConfigOptionsController controller;
 
     @BeforeEach
     void setUp() {
         navResolver = mock(NavigationModelResolver.class);
-        scopeApplicability = mock(ScopeApplicabilityResolver.class);
-        sfsCache = mock(SensitiveFieldSetCache.class);
-        controller = new NavigationConfigOptionsController(navResolver, scopeApplicability, sfsCache);
-
-        // Safe defaults so buildModelOption never dereferences null (it iterates
-        // these for EVERY model in the output). Specific-arg stubs in individual
-        // tests take precedence (Mockito: last matching stub wins).
-        when(scopeApplicability.applicableFor(anyString())).thenReturn(EnumSet.of(ScopeType.ALL));
-        when(sfsCache.setIdsOwnedBy(anyString())).thenReturn(Set.of());
-        when(sfsCache.setIdsAttachedTo(anyString())).thenReturn(Set.of());
+        modelService = mock(ModelService.class);
+        controller = new NavigationConfigOptionsController(navResolver, modelService);
+        // The DataScopeType + SensitiveFieldSet reads default to empty (Mockito) →
+        // only "ALL" scope and no SFS rows unless a test stubs the registry reads.
     }
 
     private static MetaField field(String name, FieldType type, String relatedModel) {
@@ -71,6 +65,41 @@ class NavigationConfigOptionsControllerTest {
 
     private static Map<String, RoleModelConfigOption> byModel(List<RoleModelConfigOption> data) {
         return data.stream().collect(Collectors.toMap(RoleModelConfigOption::model, Function.identity()));
+    }
+
+    private static NavigationConfigOptionsController.DataScopeTypeView dst(String id) {
+        var v = new NavigationConfigOptionsController.DataScopeTypeView();
+        v.setId(id);
+        v.setAppliesToAll(true);   // force applicable regardless of model field shape
+        return v;
+    }
+
+    private static NavigationConfigOptionsController.DataScopeTypeView dstFilter(
+            String id, JsonNode filter, String identityModel, JsonNode identityFilter) {
+        var v = new NavigationConfigOptionsController.DataScopeTypeView();
+        v.setId(id);
+        v.setFilter(filter);
+        v.setIdentityModel(identityModel);
+        v.setIdentityFilter(identityFilter);
+        return v;
+    }
+
+    private static NavigationConfigOptionsController.SensitiveFieldSetView sfsView(
+            String id, String model, String name, JsonNode attachedTo) {
+        var v = new NavigationConfigOptionsController.SensitiveFieldSetView();
+        v.setId(id);
+        v.setModel(model);
+        v.setName(name);
+        v.setAttachedTo(attachedTo);
+        return v;
+    }
+
+    private static JsonNode arrayOf(String... vals) {
+        ArrayNode a = JsonNodeFactory.instance.arrayNode();
+        for (String v : vals) {
+            a.add(v);
+        }
+        return a;
     }
 
     // ─────────────────────────── empty input ───────────────────────────
@@ -188,15 +217,17 @@ class NavigationConfigOptionsControllerTest {
     @Test
     void perModelOptions_sortedScopes_dedupedSfs_nameFallback() {
         when(navResolver.resolvePrimaryModel("hr.employee")).thenReturn("Employee");
-        when(scopeApplicability.applicableFor("Employee")).thenReturn(
-                EnumSet.of(ScopeType.ALL, ScopeType.SELF, ScopeType.DIRECT_REPORTS));
-        // emp-comp appears in BOTH owned and attached → must dedup to one row.
-        when(sfsCache.setIdsOwnedBy("Employee"))
-                .thenReturn(new LinkedHashSet<>(List.of("emp-comp", "emp-bank")));
-        when(sfsCache.setIdsAttachedTo("Employee"))
-                .thenReturn(new LinkedHashSet<>(List.of("emp-comp")));
-        when(sfsCache.nameOf("emp-comp")).thenReturn("Compensation");
-        when(sfsCache.nameOf("emp-bank")).thenReturn(null);  // name fallback → id
+        // DataScopeType views forcing ALL + SELF + DIRECT_REPORTS applicable
+        // (appliesToAll so they apply regardless of Employee's empty field stub).
+        when(modelService.searchList(eq("DataScopeType"), any(FlexQuery.class),
+                eq(NavigationConfigOptionsController.DataScopeTypeView.class))).thenReturn(List.of(
+                dst("ALL"), dst("SELF"), dst("DIRECT_REPORTS")));
+        // SensitiveFieldSet views: emp-comp is owned by Employee AND attached to
+        // Employee (must dedup to one row); emp-bank owned with no name (→ id fallback).
+        when(modelService.searchList(eq("SensitiveFieldSet"), any(FlexQuery.class),
+                eq(NavigationConfigOptionsController.SensitiveFieldSetView.class))).thenReturn(List.of(
+                sfsView("emp-comp", "Employee", "Compensation", arrayOf("Employee")),
+                sfsView("emp-bank", "Employee", null, null)));
 
         try (MockedStatic<ModelManager> mm = Mockito.mockStatic(ModelManager.class)) {
             mm.when(() -> ModelManager.existModel("Employee")).thenReturn(true);
@@ -215,6 +246,31 @@ class NavigationConfigOptionsControllerTest {
                     .containsExactlyInAnyOrder(
                             tuple("emp-comp", "Compensation"),
                             tuple("emp-bank", "emp-bank"));
+        }
+    }
+
+    @Test
+    void perModelOptions_identityFilter_derivesApplicabilityFromTemplate() {
+        // Wizard applicability replicates the engine: identity types derive their
+        // anchor fields from the filter template (identityFilter on the identityModel).
+        when(navResolver.resolvePrimaryModel("hr.employee")).thenReturn("Employee");
+        when(modelService.searchList(eq("DataScopeType"), any(FlexQuery.class),
+                eq(NavigationConfigOptionsController.DataScopeTypeView.class))).thenReturn(List.of(
+                dstFilter("SELF", arrayOf("employeeId", "=", "USER_EMP_ID"),
+                        "Employee", arrayOf("id", "=", "USER_EMP_ID")),
+                dstFilter("LEGAL_ENTITY", arrayOf("legalEntityId", "=", "USER_COMP_ID"), null, null)));
+        when(modelService.searchList(eq("SensitiveFieldSet"), any(FlexQuery.class),
+                eq(NavigationConfigOptionsController.SensitiveFieldSetView.class))).thenReturn(List.of());
+
+        try (MockedStatic<ModelManager> mm = Mockito.mockStatic(ModelManager.class)) {
+            mm.when(() -> ModelManager.existModel("Employee")).thenReturn(true);
+            // Employee has id (SELF's identityFilter anchor via model-swap) but NOT
+            // legalEntityId → SELF applies, LEGAL_ENTITY excluded.
+            mm.when(() -> ModelManager.getModelFields("Employee"))
+                    .thenReturn(List.of(field("id", FieldType.STRING, null)));
+
+            RoleModelConfigOption opt = controller.getModelOptions(List.of("hr.employee")).getData().get(0);
+            assertThat(opt.applicableScopes()).containsExactly("ALL", "SELF");
         }
     }
 }

@@ -495,16 +495,14 @@ class PermissionRegistryValidatorTest {
                 org.mockito.Mockito.mock(io.softa.starter.user.service.RoleNavigationService.class);
         io.softa.starter.user.service.NavigationModelResolver navRes =
                 org.mockito.Mockito.mock(io.softa.starter.user.service.NavigationModelResolver.class);
-        io.softa.starter.user.service.EndpointIndex ei =
-                org.mockito.Mockito.mock(io.softa.starter.user.service.EndpointIndex.class);
         io.softa.starter.user.service.RoleDataScopeService rds =
                 org.mockito.Mockito.mock(io.softa.starter.user.service.RoleDataScopeService.class);
         io.softa.starter.user.service.RoleSensitiveFieldSetService rsfsSvc =
                 org.mockito.Mockito.mock(io.softa.starter.user.service.RoleSensitiveFieldSetService.class);
-        io.softa.starter.user.filter.PermissionInterceptorProperties props =
-                new io.softa.starter.user.filter.PermissionInterceptorProperties();
+        // Rule ① (endpoint coverage) moved to permission-starter — the validator
+        // no longer takes EndpointIndex / InterceptorProperties / handlerMappings.
         return new PermissionRegistryValidator(
-                modelService, roleService, rns, rds, rsfsSvc, navRes, ei, props, List.of());
+                modelService, roleService, rns, rds, rsfsSvc, navRes);
     }
 
     /** Invoke the private non-static {@code checkRoleNavigationRows}. The

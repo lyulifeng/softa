@@ -10,12 +10,7 @@ import java.util.Set;
 
 import org.springframework.boot.context.event.ApplicationReadyEvent;
 import org.springframework.context.event.EventListener;
-import org.springframework.http.HttpMethod;
 import org.springframework.stereotype.Component;
-import org.springframework.util.AntPathMatcher;
-import org.springframework.web.method.HandlerMethod;
-import org.springframework.web.servlet.mvc.method.RequestMappingInfo;
-import org.springframework.web.servlet.mvc.method.annotation.RequestMappingHandlerMapping;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import tools.jackson.databind.JsonNode;
@@ -34,9 +29,6 @@ import io.softa.starter.user.entity.RoleNavigation;
 import io.softa.starter.user.entity.RoleSensitiveFieldSet;
 import io.softa.starter.user.entity.SensitiveFieldSet;
 import io.softa.starter.user.enums.NavigationType;
-import io.softa.starter.user.enums.ScopeType;
-import io.softa.starter.user.filter.PermissionInterceptorProperties;
-import io.softa.starter.user.service.EndpointIndex;
 import io.softa.starter.user.service.NavigationModelResolver;
 import io.softa.starter.user.service.RoleDataScopeService;
 import io.softa.starter.user.service.RoleNavigationService;
@@ -55,10 +47,8 @@ import io.softa.starter.user.service.RoleService;
  * the operator notices the bad seed instead of catching a runtime 500
  * three weeks later.
  *
- * <p>All 10 design-§3.8 rules now implemented:
+ * <p>Design-§3.8 rules ②–⑩ (the RBAC-structure rules) are implemented here:
  * <ul>
- *   <li>① endpoint→permission coverage (Spring MVC handler scan vs
- *       EndpointIndex), skipping public + authenticated-bypass URIs</li>
  *   <li>②–⑧ FK / type / model constraints on navigation / permission /
  *       sensitive_field_set / role_navigation rows</li>
  *   <li>⑨ CUSTOM scopeExpr field references must exist on the nav's
@@ -67,6 +57,11 @@ import io.softa.starter.user.service.RoleService;
  *   <li>⑩ role_navigation.navigationId points at a grantable + model-bound
  *       nav</li>
  * </ul>
+ *
+ * <p>Rule ① (endpoint→permission coverage — Spring MVC handler scan vs the
+ * {@code EndpointIndex}) is pure engine domain and now lives in
+ * permission-starter's {@code EndpointCoverageValidator}; this validator carries
+ * no compile dependency on the permission engine (full ⊥).
  *
  * <p>Bonus rule beyond the design — {@code Role.code in reserved set} —
  * prevents an admin from manually creating a role with a code that future
@@ -109,22 +104,6 @@ public class PermissionRegistryValidator {
     private final RoleDataScopeService roleDataScopeService;
     private final RoleSensitiveFieldSetService roleSensitiveFieldSetService;
     private final NavigationModelResolver navigationModelResolver;
-    private final EndpointIndex endpointIndex;
-    private final PermissionInterceptorProperties bypassProperties;
-    /** Spring MVC handler mapping(s) — declared as {@code List} (not
-     *  {@code ObjectProvider}) so we accept ALL beans of this type without
-     *  ambiguity. With Spring Boot's actuator on the classpath there are
-     *  two such beans — the main {@code requestMappingHandlerMapping} and
-     *  the actuator's {@code controllerEndpointHandlerMapping} — and a
-     *  bare-type or {@code ObjectProvider} injection trips Boot's startup
-     *  bean-uniqueness checker on the 2-bean case. {@code List<...>}
-     *  injection is explicitly defined by Spring to mean "every bean of
-     *  this type, ordered by {@code @Order}" — never a "single bean
-     *  required" failure. The list is empty when the starter runs outside
-     *  a web app; rule ① skips itself then. */
-    private final List<RequestMappingHandlerMapping> handlerMappings;
-
-    private static final AntPathMatcher URI_MATCHER = new AntPathMatcher();
 
     @EventListener(ApplicationReadyEvent.class)
     public void validate() {
@@ -168,10 +147,9 @@ public class PermissionRegistryValidator {
         List<RoleSensitiveFieldSet> sfsGrants = loadRoleSensitiveFieldSetGrants(errors);
         checkRoleSensitiveFieldSetRows(sfsGrants, sensitiveFieldSetIds, errors);
 
-        // ① Spring MVC handler URLs not covered by any permission (i.e. callable
-        // but no permission gate). Skipped when the starter is consumed without
-        // a web context (handlerMappings empty).
-        checkEndpointCoverage(errors);
+        // Rule ① (endpoint→permission coverage) now runs in permission-starter's
+        // EndpointCoverageValidator — it reads the EndpointIndex, a pure engine
+        // concept. This validator keeps only the RBAC-structure rules.
 
         if (errors.isEmpty()) {
             log.info("PermissionRegistryValidator — OK ({} nav / {} perm / {} sfs / {} grants checked)",
@@ -462,7 +440,11 @@ public class PermissionRegistryValidator {
         for (JsonNode scopeRule : dataScopes) {
             if (scopeRule == null || !scopeRule.isObject()) continue;
             JsonNode typeNode = scopeRule.get("scopeType");
-            if (typeNode == null || !ScopeType.CUSTOM.name().equals(typeNode.asString())) continue;
+            // "CUSTOM" literal (not ScopeType.CUSTOM.name()): the engine's
+            // ScopeType enum lives in permission-starter and this validator is now
+            // fully ⊥ of it. The stored scopeType wire value is a stable data
+            // contract, so matching the string is sound.
+            if (typeNode == null || !"CUSTOM".equals(typeNode.asString())) continue;
             JsonNode expr = scopeRule.get("scopeExpr");
             if (expr == null || !expr.isArray() || expr.isEmpty()) continue;
             Set<String> fieldRefs = extractFieldRefs(expr, rowId, errors);
@@ -541,92 +523,5 @@ public class PermissionRegistryValidator {
         if (node.getChildren() != null) {
             for (Filters child : node.getChildren()) walkFilterTree(child, out);
         }
-    }
-
-    /**
-     * Rule ① — every Spring MVC handler URL must be covered by some
-     * permission (or whitelisted as public / authenticated-bypass).
-     * Without this, an admin can ship a controller whose endpoint nothing
-     * can call (or worse, that anyone can call because no permission
-     * gates it).
-     *
-     * <p>Implementation walks {@link RequestMappingHandlerMapping#getHandlerMethods()}
-     * — Spring's authoritative URL → handler index — and for each (method,
-     * URL) pair checks bypass lists first, then {@link EndpointIndex#lookup}.
-     */
-    private void checkEndpointCoverage(List<String> errors) {
-        // Collect handler methods from EVERY RequestMappingHandlerMapping bean
-        // — the main MVC mapping plus any extras (notably the actuator's
-        // controllerEndpointHandlerMapping). The list will contain BOTH
-        // when actuator is on the classpath; the yml bypass lists (e.g.
-        // /actuator/**) exempt actuator routes from rule ①.
-        Map<RequestMappingInfo, HandlerMethod> handlers = new HashMap<>();
-        for (RequestMappingHandlerMapping m : handlerMappings) {
-            Map<RequestMappingInfo, HandlerMethod> sub = m.getHandlerMethods();
-            if (sub != null) handlers.putAll(sub);
-        }
-        if (handlers.isEmpty()) {
-            log.debug("PermissionRegistryValidator — no RequestMappingHandlerMapping handlers; skipping rule ① (endpoint coverage)");
-            return;
-        }
-
-        List<String> publicPatterns = bypassProperties.getPublicUriPatterns();
-        List<String> bypassPatterns = bypassProperties.getAuthenticatedBypassPatterns();
-        Set<String> uncovered = new HashSet<>();
-
-        for (Map.Entry<RequestMappingInfo, HandlerMethod> entry : handlers.entrySet()) {
-            RequestMappingInfo info = entry.getKey();
-            Set<String> patterns = info.getPathPatternsCondition() == null
-                    ? Set.of()
-                    : info.getPathPatternsCondition().getPatternValues();
-            if (patterns.isEmpty()) continue;
-            // A mapping with no explicit method condition actually serves
-            // EVERY verb, so probe them all — otherwise an uncovered
-            // PUT/DELETE/PATCH route silently escapes rule ① (it would still
-            // fail-closed at runtime, but the startup coverage signal is the
-            // point).
-            Set<HttpMethod> methods = info.getMethodsCondition().getMethods().isEmpty()
-                    ? Set.of(HttpMethod.GET, HttpMethod.POST, HttpMethod.PUT,
-                            HttpMethod.PATCH, HttpMethod.DELETE)
-                    : info.getMethodsCondition().getMethods().stream()
-                            .map(rm -> HttpMethod.valueOf(rm.name()))
-                            .collect(java.util.stream.Collectors.toSet());
-
-            for (String uri : patterns) {
-                if (isInBypass(uri, publicPatterns) || isInBypass(uri, bypassPatterns)) continue;
-                if (isFrameworkInfraPath(uri)) continue;
-                for (HttpMethod method : methods) {
-                    Set<String> perms = endpointIndex.lookup(uri, method.name());
-                    if (perms == null || perms.isEmpty()) {
-                        uncovered.add(method.name() + " " + uri);
-                    }
-                }
-            }
-        }
-        for (String entry : uncovered) {
-            errors.add(String.format(
-                    "Endpoint not covered by any permission: %s — add to permission.endpoints or public/authenticated-bypass yml",
-                    entry));
-        }
-    }
-
-    private static boolean isInBypass(String uri, List<String> patterns) {
-        if (patterns == null) return false;
-        for (String pattern : patterns) {
-            if (pattern == null || pattern.isEmpty()) continue;
-            if (URI_MATCHER.match(pattern, uri)) return true;
-        }
-        return false;
-    }
-
-    /** Framework / infra paths the interceptor's {@code excludePathPatterns}
-     *  already skips — mirror that list here so rule ① doesn't drown ops
-     *  in noise about {@code /error} / actuator / swagger. */
-    private static boolean isFrameworkInfraPath(String uri) {
-        return uri.equals("/error")
-                || uri.startsWith("/actuator/")
-                || uri.startsWith("/swagger-ui/")
-                || uri.startsWith("/v3/api-docs/")
-                || uri.equals("/favicon.ico");
     }
 }

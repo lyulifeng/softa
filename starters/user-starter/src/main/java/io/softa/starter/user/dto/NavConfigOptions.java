@@ -6,7 +6,7 @@ import io.swagger.v3.oas.annotations.media.Schema;
 
 /**
  * Per-navigation Wizard stage 3 options — emitted by {@code GET
- * /admin/navigationConfigOptions} for each navigation id the FE wizard
+ * /userAccess/navigationConfigOptions} for each navigation id the FE wizard
  * needs to render. Composed from:
  *
  * <ul>

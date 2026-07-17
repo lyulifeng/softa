@@ -7,6 +7,8 @@ import java.util.Set;
 
 import tools.jackson.databind.JsonNode;
 
+import io.softa.framework.base.utils.JsonUtils;
+
 /**
  * Lenient JSON-array → Java collection converters for {@code JsonNode}
  * columns ({@code permission.endpoints} / {@code role_navigation.dataScopes}
@@ -24,25 +26,16 @@ import tools.jackson.databind.JsonNode;
  *       behaviour, which is the safest default for new code.</li>
  * </ul>
  *
- * <h3>Why not {@code io.softa.framework.base.utils.JsonUtils}?</h3>
- * Framework {@code JsonUtils.jsonNodeToStringList} / {@code jsonNodeToLongList}
- * exist but use {@code mapper.convertValue} which:
- * <ol>
- *   <li>Returns {@code null} (not {@code List.of()}) for null / non-array
- *       input — every caller would need a null check.</li>
- *   <li>Lets Jackson silently coerce element types — a {@code [1, 2, 3]}
- *       array passes through {@code jsonNodeToStringList} as
- *       {@code ["1", "2", "3"]}, defeating the "fieldCode must be a real
- *       string" intent.</li>
- *   <li>Throws on unparseable elements ({@code ["abc"]} → {@code Long}
- *       blows up).</li>
- *   <li>Has no {@code Set} variants or {@code Long}-from-mixed-elements
- *       helper.</li>
- * </ol>
- * This util keeps the "strict + null-safe + never throw" contract that
- * SFS cache / PermissionInfoEnricher / FieldFilter rely on. If you don't
- * need that contract (e.g. trusted internal JSON), prefer the framework
- * helpers — same API name, slightly different shape.
+ * <h3>Relationship to {@code JsonUtils}</h3>
+ * The strict-string list conversion now lives in framework
+ * {@code JsonUtils.toStringList(Object, boolean)} (2026-07-17) and these
+ * {@code toStringList} methods <b>delegate</b> to it — the only difference is the
+ * empty contract: framework returns {@code null} (so callers can tell absent from
+ * empty), whereas this util coalesces to {@code List.of()} to match the
+ * SFS-cache / FieldFilter callers that never null-check. The {@code Set} and
+ * {@code Long} variants below have no framework equivalent and stay here.
+ * (Do NOT confuse with the older {@code JsonUtils.jsonNodeToStringList}, which uses
+ * {@code convertValue} = stringify-everything, not strict-string.)
  */
 public final class JsonArrayUtils {
 
@@ -66,16 +59,8 @@ public final class JsonArrayUtils {
      *                       JSON dialects.
      */
     public static List<String> toStringList(JsonNode node, boolean coerceNumeric) {
-        if (node == null || !node.isArray()) return List.of();
-        List<String> out = new ArrayList<>(node.size());
-        for (JsonNode el : node) {
-            if (el.isString()) {
-                out.add(el.asString());
-            } else if (coerceNumeric && el.isNumber()) {
-                out.add(String.valueOf(el.asLong()));
-            }
-        }
-        return out;
+        List<String> out = JsonUtils.toStringList(node, coerceNumeric);
+        return out == null ? List.of() : out;
     }
 
     /** Strict-string variant returning a Set (dedup applied). */

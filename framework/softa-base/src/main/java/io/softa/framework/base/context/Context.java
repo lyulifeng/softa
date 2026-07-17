@@ -3,6 +3,7 @@ package io.softa.framework.base.context;
 import java.io.Serial;
 import java.io.Serializable;
 import java.time.LocalDate;
+import java.util.Set;
 import java.util.UUID;
 import lombok.Data;
 import org.apache.commons.lang3.StringUtils;
@@ -40,7 +41,12 @@ public class Context implements Serializable {
 
     private UserInfo userInfo;
     private EmpInfo empInfo;
-    private PermissionInfo permissionInfo;
+    /** Caller's system role codes, bridged onto the Context by the enforce
+     *  layer (permission-starter interceptor) so framework aspects like
+     *  {@code @RequireRole} can gate without depending on the permission model.
+     *  The full permission snapshot ({@code PermissionInfo}) lives in
+     *  permission-starter and is fetched via the snapshot SPI, not carried here. */
+    private Set<String> roleCodes;
 
     /**
      * Whether to skip permission verification (including model permission and data range),

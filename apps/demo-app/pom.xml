@@ -73,6 +73,15 @@
             <version>${project.version}</version>
         </dependency>
 
+        <!-- Permission enforcement engine. Declared explicitly (not pulled in
+             transitively via user-starter, which is now ⊥ of it) so this app's
+             route-admission + scope enforcement stays active. -->
+        <dependency>
+            <groupId>io.softa</groupId>
+            <artifactId>permission-starter</artifactId>
+            <version>${project.version}</version>
+        </dependency>
+
         <!-- Tenant registry (TenantInfo) + multi-tenant SPI impl — required since multi-tenancy is enabled -->
         <dependency>
             <groupId>io.softa</groupId>
