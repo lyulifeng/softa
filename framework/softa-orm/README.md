@@ -76,7 +76,7 @@ public enum CustomerTier {
 | (class simple name) | — | — | `modelName` | inferred, no override |
 | `label` | String | `""` | `label` | empty → humanized class name (`DeptInfo`→"Dept Info"); i18n translations override by id |
 | `tableName` | String | `""` | `tableName` | empty → `snake_case(modelName)` |
-| `description` | String | `""` | `description` | |
+| `description` | String | `""` | `description` | **≤512 chars**, parse-time enforced (catalog column width); concise user-facing summary — design notes go in Javadoc |
 | `displayName` | String[] | `{}` | `displayName` | list-display defaults |
 | `searchName` | String[] | `{}` | `searchName` | search-field defaults |
 | `defaultOrder` | String[] | `{}` | `defaultOrder` | e.g. `"createdTime:desc"` |
@@ -107,7 +107,7 @@ extends `AuditableModel`.
 | (Java field name) | — | — | `fieldName` | inferred, no override |
 | (Java type) | — | — | `fieldType` | inferred via `TypeInference` |
 | `label` | String | `""` | `label` | empty → humanized field name (`deptId`→"Dept Id"); i18n translations override by id |
-| `description` | String | `""` | `description` | |
+| `description` | String | `""` | `description` | **≤512 chars**, parse-time enforced (catalog column width); concise user-facing summary — design notes go in Javadoc |
 | `fieldType` | `FieldType[]` | `{}` | `fieldType` | single value, no braces (e.g. `fieldType = FieldType.MULTI_FILE`); `OPTION`/`MULTI_OPTION` **cannot** be written explicitly |
 | `columnName` | String | `""` | `columnName` | empty → `snake_case(fieldName)` |
 | `length` | int | `0` | `length` | `0` → type default: STRING/OPTION 64, MULTI_STRING/ORDERS 256, DOUBLE 24 (measurements), BIG_DECIMAL 32 (money); declare explicitly for anything else. MySQL renders `length > 16383` as TEXT |
@@ -116,6 +116,14 @@ extends `AuditableModel`.
 | `readonly` | boolean | `false` | `readonly` | UI hint |
 | `translatable` | boolean | `false` | `translatable` | i18n-aware column |
 | `copyable` | boolean | `true` | `copyable` | `false` ⇒ value not carried over by `copyById` (business keys, credentials, runtime state) |
+
+Copy field-selection contract (applies regardless of the flag): `ONE_TO_ONE` FKs are **always
+excluded** — copying one would make two rows share an exclusively-owned related row, corrupting the
+1:1 (or hard-failing on its unique index); dynamic fields (`ONE_TO_MANY` / `MANY_TO_MANY` / computed /
+cascaded) are excluded because they are not stored columns; `MANY_TO_ONE` **stays copyable** — a shared
+reference is exactly its semantics. Historical trap: the `nonCopyable` → `copyable` rename was done as a
+migration (V6), NOT via `renamedFrom`, because the rename inverts the value's meaning — a
+value-preserving rename would have carried wrong values.
 | `unsearchable` | boolean | `false` | `unsearchable` | excluded from default search |
 | `computed` | boolean | `false` | `computed` | requires `expression` |
 | `expression` | String | `""` | `expression` | AviatorScript |
@@ -125,8 +133,8 @@ extends `AuditableModel`.
 | `defaultValue` | String | `""` | `defaultValue` | |
 | `relatedModel` | `Class<?>` | `Void.class` | `relatedModel` | Class ref (compile-checked), e.g. `Foo.class`; `Void.class` → inferred from POJO type; **required** for `Long` FK. Use `relatedModelName` (String) for cross-module/dynamic models |
 | `relatedModelName` | String | `""` | `relatedModel` | String fallback to `relatedModel` (cross-module/dynamic) |
-| `relatedField` | String | `""` | `relatedField` | TO_ONE: always `id` — leave empty (a non-id value is rejected at boot, ADR-0024; to store a business code make the related model code-as-id). ONE_TO_MANY: names the child FK column |
-| `onDelete` | `OnDelete[]` | `{}` | `on_delete` | TO_ONE FK delete strategy: `RESTRICT` / `CASCADE` / `SET_NULL`; `{}`/unset = KEEP (default — do nothing). App-level (no DB FK). See "Delete strategy" below + ADR-0022 |
+| `relatedField` | String | `""` | `relatedField` | TO_ONE: always `id` — leave empty (a non-id value is rejected at boot; to store a business code make the related model code-as-id). ONE_TO_MANY: names the child FK column |
+| `onDelete` | `OnDelete[]` | `{}` | `on_delete` | TO_ONE FK delete strategy: `RESTRICT` / `CASCADE` / `SET_NULL`; `{}`/unset = KEEP (default — do nothing). App-level (no DB FK). See "Delete strategy" below |
 | `joinModel` | `Class<?>` | `Void.class` | `joinModel` | M2M join model class; `joinModelName` (String) fallback |
 | `joinLeft` | String | `""` | `joinLeft` | |
 | `joinRight` | String | `""` | `joinRight` | |
@@ -143,7 +151,11 @@ extends `AuditableModel`.
 
 On a `MANY_TO_ONE` / `ONE_TO_ONE` FK, `onDelete` declares what happens to the **referencing** rows when
 the referenced ("One") row is deleted. Enforced application-level in `ModelServiceImpl.deleteByIds` — no
-physical DB `FOREIGN KEY ... ON DELETE` is ever emitted (relations are app-level):
+physical DB `FOREIGN KEY ... ON DELETE` is ever emitted. Why app-level and never a real DB FK: soft
+delete is an `UPDATE`, invisible to a DB `ON DELETE` (the FK would simply never fire); a DB cascade
+bypasses permissions, change logs, audit stamping, soft-delete conversion and tenant scoping; a DB FK
+cannot express "count only `deleted=false` referrers", "block regardless of tenant", or "null only on
+hard delete"; and physical FKs clash with the never-auto-DROP DDL governance. Strategies:
 
 - `RESTRICT` — block the delete if any live (`deleted=false`) referrer exists.
 - `CASCADE` — delete the referrers in the same transaction (each follows its own soft/hard delete).
@@ -175,12 +187,17 @@ transaction — chunking bounds statement size, not lock duration).
 For a OneToMany "delete parent → delete children", put `CASCADE` on the **child's back-reference FK**
 (the FK is the single source of truth; `onDelete` is not declared on `ONE_TO_MANY`).
 
-Boot-time guards (fail-fast): `onDelete` is valid only on TO_ONE; `SET_NULL` requires a nullable FK; the
-target may not be a timeline model; a **cyclic / self-referential `CASCADE`** is rejected (delete such
-hierarchies — org trees, BOM, category trees — in application code); a **`CASCADE` chain deeper than
-`MAX_CASCADE_DEPTH` models** is rejected (bounds recursion; the error names the full chain); and a
-`CASCADE` from a **soft-delete parent to a hard-delete child**, or from a **shared parent to a
-multi-tenant child**, is rejected (see the matrix above).
+Boot-time guards (fail-fast): `onDelete` is valid only on TO_ONE; `SET_NULL` requires a nullable FK; a
+**cyclic / self-referential `CASCADE`** is rejected (delete such hierarchies — org trees, BOM, category
+trees — in application code); a **`CASCADE` chain deeper than `MAX_CASCADE_DEPTH` models** is rejected
+(bounds recursion; the error names the full chain); and a `CASCADE` from a **soft-delete parent to a
+hard-delete child**, or from a **shared parent to a multi-tenant child**, is rejected (see the matrix
+above).
+
+A **timeline** target is allowed: the inbound-FK strategy fires on **entity deletion** (`deleteByIds`,
+which removes all slices of the logical id — referencing FKs store that logical id, so RESTRICT counts /
+CASCADE deletes / SET_NULL nulls by it, no effective-date resolution involved); slice-level
+`deleteBySliceId` keeps the entity alive and deliberately does not trigger it.
 
 ### `@OptionSet` ↔ `SysOptionSet`
 
@@ -188,7 +205,7 @@ multi-tenant child**, is rejected (see the matrix above).
 |---|---|---|---|---|
 | (enum simple name) | — | — | `optionSetCode` | inferred, no override |
 | `name` | String | `""` | `name` | display label; empty → humanized enum name (`TenantStatus`→"Tenant Status") |
-| `description` | String | `""` | `description` | |
+| `description` | String | `""` | `description` | **≤512 chars**, parse-time enforced (catalog column width); concise user-facing summary — design notes go in Javadoc |
 | (scanner sets) | — | — | `appCode` / `id` | |
 | (Studio toggle) | — | — | `deleted` / `optionItems` | runtime aggregation |
 
@@ -199,7 +216,7 @@ multi-tenant child**, is rejected (see the matrix above).
 | (`@JsonValue` field value on enum) | — | — | `itemCode` | fallback to `enum.name()` when no `@JsonValue` |
 | (enclosing enum simple name) | — | — | `optionSetCode` | inferred |
 | `label` | String | `""` | `label` | defaults to humanized constant name (`MULTI_FILE`→"Multi File"); declare explicitly to customize. Omit when it equals the humanized name (and omit the whole `@OptionItem` if nothing else remains) |
-| `description` | String | `""` | `description` | |
+| `description` | String | `""` | `description` | **≤512 chars**, parse-time enforced (catalog column width); concise user-facing summary — design notes go in Javadoc |
 | `sequence` | int | `-1` | `sequence` | `-1` → use `ordinal() + 1` |
 | `parentItemCode` | String | `""` | `parentItemCode` | hierarchy |
 | `itemTone` | `OptionItemTone[]` | `{}` | `itemTone` | single element |
@@ -233,7 +250,7 @@ declare such indexes explicitly:
 
 Rows in `sys_model` / `sys_field` / `sys_option_set` / `sys_option_item` /
 `sys_model_index` are scoped by **`app_code`**, stamped server-side from
-`system.app-code` (ADR-0015). The retired `ownership` tier column is gone from
+`system.app-code`. The retired `ownership` tier column is gone from
 the baseline — the annotation lane and the Studio no-code lane reconcile the
 **same rows matched by business key** (`modelName` / `fieldName` /
 `optionSetCode` / `itemCode`, plus `renamedFrom`).
@@ -241,7 +258,7 @@ the baseline — the annotation lane and the Studio no-code lane reconcile the
 In development, packages listed in `scanner-scope` reconcile annotation-derived
 metadata into `sys_*` for this app. In production, Studio/connector publish
 applies the app-scoped design catalog. Per-tenant runtime metadata
-customization is not represented as separate `sys_*` rows (ADR-0013).
+customization is not represented as separate `sys_*` rows.
 
 Verify after boot:
 
@@ -348,7 +365,7 @@ Recommendation:
 ### Less Common Annotations
 - `@RPCCheckpoint`: framework-internal AOP hook used by `JdbcServiceImpl` to
   redirect ORM calls to the app that owns the model — `SwitchServiceAspect`
-  routes by the model's `appCode` (ADR-0015) when it differs from this runtime's
+  routes by the model's `appCode` when it differs from this runtime's
   `system.app-code`. Application services do not apply this annotation themselves.
   See [Service-to-Service RPC](../architecture/rpc.md) for
   the mechanism, wire format, and configuration.
@@ -508,6 +525,10 @@ A timeline model records historical slices of data over time. It is useful for b
 #### 1.1 Timeline Attribute at Model Level
 - `timeline = true` indicates this is a timeline model. It must contain the reserved fields `effectiveStartDate` and `effectiveEndDate`. The system validates these fields on startup and throws an exception if missing.
 - `timeline = false` indicates a non-timeline model. Non-timeline models must not define the reserved fields `effectiveStartDate` and `effectiveEndDate`.
+- A timeline model **requires an app-generated logical id** — `idStrategy = DISTRIBUTED_LONG` (or
+  `DISTRIBUTED_STRING` / `EXTERNAL_ID`). `DB_AUTO_ID` is rejected at boot: the auto-increment lands on the
+  physical `sliceId`, so nothing would fill the shared logical `id` column of a first slice (split/correct
+  rows arrive carrying the entity's existing id and keep it).
 
 #### 1.2 Primary Keys and Fields
 - `sliceId`: physical primary key of a timeline model, used to update a slice.
@@ -515,7 +536,16 @@ A timeline model records historical slices of data over time. It is useful for b
 - `effectiveEndDate`: effective end date of the timeline data.
 - `id`: logical (business) primary key, compatible with non-timeline models. All business foreign keys referencing a timeline model use this field.
 - If your database needs an auto-increment record number (such as `record_id`) for change logs, you can add it yourself. It is not a framework-reserved field.
-- Recommended unique constraint: `(id, effectiveStartDate, effectiveEndDate)`.
+- Recommended unique constraint: `(id, effectiveStartDate, effectiveEndDate)` — one index doubles as the
+  as-of read cover (the end date is checked in-index) and as an integrity backstop: interval maintenance is
+  a check-then-act sequence, so a true concurrent write race on one entity surfaces as a unique violation
+  instead of silent same-start slices. Declare it with an **explicit `indexName`** (the default concatenated
+  name exceeds the 60-char global limit for longer table names):
+
+  ```java
+  @Index(indexName = "uk_<table>_timeline",
+         fields = {"id", "effectiveStartDate", "effectiveEndDate"}, unique = true)
+  ```
 
 #### 1.3 Metadata Relationships
 - Timeline models can relate to themselves via One2One, Many2One, One2Many, Many2Many. Storage and references use the logical primary key `id`.
@@ -559,6 +589,15 @@ Example timeline slices (same logical department `id`):
 - Queries like `getById/getByIds/searchList/searchPage` return only slices effective on `effectiveDate` by default.
 - To query history across time, use `FlexQuery#acrossTimelineData()` or include `effectiveStartDate`/`effectiveEndDate` in filters.
 - Cascaded reads propagate `effectiveDate`.
+- **View a record's version list from the REST API**: `/searchPage` (or `/searchList`) with the row's
+  `id` in `filters` and `acrossTimeline: true` returns all slices (each carrying its own `sliceId` and
+  effective range). The `acrossTimeline` flag is the explicit half of the dual trigger, exposed on
+  `QueryParams` / `SearchListParams`; it is not on `SearchNameParams` (a displayName picker wants the
+  as-of option, not every version). Example:
+  ```jsonc
+  POST /{model}/searchPage
+  { "filters": [["id","=",6]], "orders": [["effectiveStartDate","DESC"]], "acrossTimeline": true }
+  ```
 
 #### 2.3 create APIs
 - For `createOne/createList`, if `effectiveStartDate` is empty, it uses the current `effectiveDate`; if `effectiveEndDate` is empty, it is set to `9999-12-31`.
@@ -570,10 +609,32 @@ Example timeline slices (same logical department `id`):
 - If an upper layer provides a "correct"-style API (update data without creating a new slice), it should locate by `sliceId` (the ORM currently does not provide a dedicated correct API).
 
 #### 2.5 delete APIs
-- `deleteById/deleteByIds`: deletes all slices for a business `id`.
-- `deleteBySliceId`: deletes a single slice and automatically corrects adjacent slice ranges.
+- `deleteById/deleteByIds`: deletes all slices for a business `id` — this is **entity deletion**, and it is
+  the point where the inbound-FK delete strategy (`onDelete` RESTRICT / CASCADE / SET_NULL, keyed by the
+  logical `id`) fires against referencing models.
+- `deleteBySliceId`: deletes a single slice and automatically corrects adjacent slice ranges. The entity
+  survives, so `onDelete` deliberately does **not** fire.
 
-#### 2.6 search Join Rules for Timeline Associations
+#### 2.6 Versioning seam (engine internals)
+- All timeline handling in `ModelServiceImpl` routes through one `VersioningStrategy` seam
+  (`service/versioning/`): `IdentityStrategy` is a no-op for regular models, `TimelineStrategy` adapts the
+  interval-maintenance algorithm in `TimelineService`. New read paths must route Filters/FlexQuery through
+  the `scopedRead` exits — there is no per-call-site `if (isTimelineModel)` to forget.
+- The across-timeline opt-out is a **dual trigger by contract**: the explicit
+  `FlexQuery.acrossTimelineData()` flag, **or** caller-supplied `effectiveStartDate`/`effectiveEndDate`
+  conditions (which declare "I am doing my own temporal filtering"). Either suppresses the default
+  effective-date clamp; both are intended, stable behavior.
+- **Accepted limitations** (a master-detail table split was evaluated and rejected — its headline benefit,
+  a real DB FK target, is moot because referential integrity is enforced app-level and no physical FKs are
+  emitted): version-invariant fields (e.g. `code`) repeat on every slice, and a **declarative
+  reference-by-code relation to a timeline model is not supported** (`code` is not physically unique across
+  slices). Reference timeline entities by logical `id` (as-of) or pin one slice via `sliceId`; a **runtime**
+  "`code` + effective date" as-of query is fully supported (non-overlapping intervals make it unique).
+- `Context.effectiveDate` is ambient state (defaults to today). Batch engines that fan work out across
+  threads must propagate the context (ScopedValue) to workers — e.g. a payroll run pricing by `payDate` —
+  or that branch silently prices "as of today".
+
+#### 2.7 search Join Rules for Timeline Associations
 - When the related object is a timeline model, Many2One/One2One queries automatically append to the `LEFT JOIN ON` clause:
   `effectiveStartDate <= effectiveDate AND effectiveEndDate >= effectiveDate`.
 - One2Many/Many2Many cascades also filter slices based on `effectiveDate`.
@@ -584,7 +645,9 @@ Example timeline slices (same logical department `id`):
 ```java
 @Data
 @EqualsAndHashCode(callSuper = true)
-@Model(label = "Product Price", timeline = true)
+@Model(label = "Product Price", timeline = true, idStrategy = IdStrategy.DISTRIBUTED_LONG)
+@Index(indexName = "uk_product_price_timeline",
+       fields = {"id", "effectiveStartDate", "effectiveEndDate"}, unique = true)
 public class ProductPrice extends TimelineModel {
     @Serial
     private static final long serialVersionUID = 1L;
