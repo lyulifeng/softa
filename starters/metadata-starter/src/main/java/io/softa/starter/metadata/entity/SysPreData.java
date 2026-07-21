@@ -25,10 +25,10 @@ public class SysPreData extends AuditableModel {
     @Field
     private String model;
 
-    @Field(label = "Pre ID", required = true)
+    @Field(label = "Pre ID", required = true, length = 128)
     private String preId;
 
-    @Field(label = "Row ID")
+    @Field(label = "Row ID", length = 128)
     private String rowId;
 
     @Field
