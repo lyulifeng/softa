@@ -142,7 +142,7 @@ class RoleServiceImplTest {
 
         assertThatThrownBy(() -> svc.updateOne(patch))
                 .isInstanceOf(BusinessException.class)
-                .hasMessageContaining("Cannot rename system role");
+                .hasMessageContaining("Cannot edit system role");
     }
 
     @Test
@@ -156,7 +156,7 @@ class RoleServiceImplTest {
 
         assertThatThrownBy(() -> svc.updateOne(patch))
                 .isInstanceOf(BusinessException.class)
-                .hasMessageContaining("Cannot deactivate system role");
+                .hasMessageContaining("Cannot edit system role");
     }
 
     @Test
@@ -170,7 +170,7 @@ class RoleServiceImplTest {
 
         assertThatThrownBy(() -> svc.updateOne(patch))
                 .isInstanceOf(BusinessException.class)
-                .hasMessageContaining("Cannot change code");
+                .hasMessageContaining("Cannot edit system role");
     }
 
     @Test
@@ -186,7 +186,23 @@ class RoleServiceImplTest {
 
         assertThatThrownBy(() -> svc.updateOne(patch))
                 .isInstanceOf(BusinessException.class)
-                .hasMessageContaining("dynamic membership");
+                .hasMessageContaining("Cannot edit system role");
+    }
+
+    @Test
+    void updateOne_editDescriptionOfSystemRole_throws() {
+        // Tightened: built-in roles are fully immutable — even a benign description edit is rejected
+        // (previously only rename / deactivate / code / dynamicFilter were blocked).
+        Role persisted = superAdminRole();
+        doReturn(Optional.of(persisted)).when(svc).getById(1L);
+
+        Role patch = new Role();
+        patch.setId(1L);
+        patch.setDescription("tweaked");
+
+        assertThatThrownBy(() -> svc.updateOne(patch))
+                .isInstanceOf(BusinessException.class)
+                .hasMessageContaining("Cannot edit system role");
     }
 
     @Test
@@ -211,6 +227,39 @@ class RoleServiceImplTest {
         doReturn(true).when(svc).updateOne(any(Role.class));
         Role patch = new Role();
         assertThatCode(() -> svc.updateOne(patch)).doesNotThrowAnyException();
+    }
+
+    // ─── extension: guards protect ANY system-reserved role, not just SUPER_ADMIN ───
+
+    @Test
+    void deleteById_tenantAdminRole_throws() {
+        Role ta = new Role();
+        ta.setId(2L);
+        ta.setName("Tenant Admin");
+        ta.setCode(RoleConstant.CODE_TENANT_ADMIN);
+        doReturn(List.of(ta)).when(svc).searchList(any(Filters.class));
+
+        assertThatThrownBy(() -> svc.deleteById(2L))
+                .isInstanceOf(BusinessException.class)
+                .hasMessageContaining("Delete is not allowed on system role");
+    }
+
+    @Test
+    void updateOne_deactivateTenantAdmin_throws() {
+        Role persisted = new Role();
+        persisted.setId(2L);
+        persisted.setName("Tenant Admin");
+        persisted.setCode(RoleConstant.CODE_TENANT_ADMIN);
+        persisted.setActive(true);
+        doReturn(Optional.of(persisted)).when(svc).getById(2L);
+
+        Role patch = new Role();
+        patch.setId(2L);
+        patch.setActive(false);
+
+        assertThatThrownBy(() -> svc.updateOne(patch))
+                .isInstanceOf(BusinessException.class)
+                .hasMessageContaining("Cannot edit system role");
     }
 
     // ─── cache eviction: Role write publishes a per-role event ───

@@ -17,7 +17,7 @@ import io.softa.framework.web.response.ApiResponse;
 import io.softa.starter.user.dto.BulkAddRequest;
 import io.softa.starter.user.dto.BulkAddResult;
 import io.softa.starter.user.entity.UserRoleRel;
-import io.softa.starter.user.enums.RoleSource;
+import io.softa.starter.user.enums.UserRoleSource;
 import io.softa.starter.user.service.BulkUserRoleService;
 import io.softa.starter.user.service.UserRoleRelService;
 
@@ -57,7 +57,14 @@ public class UserRoleRelController
             + "returns added / skipped with technical reasons")
     @PostMapping("/bulkAdd")
     public ApiResponse<BulkAddResult> bulkAdd(@RequestBody @Valid BulkAddRequest body) {
-        RoleSource source = body.source() == null ? RoleSource.MANUAL : body.source();
+        UserRoleSource source = body.source() == null ? UserRoleSource.MANUAL : body.source();
         return ApiResponse.success(bulkUserRoleService.bulkAdd(body.pairs(), source));
+    }
+
+    @Operation(summary = "createOne — typed (runs the SUPER_ADMIN bind guard); the generic "
+            + "/UserRoleRel/createOne path skips it")
+    @PostMapping("/createOne")
+    public ApiResponse<Long> createOne(@RequestBody UserRoleRel entity) {
+        return ApiResponse.success(service.createOne(entity));
     }
 }

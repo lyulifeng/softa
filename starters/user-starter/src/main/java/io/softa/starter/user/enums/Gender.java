@@ -14,7 +14,8 @@ import io.softa.framework.base.annotation.OptionSet;
 @OptionSet
 public enum Gender {
     MALE("Male"),
-    FEMALE("Female");
+    FEMALE("Female"),
+    OTHER("Other");
 
     @JsonValue
     private final String gender;

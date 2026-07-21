@@ -1,28 +1,33 @@
 package io.softa.starter.user.controller;
 
-import io.softa.framework.base.utils.Assert;
+import io.softa.framework.base.exception.BusinessException;
 import io.softa.framework.orm.domain.Filters;
 import io.softa.framework.orm.service.ModelService;
 import io.softa.framework.web.response.ApiResponse;
+import io.softa.starter.user.constant.RoleConstant;
+import io.softa.starter.user.dto.EffectiveAccess;
+import io.softa.starter.user.dto.RoleActiveDTO;
 import io.softa.starter.user.dto.WizardSaveDTO;
 import io.softa.starter.user.entity.Role;
 import io.softa.starter.user.entity.RoleDataScope;
 import io.softa.starter.user.entity.RoleNavigation;
 import io.softa.starter.user.entity.RoleSensitiveFieldSet;
 import io.softa.starter.user.entity.UserRoleRel;
-import io.softa.starter.user.enums.RoleSource;
+import io.softa.starter.user.enums.UserRoleSource;
 import io.softa.starter.user.service.DynamicRoleSyncJob;
 import io.softa.starter.user.service.RoleDataScopeService;
 import io.softa.starter.user.service.RoleNavigationService;
 import io.softa.starter.user.service.RoleSensitiveFieldSetService;
 import io.softa.starter.user.service.RoleService;
 import io.softa.starter.user.service.UserRoleRelService;
+import io.softa.starter.user.service.impl.UiContextBuilder;
 import io.softa.starter.user.util.JsonArrayUtils;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.PutMapping;
@@ -64,6 +69,7 @@ public class RoleController {
      *  dynamicFilter). The map-based updateOne writes whatever keys are
      *  present in the map, null values included. */
     private final ModelService<?> modelService;
+    private final UiContextBuilder uiContextBuilder;
 
     @Operation(summary = "Delete a role by id — typed (system-role guard + cache eviction); "
             + "shadows the generic /Role/deleteById which skips both")
@@ -77,6 +83,64 @@ public class RoleController {
     @PostMapping("/deleteByIds")
     public ApiResponse<Boolean> deleteByIds(@RequestParam List<Long> ids) {
         return ApiResponse.success(roleService.deleteByIds(ids));
+    }
+
+    @Operation(summary = "Create a role — typed shadow that rejects a client-supplied `code` (reserved for "
+            + "system roles, code-initialized only); the generic /Role/createOne would skip that guard.")
+    @PostMapping("/createOne")
+    public ApiResponse<Object> createOne(@RequestBody Map<String, Object> row) {
+        rejectClientCode(row);
+        return ApiResponse.success(modelService.createOne("Role", row));
+    }
+
+    @Operation(summary = "Batch-create roles — typed shadow that rejects any client-supplied `code`.")
+    @PostMapping("/createList")
+    public ApiResponse<Object> createList(@RequestBody List<Map<String, Object>> rows) {
+        if (rows != null) rows.forEach(RoleController::rejectClientCode);
+        return ApiResponse.success(modelService.createList("Role", rows));
+    }
+
+    @Operation(summary = "Update a role — typed shadow that blocks generic edits to a system-reserved role "
+            + "(code != null: SUPER_ADMIN / TENANT_ADMIN / …); the generic /Role/updateOne would skip the guard.")
+    @PostMapping("/updateOne")
+    public ApiResponse<Boolean> updateOne(@RequestBody Map<String, Object> row) {
+        guardNotSystemRole(row);
+        return ApiResponse.success(modelService.updateOne("Role", row));
+    }
+
+    /** Reject a client-supplied non-blank {@code code} on create — reserved for system seeds (mirrors
+     *  {@code RoleServiceImpl.guardAdminCreatedCode}; the generic ModelController create bypasses it). */
+    private static void rejectClientCode(Map<String, Object> row) {
+        Object code = row == null ? null : row.get("code");
+        if (code != null && !code.toString().isBlank()) {
+            throw new BusinessException(
+                    "Role code is reserved for system roles; admin-created roles must have code=null");
+        }
+    }
+
+    /** Block a generic update targeting a system-reserved role (code != null). The nuanced field-level
+     *  guard for the typed edit paths (wizard / active) is {@code RoleServiceImpl.guardSystemMutation}. */
+    private void guardNotSystemRole(Map<String, Object> row) {
+        Object id = row == null ? null : row.get("id");
+        if (id == null) return;
+        roleService.getById(Long.valueOf(id.toString()))
+                .filter(RoleConstant::isSystemRole)
+                .ifPresent(r -> {
+                    throw new BusinessException(
+                            "Update is not allowed on system role '" + r.getName() + "' (code=" + r.getCode() + ")");
+                });
+    }
+
+    @GetMapping("/{id}/effective-access")
+    @Operation(summary = "Read-only computed navigation/permissions for an admin role — SUPER_ADMIN = every "
+            + "nav+permission; TENANT_ADMIN = tenant-facing navs (minus platform-only) narrowed by the tenant's "
+            + "plan; row-scope + sensitive fields unrestricted (admin bypass). Non-admin roles return "
+            + "{computed:false} — the FE renders their static role_navigation grants instead.")
+    public ApiResponse<EffectiveAccess> effectiveAccess(@PathVariable Long id) {
+        Role role = roleService.getById(id)
+                .orElseThrow(() -> new BusinessException("Role not found."));
+        // Admin role → computed navs/permissions; non-admin → {computed:false} (FE uses static grants).
+        return ApiResponse.success(uiContextBuilder.effectiveAccessForRole(role.getCode(), role.getTenantId()));
     }
 
     @PostMapping("/wizard")
@@ -149,12 +213,10 @@ public class RoleController {
             + "RoleNavigationChangedEvent — every holder's PermissionInfo cache is evicted on commit and "
             + "the status change takes effect immediately. The generic /Role/updateOne path publishes no "
             + "event (holders would stay authorised until the 1h cache TTL), so status MUST be changed here.")
-    public ApiResponse<Boolean> setActive(@PathVariable Long id, @RequestBody JsonNode payload) {
-        JsonNode active = payload == null ? null : payload.get("active");
-        Assert.isTrue(active != null && !active.isNull(), "`active` (boolean) is required");
+    public ApiResponse<Boolean> setActive(@PathVariable Long id, @RequestBody @Valid RoleActiveDTO body) {
         Role patch = new Role();
         patch.setId(id);
-        patch.setActive(active.asBoolean());
+        patch.setActive(body.active());
         // ignoreNull=true → writes only `active`, leaving name / code / tenantId
         // untouched. The typed updateOne runs guardSystemMutation (blocks
         // deactivating a system role) and publishRoleGrantChange, whose
@@ -210,7 +272,7 @@ public class RoleController {
             UserRoleRel ur = new UserRoleRel();
             ur.setUserId(userId);
             ur.setRoleId(roleId);
-            ur.setSource(RoleSource.MANUAL);
+            ur.setSource(UserRoleSource.MANUAL);
             rows.add(ur);
         }
         userRoleRelService.createList(rows);

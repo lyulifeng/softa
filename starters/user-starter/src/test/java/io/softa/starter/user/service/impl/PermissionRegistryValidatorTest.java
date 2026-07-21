@@ -287,7 +287,7 @@ class PermissionRegistryValidatorTest {
     @Test
     void checkRoleNavigationRows_navMissing_reportsError() throws Exception {
         List<String> errors = runRoleNavCheck(
-                List.of(rn(1L, 100L, "missing.nav", null, null, null)),
+                List.of(rn(1L, 100L, "missing.nav", null)),
                 Map.of(),
                 Map.of(),
                 java.util.Set.of());
@@ -300,7 +300,7 @@ class PermissionRegistryValidatorTest {
         // Grant on a GROUP nav — GROUP isn't grantable.
         Navigation group = nav("hr", NavigationType.GROUP, null);
         List<String> errors = runRoleNavCheck(
-                List.of(rn(1L, 100L, "hr", null, null, null)),
+                List.of(rn(1L, 100L, "hr", null)),
                 Map.of("hr", group),
                 Map.of(),
                 java.util.Set.of());
@@ -313,7 +313,7 @@ class PermissionRegistryValidatorTest {
     void checkRoleNavigationRows_navWithNullModel_reportsError() throws Exception {
         Navigation containerMenu = nav("hr.menu", NavigationType.MENU, null);   // model=null
         List<String> errors = runRoleNavCheck(
-                List.of(rn(1L, 100L, "hr.menu", null, null, null)),
+                List.of(rn(1L, 100L, "hr.menu", null)),
                 Map.of("hr.menu", containerMenu),
                 Map.of(),
                 java.util.Set.of());
@@ -333,7 +333,7 @@ class PermissionRegistryValidatorTest {
         ArrayNode permIds = JsonNodeFactory.instance.arrayNode();
         permIds.add("leave.view");
         List<String> errors = runRoleNavCheck(
-                List.of(rn(1L, 100L, "hr.employee", permIds, null, null)),
+                List.of(rn(1L, 100L, "hr.employee", permIds)),
                 byId,
                 permNav,
                 java.util.Set.of());
@@ -348,7 +348,7 @@ class PermissionRegistryValidatorTest {
         ArrayNode permIds = JsonNodeFactory.instance.arrayNode();
         permIds.add("employee.view");
         List<String> errors = runRoleNavCheck(
-                List.of(rn(1L, 100L, "hr.employee", permIds, null, null)),
+                List.of(rn(1L, 100L, "hr.employee", permIds)),
                 Map.of("hr.employee", empNav),
                 Map.of(),      // permission does not exist
                 java.util.Set.of());
@@ -465,16 +465,12 @@ class PermissionRegistryValidatorTest {
     /** Build a RoleNavigation row for role-nav integrity tests. */
     private static io.softa.starter.user.entity.RoleNavigation rn(
             Long id, Long roleId, String navId,
-            tools.jackson.databind.JsonNode permIds,
-            tools.jackson.databind.JsonNode sfsIds,
-            tools.jackson.databind.JsonNode dataScopes) {
+            tools.jackson.databind.JsonNode permIds) {
         io.softa.starter.user.entity.RoleNavigation r = new io.softa.starter.user.entity.RoleNavigation();
         r.setId(id);
         r.setRoleId(roleId);
         r.setNavigationId(navId);
         if (permIds != null) r.setPermissionIds(permIds);
-        if (sfsIds != null) r.setSensitiveFieldSetIds(sfsIds);
-        if (dataScopes != null) r.setDataScopes(dataScopes);
         return r;
     }
 

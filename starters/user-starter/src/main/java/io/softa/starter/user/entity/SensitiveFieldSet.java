@@ -1,36 +1,43 @@
 package io.softa.starter.user.entity;
 
 import java.io.Serial;
-import io.swagger.v3.oas.annotations.media.Schema;
 import lombok.Data;
 import lombok.EqualsAndHashCode;
 import tools.jackson.databind.JsonNode;
 
+import io.softa.framework.orm.annotation.Field;
+import io.softa.framework.orm.annotation.Index;
+import io.softa.framework.orm.annotation.Model;
 import io.softa.framework.orm.entity.AuditableModel;
+import io.softa.framework.orm.enums.IdStrategy;
 
 /**
  * Sensitive field set — a named bundle of fields on one model that require
  * explicit grant to view. Admin grants per (role, navigation) which set ids apply.
  * Naming convention: kebab-case with model prefix (e.g. 'employee-compensation').
+ *
+ * <p><b>Metadata note:</b> {@code io.softa.starter.user.entity} is NOT in scanner-scope; annotations
+ * mirror the studio-managed live {@code sys_field} (not reconciled at runtime).
  */
 @Data
-@Schema(name = "SensitiveFieldSet")
 @EqualsAndHashCode(callSuper = true)
+@Model(idStrategy = IdStrategy.EXTERNAL_ID, displayName = {"name"}, searchName = {"name"})
+@Index(indexName = "idx_sensitive_field_set_model", fields = {"model"})
 public class SensitiveFieldSet extends AuditableModel {
 
     @Serial
     private static final long serialVersionUID = 1L;
 
-    @Schema(description = "Set ID (e.g. 'employee-compensation')")
+    @Field(label = "ID", length = 64, description = "Set ID (e.g. 'employee-compensation')")
     private String id;
 
-    @Schema(description = "Bound model name (MetaModel.modelName, PascalCase). Set only applies to this model")
+    @Field(length = 64, description = "Bound model name (MetaModel.modelName, PascalCase). Set only applies to this model")
     private String model;
 
-    @Schema(description = "Display name (e.g. 'Employee Compensation')")
+    @Field(length = 128, description = "Display name (e.g. 'Employee Compensation')")
     private String name;
 
-    @Schema(description = "Field codes covered by this set. Must be actual fields on the bound model (validated at startup)")
+    @Field(description = "Field codes covered by this set. Must be actual fields on the bound model (validated at startup)")
     private JsonNode fieldCodes;
 
     /**
@@ -53,12 +60,12 @@ public class SensitiveFieldSet extends AuditableModel {
      * SFS only appears under its own {@link #model} nav row in the Wizard.
      * Validator ⑪ checks every referenced MetaModel exists.
      */
-    @Schema(description =
+    @Field(description =
             "Optional extra MetaModel names whose Wizard nav rows should "
                     + "also list this SFS. UI hint only — does not change "
                     + "mask authority (still controlled by `model`).")
     private JsonNode attachedTo;
 
-    @Schema(description = "Optional description")
+    @Field(length = 256, description = "Optional description")
     private String description;
 }

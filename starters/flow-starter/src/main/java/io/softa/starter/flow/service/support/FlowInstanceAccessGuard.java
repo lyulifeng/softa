@@ -8,7 +8,6 @@ import org.springframework.util.StringUtils;
 
 import io.softa.framework.base.context.Context;
 import io.softa.framework.base.context.ContextHolder;
-import io.softa.framework.base.context.PermissionInfo;
 import io.softa.framework.base.enums.SystemRole;
 import io.softa.starter.flow.entity.FlowInstance;
 import io.softa.starter.flow.runtime.exception.FlowAuthorizationException;
@@ -32,9 +31,10 @@ import io.softa.starter.flow.service.FlowInstanceService;
  * Monitor-admin bypass: a caller holding the system admin role may view any
  * instance — the cross-initiator monitoring console pairs with
  * {@code POST /flow/monitor/instances/search}. The role codes are read from the
- * framework-layer {@link Context#getPermissionInfo()} exactly like the
- * {@code @RequireRole} aspect does, and the check fails closed when the
- * consuming application populated no role provider.
+ * framework-layer {@link Context#getRoleCodes()} (bridged onto the Context by the
+ * permission-starter interceptor) exactly like the {@code @RequireRole} aspect
+ * does, and the check fails closed when the consuming application populated no
+ * role provider.
  */
 @Component
 public class FlowInstanceAccessGuard {
@@ -95,8 +95,7 @@ public class FlowInstanceAccessGuard {
      */
     private static boolean isMonitorAdmin() {
         Context context = ContextHolder.getContext();
-        PermissionInfo permissionInfo = context == null ? null : context.getPermissionInfo();
-        Set<String> roleCodes = permissionInfo == null ? null : permissionInfo.getRoleCodes();
+        Set<String> roleCodes = context == null ? null : context.getRoleCodes();
         return roleCodes != null && roleCodes.contains(SystemRole.SYSTEM_ROLE_ADMIN.getCode());
     }
 

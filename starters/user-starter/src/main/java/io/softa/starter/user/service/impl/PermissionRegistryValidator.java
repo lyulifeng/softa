@@ -74,7 +74,8 @@ public class PermissionRegistryValidator {
 
     /** Reserved Role.code values. Adding a new built-in role? Append here. */
     private static final Set<String> RESERVED_ROLE_CODES = Set.of(
-            RoleConstant.CODE_SUPER_ADMIN
+            RoleConstant.CODE_SUPER_ADMIN,
+            RoleConstant.CODE_TENANT_ADMIN
     );
 
     /** Allowed child types per parent type (design rule ⑤).

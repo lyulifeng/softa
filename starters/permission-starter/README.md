@@ -10,7 +10,7 @@ enforce permissions without bundling user management.
 <dependency>
   <groupId>io.softa</groupId>
   <artifactId>permission-starter</artifactId>
-  <version>2.0.3</version>
+  <version>${softa.version}</version>
 </dependency>
 ```
 
@@ -84,7 +84,8 @@ spi/          PermissionSnapshotProvider · PermissionEndpointSource(+Def)
               PermissionInfo · ScopeRule · ScopeType   (snapshot + scope value types)
 spi/support/  AbstractCacheAsideSnapshotProvider · RedisPermissionSnapshotProvider
               DefaultPermissionSnapshotProvider (约定读 build, monolith default)
-              DbPermissionEndpointSource · DbSensitiveFieldSetSource · JsonCoerce
+              DbPermissionEndpointSource · DbSensitiveFieldSetSource
+              (JSON columns coerced via softa-base JsonUtils.toStringList)
 scope/        ScopeRuleCompiler · ScopeApplicabilityResolver · IdentityScopeCompiler · ScopeFilterTemplates
               DataScopeType (+ data-system/DataScopeType.Builtin.json) · DataScopeTypeReader
               + org-scope support (EmployeeContextEnricher, Department*Resolver, PermissionScopeConfig)

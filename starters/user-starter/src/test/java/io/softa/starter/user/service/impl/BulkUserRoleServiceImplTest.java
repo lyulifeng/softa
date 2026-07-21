@@ -5,7 +5,6 @@ import java.util.Set;
 
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
-import org.springframework.test.util.ReflectionTestUtils;
 
 import io.softa.framework.base.context.Context;
 import io.softa.framework.base.context.ContextHolder;
@@ -15,7 +14,7 @@ import io.softa.starter.user.dto.UserRolePair;
 import io.softa.starter.user.entity.Role;
 import io.softa.starter.user.entity.UserAccount;
 import io.softa.starter.user.entity.UserRoleRel;
-import io.softa.starter.user.enums.RoleSource;
+import io.softa.starter.user.enums.UserRoleSource;
 import io.softa.starter.user.service.PermissionCacheInvalidator;
 import io.softa.starter.user.service.RoleService;
 import io.softa.starter.user.service.UserAccountService;
@@ -50,7 +49,7 @@ class BulkUserRoleServiceImplTest {
 
     @Test
     void nullPairs_returnsEmptySummary() {
-        BulkAddResult r = svc.bulkAdd(null, RoleSource.MANUAL);
+        BulkAddResult r = svc.bulkAdd(null, UserRoleSource.MANUAL);
         assertThat(r.getSummary().getRequested()).isZero();
         assertThat(r.getAdded()).isEmpty();
         assertThat(r.getSkipped()).isEmpty();
@@ -59,7 +58,7 @@ class BulkUserRoleServiceImplTest {
 
     @Test
     void emptyPairs_returnsEmptySummary() {
-        BulkAddResult r = svc.bulkAdd(List.of(), RoleSource.MANUAL);
+        BulkAddResult r = svc.bulkAdd(List.of(), UserRoleSource.MANUAL);
         assertThat(r.getSummary().getRequested()).isZero();
     }
 
@@ -67,7 +66,7 @@ class BulkUserRoleServiceImplTest {
     void invalidPair_isSkippedWithInvalidPairReason() {
         // Both null → INVALID_PAIR
         UserRolePair bad = new UserRolePair();
-        BulkAddResult r = svc.bulkAdd(List.of(bad), RoleSource.MANUAL);
+        BulkAddResult r = svc.bulkAdd(List.of(bad), UserRoleSource.MANUAL);
         assertThat(r.getSkipped()).hasSize(1);
         assertThat(r.getSkipped().getFirst().getReason()).isEqualTo("INVALID_PAIR");
     }
@@ -83,7 +82,7 @@ class BulkUserRoleServiceImplTest {
         p.setUserId(7L);
         p.setRoleId(500L);
 
-        BulkAddResult r = svc.bulkAdd(List.of(p), RoleSource.MANUAL);
+        BulkAddResult r = svc.bulkAdd(List.of(p), UserRoleSource.MANUAL);
         assertThat(r.getSkipped()).hasSize(1);
         assertThat(r.getSkipped().getFirst().getReason()).isEqualTo("NOT_FOUND");
         assertThat(r.getAdded()).isEmpty();
@@ -101,14 +100,14 @@ class BulkUserRoleServiceImplTest {
         UserRoleRel existing = new UserRoleRel();
         existing.setUserId(7L);
         existing.setRoleId(500L);
-        existing.setSource(RoleSource.MANUAL);
+        existing.setSource(UserRoleSource.MANUAL);
         when(userRoleRelService.searchList(any(Filters.class))).thenReturn(List.of(existing));
 
         UserRolePair p = new UserRolePair();
         p.setUserId(7L);
         p.setRoleId(500L);
 
-        BulkAddResult r = svc.bulkAdd(List.of(p), RoleSource.MANUAL);
+        BulkAddResult r = svc.bulkAdd(List.of(p), UserRoleSource.MANUAL);
         assertThat(r.getSkipped()).hasSize(1);
         assertThat(r.getSkipped().getFirst().getReason()).isEqualTo("ALREADY_ASSIGNED");
         verify(userRoleRelService, never()).createList(any());
@@ -131,7 +130,7 @@ class BulkUserRoleServiceImplTest {
 
         Context ctx = new Context();
         ctx.setTenantId(10L);
-        BulkAddResult r = ContextHolder.callWith(ctx, () -> svc.bulkAdd(List.of(p), RoleSource.MANUAL));
+        BulkAddResult r = ContextHolder.callWith(ctx, () -> svc.bulkAdd(List.of(p), UserRoleSource.MANUAL));
 
         assertThat(r.getAdded()).hasSize(1);
         assertThat(r.getAdded().getFirst().getUserRoleId()).isEqualTo(1001L);
@@ -156,7 +155,7 @@ class BulkUserRoleServiceImplTest {
         b.setUserId(7L);
         b.setRoleId(500L);   // duplicate
 
-        BulkAddResult r = svc.bulkAdd(List.of(a, b), RoleSource.MANUAL);
+        BulkAddResult r = svc.bulkAdd(List.of(a, b), UserRoleSource.MANUAL);
         // 2 requested → 1 inserted row; the duplicate is folded but RECORDED
         // as skipped(DUPLICATE_IN_REQUEST) so requested == added + skipped.
         assertThat(r.getAdded()).hasSize(1);

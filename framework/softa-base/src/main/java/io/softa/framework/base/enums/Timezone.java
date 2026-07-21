@@ -1,6 +1,8 @@
 package io.softa.framework.base.enums;
 
 
+import java.time.ZoneId;
+import java.time.ZoneOffset;
 import java.util.Map;
 import java.util.function.Function;
 import java.util.stream.Collectors;
@@ -108,5 +110,18 @@ public enum Timezone {
 
     public static Timezone of(String timezone) {
         return TIMEZONE_MAP.get(timezone);
+    }
+
+    /**
+     * This zone as a {@link ZoneId}. The code is a fixed UTC offset (e.g. {@code "UTC+08:00"}), which
+     * {@link ZoneId#of(String)} parses directly into a prefixed-offset zone.
+     */
+    public ZoneId toZoneId() {
+        return ZoneId.of(timezone);
+    }
+
+    /** Null-safe {@link #toZoneId()}: the zone, or UTC when {@code tz} is null. */
+    public static ZoneId zoneIdOrUtc(Timezone tz) {
+        return tz == null ? ZoneOffset.UTC : tz.toZoneId();
     }
 }

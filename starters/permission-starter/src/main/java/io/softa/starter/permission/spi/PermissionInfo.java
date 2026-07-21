@@ -35,8 +35,13 @@ public class PermissionInfo implements Serializable {
     @Serial
     private static final long serialVersionUID = 1L;
 
-    /** Role code that identifies a platform super-admin (cross-tenant, all menus). */
+    /** Role code that identifies a platform super-admin (cross-tenant, all menus + platform Ops). */
     public static final String CODE_SUPER_ADMIN = "SUPER_ADMIN";
+
+    /** Role code that identifies a tenant super-admin — bypasses permission/scope WITHIN its own
+     *  tenant (tenant-isolated, no cross-tenant), but is denied platform-only endpoints (billing /
+     *  provisioning / cross-tenant Ops; see {@code PermissionInterceptorProperties.platformOnlyPatterns}). */
+    public static final String CODE_TENANT_ADMIN = "TENANT_ADMIN";
 
     @Schema(description = "Role codes the user holds (display + super-admin check; auth decisions use permissions / nav sets)")
     private Set<String> roleCodes;
@@ -72,5 +77,30 @@ public class PermissionInfo implements Serializable {
     /** Static null-tolerant variant — {@code pi == null} treated as not super-admin. */
     public static boolean isSuperAdmin(PermissionInfo pi) {
         return pi != null && pi.isSuperAdmin();
+    }
+
+    /** True iff the user holds the {@link #CODE_TENANT_ADMIN} role — a tenant-scoped super-admin. */
+    public boolean isTenantAdmin() {
+        return roleCodes != null && roleCodes.contains(CODE_TENANT_ADMIN);
+    }
+
+    /** Static null-tolerant variant of {@link #isTenantAdmin()}. */
+    public static boolean isTenantAdmin(PermissionInfo pi) {
+        return pi != null && pi.isTenantAdmin();
+    }
+
+    /**
+     * True iff the user is any admin — platform {@link #CODE_SUPER_ADMIN} or tenant
+     * {@link #CODE_TENANT_ADMIN}. Both bypass the data-plane checks (row scope, field mask, write
+     * guard); the difference is reach: SUPER_ADMIN is cross-tenant + platform Ops, TENANT_ADMIN is
+     * confined to its own tenant (via {@code crossTenant=false}) and denied platform-only endpoints.
+     */
+    public boolean isAdmin() {
+        return isSuperAdmin() || isTenantAdmin();
+    }
+
+    /** Static null-tolerant variant of {@link #isAdmin()}. */
+    public static boolean isAdmin(PermissionInfo pi) {
+        return pi != null && pi.isAdmin();
     }
 }

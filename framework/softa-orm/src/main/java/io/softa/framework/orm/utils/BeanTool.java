@@ -241,6 +241,11 @@ public class BeanTool {
                 value = convertStringValue(fieldTypeClass, value);
             } else if (value instanceof Integer intValue && Long.class.isAssignableFrom(fieldTypeClass)) {
                 value = intValue.longValue();
+            } else if (value instanceof Integer num
+                    && (fieldTypeClass.equals(boolean.class) || fieldTypeClass.equals(Boolean.class))) {
+                // TINYINT/INT columns (e.g. soft_delete) come back from JDBC as Integer; map 0 -> false,
+                // non-zero -> true. Without this, CustomBooleanEditor rejects the Integer for a boolean field.
+                value = num != 0;
             } else if (value == null && fieldTypeClass.equals(boolean.class)) {
                 value = false;
             }
@@ -288,6 +293,20 @@ public class BeanTool {
      * @param <T> the bean object type
      */
     public static <T> T mapToObject(Map<String, Object> row, Class<T> entityClass, boolean ignoreNotExist) {
+        // No distinct projection: for an entity class the class name IS the model name.
+        return mapToObject(row, entityClass, ignoreNotExist, entityClass.getSimpleName());
+    }
+
+    /**
+     * Convert the Map to a bean object, driving list/relation conversion off {@code modelName}'s metadata.
+     *
+     * <p>{@code modelName} is passed separately from {@code entityClass} because a projection query maps a
+     * model's rows into a DTO whose class name is NOT the model name — e.g.
+     * {@code searchList("DataScopeType", q, DataScopeTypeView.class)}. Field metadata (to detect TO_MANY
+     * relations) must come from the queried model, not the projection DTO's class name. Callers with no
+     * distinct projection pass {@code entityClass.getSimpleName()}.
+     */
+    public static <T> T mapToObject(Map<String, Object> row, Class<T> entityClass, boolean ignoreNotExist, String modelName) {
         if (row == null) {
             return null;
         }
@@ -307,7 +326,7 @@ public class BeanTool {
                 }
                 return;
             }
-            value = convertValueForField(entityClass, field, fieldTypeClass, value);
+            value = convertValueForField(entityClass, field, fieldTypeClass, value, modelName);
             try {
                 beanMap.put(field, value);
             }  catch (ClassCastException e) {
@@ -319,6 +338,11 @@ public class BeanTool {
     }
 
     public static <T> Object convertValueForField(Class<T> entityClass, String fieldName, Class<?> fieldTypeClass, Object value) {
+        return convertValueForField(entityClass, fieldName, fieldTypeClass, value, entityClass.getSimpleName());
+    }
+
+    public static <T> Object convertValueForField(Class<T> entityClass, String fieldName, Class<?> fieldTypeClass,
+                                                  Object value, String modelName) {
         if (value instanceof String strValue && Enum.class.isAssignableFrom(fieldTypeClass)) {
             value = formatEnumProperty(strValue, fieldTypeClass);
         } else if (value instanceof String strValue && JsonNode.class.isAssignableFrom(fieldTypeClass)) {
@@ -329,7 +353,7 @@ public class BeanTool {
         } else if (value instanceof JsonNode jsonNode && DTOFieldObject.class.isAssignableFrom(fieldTypeClass)) {
             value = JsonUtils.jsonNodeToObject(jsonNode, fieldTypeClass);
         } else if (value instanceof List<?> valueList && !valueList.isEmpty()) {
-            value = formatListProperty(fieldName, Cast.of(valueList), entityClass);
+            value = formatListProperty(fieldName, Cast.of(valueList), entityClass, modelName);
         } else if (value instanceof Map<?,?> mapValue && AbstractModel.class.isAssignableFrom(fieldTypeClass)) {
             value = mapToObject(Cast.of(mapValue), fieldTypeClass);
         }
@@ -357,7 +381,7 @@ public class BeanTool {
      * @return object list
      * @param <T> the entity class type
      */
-    private static <T> List<?> formatListProperty(String field, List<?> valueList, Class<T> entityClass) {
+    private static <T> List<?> formatListProperty(String field, List<?> valueList, Class<T> entityClass, String modelName) {
         Class<?> elementClass = getElementClass(entityClass, field);
         if (Enum.class.isAssignableFrom(elementClass)) {
             return valueList.stream()
@@ -366,7 +390,10 @@ public class BeanTool {
                             : elementClass.cast(item))
                     .toList();
         }
-        MetaField metaField = ModelManager.getModelField(entityClass.getSimpleName(), field);
+        // Look up field metadata by the queried MODEL name (threaded from the projection call), NOT by
+        // entityClass.getSimpleName() — a projection maps a model's rows into a DTO whose class name is not
+        // the model name (e.g. searchList("DataScopeType", q, DataScopeTypeView.class)).
+        MetaField metaField = ModelManager.getModelField(modelName, field);
         if (FieldType.TO_MANY_TYPES.contains(metaField.getFieldType()) && AbstractModel.class.isAssignableFrom(elementClass)) {
             // OneToMany or ManyToMany field type, need to convert to object list
             List<Map<String, Object>> rows = Cast.of(valueList);
@@ -383,7 +410,16 @@ public class BeanTool {
      * @param <T> the bean object type
      */
     public static <T> List<T> mapListToObjects(List<Map<String, Object>> rows, Class<T> entityClass) {
-        return rows.stream().map(row -> mapToObject(row, entityClass)).collect(Collectors.toList());
+        return mapListToObjects(rows, entityClass, entityClass.getSimpleName());
+    }
+
+    /**
+     * Convert the Map list to bean object list, driving list/relation conversion off {@code modelName}'s
+     * metadata (see {@link #mapToObject(Map, Class, boolean, String)} for why the model name is separate
+     * from the projection class).
+     */
+    public static <T> List<T> mapListToObjects(List<Map<String, Object>> rows, Class<T> entityClass, String modelName) {
+        return rows.stream().map(row -> mapToObject(row, entityClass, true, modelName)).collect(Collectors.toList());
     }
 
     public static <T> Object convertPropertyValue(Class<T> entityClass, String fieldName, Object value) {

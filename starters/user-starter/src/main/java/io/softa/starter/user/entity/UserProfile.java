@@ -23,6 +23,7 @@ import io.softa.starter.user.enums.UserLayoutDensity;
 @EqualsAndHashCode(callSuper = true)
 @Model(
         idStrategy = IdStrategy.DISTRIBUTED_LONG,
+        multiTenant = true,
         searchName = {"fullName"}
 )
 public class UserProfile extends AuditableModel {

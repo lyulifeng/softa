@@ -1,6 +1,7 @@
 package io.softa.starter.user.service;
 
 import io.softa.framework.base.context.UserInfo;
+import io.softa.starter.user.dto.InvitationInfo;
 
 /**
  * UserAccount Model Service Interface
@@ -66,17 +67,25 @@ public interface LoginService {
     UserInfo loginByEmailAndPassword(String email, String password);
 
     /**
-     * Forget password, send password reset email
+     * Forgot password — issue a self-service password-reset token and email the set-password link.
      *
-     * @param username Username or email
+     * @param email registered email
      */
-    void forgetPassword(String username);
+    void forgetPassword(String email);
 
     /**
-     * Reset password using reset token
+     * Set the password via a token (invitation-accept or forgot-password reset).
      *
-     * @param token       Password reset token
-     * @param newPassword New password
+     * @param token       the emailed one-time token
+     * @param newPassword the new password
      */
     void resetPassword(String token, String newPassword);
+
+    /**
+     * Validate a token for the public set-password page.
+     *
+     * @param token the emailed one-time token
+     * @return validity + the email to greet the holder (no leak of why an invalid token failed)
+     */
+    InvitationInfo inviteInfo(String token);
 }

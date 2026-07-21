@@ -9,7 +9,6 @@ import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
-import tools.jackson.databind.JsonNode;
 
 import io.softa.framework.base.constant.BaseConstant;
 import io.softa.framework.base.context.UserInfo;
@@ -96,17 +95,15 @@ public class LoginController {
 
     @PostMapping("/sendEmailCode")
     @SwitchUser(SystemUser.REGISTERED_USER)
-    public ApiResponse<Void> sendEmailCode(@RequestBody JsonNode requestBody) {
-        String email = requestBody.get("email").asString();
-        loginService.sendEmailCode(email);
+    public ApiResponse<Void> sendEmailCode(@RequestBody @Valid SendEmailCodeDTO body) {
+        loginService.sendEmailCode(body.getEmail());
         return ApiResponse.success();
     }
 
     @PostMapping("/sendMobileCode")
     @SwitchUser(SystemUser.REGISTERED_USER)
-    public ApiResponse<Void> sendMobileCode(@RequestBody JsonNode requestBody) {
-        String email = requestBody.get("mobile").asString();
-        loginService.sendMobileCode(email);
+    public ApiResponse<Void> sendMobileCode(@RequestBody @Valid SendMobileCodeDTO body) {
+        loginService.sendMobileCode(body.getMobile());
         return ApiResponse.success();
     }
 
@@ -163,6 +160,16 @@ public class LoginController {
     public ApiResponse<Void> resetPassword(@RequestBody @Valid ResetPasswordDTO resetPasswordDTO) {
         loginService.resetPassword(resetPasswordDTO.getToken(), resetPasswordDTO.getNewPassword());
         return ApiResponse.success();
+    }
+
+    /**
+     * Validate an invitation / reset token for the public set-password page (greets the holder with
+     * the email; never reveals why an invalid token failed).
+     */
+    @PostMapping("/inviteInfo")
+    @SwitchUser(SystemUser.REGISTERED_USER)
+    public ApiResponse<InvitationInfo> inviteInfo(@RequestBody @Valid InviteInfoDTO body) {
+        return ApiResponse.success(loginService.inviteInfo(body.getToken()));
     }
 
 }

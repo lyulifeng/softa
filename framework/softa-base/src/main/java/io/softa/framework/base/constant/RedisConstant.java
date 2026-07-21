@@ -22,6 +22,8 @@ public interface RedisConstant {
     String VERIFICATION_CODE =  "verification-code:";
     String TENANT_IDS =  "tenant:id-list";
     String TENANT_INFO =  "tenant-info:";
+    /** Per-tenant entitlement (resolved module set); full key: {@code entl:{tenantId}}. */
+    String ENTITLEMENT = "entl:";
 
     String TEMP_TOKEN = "temp-token:";
     String ONE_TIME_KEY = "one-time-key:";

@@ -12,7 +12,7 @@ import lombok.Getter;
  */
 @Getter
 @AllArgsConstructor
-public enum RoleSource {
+public enum UserRoleSource {
     MANUAL("Manual", "Admin-granted"),
     DYNAMIC("Dynamic", "Auto-synced by DynamicRoleSyncJob")
     ;

@@ -126,6 +126,30 @@ public class UserAccountServiceImpl extends EntityServiceImpl<UserAccount, Long>
 
     @Override
     @Transactional
+    public UserInfo registerInvitedUser(String email, String mobile) {
+        UserAccountDTO accountInfo = new UserAccountDTO();
+        UserProfileDTO profileInfo = new UserProfileDTO();
+        accountInfo.setEmail(email);
+        accountInfo.setMobile(mobile);
+        // Username = email if present, else mobile (mirrors registerNewUser)
+        if (StringUtils.isNotBlank(email)) {
+            accountInfo.setUsername(email);
+            profileInfo.setFullName(email);
+        } else if (StringUtils.isNotBlank(mobile)) {
+            accountInfo.setUsername(mobile);
+            profileInfo.setFullName(mobile);
+        }
+
+        UserAccount userAccount = this.buildUserAccount(accountInfo);
+        // INVITED, no password — the user sets it later via the invitation link.
+        userAccount.setStatus(AccountStatus.INVITED);
+        Long userId = this.createOne(userAccount);
+
+        return profileService.registerUserProfile(userId, profileInfo);
+    }
+
+    @Override
+    @Transactional
     public void changeMyPassword(String currentPassword, String newPassword) {
         Assert.notBlank(currentPassword, "Old password cannot be empty.");
         Assert.notBlank(newPassword, "New password cannot be empty.");

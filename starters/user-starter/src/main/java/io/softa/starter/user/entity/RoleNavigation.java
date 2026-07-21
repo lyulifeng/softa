@@ -1,49 +1,52 @@
 package io.softa.starter.user.entity;
 
 import java.io.Serial;
-import io.swagger.v3.oas.annotations.media.Schema;
 import lombok.Data;
 import lombok.EqualsAndHashCode;
 import tools.jackson.databind.JsonNode;
 
+import io.softa.framework.orm.annotation.Field;
+import io.softa.framework.orm.annotation.Index;
+import io.softa.framework.orm.annotation.Model;
 import io.softa.framework.orm.entity.AuditableModel;
+import io.softa.framework.orm.enums.FieldType;
+import io.softa.framework.orm.enums.IdStrategy;
 
 /**
  * RoleNavigation — one row = one navigation's complete grant for a role.
- * Three JSON columns hold the inline membership lists (per design v4 §A.2):
- *   - permissionIds:        Set<String>     (subset of perms under this nav)
- *   - dataScopes:           List<ScopeRule> (OR-combined)
- *   - sensitiveFieldSetIds: Set<String>     (OR-combined)
  *
  * The navigation_id may reference any non-GROUP node (MENU / BUTTON / TAB);
  * Validator ⑩ rejects GROUP and pure-container MENU (nav.model = null).
+ *
+ * <p><b>Metadata note:</b> {@code io.softa.starter.user.entity} is NOT in scanner-scope; annotations
+ * mirror the studio-managed live {@code sys_field} (not reconciled at runtime). {@code dataScopes} and
+ * {@code sensitiveFieldSetIds} are NOT present in the live {@code sys_field} — they were normalised out
+ * into {@link RoleDataScope} / {@link RoleSensitiveFieldSet}; kept as Java fields for compatibility.
  */
 @Data
-@Schema(name = "RoleNavigation")
 @EqualsAndHashCode(callSuper = true)
+@Model(idStrategy = IdStrategy.DISTRIBUTED_LONG, multiTenant = true)
+@Index(indexName = "uk_role_navigation_tenant_role_nav", fields = {"tenantId", "roleId", "navigationId"},
+        unique = true, message = "This role already has a grant for this navigation.")
 public class RoleNavigation extends AuditableModel {
 
     @Serial
     private static final long serialVersionUID = 1L;
 
-    @Schema(description = "ID")
+    @Field(label = "ID")
     private Long id;
 
-    @Schema(description = "Tenant ID")
+    @Field(label = "Tenant ID")
     private Long tenantId;
 
-    @Schema(description = "Role ID (FK role.id)")
+    @Field(label = "Role", fieldType = FieldType.MANY_TO_ONE, relatedModel = Role.class,
+            description = "Role ID (FK role.id)")
     private Long roleId;
 
-    @Schema(description = "Navigation ID (FK navigation.id). Must reference MENU / BUTTON / TAB only — not GROUP or pure-container MENU")
+    @Field(label = "Navigation", length = 128,
+            description = "Navigation ID (FK navigation.id). Must reference MENU / BUTTON / TAB only — not GROUP or pure-container MENU")
     private String navigationId;
 
-    @Schema(description = "Granted permission IDs under this nav (string array; default = all, subset = admin-trimmed)")
+    @Field(description = "Granted permission IDs under this nav (string array; default = all, subset = admin-trimmed)")
     private JsonNode permissionIds;
-
-    @Schema(description = "Scope rules (OR-combined). Array of {scopeType, scopeExpr?}")
-    private JsonNode dataScopes;
-
-    @Schema(description = "Granted sensitive_field_set IDs under this nav (string array; empty = no sensitive fields visible)")
-    private JsonNode sensitiveFieldSetIds;
 }

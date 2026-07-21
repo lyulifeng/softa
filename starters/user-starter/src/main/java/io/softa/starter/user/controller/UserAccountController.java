@@ -36,6 +36,7 @@ import io.softa.starter.user.dto.UserAccountDTO;
 import io.softa.starter.user.entity.UserAccount;
 import io.softa.starter.user.service.PermissionCacheInvalidator;
 import io.softa.starter.user.service.UserAccountService;
+import io.softa.starter.user.service.UserInvitationService;
 
 /**
  * UserAccount Controller
@@ -58,6 +59,9 @@ public class UserAccountController extends EntityController<UserAccountService, 
 
     @Autowired
     private PermissionCacheInvalidator permissionCacheInvalidator;
+
+    @Autowired
+    private UserInvitationService invitationService;
 
     /**
      * Typed shadow of the generic {@code /UserAccount/updateOne}. The
@@ -145,6 +149,16 @@ public class UserAccountController extends EntityController<UserAccountService, 
             throw new BusinessException("You cannot unlock your own account.");
         }
         service.unlockAccounts(userIds, unlockAccountsDTO.getReason());
+        return ApiResponse.success();
+    }
+
+    @Operation(summary = "Invite / re-invite a user — emails a set-password link (for accounts that "
+            + "have not set a password yet)")
+    @PostMapping("/invite")
+    public ApiResponse<Void> invite(@RequestParam @NotNull Long id) {
+        Long currentUserId = ContextHolder.getContext() == null ? null
+                : ContextHolder.getContext().getUserId();
+        invitationService.invite(id, currentUserId);
         return ApiResponse.success();
     }
 

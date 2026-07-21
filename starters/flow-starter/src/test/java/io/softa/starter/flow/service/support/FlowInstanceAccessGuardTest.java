@@ -8,7 +8,6 @@ import org.junit.jupiter.api.Test;
 
 import io.softa.framework.base.context.Context;
 import io.softa.framework.base.context.ContextHolder;
-import io.softa.framework.base.context.PermissionInfo;
 import io.softa.framework.base.enums.SystemRole;
 import io.softa.starter.flow.runtime.NoopApprovalActionLedger;
 import io.softa.starter.flow.runtime.engine.ApprovalAuditReader;
@@ -165,9 +164,7 @@ class FlowInstanceAccessGuardTest {
 
     private static Context contextWithRoles(Set<String> roleCodes) {
         Context ctx = new Context();
-        PermissionInfo permissionInfo = new PermissionInfo();
-        permissionInfo.setRoleCodes(roleCodes);
-        ctx.setPermissionInfo(permissionInfo);
+        ctx.setRoleCodes(roleCodes);
         return ctx;
     }
 

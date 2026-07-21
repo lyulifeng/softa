@@ -6,7 +6,7 @@ import io.swagger.v3.oas.annotations.media.Schema;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.NotEmpty;
 
-import io.softa.starter.user.enums.RoleSource;
+import io.softa.starter.user.enums.UserRoleSource;
 
 /**
  * Request body for {@code POST /admin/user-role/bulk} — the Wizard's
@@ -19,7 +19,7 @@ import io.softa.starter.user.enums.RoleSource;
  * the {@link BulkAddResult} response with a technical reason but don't
  * abort the batch.
  *
- * <p>{@code source} defaults to {@link RoleSource#MANUAL} when omitted —
+ * <p>{@code source} defaults to {@link UserRoleSource#MANUAL} when omitted —
  * DYNAMIC rows are rebuilt by {@code DynamicRoleSyncJob} and shouldn't
  * be created through this endpoint.
  */
@@ -30,6 +30,6 @@ public record BulkAddRequest(
         List<@Valid UserRolePair> pairs,
 
         @Schema(description = "Source; defaults to MANUAL when omitted")
-        RoleSource source
+        UserRoleSource source
 ) {
 }

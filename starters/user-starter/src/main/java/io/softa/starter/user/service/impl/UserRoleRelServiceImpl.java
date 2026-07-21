@@ -14,6 +14,7 @@ import io.softa.framework.base.context.ContextHolder;
 import io.softa.framework.base.exception.BusinessException;
 import io.softa.framework.orm.domain.Filters;
 import io.softa.framework.orm.service.impl.EntityServiceImpl;
+import io.softa.starter.user.constant.RoleConstant;
 import io.softa.starter.user.entity.Role;
 import io.softa.starter.user.entity.UserRoleRel;
 import io.softa.starter.user.event.UserRoleRelChangedEvent;
@@ -47,6 +48,7 @@ public class UserRoleRelServiceImpl extends EntityServiceImpl<UserRoleRel, Long>
 
     @Override
     public Long createOne(UserRoleRel entity) {
+        guardSuperAdminBind(entity == null ? List.of() : List.of(entity));
         Long id = super.createOne(entity);
         publishChange(Set.of(entity.getUserId()));
         return id;
@@ -54,6 +56,7 @@ public class UserRoleRelServiceImpl extends EntityServiceImpl<UserRoleRel, Long>
 
     @Override
     public List<Long> createList(List<UserRoleRel> entities) {
+        guardSuperAdminBind(entities);
         List<Long> ids = super.createList(entities);
         if (entities != null) {
             Set<Long> userIds = new HashSet<>();
@@ -133,6 +136,28 @@ public class UserRoleRelServiceImpl extends EntityServiceImpl<UserRoleRel, Long>
      * {@link Role#getCode()} so new system roles inherit the protection
      * automatically.
      */
+    /**
+     * Reject binding the {@code SUPER_ADMIN} role via the API — it is managed by ops only (seed / DB);
+     * no application flow legitimately binds it. TENANT_ADMIN is deliberately NOT blocked here:
+     * {@link io.softa.starter.user.provisioning.AdminProvisioningService} binds it during tenant
+     * provisioning, which routes through this same {@code createOne}.
+     */
+    private void guardSuperAdminBind(List<UserRoleRel> entities) {
+        if (entities == null || entities.isEmpty()) return;
+        Set<Long> roleIds = new HashSet<>();
+        for (UserRoleRel e : entities) {
+            if (e != null && e.getRoleId() != null) roleIds.add(e.getRoleId());
+        }
+        if (roleIds.isEmpty()) return;
+        boolean bindsSuperAdmin = !roleService.searchList(
+                        new Filters().in(Role::getId, roleIds).eq(Role::getCode, RoleConstant.CODE_SUPER_ADMIN))
+                .isEmpty();
+        if (bindsSuperAdmin) {
+            throw new BusinessException(
+                    "Cannot bind the SUPER_ADMIN role via the API; it is managed by ops only.");
+        }
+    }
+
     private void guardSystemRoleHolderRemoval(List<Long> relIds) {
         if (relIds == null || relIds.isEmpty()) return;
 

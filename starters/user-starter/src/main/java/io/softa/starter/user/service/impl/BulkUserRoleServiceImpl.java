@@ -20,7 +20,7 @@ import io.softa.starter.user.dto.UserRolePair;
 import io.softa.starter.user.entity.Role;
 import io.softa.starter.user.entity.UserAccount;
 import io.softa.starter.user.entity.UserRoleRel;
-import io.softa.starter.user.enums.RoleSource;
+import io.softa.starter.user.enums.UserRoleSource;
 import io.softa.starter.user.service.BulkUserRoleService;
 import io.softa.starter.user.service.PermissionCacheInvalidator;
 import io.softa.starter.user.service.RoleService;
@@ -53,7 +53,7 @@ public class BulkUserRoleServiceImpl implements BulkUserRoleService {
 
     @Override
     @Transactional
-    public BulkAddResult bulkAdd(List<UserRolePair> pairs, RoleSource source) {
+    public BulkAddResult bulkAdd(List<UserRolePair> pairs, UserRoleSource source) {
         List<BulkAddResult.AddedItem> added = new ArrayList<>();
         List<BulkAddResult.SkippedItem> skipped = new ArrayList<>();
         int requested = pairs == null ? 0 : pairs.size();
@@ -65,7 +65,7 @@ public class BulkUserRoleServiceImpl implements BulkUserRoleService {
                             .requested(0).added(0).skipped(0).build())
                     .build();
         }
-        RoleSource src = source == null ? RoleSource.MANUAL : source;
+        UserRoleSource src = source == null ? UserRoleSource.MANUAL : source;
 
         // Distinct user / role id sets — used for the existing-row probe.
         Set<Long> userIds = new LinkedHashSet<>();

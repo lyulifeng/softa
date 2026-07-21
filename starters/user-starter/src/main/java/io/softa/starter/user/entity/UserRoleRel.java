@@ -1,12 +1,16 @@
 package io.softa.starter.user.entity;
 
 import java.io.Serial;
-import io.swagger.v3.oas.annotations.media.Schema;
 import lombok.Data;
 import lombok.EqualsAndHashCode;
 
+import io.softa.framework.orm.annotation.Field;
+import io.softa.framework.orm.annotation.Index;
+import io.softa.framework.orm.annotation.Model;
 import io.softa.framework.orm.entity.AuditableModel;
-import io.softa.starter.user.enums.RoleSource;
+import io.softa.framework.orm.enums.FieldType;
+import io.softa.framework.orm.enums.IdStrategy;
+import io.softa.starter.user.enums.UserRoleSource;
 
 /**
  * UserRoleRel — user-to-role assignment join row. The same (user, role)
@@ -19,27 +23,36 @@ import io.softa.starter.user.enums.RoleSource;
  * Deleting a MANUAL row leaves the DYNAMIC row intact (prevents accidental
  * de-authorization). Dynamic rows only refresh on cron sync, not on direct
  * delete.
+ *
+ * <p><b>Metadata note:</b> {@code io.softa.starter.user.entity} is NOT in scanner-scope; annotations
+ * mirror the studio-managed live {@code sys_field} (not reconciled at runtime). Live is {@code multiTenant}
+ * and also carries a {@code deleted} column (soft-delete flag) which is not declared as a Java field here.
  */
 @Data
-@Schema(name = "UserRoleRel")
 @EqualsAndHashCode(callSuper = true)
+@Model(idStrategy = IdStrategy.DISTRIBUTED_LONG, multiTenant = true)
+@Index(indexName = "uk_user_role_rel_tenant_user_role_source",
+        fields = {"tenantId", "userId", "roleId", "source"}, unique = true,
+        message = "This role is already assigned to the user with this source.")
 public class UserRoleRel extends AuditableModel {
 
     @Serial
     private static final long serialVersionUID = 1L;
 
-    @Schema(description = "ID")
+    @Field(label = "ID")
     private Long id;
 
-    @Schema(description = "Tenant ID")
+    @Field(label = "Tenant ID")
     private Long tenantId;
 
-    @Schema(description = "User ID (FK user_account.id)")
+    @Field(label = "User", fieldType = FieldType.MANY_TO_ONE, relatedModel = UserAccount.class,
+            description = "User ID (FK user_account.id)")
     private Long userId;
 
-    @Schema(description = "Role ID (FK role.id)")
+    @Field(label = "Role", fieldType = FieldType.MANY_TO_ONE, relatedModel = Role.class,
+            description = "Role ID (FK role.id)")
     private Long roleId;
 
-    @Schema(description = "Source: MANUAL (admin grant) or DYNAMIC (DynamicRoleSyncJob auto-assign)")
-    private RoleSource source;
+    @Field(description = "Source: MANUAL (admin grant) or DYNAMIC (DynamicRoleSyncJob auto-assign)")
+    private UserRoleSource source;
 }

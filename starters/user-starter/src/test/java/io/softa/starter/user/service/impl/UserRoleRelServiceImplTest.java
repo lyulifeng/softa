@@ -96,6 +96,44 @@ class UserRoleRelServiceImplTest {
         verify(roleService, never()).searchList(any(Filters.class));
     }
 
+    // ─── SUPER_ADMIN bind guard ───
+
+    @Test
+    void bindGuard_superAdminRole_throws() throws Exception {
+        // The guard's query filters code=SUPER_ADMIN, so a match means the bind targets SUPER_ADMIN.
+        Role superAdmin = new Role();
+        superAdmin.setId(500L);
+        superAdmin.setCode("SUPER_ADMIN");
+        superAdmin.setName("Super Admin");
+        when(roleService.searchList(any(Filters.class))).thenReturn(List.of(superAdmin));
+
+        UserRoleRel rel = new UserRoleRel();
+        rel.setUserId(7L);
+        rel.setRoleId(500L);
+
+        assertThatThrownBy(() -> invokeBindGuard(svc, List.of(rel)))
+                .hasCauseInstanceOf(BusinessException.class);
+    }
+
+    @Test
+    void bindGuard_nonSuperAdminRole_passes() throws Exception {
+        // Binding TENANT_ADMIN / a regular role: the code=SUPER_ADMIN filter matches nothing → no throw.
+        // (TENANT_ADMIN is intentionally allowed here — AdminProvisioningService binds it legitimately.)
+        when(roleService.searchList(any(Filters.class))).thenReturn(List.of());
+
+        UserRoleRel rel = new UserRoleRel();
+        rel.setUserId(7L);
+        rel.setRoleId(600L);
+
+        invokeBindGuard(svc, List.of(rel));   // must not throw
+    }
+
+    @Test
+    void bindGuard_empty_earlyReturn() throws Exception {
+        invokeBindGuard(svc, List.of());
+        verify(roleService, never()).searchList(any(Filters.class));
+    }
+
     // ─── publishChange emits events ───
 
     @Test
@@ -148,6 +186,17 @@ class UserRoleRelServiceImplTest {
     }
 
     // ─── helpers ───
+
+    private static void invokeBindGuard(UserRoleRelServiceImpl svc, List<UserRoleRel> entities) throws Exception {
+        java.lang.reflect.Method m = UserRoleRelServiceImpl.class
+                .getDeclaredMethod("guardSuperAdminBind", List.class);
+        m.setAccessible(true);
+        try {
+            m.invoke(svc, entities);
+        } catch (java.lang.reflect.InvocationTargetException ite) {
+            throw new RuntimeException(ite.getCause());
+        }
+    }
 
     private static void invokePrivateGuard(UserRoleRelServiceImpl svc, List<Long> relIds) throws Exception {
         java.lang.reflect.Method m = UserRoleRelServiceImpl.class

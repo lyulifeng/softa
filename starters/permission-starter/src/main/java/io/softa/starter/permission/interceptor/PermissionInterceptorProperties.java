@@ -45,4 +45,11 @@ public class PermissionInterceptorProperties {
      *  {@code /UserProfile/getMyUserInfo}, {@code /UserAccount/logout},
      *  {@code /MetaModel/**} etc. */
     private List<String> authenticatedBypassPatterns = List.of();
+
+    /** Platform-only endpoints — a {@code TENANT_ADMIN} (tenant super-admin) is DENIED these even
+     *  though it otherwise bypasses the permission gate; only {@code SUPER_ADMIN} (platform admin)
+     *  may call them. For cross-tenant Ops surfaces (billing / plan / subscription / tenant
+     *  provisioning). Empty by default — the app lists its platform endpoints in yml, e.g.
+     *  {@code /Plan/**}, {@code /entitlement/**}, {@code /TenantInfo/**}. */
+    private List<String> platformOnlyPatterns = List.of();
 }

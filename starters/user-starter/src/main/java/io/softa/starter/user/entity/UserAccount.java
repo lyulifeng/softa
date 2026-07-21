@@ -2,12 +2,14 @@ package io.softa.starter.user.entity;
 
 import java.io.Serial;
 import java.time.LocalDateTime;
+import java.util.List;
 import lombok.Data;
 import lombok.EqualsAndHashCode;
 
 import io.softa.framework.orm.annotation.Field;
 import io.softa.framework.orm.annotation.Model;
 import io.softa.framework.orm.entity.AuditableModel;
+import io.softa.framework.orm.enums.FieldType;
 import io.softa.framework.orm.enums.IdStrategy;
 import io.softa.starter.user.enums.AccountStatus;
 
@@ -60,4 +62,9 @@ public class UserAccount extends AuditableModel {
 
     @Field
     private AccountStatus status;
+    
+    @Field(label = "Roles", fieldType = FieldType.MANY_TO_MANY,
+            relatedModel = Role.class, joinModel = UserRoleRel.class,
+            joinLeft = "userId", joinRight = "roleId")
+    private List<Long> roles;
 }
