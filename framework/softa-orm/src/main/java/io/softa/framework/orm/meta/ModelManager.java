@@ -786,7 +786,9 @@ public class ModelManager {
         String model = metaField.getModelName();
         if (ModelConstant.AUDIT_FIELDS.contains(metaField.getFieldName())) {
             metaField.setReadonly(true);
-        } else if (SystemConfig.env.isEnableMultiTenancy() && ModelConstant.TENANT_ID.equals(metaField.getFieldName())) {
+        } else if (SystemConfig.env.isEnableMultiTenancy()
+                && modelMap().get(model).isMultiTenant()
+                && ModelConstant.TENANT_ID.equals(metaField.getFieldName())) {
             metaField.setReadonly(true);
         } else if (modelMap().get(model).isVersionLock() && ModelConstant.VERSION.equals(metaField.getFieldName())) {
             metaField.setReadonly(true);
