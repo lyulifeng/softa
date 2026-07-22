@@ -136,6 +136,10 @@ public class UserInvitationServiceImpl extends EntityServiceImpl<UserInvitation,
         String template = purpose == InvitationPurpose.PASSWORD_RESET ? TEMPLATE_RESET : TEMPLATE_INVITE;
         eventPublisher.publishEvent(new MailRequestMessage(
                 List.of(account.getEmail()), template, Map.of("link", link, "expiryDays", EXPIRY_DAYS)));
+        // Dev aid: surface the set-password / reset link so it can be copied from the logs when SMTP / MQ
+        // is not wired locally. ⚠️ The link carries a one-time credential token — lower this to debug or
+        // remove it before production so the token is not leaked into prod logs.
+        log.debug("Invitation link ({}) for {}: {}", purpose, account.getEmail(), link);
     }
 
     private void revokePending(Long userId) {
