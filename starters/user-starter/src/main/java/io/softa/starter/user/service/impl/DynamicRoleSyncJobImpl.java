@@ -350,7 +350,7 @@ public class DynamicRoleSyncJobImpl implements DynamicRoleSyncJob {
         Context ctx = ContextHolder.getContext();
         Long tid = ctx == null ? null : ctx.getTenantId();
         Assert.notNull(tid,
-                "DynamicRoleSyncJob.{0} requires an active tenant context — set Context.tenantId before invoking (cron: use DynamicRoleSyncCronHandler's per-tenant fan-out).",
+                "DynamicRoleSyncJob.{0} requires an active tenant context — set Context.tenantId before invoking (cron: seed the DynamicRoleSync sys_cron row as PER_TENANT so the scheduler fans out one message per active tenant; consumed by user-starter's UserMaintenanceCronConsumer).",
                 methodName);
     }
 
