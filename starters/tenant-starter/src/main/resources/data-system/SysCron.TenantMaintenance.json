@@ -1,0 +1,14 @@
+{
+  "SysCron": [
+    {
+      "id": "ProvisioningTimeout",
+      "name": "ProvisioningTimeout",
+      "cronExpression": "0 */5 * * * ?",
+      "cronSemantic": "Every 5 minutes",
+      "limitExecution": false,
+      "tenantJobMode": "CrossTenant",
+      "active": true,
+      "description": "Flip tenants stuck in provisioning INITIALIZING beyond softa.tenant.provisioning.ready-timeout-seconds (default 600s) to FAILED. Consumed by tenant-starter's TenantMaintenanceCronConsumer (CrossTenant: one message, failTimedOut sweeps all stuck tenants). Seeded via loadPreSystemData - active=true so it runs on load. (tenantJobMode uses the @JsonValue code 'CrossTenant', matching 4.cron-data.sql's DB column.)"
+    }
+  ]
+}

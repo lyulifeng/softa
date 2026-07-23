@@ -26,6 +26,14 @@
             <version>${project.version}</version>
         </dependency>
 
+        <!-- Provisioning-timeout guard: tenant-starter self-consumes the ProvisioningTimeout cron
+             (leader-scheduled via cron-starter) in TenantMaintenanceCronConsumer → failTimedOut(). -->
+        <dependency>
+            <groupId>io.softa</groupId>
+            <artifactId>cron-starter</artifactId>
+            <version>${project.version}</version>
+        </dependency>
+
         <!-- https://mvnrepository.com/artifact/com.stripe/stripe-java -->
         <dependency>
             <groupId>com.stripe</groupId>
