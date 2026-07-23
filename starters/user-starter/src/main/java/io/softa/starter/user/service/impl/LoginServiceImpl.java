@@ -21,6 +21,7 @@ import io.softa.framework.orm.service.CacheService;
 import io.softa.framework.orm.service.TenantInfoService;
 import io.softa.starter.user.dto.InvitationInfo;
 import io.softa.starter.user.entity.UserAccount;
+import io.softa.starter.user.enums.AccountStatus;
 import io.softa.starter.user.service.LoginService;
 import io.softa.starter.user.service.UserAccountService;
 import io.softa.starter.user.service.UserInvitationService;
@@ -66,6 +67,40 @@ public class LoginServiceImpl implements LoginService {
         if (tenantInfoService == null || !tenantInfoService.isTenantActive(tenantId)) {
             throw new BusinessException("Login denied: tenant is not active.");
         }
+    }
+
+    /**
+     * Account lifecycle gate at login: only an ACTIVE account may obtain a session.
+     * Sits at the same session-issuance choke point as {@link #validateTenantActive},
+     * so every login flow (password / email code / mobile code / OAuth / Apple) is
+     * covered. It runs AFTER credentials are verified, so returning the specific
+     * reason is safe — the caller has already proven identity, so this is not an
+     * account-enumeration channel.
+     *
+     * <p>Closes the gap where an employee off-boarded to INACTIVE (mirrored onto
+     * UserAccount.status = Frozen) could still authenticate, because login only
+     * checked the password and never the account state.
+     */
+    private void validateAccountActive(Long userId) {
+        UserAccount account = accountService.getById(userId)
+                .orElseThrow(() -> new BusinessException("Login denied: account not found."));
+        if (account.getStatus() == AccountStatus.ACTIVE) {
+            return;
+        }
+        throw new BusinessException(accountDeniedMessage(account.getStatus()));
+    }
+
+    /** Human-readable reason for refusing login to a non-ACTIVE account. */
+    private static String accountDeniedMessage(AccountStatus status) {
+        String reason = switch (status == null ? AccountStatus.FROZEN : status) {
+            case FROZEN, PENDING_DELETION, DELETED -> "your account has been deactivated";
+            case LOCKED -> "your account is locked";
+            case BLACKLISTED -> "your account has been blocked";
+            case INVITED -> "your account invitation has not been accepted yet";
+            case UNVERIFIED -> "your account has not been verified yet";
+            default -> "your account is not active";
+        };
+        return "Login denied: " + reason + ".";
     }
 
     public static String buildLoginCodeKey(String identifier) {
@@ -167,8 +202,10 @@ public class LoginServiceImpl implements LoginService {
      * @return Session ID
      */
     public String generateSessionId(Long userId) {
-        // Tenant lifecycle gate — the single choke point all login flows pass through.
+        // Tenant + account lifecycle gates — the single choke point every login flow
+        // passes through, and it runs AFTER credentials are verified.
         validateTenantActive(userId);
+        validateAccountActive(userId);
         String sessionId = UUIDUtils.shortUUID22();
         // Store session ID -> user ID mapping in cache
         String sessionKey = RedisConstant.SESSION + sessionId;
