@@ -8,7 +8,7 @@
       "limitExecution": false,
       "tenantJobMode": "PerTenant",
       "active": true,
-      "description": "Re-evaluate every role's dynamic_filter and refresh the DYNAMIC rows in user_role. PerTenant: the scheduler fans out one message per active tenant (each carries its tenantId), and user-starter's UserMaintenanceCronConsumer runs DynamicRoleSyncJob.syncAll() under that tenant context (syncAll is single-tenant by contract). Seeded via loadPreSystemData - active=true so it runs on load. tenantJobMode uses the @JsonValue code 'PerTenant', matching the DB column."
+      "description": "Re-evaluate each role's dynamic_filter and refresh the DYNAMIC user_role rows. PerTenant: the scheduler fans out one message per active tenant; user-starter's UserMaintenanceCronConsumer runs syncAll under that tenant context."
     }
   ]
 }
