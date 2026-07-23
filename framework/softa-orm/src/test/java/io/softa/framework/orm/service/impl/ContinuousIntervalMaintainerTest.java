@@ -20,6 +20,7 @@ import org.mockito.MockedStatic;
 import org.mockito.Mockito;
 import org.springframework.test.util.ReflectionTestUtils;
 
+import io.softa.framework.base.config.SystemConfig;
 import io.softa.framework.base.context.Context;
 import io.softa.framework.base.context.ContextHolder;
 import io.softa.framework.orm.constant.ModelConstant;
@@ -29,11 +30,13 @@ import io.softa.framework.orm.entity.TimelineSlice;
 import io.softa.framework.orm.enums.AccessType;
 import io.softa.framework.orm.enums.ConvertType;
 import io.softa.framework.orm.enums.FieldType;
+import io.softa.framework.orm.enums.IdStrategy;
 import io.softa.framework.orm.jdbc.JdbcService;
 import io.softa.framework.orm.meta.MetaField;
 import io.softa.framework.orm.meta.ModelManager;
 import io.softa.framework.orm.service.PermissionService;
 import io.softa.framework.orm.service.relation.RelationDeleteHandler;
+import io.softa.framework.orm.service.versioning.TimelineStrategy;
 import io.softa.framework.orm.service.versioning.VersioningStrategyResolver;
 
 import static org.mockito.ArgumentMatchers.any;
@@ -79,8 +82,12 @@ class ContinuousIntervalMaintainerTest {
     @BeforeEach
     @SuppressWarnings("unchecked")
     void setUp() {
+        if (SystemConfig.env == null) {
+            SystemConfig.env = new SystemConfig();
+        }
         modelManager = Mockito.mockStatic(ModelManager.class);
         modelManager.when(() -> ModelManager.isTimelineModel(MODEL)).thenReturn(true);
+        modelManager.when(() -> ModelManager.getIdStrategy(MODEL)).thenReturn(IdStrategy.DISTRIBUTED_LONG);
         // The algorithm mutates the returned set (removeAll/retainAll/remove): a fresh copy per call.
         modelManager.when(() -> ModelManager.getModelUpdatableFields(MODEL))
                 .thenAnswer(inv -> new HashSet<>(List.of(
@@ -210,6 +217,76 @@ class ContinuousIntervalMaintainerTest {
 
         Map<String, Object> inserted = captureSingleInsert();
         Assertions.assertEquals(MAX_END, inserted.get(ModelConstant.EFFECTIVE_END_DATE));
+    }
+
+    // ------------------------------------------------- create guard: unknown caller-supplied id
+
+    @Test
+    void createWithUnknownIdIsRejectedForDistributedStrategies() {
+        // exist(99) defaults to false: the id matches no entity — a typo must fail loudly
+        // instead of silently minting a new entity with a caller-chosen id.
+        Map<String, Object> row = mutableRow(Map.of(ModelConstant.ID, 99L, "name", "typo"));
+
+        RuntimeException e = Assertions.assertThrows(RuntimeException.class,
+                () -> withCtx(() -> timeline.createSlices(MODEL, listOf(row))));
+        Assertions.assertTrue(e.getMessage().contains("does not exist"));
+        verify(jdbc, never()).insertList(any(), anyList());
+    }
+
+    @Test
+    void createWithUnknownIdIsAllowedForExternalIdModels() {
+        // EXTERNAL_ID models legitimately create new entities with a caller-supplied id.
+        modelManager.when(() -> ModelManager.getIdStrategy(MODEL)).thenReturn(IdStrategy.EXTERNAL_ID);
+        Map<String, Object> row = mutableRow(Map.of(ModelConstant.ID, 99L, "name", "ext"));
+
+        withCtx(() -> timeline.createSlices(MODEL, listOf(row)));
+
+        Map<String, Object> inserted = captureSingleInsert();
+        Assertions.assertEquals(99L, inserted.get(ModelConstant.ID));
+        Assertions.assertEquals(MAX_END, inserted.get(ModelConstant.EFFECTIVE_END_DATE));
+    }
+
+    @Test
+    void createWithUnknownIdIsAllowedInInsertIdImportMode() {
+        // enableInsertId is the preset-id import escape hatch (mirrors IdProcessor's contract).
+        boolean previous = SystemConfig.env.isEnableInsertId();
+        SystemConfig.env.setEnableInsertId(true);
+        try {
+            Map<String, Object> row = mutableRow(Map.of(ModelConstant.ID, 99L, "name", "import"));
+            withCtx(() -> timeline.createSlices(MODEL, listOf(row)));
+            Map<String, Object> inserted = captureSingleInsert();
+            Assertions.assertEquals(99L, inserted.get(ModelConstant.ID));
+        } finally {
+            SystemConfig.env.setEnableInsertId(previous);
+        }
+    }
+
+    // ------------------------------------------------- addVersion precondition (strategy level)
+
+    @Test
+    void checkVersionCreateRequiresAnExistingEntityId() {
+        TimelineStrategy<Serializable> strategy = new TimelineStrategy<>(jdbc, timeline);
+
+        RuntimeException missingId = Assertions.assertThrows(RuntimeException.class,
+                () -> strategy.checkVersionCreate(MODEL, mutableRow(Map.of("name", "x"))));
+        Assertions.assertTrue(missingId.getMessage().contains("requires the existing entity"));
+
+        // DISTRIBUTED strategies defer existence to the createSlices guard, which rides the
+        // exist() probe it performs anyway — checkVersionCreate must NOT probe a second time.
+        Assertions.assertDoesNotThrow(
+                () -> strategy.checkVersionCreate(MODEL, mutableRow(Map.of(ModelConstant.ID, 99L))));
+        verify(jdbc, never()).exist(eq(MODEL), any());
+
+        // EXTERNAL_ID leaves the createSlices guard open (new entities legitimately carry an id),
+        // so addVersion's "existing entity" contract needs its own probe there.
+        modelManager.when(() -> ModelManager.getIdStrategy(MODEL)).thenReturn(IdStrategy.EXTERNAL_ID);
+        RuntimeException unknownId = Assertions.assertThrows(RuntimeException.class,
+                () -> strategy.checkVersionCreate(MODEL, mutableRow(Map.of(ModelConstant.ID, 99L))));
+        Assertions.assertTrue(unknownId.getMessage().contains("does not exist"));
+
+        when(jdbc.exist(MODEL, 1L)).thenReturn(true);
+        Assertions.assertDoesNotThrow(
+                () -> strategy.checkVersionCreate(MODEL, mutableRow(Map.of(ModelConstant.ID, 1L))));
     }
 
     // ---------------------------------------------------------------- updateSlices

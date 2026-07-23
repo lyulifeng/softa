@@ -8,6 +8,7 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 import org.springframework.util.CollectionUtils;
 
+import io.softa.framework.base.config.SystemConfig;
 import io.softa.framework.base.context.ContextHolder;
 import io.softa.framework.base.enums.Operator;
 import io.softa.framework.base.utils.Assert;
@@ -18,6 +19,7 @@ import io.softa.framework.orm.domain.Filters;
 import io.softa.framework.orm.domain.FlexQuery;
 import io.softa.framework.orm.domain.Orders;
 import io.softa.framework.orm.entity.TimelineSlice;
+import io.softa.framework.orm.enums.IdStrategy;
 import io.softa.framework.orm.jdbc.JdbcService;
 import io.softa.framework.orm.meta.ModelManager;
 import io.softa.framework.orm.service.TimelineService;
@@ -133,10 +135,22 @@ public class TimelineServiceImpl<K extends Serializable> implements TimelineServ
         LocalDate effectiveDate = ContextHolder.getContext().getEffectiveDate();
         rows.forEach(row -> {
             row.putIfAbsent(ModelConstant.EFFECTIVE_START_DATE, effectiveDate);
-            if (row.get(ModelConstant.ID) != null && jdbcService.exist(modelName, (Serializable) row.get(ModelConstant.ID))) {
+            Serializable id = (Serializable) row.get(ModelConstant.ID);
+            if (id != null && jdbcService.exist(modelName, id)) {
                 // id already exists, copy adjacent slice to insert a new one.
                 createSlice(modelName, row);
             } else {
+                // A caller-supplied id that matches no entity is almost certainly a mistake
+                // (a typo silently minting a new entity). Only EXTERNAL_ID models (new entities
+                // legitimately arrive with their id) and the enableInsertId import mode
+                // (preset ids, mirroring IdProcessor's contract) may create a first slice with
+                // a caller-chosen id.
+                Assert.notTrue(id != null
+                                && !IdStrategy.EXTERNAL_ID.equals(ModelManager.getIdStrategy(modelName))
+                                && !SystemConfig.env.isEnableInsertId(),
+                        "Timeline model {0}: id {1} does not exist. Omit `id` to create a new entity, "
+                                + "or use `addVersion` / pass an existing entity''s id to add a version.",
+                        modelName, id);
                 // No id is provided, insert the row data as the first slice.
                 row.put(ModelConstant.EFFECTIVE_END_DATE, ModelConstant.MAX_EFFECTIVE_END_DATE);
                 jdbcService.insertList(modelName, Collections.singletonList(row));
