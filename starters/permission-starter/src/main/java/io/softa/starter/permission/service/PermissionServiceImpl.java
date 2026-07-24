@@ -94,7 +94,7 @@ public class PermissionServiceImpl implements PermissionService {
     public Filters appendScopeAccessFilters(String model, Filters originalFilters) {
         if (shouldBypass()) return originalFilters;
         PermissionInfo pi = currentPi();
-        if (PermissionInfo.isSuperAdmin(pi)) return originalFilters;
+        if (PermissionInfo.isAdmin(pi)) return originalFilters;
         if (hasExplicitRules(pi, model)) {
             Filters scope = scopeCompiler.compile(rulesFor(pi, model), model);
             if (scope == null) return originalFilters; // ALL rule → no restriction
@@ -131,7 +131,7 @@ public class PermissionServiceImpl implements PermissionService {
     public Collection<String> filterReadableFields(String model, Collection<String> requested, AccessType accessType) {
         if (requested == null || requested.isEmpty() || shouldBypass()) return requested;
         PermissionInfo pi = currentPi();
-        if (PermissionInfo.isSuperAdmin(pi)) return requested;
+        if (PermissionInfo.isAdmin(pi)) return requested;
         Set<String> blocked = blockedFields(pi, model);
         if (blocked.isEmpty()) return requested;
         List<String> out = new ArrayList<>(requested.size());
@@ -143,7 +143,7 @@ public class PermissionServiceImpl implements PermissionService {
     public <T> T maskResponseValue(String model, T value, AccessType accessType) {
         if (value == null || shouldBypass()) return value;
         PermissionInfo pi = currentPi();
-        if (PermissionInfo.isSuperAdmin(pi)) return value;
+        if (PermissionInfo.isAdmin(pi)) return value;
         Set<String> blocked = blockedFields(pi, model);
         if (blocked.isEmpty()) return value;
         maskInPlace(value, blocked);
@@ -180,7 +180,7 @@ public class PermissionServiceImpl implements PermissionService {
     public void checkModelFieldsAccess(String model, Collection<String> fields, AccessType accessType) {
         if (fields == null || fields.isEmpty() || shouldBypass()) return;
         PermissionInfo pi = currentPi();
-        if (PermissionInfo.isSuperAdmin(pi)) return;
+        if (PermissionInfo.isAdmin(pi)) return;
         Set<String> blocked = blockedFields(pi, model);
         if (blocked.isEmpty()) return;
         for (String f : fields) {
@@ -204,7 +204,7 @@ public class PermissionServiceImpl implements PermissionService {
     public void checkWritePayload(String model, Map<String, Object> payload) {
         if (payload == null || payload.isEmpty() || shouldBypass()) return;
         PermissionInfo pi = currentPi();
-        if (PermissionInfo.isSuperAdmin(pi)) return;
+        if (PermissionInfo.isAdmin(pi)) return;
         Set<String> blocked = blockedFields(pi, model);
         if (blocked.isEmpty()) return;
         for (String f : payload.keySet()) {
@@ -261,7 +261,7 @@ public class PermissionServiceImpl implements PermissionService {
                                AccessType accessType) {
         if (ids == null || ids.isEmpty() || shouldBypass()) return;
         PermissionInfo pi = currentPi();
-        if (PermissionInfo.isSuperAdmin(pi)) return;
+        if (PermissionInfo.isAdmin(pi)) return;
         List<Serializable> idList = new ArrayList<>(ids);
 
         // Anchorless config/extension model with no explicit grant carries no
@@ -306,7 +306,7 @@ public class PermissionServiceImpl implements PermissionService {
     public Set<String> getUserBlockedModelFields(String model, AccessType accessType) {
         if (shouldBypass()) return Set.of();
         PermissionInfo pi = currentPi();
-        if (PermissionInfo.isSuperAdmin(pi)) return Set.of();
+        if (PermissionInfo.isAdmin(pi)) return Set.of();
         return blockedFields(pi, model);
     }
 

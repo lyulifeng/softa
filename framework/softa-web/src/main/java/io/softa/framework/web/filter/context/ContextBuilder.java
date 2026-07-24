@@ -79,6 +79,15 @@ public class ContextBuilder implements SmartInitializingSingleton {
     public Context buildUserContext(HttpServletRequest request) throws UserNotFoundException {
         String sessionId = this.getSessionId(request);
         UserInfo userInfo = this.getUserInfo(sessionId);
+        // Account lifecycle gate: a session outlives credential entry, so re-check that
+        // the account is still active on every request (symmetric to the tenant gate in
+        // setMultiTenancyEnv). A frozen / off-boarded account is force-logged-out and
+        // bounced to re-login (where the login gate then refuses it). active == null is a
+        // legacy session cached before this field existed — left alone, so no mass logout.
+        if (Boolean.FALSE.equals(userInfo.getActive())) {
+            cacheService.clear(RedisConstant.SESSION + sessionId);
+            throw new UserNotFoundException("Account is not active; session terminated.");
+        }
         // Create Context with TraceID from the request header
         String traceId = request.getHeader(BaseConstant.X_B3_TRACEID);
         Context context = new Context(traceId);

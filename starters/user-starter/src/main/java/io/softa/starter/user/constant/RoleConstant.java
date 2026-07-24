@@ -30,6 +30,19 @@ public final class RoleConstant {
     public static final String CODE_SUPER_ADMIN = "SUPER_ADMIN";
 
     /**
+     * Reserved code for a tenant super-admin role. Holders bypass the permission gate WITHIN
+     * their own tenant (tenant-isolated — NOT cross-tenant), but are denied platform-only Ops
+     * endpoints (billing / provisioning; see {@code PermissionInterceptorProperties.platformOnlyPatterns}).
+     * Seeded per-tenant by provisioning; the first tenant admin is granted this role.
+     */
+    public static final String CODE_TENANT_ADMIN = "TENANT_ADMIN";
+
+    /** Null-safe — true when the given role is the reserved tenant super-admin role. */
+    public static boolean isTenantAdmin(Role role) {
+        return role != null && CODE_TENANT_ADMIN.equals(role.getCode());
+    }
+
+    /**
      * True when the given role is the system-reserved Super-Admin role.
      *
      * <p>Lives here (not on {@link Role}) so the entity stays a pure data
@@ -40,6 +53,15 @@ public final class RoleConstant {
      */
     public static boolean isSuperAdmin(Role role) {
         return role != null && CODE_SUPER_ADMIN.equals(role.getCode());
+    }
+
+    /**
+     * True when the given role is any system-reserved role — it has a non-null {@code code}
+     * (SUPER_ADMIN / TENANT_ADMIN / any future built-in). Admin-created roles have {@code code = null}.
+     * Null-safe. Used to protect built-in roles from admin edit / delete.
+     */
+    public static boolean isSystemRole(Role role) {
+        return role != null && role.getCode() != null && !role.getCode().isBlank();
     }
 
     private RoleConstant() {

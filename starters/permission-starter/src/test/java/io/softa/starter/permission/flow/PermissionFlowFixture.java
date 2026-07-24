@@ -280,7 +280,7 @@ public final class PermissionFlowFixture {
         });
         ReflectionTestUtils.invokeMethod(endpointIndex, "init");
 
-        provider = new DefaultPermissionSnapshotProvider(cacheService, modelService, sfsCache);
+        provider = new DefaultPermissionSnapshotProvider(cacheService, modelService, sfsCache, java.util.List.of());
     }
 
     // ─── FlexQuery filter extraction helpers (framework types only) ───

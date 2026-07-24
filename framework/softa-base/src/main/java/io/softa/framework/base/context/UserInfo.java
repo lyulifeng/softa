@@ -23,4 +23,12 @@ public class UserInfo implements Serializable {
     private String photoUrl;
     private Long tenantId;
 
+    /**
+     * Whether the account may operate. Re-checked per request in {@code ContextBuilder}
+     * so a frozen / off-boarded account is force-logged-out even mid-session. Nullable:
+     * a legacy UserInfo serialized before this field existed deserializes to {@code null}
+     * and is treated as active, so a deploy does not mass-logout existing sessions.
+     */
+    private Boolean active;
+
 }

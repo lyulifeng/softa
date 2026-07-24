@@ -19,9 +19,12 @@ import io.softa.framework.base.utils.UUIDUtils;
 import io.softa.framework.orm.domain.Filters;
 import io.softa.framework.orm.service.CacheService;
 import io.softa.framework.orm.service.TenantInfoService;
+import io.softa.starter.user.dto.InvitationInfo;
 import io.softa.starter.user.entity.UserAccount;
+import io.softa.starter.user.enums.AccountStatus;
 import io.softa.starter.user.service.LoginService;
 import io.softa.starter.user.service.UserAccountService;
+import io.softa.starter.user.service.UserInvitationService;
 import io.softa.starter.user.service.UserProfileService;
 
 /**
@@ -43,6 +46,9 @@ public class LoginServiceImpl implements LoginService {
     @Autowired(required = false)
     private TenantInfoService tenantInfoService;
 
+    @Autowired
+    private UserInvitationService invitationService;
+
     /**
      * Tenant lifecycle gate at login: only ACTIVE tenants may log in. Enforced at the single
      * session-issuance choke point ({@link #generateSessionId}), so every login flow — password,
@@ -61,6 +67,40 @@ public class LoginServiceImpl implements LoginService {
         if (tenantInfoService == null || !tenantInfoService.isTenantActive(tenantId)) {
             throw new BusinessException("Login denied: tenant is not active.");
         }
+    }
+
+    /**
+     * Account lifecycle gate at login: only an ACTIVE account may obtain a session.
+     * Sits at the same session-issuance choke point as {@link #validateTenantActive},
+     * so every login flow (password / email code / mobile code / OAuth / Apple) is
+     * covered. It runs AFTER credentials are verified, so returning the specific
+     * reason is safe — the caller has already proven identity, so this is not an
+     * account-enumeration channel.
+     *
+     * <p>Closes the gap where an employee off-boarded to INACTIVE (mirrored onto
+     * UserAccount.status = Frozen) could still authenticate, because login only
+     * checked the password and never the account state.
+     */
+    private void validateAccountActive(Long userId) {
+        UserAccount account = accountService.getById(userId)
+                .orElseThrow(() -> new BusinessException("Login denied: account not found."));
+        if (account.getStatus() == AccountStatus.ACTIVE) {
+            return;
+        }
+        throw new BusinessException(accountDeniedMessage(account.getStatus()));
+    }
+
+    /** Human-readable reason for refusing login to a non-ACTIVE account. */
+    private static String accountDeniedMessage(AccountStatus status) {
+        String reason = switch (status == null ? AccountStatus.FROZEN : status) {
+            case FROZEN, PENDING_DELETION, DELETED -> "your account has been deactivated";
+            case LOCKED -> "your account is locked";
+            case BLACKLISTED -> "your account has been blocked";
+            case INVITED -> "your account invitation has not been accepted yet";
+            case UNVERIFIED -> "your account has not been verified yet";
+            default -> "your account is not active";
+        };
+        return "Login denied: " + reason + ".";
     }
 
     public static String buildLoginCodeKey(String identifier) {
@@ -162,8 +202,10 @@ public class LoginServiceImpl implements LoginService {
      * @return Session ID
      */
     public String generateSessionId(Long userId) {
-        // Tenant lifecycle gate — the single choke point all login flows pass through.
+        // Tenant + account lifecycle gates — the single choke point every login flow
+        // passes through, and it runs AFTER credentials are verified.
         validateTenantActive(userId);
+        validateAccountActive(userId);
         String sessionId = UUIDUtils.shortUUID22();
         // Store session ID -> user ID mapping in cache
         String sessionKey = RedisConstant.SESSION + sessionId;
@@ -189,74 +231,30 @@ public class LoginServiceImpl implements LoginService {
     }
 
     /**
-     * Forgot password, send reset password email
+     * Forgot password — issue a self-service PASSWORD_RESET token and email the set-password link.
+     * Delegates to {@link UserInvitationService}; silently no-ops for an unknown email (no
+     * account enumeration).
      */
     @Override
-    public void forgetPassword(String username) {
-        Assert.hasText(username, "Username cannot be empty.");
-
-        Filters filter = Filters.of("username", Operator.EQUAL, username);
-        UserAccount user = accountService.searchOne(filter).orElseThrow(
-                () -> new BusinessException("User not found with username: " + username)
-        );
-
-        // --- Password Reset Token Generation Needed ---
-        // TODO: Implement a secure mechanism to generate a time-limited password reset
-        // token.
-        // This could involve:
-        // 1. Adding `resetToken` and `resetTokenExpiry` fields to UserAccount entity.
-        // 2. Using a separate Cache (e.g., Redis) to store `token -> userId` mapping
-        // with TTL.
-        // 3. Potentially leveraging PasswordUtils if it offers token features (unlikely
-        // based on current view).
-        String token = "GENERATED_RESET_TOKEN"; // Placeholder
-        log.info("TODO: Generate and store password reset token for user {}. Token: {}", username, token);
-
-        // TODO: Send email to the user's registered email address (user.getEmail())
-        // The email should contain a link like: [baseURL]/reset-password?token={token}
-        // Requires an EmailService implementation.
-        log.info("Password reset token generated for user {}. Email sending required.", username);
-        throw new UnsupportedOperationException("Password reset token generation and Email sending not implemented yet.");
+    public void forgetPassword(String email) {
+        invitationService.forgotPassword(email);
     }
 
     /**
-     * Reset password using reset token
+     * Set the password via a token — serves both invitation-accept and forgot-password reset.
+     * Delegates to {@link UserInvitationService} (validates the token, sets a fresh salted hash,
+     * and activates an INVITED account).
      */
     @Override
     @Transactional
     public void resetPassword(String token, String newPassword) {
-        Assert.hasText(token, "Reset token cannot be empty.");
-        Assert.hasText(newPassword, "New password cannot be empty.");
-        // TODO: Add password strength validation
+        invitationService.acceptToken(token, newPassword);
+    }
 
-        // --- Password Reset Token Validation Needed ---
-        // TODO: Implement validation for the provided reset token.
-        // This requires retrieving the user associated with the token and checking its
-        // validity/expiry based on the chosen generation mechanism (DB field, Cache,
-        // etc.).
-        // Example logic (depends heavily on implementation):
-        // UserAccount user = findUserByResetToken(token); // Implement this lookup
-        // if (user == null || isTokenExpired(user or tokenData)) {
-        // throw new BusinessException("Invalid or expired password reset token.");
-        // }
-        log.warn("Password reset called, BUT TOKEN VALIDATION LOGIC IS MISSING.");
-        UserAccount user = null; // Placeholder - MUST be replaced by user found via token
-
-        if (user == null) { // Temporary check until validation is implemented
-            throw new UnsupportedOperationException("Password reset token validation and user retrieval not implemented.");
-        }
-
-        // --- IMPORTANT: Generate a NEW salt when resetting password ---
-        String newSalt = PasswordUtils.generateSalt();
-        user.setPasswordSalt(newSalt);
-        user.setPassword(PasswordUtils.hashPassword(newPassword, newSalt));
-
-        // TODO: Invalidate the reset token after successful use (e.g., clear DB fields,
-        // remove from cache).
-
-        accountService.updateOne(user); // Update the user record
-        log.info("Password reset successfully for user retrieved via token (User ID: {}).", user.getId()); // Assuming
-        // getId() exists
+    /** Validate a token for the public set-password page. */
+    @Override
+    public InvitationInfo inviteInfo(String token) {
+        return invitationService.inspectToken(token);
     }
 
 }

@@ -1,0 +1,14 @@
+{
+  "SysCron": [
+    {
+      "id": "DynamicRoleSync",
+      "name": "DynamicRoleSync",
+      "cronExpression": "0 0 2 * * ?",
+      "cronSemantic": "Every day at 02:00",
+      "limitExecution": false,
+      "tenantJobMode": "PerTenant",
+      "active": true,
+      "description": "Re-evaluate each role's dynamic_filter and refresh the DYNAMIC user_role rows. PerTenant: the scheduler fans out one message per active tenant; user-starter's UserMaintenanceCronConsumer runs syncAll under that tenant context."
+    }
+  ]
+}

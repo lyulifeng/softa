@@ -1188,7 +1188,8 @@ public class ModelServiceImpl<K extends Serializable> implements ModelService<K>
     @Override
     public <R> List<R> searchList(String modelName, FlexQuery flexQuery, Class<R> returnClass) {
         List<Map<String, Object>> rows = this.searchList(modelName, flexQuery);
-        return CollectionUtils.isEmpty(rows) ? Collections.emptyList() : BeanTool.mapListToObjects(rows, returnClass);
+        return CollectionUtils.isEmpty(rows) ? Collections.emptyList()
+                : BeanTool.mapListToObjects(rows, returnClass, modelName);
     }
 
     /**
@@ -1237,7 +1238,7 @@ public class ModelServiceImpl<K extends Serializable> implements ModelService<K>
         Page<Map<String, Object>> mapPage = new Page<>(page.getPageNumber(), page.getPageSize(), page.isCursorPage(), page.isCount());
         this.searchPage(modelName, flexQuery, mapPage);
         if (!CollectionUtils.isEmpty(mapPage.getRows())) {
-            List<R> objects = BeanTool.mapListToObjects(mapPage.getRows(), returnClass);
+            List<R> objects = BeanTool.mapListToObjects(mapPage.getRows(), returnClass, modelName);
             page.setRows(objects);
             if (page.isCount()) {
                 page.setTotalCount(mapPage.getTotalCount());

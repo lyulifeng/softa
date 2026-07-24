@@ -1,5 +1,9 @@
 package io.softa.starter.permission.config;
 
+import java.util.Arrays;
+import java.util.List;
+
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.autoconfigure.AutoConfiguration;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean;
 import org.springframework.context.annotation.Bean;
@@ -82,12 +86,22 @@ public class PermissionStarterAutoConfiguration {
     public PermissionSnapshotProvider permissionSnapshotProvider(
             CacheService cacheService,
             @Lazy ModelService<?> modelService,
-            @Lazy SensitiveFieldSetCache sensitiveFieldSetCache) {
+            @Lazy SensitiveFieldSetCache sensitiveFieldSetCache,
+            @Value("${permission.platform-nav-prefixes:}") String platformNavPrefixes) {
         // Default: build the per-user snapshot from the standard RBAC config models
         // (约定读 into view DTOs). A pure-enforce deployment without those models
         // gets fail-closed nulls and should register its own provider (e.g. a
         // RedisPermissionSnapshotProvider keep-warm reader, or an RPC re-sourcer).
-        return new DefaultPermissionSnapshotProvider(cacheService, modelService, sensitiveFieldSetCache);
+        return new DefaultPermissionSnapshotProvider(cacheService, modelService, sensitiveFieldSetCache,
+                splitCsv(platformNavPrefixes));
+    }
+
+    /** Split a comma-separated config value into a trimmed, non-empty list. */
+    private static List<String> splitCsv(String csv) {
+        if (csv == null || csv.isBlank()) {
+            return List.of();
+        }
+        return Arrays.stream(csv.split(",")).map(String::trim).filter(s -> !s.isEmpty()).toList();
     }
 
     @Bean

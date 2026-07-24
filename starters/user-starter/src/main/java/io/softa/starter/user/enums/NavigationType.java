@@ -4,6 +4,8 @@ import com.fasterxml.jackson.annotation.JsonValue;
 import lombok.AllArgsConstructor;
 import lombok.Getter;
 
+import io.softa.framework.base.annotation.OptionSet;
+
 /**
  * Navigation node type.
  * - GROUP:  Category container (sidebar section header). No route. Not granted.
@@ -11,6 +13,7 @@ import lombok.Getter;
  * - BUTTON: Sub-page entry under a MENU. Has route. Granted.
  * - TAB:    Cross-model auth-context tab in a MultiView page. No route. Granted.
  */
+@OptionSet
 @Getter
 @AllArgsConstructor
 public enum NavigationType {

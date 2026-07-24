@@ -104,7 +104,19 @@ public class PermissionInterceptor implements HandlerInterceptor {
         // aspects (e.g. {@code @RequireRole}) can gate on system roles without
         // depending on the user-starter permission model.
         bridgeRoleCodesToContext(ctx, pi);
+        // Platform super-admin — full bypass, cross-tenant (crossTenant set in the bridge).
         if (PermissionInfo.isSuperAdmin(pi)) return true;
+        // Tenant super-admin — bypasses the permission gate WITHIN its own tenant (tenant-isolated,
+        // crossTenant stays false), but is denied platform-only Ops endpoints (billing / plan /
+        // provisioning) which only SUPER_ADMIN may reach.
+        if (PermissionInfo.isTenantAdmin(pi)) {
+            if (matchAny(properties.getPlatformOnlyPatterns(), uri)) {
+                log.warn("Platform-only endpoint denied to tenant-admin — userId={}, uri={} {}",
+                        ctx.getUserId(), method, uri);
+                throw new PermissionException("Platform-admin only: " + method + " " + uri);
+            }
+            return true;
+        }
 
         // EndpointIndex.lookup returns every permission id that lists this
         // endpoint in its `permission.endpoints` array (or matches the
@@ -145,6 +157,10 @@ public class PermissionInterceptor implements HandlerInterceptor {
         if (pi != null && pi.getRoleCodes() != null) codes.addAll(pi.getRoleCodes());
         if (PermissionInfo.isSuperAdmin(pi)) {
             for (SystemRole r : SystemRole.values()) codes.add(r.getCode());
+            // Platform super-admin operates cross-tenant (sees every tenant's data + the
+            // non-tenant-filtered Ops models). A TENANT_ADMIN does NOT get this — it stays
+            // tenant-isolated (crossTenant remains false).
+            ctx.setCrossTenant(true);
         }
         ctx.setRoleCodes(codes);
     }

@@ -26,6 +26,17 @@
             <version>${project.version}</version>
         </dependency>
 
+        <!-- Optional cron-starter integration for the DynamicRoleSync cron via UserMaintenanceCronConsumer.
+             optional=true: NOT propagated to downstream apps — a deployment on a different scheduler omits
+             it, the consumer stays dormant (@ConditionalOnClass), and the app drives
+             DynamicRoleSyncJob.syncAll() itself. -->
+        <dependency>
+            <groupId>io.softa</groupId>
+            <artifactId>cron-starter</artifactId>
+            <version>${project.version}</version>
+            <optional>true</optional>
+        </dependency>
+
         <!-- JWT for Apple and Google ID token validation -->
         <dependency>
             <groupId>com.nimbusds</groupId>

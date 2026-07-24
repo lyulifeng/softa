@@ -3,6 +3,7 @@ package io.softa.starter.user.service.impl;
 import java.util.List;
 import java.util.Optional;
 
+import io.softa.starter.user.enums.UserRoleSource;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.transaction.PlatformTransactionManager;
@@ -182,7 +183,7 @@ class DynamicRoleSyncJobImplTest {
                 .allSatisfy(r -> {
                     assertThat(r.getRoleId()).isEqualTo(500L);
                     assertThat(r.getSource()).isEqualTo(
-                            io.softa.starter.user.enums.RoleSource.DYNAMIC);
+                            UserRoleSource.DYNAMIC);
                 });
     }
 

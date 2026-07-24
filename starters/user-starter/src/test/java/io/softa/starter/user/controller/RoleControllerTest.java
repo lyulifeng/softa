@@ -12,6 +12,7 @@ import tools.jackson.databind.node.ArrayNode;
 import tools.jackson.databind.node.JsonNodeFactory;
 import tools.jackson.databind.node.ObjectNode;
 
+import io.softa.framework.base.exception.BusinessException;
 import io.softa.framework.orm.domain.Filters;
 import io.softa.framework.orm.service.ModelService;
 import io.softa.framework.web.response.ApiResponse;
@@ -19,7 +20,7 @@ import io.softa.starter.user.dto.WizardSaveDTO;
 import io.softa.starter.user.entity.Role;
 import io.softa.starter.user.entity.RoleNavigation;
 import io.softa.starter.user.entity.UserRoleRel;
-import io.softa.starter.user.enums.RoleSource;
+import io.softa.starter.user.enums.UserRoleSource;
 import io.softa.starter.user.service.DynamicRoleSyncJob;
 import io.softa.starter.user.service.RoleDataScopeService;
 import io.softa.starter.user.service.RoleNavigationService;
@@ -28,13 +29,13 @@ import io.softa.starter.user.service.RoleService;
 import io.softa.starter.user.service.UserRoleRelService;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyBoolean;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
-import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -54,6 +55,7 @@ class RoleControllerTest {
     private DynamicRoleSyncJob dynamicRoleSyncJob;
     @SuppressWarnings({"rawtypes", "unchecked"})
     private ModelService modelService;
+    private io.softa.starter.user.service.impl.UiContextBuilder uiContextBuilder;
     private RoleController controller;
 
     @SuppressWarnings({"rawtypes", "unchecked"})
@@ -66,10 +68,56 @@ class RoleControllerTest {
         userRoleRelService = mock(UserRoleRelService.class);
         dynamicRoleSyncJob = mock(DynamicRoleSyncJob.class);
         modelService = mock(ModelService.class);
+        uiContextBuilder = mock(io.softa.starter.user.service.impl.UiContextBuilder.class);
         controller = new RoleController(
                 roleService, roleNavigationService,
                 roleDataScopeService, roleSensitiveFieldSetService,
-                userRoleRelService, dynamicRoleSyncJob, modelService);
+                userRoleRelService, dynamicRoleSyncJob, modelService, uiContextBuilder);
+    }
+
+    // ─── typed shadows: reject client `code` on create + block generic edits to a system role ───
+
+    @Test
+    void createOne_withClientCode_rejected() {
+        assertThatThrownBy(() ->
+                controller.createOne(Map.<String, Object>of("name", "Evil", "code", "SUPER_ADMIN")))
+                .isInstanceOf(BusinessException.class)
+                .hasMessageContaining("reserved for system roles");
+        verify(modelService, never()).createOne(any(), any());
+    }
+
+    @Test
+    void createOne_noCode_delegatesToGenericCreate() {
+        when(modelService.createOne(eq("Role"), any())).thenReturn(42L);
+        controller.createOne(Map.<String, Object>of("name", "HR Manager"));
+        verify(modelService).createOne(eq("Role"), any());
+    }
+
+    @Test
+    void updateOne_systemRole_blocked() {
+        Role sa = new Role();
+        sa.setId(1L);
+        sa.setName("Super Admin");
+        sa.setCode("SUPER_ADMIN");
+        when(roleService.getById(1L)).thenReturn(java.util.Optional.of(sa));
+
+        assertThatThrownBy(() ->
+                controller.updateOne(Map.<String, Object>of("id", 1L, "name", "x")))
+                .isInstanceOf(BusinessException.class)
+                .hasMessageContaining("not allowed on system role");
+        verify(modelService, never()).updateOne(any(), any());
+    }
+
+    @Test
+    void updateOne_nonSystemRole_delegatesToGenericUpdate() {
+        Role hr = new Role();
+        hr.setId(500L);
+        hr.setName("HR Manager");   // no code → not a system role
+        when(roleService.getById(500L)).thenReturn(java.util.Optional.of(hr));
+        when(modelService.updateOne(eq("Role"), any())).thenReturn(true);
+
+        controller.updateOne(Map.<String, Object>of("id", 500L, "name", "HR Lead"));
+        verify(modelService).updateOne(eq("Role"), any());
     }
 
     // ─── createWithWizard ───
@@ -100,7 +148,7 @@ class RoleControllerTest {
         verify(userRoleRelService).createList(ursCap.capture());
         assertThat(ursCap.getValue()).hasSize(2);
         assertThat(ursCap.getValue()).allSatisfy(r -> {
-            assertThat(r.getSource()).isEqualTo(RoleSource.MANUAL);
+            assertThat(r.getSource()).isEqualTo(UserRoleSource.MANUAL);
             assertThat(r.getRoleId()).isEqualTo(999L);
         });
         // Dynamic sync also fires for the new role.

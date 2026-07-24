@@ -119,36 +119,27 @@ public class RoleServiceImpl extends EntityServiceImpl<Role, Long> implements Ro
     /** Reject if any id in the batch belongs to a system role. */
     private void guardSystemRole(List<Long> ids, String op) {
         if (ids == null || ids.isEmpty()) return;
-        List<Role> rolesToTouch = searchList(
+        // isSet(code) → only system-reserved roles (admin-created roles have code=null); ANY match is blocked
+        // (SUPER_ADMIN / TENANT_ADMIN / any future built-in — none may be deleted via the API).
+        List<Role> systemRoles = searchList(
                 new Filters().in(Role::getId, ids).isSet(Role::getCode));
-        for (Role r : rolesToTouch) {
-            if (RoleConstant.isSuperAdmin(r)) {
-                throw new BusinessException(
-                        op + " is not allowed on system role '" + r.getName() + "' (code=" + r.getCode() + ")");
-            }
+        if (!systemRoles.isEmpty()) {
+            Role r = systemRoles.get(0);
+            throw new BusinessException(
+                    op + " is not allowed on system role '" + r.getName() + "' (code=" + r.getCode() + ")");
         }
     }
 
-    /** Reject changes that would damage a system role:
-     *  rename, deactivate, blank the code, or attach a dynamicFilter. */
+    /** Built-in (system-reserved) roles are IMMUTABLE via the API — reject ANY field edit (name,
+     *  description, active, code, dynamicFilter, …). Associating users is a separate path
+     *  ({@code UserRoleRel}), so this does NOT block assigning members to a built-in role. */
     private void guardSystemMutation(Role patch) {
         if (patch == null || patch.getId() == null) return;
         Role persisted = getById(patch.getId()).orElse(null);
-        if (!RoleConstant.isSuperAdmin(persisted)) return;
-
-        if (patch.getCode() != null && !persisted.getCode().equals(patch.getCode())) {
-            throw new BusinessException("Cannot change code of system role '" + persisted.getName() + "'");
-        }
-        if (patch.getName() != null && !persisted.getName().equals(patch.getName())) {
-            throw new BusinessException("Cannot rename system role '" + persisted.getName() + "'");
-        }
-        if (Boolean.FALSE.equals(patch.getActive())) {
-            throw new BusinessException("Cannot deactivate system role '" + persisted.getName() + "'");
-        }
-        if (patch.getDynamicFilter() != null && !patch.getDynamicFilter().isNull()) {
-            throw new BusinessException(
-                    "System role '" + persisted.getName() + "' cannot have a dynamic membership rule");
-        }
+        if (!RoleConstant.isSystemRole(persisted)) return;
+        throw new BusinessException(
+                "Cannot edit system role '" + persisted.getName() + "' (code=" + persisted.getCode()
+                        + "); built-in roles are managed by ops. Only user assignment is allowed.");
     }
 
     private static Set<Long> idsOf(Role entity) {

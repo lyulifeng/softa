@@ -4,7 +4,7 @@ import java.util.List;
 
 import io.softa.starter.user.dto.BulkAddResult;
 import io.softa.starter.user.dto.UserRolePair;
-import io.softa.starter.user.enums.RoleSource;
+import io.softa.starter.user.enums.UserRoleSource;
 
 /**
  * Batch user-role assignment service (entry C: M users × N roles).
@@ -25,5 +25,5 @@ public interface BulkUserRoleService {
      * @param source either MANUAL (admin UI) or DYNAMIC (job, internal use)
      * @return per-pair add / skip result + summary counts
      */
-    BulkAddResult bulkAdd(List<UserRolePair> pairs, RoleSource source);
+    BulkAddResult bulkAdd(List<UserRolePair> pairs, UserRoleSource source);
 }

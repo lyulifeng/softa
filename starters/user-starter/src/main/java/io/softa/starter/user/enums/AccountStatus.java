@@ -14,6 +14,7 @@ import io.softa.framework.base.annotation.OptionSet;
 @OptionSet
 public enum AccountStatus {
     ACTIVE("Active"),
+    INVITED("Invited"),
     UNVERIFIED("Unverified"),
     LOCKED("Locked"),
     FROZEN("Frozen"),

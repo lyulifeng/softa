@@ -67,6 +67,8 @@ public class DefaultPermissionSnapshotProvider implements PermissionSnapshotProv
 
     /** Role code that bypasses all enforcement — must match the seeded role. */
     private static final String SUPER_ADMIN_CODE = "SUPER_ADMIN";
+    /** Tenant super-admin — granted every tenant-facing nav (all minus platform prefixes). */
+    private static final String TENANT_ADMIN_CODE = "TENANT_ADMIN";
 
     private static final String M_USER_ROLE_REL = "UserRoleRel";
     private static final String M_ROLE = "Role";
@@ -74,10 +76,14 @@ public class DefaultPermissionSnapshotProvider implements PermissionSnapshotProv
     private static final String M_ROLE_SCOPE = "RoleDataScope";
     private static final String M_ROLE_SFS = "RoleSensitiveFieldSet";
     private static final String M_NAV = "Navigation";
+    private static final String M_PERMISSION = "Permission";
 
     private final CacheService cacheService;
     private final ModelService<?> modelService;
     private final SensitiveFieldSetCache sensitiveFieldSetCache;
+    /** Nav-id prefixes that are platform-only (never in a tenant admin's grant), e.g.
+     *  {@code navigation.system.} / {@code navigation.studio.}. From {@code permission.platform-nav-prefixes}. */
+    private final List<String> platformNavPrefixes;
 
     /** leafNavId → root→leaf ancestor chain; lazily built from the Navigation
      *  tree (seed data — changes only on redeploy). */
@@ -85,10 +91,12 @@ public class DefaultPermissionSnapshotProvider implements PermissionSnapshotProv
 
     public DefaultPermissionSnapshotProvider(CacheService cacheService,
                                              ModelService<?> modelService,
-                                             SensitiveFieldSetCache sensitiveFieldSetCache) {
+                                             SensitiveFieldSetCache sensitiveFieldSetCache,
+                                             List<String> platformNavPrefixes) {
         this.cacheService = cacheService;
         this.modelService = modelService;
         this.sensitiveFieldSetCache = sensitiveFieldSetCache;
+        this.platformNavPrefixes = platformNavPrefixes == null ? List.of() : platformNavPrefixes;
     }
 
     @Override
@@ -158,6 +166,9 @@ public class DefaultPermissionSnapshotProvider implements PermissionSnapshotProv
 
         if (roleCodes.contains(SUPER_ADMIN_CODE)) {
             return emptyGrantsSnapshot(roleCodes);
+        }
+        if (roleCodes.contains(TENANT_ADMIN_CODE)) {
+            return tenantAdminSnapshot(roleCodes);
         }
         if (activeRoles.isEmpty()) {
             return emptyGrantsSnapshot(roleCodes);
@@ -345,6 +356,49 @@ public class DefaultPermissionSnapshotProvider implements PermissionSnapshotProv
         return out;
     }
 
+    /**
+     * Tenant super-admin snapshot: every tenant-facing navigation (all navs minus the configured
+     * platform-only prefixes) + those navs' permissions. The tenant's plan narrows this further on
+     * the FE via entitledModules. Scope / SFS empty — a tenant admin bypasses row-scope and sees all
+     * fields within its own tenant. Runtime-computed (mirrors user-starter's UiContextBuilder) so no
+     * static per-nav grants are needed for the seeded TENANT_ADMIN role.
+     */
+    private PermissionInfo tenantAdminSnapshot(Set<String> roleCodes) {
+        List<NavigationView> allNavs = modelService.searchList(M_NAV,
+                new FlexQuery(List.of("id"), new Filters()), NavigationView.class);
+        Set<String> navigations = new HashSet<>();
+        for (NavigationView n : allNavs) {
+            if (n.getId() != null && !isPlatformNav(n.getId())) {
+                navigations.add(n.getId());
+            }
+        }
+        List<PermissionView> allPerms = modelService.searchList(M_PERMISSION,
+                new FlexQuery(List.of("id", "navigationId"), new Filters()), PermissionView.class);
+        Set<String> permissions = new HashSet<>();
+        for (PermissionView p : allPerms) {
+            if (p.getId() != null && p.getNavigationId() != null && navigations.contains(p.getNavigationId())) {
+                permissions.add(p.getId());
+            }
+        }
+        PermissionInfo info = new PermissionInfo();
+        info.setRoleCodes(roleCodes);
+        info.setNavigations(navigations);
+        info.setPermissions(permissions);
+        info.setModelScopeMap(Collections.emptyMap());
+        info.setModelSensitiveFieldSetsMap(Collections.emptyMap());
+        return info;
+    }
+
+    /** True when a nav id falls under a configured platform-only prefix (never tenant-facing). */
+    private boolean isPlatformNav(String navId) {
+        for (String prefix : platformNavPrefixes) {
+            if (prefix != null && !prefix.isBlank() && navId.startsWith(prefix.trim())) {
+                return true;
+            }
+        }
+        return false;
+    }
+
     private static PermissionInfo emptyGrantsSnapshot(Set<String> roleCodes) {
         PermissionInfo info = new PermissionInfo();
         info.setRoleCodes(roleCodes);
@@ -386,5 +440,10 @@ public class DefaultPermissionSnapshotProvider implements PermissionSnapshotProv
     @Data public static class NavigationView {
         private String id;
         private String parentId;
+    }
+
+    @Data public static class PermissionView {
+        private String id;
+        private String navigationId;
     }
 }

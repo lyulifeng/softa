@@ -1,12 +1,16 @@
 package io.softa.starter.user.entity;
 
 import java.io.Serial;
-import io.swagger.v3.oas.annotations.media.Schema;
 import lombok.Data;
 import lombok.EqualsAndHashCode;
 import tools.jackson.databind.JsonNode;
 
+import io.softa.framework.orm.annotation.Field;
+import io.softa.framework.orm.annotation.Index;
+import io.softa.framework.orm.annotation.Model;
 import io.softa.framework.orm.entity.AuditableModel;
+import io.softa.framework.orm.enums.FieldType;
+import io.softa.framework.orm.enums.IdStrategy;
 
 /**
  * RoleDataScope — one row = a role's row-level data scope for ONE model.
@@ -23,27 +27,34 @@ import io.softa.framework.orm.entity.AuditableModel;
  * granted navigation). Child/related models that merely contribute sensitive
  * fields (e.g. {@code EmpBankAccount} under {@code Employee}) do NOT need a
  * scope row — their field masking is driven by {@link RoleSensitiveFieldSet}.
+ *
+ * <p><b>Metadata note:</b> {@code io.softa.starter.user.entity} is NOT in scanner-scope; annotations
+ * mirror the studio-managed live {@code sys_field} (not reconciled at runtime).
  */
 @Data
-@Schema(name = "RoleDataScope")
 @EqualsAndHashCode(callSuper = true)
+@Model(idStrategy = IdStrategy.DISTRIBUTED_LONG, multiTenant = true)
+@Index(indexName = "uk_role_data_scope_tenant_role_model", fields = {"tenantId", "roleId", "model"},
+        unique = true, message = "This role already has a data scope for this model.")
 public class RoleDataScope extends AuditableModel {
 
     @Serial
     private static final long serialVersionUID = 1L;
 
-    @Schema(description = "ID")
+    @Field(label = "ID")
     private Long id;
 
-    @Schema(description = "Tenant ID")
+    @Field(label = "Tenant ID")
     private Long tenantId;
 
-    @Schema(description = "Role ID (FK role.id)")
+    @Field(label = "Role", fieldType = FieldType.MANY_TO_ONE, relatedModel = Role.class,
+            description = "Role ID (FK role.id)")
     private Long roleId;
 
-    @Schema(description = "Queried model name (PascalCase), e.g. Employee / Department. The model whose rows this scope filters.")
+    @Field(length = 64,
+            description = "Queried model name (PascalCase), e.g. Employee / Department. The model whose rows this scope filters.")
     private String model;
 
-    @Schema(description = "Scope rules (OR-combined). Array of {scopeType, scopeExpr?}")
+    @Field(description = "Scope rules (OR-combined). Array of {scopeType, scopeExpr?}")
     private JsonNode dataScopes;
 }

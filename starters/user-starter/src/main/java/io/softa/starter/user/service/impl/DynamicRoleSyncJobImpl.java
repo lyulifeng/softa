@@ -24,7 +24,7 @@ import io.softa.framework.orm.domain.FlexQuery;
 import io.softa.framework.orm.service.ModelService;
 import io.softa.starter.user.entity.Role;
 import io.softa.starter.user.entity.UserRoleRel;
-import io.softa.starter.user.enums.RoleSource;
+import io.softa.starter.user.enums.UserRoleSource;
 import io.softa.starter.user.service.DynamicRoleSyncJob;
 import io.softa.starter.user.service.RoleService;
 import io.softa.starter.user.service.UserRoleRelService;
@@ -146,7 +146,7 @@ public class DynamicRoleSyncJobImpl implements DynamicRoleSyncJob {
         //    keeps Manual grants intact and avoids the UK collision case.
         Set<Long> manualUserIds = userRoleRelService.searchList(
                 new Filters().eq(UserRoleRel::getRoleId, role.getId())
-                        .eq(UserRoleRel::getSource, RoleSource.MANUAL.getCode())
+                        .eq(UserRoleRel::getSource, UserRoleSource.MANUAL.getCode())
         ).stream().map(UserRoleRel::getUserId).collect(java.util.stream.Collectors.toSet());
 
         // 2. Wipe existing DYNAMIC rows. When admin clears the rule
@@ -154,7 +154,7 @@ public class DynamicRoleSyncJobImpl implements DynamicRoleSyncJob {
         //    the subsequent insert idempotent (no diff-and-merge gymnastics).
         userRoleRelService.deleteByFilters(
                 new Filters().eq(UserRoleRel::getRoleId, role.getId())
-                        .eq(UserRoleRel::getSource, RoleSource.DYNAMIC.getCode()));
+                        .eq(UserRoleRel::getSource, UserRoleSource.DYNAMIC.getCode()));
 
         JsonNode rule = role.getDynamicFilter();
         if (rule == null || rule.isNull() || !rule.isArray()) return 0;
@@ -186,7 +186,7 @@ public class DynamicRoleSyncJobImpl implements DynamicRoleSyncJob {
             UserRoleRel ur = new UserRoleRel();
             ur.setRoleId(role.getId());
             ur.setUserId(uid);
-            ur.setSource(RoleSource.DYNAMIC);
+            ur.setSource(UserRoleSource.DYNAMIC);
             rows.add(ur);
         }
         if (!rows.isEmpty()) userRoleRelService.createList(rows);
@@ -322,19 +322,19 @@ public class DynamicRoleSyncJobImpl implements DynamicRoleSyncJob {
         boolean manualExists = userRoleRelService.exist(
                 new Filters().eq(UserRoleRel::getRoleId, role.getId())
                         .eq(UserRoleRel::getUserId, userId)
-                        .eq(UserRoleRel::getSource, RoleSource.MANUAL.getCode()));
+                        .eq(UserRoleRel::getSource, UserRoleSource.MANUAL.getCode()));
         if (manualExists) return true; // matches the filter; just don't add a duplicate Dynamic row
 
         boolean dynamicExists = userRoleRelService.exist(
                 new Filters().eq(UserRoleRel::getRoleId, role.getId())
                         .eq(UserRoleRel::getUserId, userId)
-                        .eq(UserRoleRel::getSource, RoleSource.DYNAMIC.getCode()));
+                        .eq(UserRoleRel::getSource, UserRoleSource.DYNAMIC.getCode()));
         if (dynamicExists) return true;
 
         UserRoleRel row = new UserRoleRel();
         row.setRoleId(role.getId());
         row.setUserId(userId);
-        row.setSource(RoleSource.DYNAMIC);
+        row.setSource(UserRoleSource.DYNAMIC);
         userRoleRelService.createOne(row);
         return true;
     }
@@ -350,7 +350,7 @@ public class DynamicRoleSyncJobImpl implements DynamicRoleSyncJob {
         Context ctx = ContextHolder.getContext();
         Long tid = ctx == null ? null : ctx.getTenantId();
         Assert.notNull(tid,
-                "DynamicRoleSyncJob.{0} requires an active tenant context — set Context.tenantId before invoking (cron: use DynamicRoleSyncCronHandler's per-tenant fan-out).",
+                "DynamicRoleSyncJob.{0} requires an active tenant context — set Context.tenantId before invoking (cron: seed the DynamicRoleSync sys_cron row as PER_TENANT so the scheduler fans out one message per active tenant; consumed by user-starter's UserMaintenanceCronConsumer).",
                 methodName);
     }
 
@@ -360,7 +360,7 @@ public class DynamicRoleSyncJobImpl implements DynamicRoleSyncJob {
         List<UserRoleRel> existing = userRoleRelService.searchList(
                 new Filters().eq(UserRoleRel::getRoleId, roleId)
                         .eq(UserRoleRel::getUserId, userId)
-                        .eq(UserRoleRel::getSource, RoleSource.DYNAMIC.getCode()));
+                        .eq(UserRoleRel::getSource, UserRoleSource.DYNAMIC.getCode()));
         if (existing.isEmpty()) return 0;
         userRoleRelService.deleteByIds(existing.stream().map(UserRoleRel::getId).toList());
         return existing.size();

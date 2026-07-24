@@ -5,6 +5,7 @@ import java.util.Optional;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.lang3.StringUtils;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.context.annotation.Lazy;
 import org.springframework.stereotype.Service;
 
 import io.softa.framework.base.constant.RedisConstant;
@@ -27,6 +28,8 @@ import io.softa.framework.orm.service.TenantInfoService;
 import io.softa.framework.orm.service.impl.EntityServiceImpl;
 import io.softa.starter.user.dto.UserProfileDTO;
 import io.softa.starter.user.entity.UserProfile;
+import io.softa.starter.user.enums.AccountStatus;
+import io.softa.starter.user.service.UserAccountService;
 import io.softa.starter.user.service.UserProfileService;
 
 /**
@@ -44,6 +47,12 @@ public class UserProfileServiceImpl extends EntityServiceImpl<UserProfile, Long>
 
     @Autowired
     private TenantInfoService tenantInfoService;
+
+    /** @Lazy breaks a potential UserAccount ⇄ UserProfile service cycle; used only to
+     *  read the account's status when (re)building the cached UserInfo. */
+    @Autowired
+    @Lazy
+    private UserAccountService accountService;
 
     /**
      * Get Current User Profile
@@ -114,6 +123,11 @@ public class UserProfileServiceImpl extends EntityServiceImpl<UserProfile, Long>
         userInfo.setLanguage(profile.getLanguage());
         userInfo.setTimezone(profile.getTimezone());
         userInfo.setTenantId(profile.getTenantId());
+        // Reflect the account's live status so ContextBuilder can force-logout a frozen
+        // account. Absent account row → treat as active (don't gate on a data anomaly).
+        userInfo.setActive(accountService.getById(profile.getUserId())
+                .map(account -> AccountStatus.ACTIVE == account.getStatus())
+                .orElse(Boolean.TRUE));
         this.validateTenantInfo(profile);
         if (profile.getPhotoId() != null) {
             // The photo URL expires in one quarter (90 days), longer than the user info cache expiration time
