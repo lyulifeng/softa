@@ -26,13 +26,15 @@
             <version>${project.version}</version>
         </dependency>
 
-        <!-- Dynamic-role membership sync cron: user-starter self-consumes DynamicRoleSync via
-             UserMaintenanceCronConsumer + ships SysCron.UserMaintenance.json. The job (DynamicRoleSyncJob)
-             and the Role / UserRoleRel entities live here, so its cron trigger does too. -->
+        <!-- Optional cron-starter integration for the DynamicRoleSync cron via UserMaintenanceCronConsumer.
+             optional=true: NOT propagated to downstream apps — a deployment on a different scheduler omits
+             it, the consumer stays dormant (@ConditionalOnClass), and the app drives
+             DynamicRoleSyncJob.syncAll() itself. -->
         <dependency>
             <groupId>io.softa</groupId>
             <artifactId>cron-starter</artifactId>
             <version>${project.version}</version>
+            <optional>true</optional>
         </dependency>
 
         <!-- JWT for Apple and Google ID token validation -->

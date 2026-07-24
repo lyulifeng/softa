@@ -2,6 +2,7 @@ package io.softa.starter.user.cron;
 
 import lombok.extern.slf4j.Slf4j;
 import org.apache.pulsar.client.api.SubscriptionType;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnClass;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.pulsar.annotation.PulsarListener;
 import org.springframework.stereotype.Component;
@@ -29,6 +30,10 @@ import io.softa.starter.user.service.DynamicRoleSyncJob;
  */
 @Slf4j
 @Component
+// Optional cron-starter integration: only wires up when cron-starter is on the classpath (CronTaskMessage
+// present) AND the cron-task topic is configured. A deployment using a different scheduler simply omits
+// cron-starter — this consumer stays dormant and the app drives DynamicRoleSyncJob.syncAll() itself.
+@ConditionalOnClass(name = "io.softa.starter.cron.message.dto.CronTaskMessage")
 @ConditionalOnProperty(name = "mq.topics.cron-task.topic")
 public class UserMaintenanceCronConsumer {
 

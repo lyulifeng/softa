@@ -17,9 +17,10 @@ and a separate commerce sub-domain (service catalog, orders, payments).
 ```
 
 Depends on `softa-web`, `reference-data-starter` (for `Currency` / `CountryRegion`
-lookups on `TenantInfo`), `stripe-java` (payments), and `cron-starter` (tenant-starter
-self-consumes its own maintenance crons — the provisioning-timeout guard + subscription-expiry —
-via `TenantMaintenanceCronConsumer`). Auto-configured by
+lookups on `TenantInfo`), `stripe-java` (payments), and `cron-starter` (**optional** — powers the built-in
+`TenantMaintenanceCronConsumer` for the provisioning-timeout guard + subscription-expiry; a deployment
+on a different scheduler omits it, the consumer stays dormant via `@ConditionalOnClass`, and the app
+drives the jobs itself). Auto-configured by
 `io.softa.starter.tenant.TenantAutoConfiguration` (component-scan). Requires
 Redis for the active-tenant cache.
 
@@ -113,6 +114,9 @@ only, it does **not** gate login.
   READY if the seed later completes). Triggered by tenant-starter's own `TenantMaintenanceCronConsumer`
   (`ProvisioningTimeout` sys_cron, shipped in `data-system/SysCron.TenantMaintenance.json`) — softa
   self-sufficient, no dependency on an app-side DLQ. The same consumer also carries `SubscriptionExpiry`.
+  **cron-starter is optional** (`@ConditionalOnClass` on the consumer + `<optional>true</optional>` in the
+  pom): a deployment on a different scheduler (Quartz, `@Scheduled`, XXL-Job, …) omits cron-starter — the
+  consumer stays dormant and the app drives `failTimedOut()` / `SubscriptionExpiryJob` from its own trigger.
 
 ## How isolation works
 
