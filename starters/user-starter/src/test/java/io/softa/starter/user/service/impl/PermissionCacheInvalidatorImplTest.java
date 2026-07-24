@@ -14,7 +14,7 @@ import io.softa.framework.orm.service.CacheService;
 import io.softa.starter.user.entity.UserRoleRel;
 import io.softa.starter.user.event.RoleNavigationChangedEvent;
 import io.softa.starter.user.event.UserRoleRelChangedEvent;
-import io.softa.starter.user.service.PermissionInfoEnricher;
+import io.softa.starter.user.util.PermissionSnapshotKey;
 import io.softa.starter.user.service.UserRoleRelService;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -43,7 +43,7 @@ class PermissionCacheInvalidatorImplTest {
     @Test
     void evictOne_clearsCanonicalKey() {
         invalidator.evictOne(10L, 42L);
-        String expected = PermissionInfoEnricher.cacheKey(10L, 42L);
+        String expected = PermissionSnapshotKey.forUser(10L, 42L);
         verify(cacheService).clear(expected);
     }
 
@@ -77,9 +77,9 @@ class PermissionCacheInvalidatorImplTest {
         assertThat(keys.getValue()).hasSize(3);
         assertThat(keys.getValue())
                 .containsExactlyInAnyOrder(
-                        PermissionInfoEnricher.cacheKey(10L, 1L),
-                        PermissionInfoEnricher.cacheKey(10L, 2L),
-                        PermissionInfoEnricher.cacheKey(10L, 3L));
+                        PermissionSnapshotKey.forUser(10L, 1L),
+                        PermissionSnapshotKey.forUser(10L, 2L),
+                        PermissionSnapshotKey.forUser(10L, 3L));
     }
 
     @Test

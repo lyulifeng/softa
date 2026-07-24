@@ -4,7 +4,6 @@ import java.util.Set;
 
 import io.softa.framework.base.context.Context;
 import io.softa.framework.base.context.ContextHolder;
-import io.softa.framework.base.context.PermissionInfo;
 import io.softa.framework.base.exception.PermissionException;
 import io.softa.framework.orm.annotation.RequireRole;
 import io.softa.framework.orm.annotation.SwitchUser;
@@ -74,9 +73,9 @@ public class PermissionAspect {
      *
      * <h3>Fail-closed contract</h3>
      * The caller's role codes are read from the framework-layer
-     * {@link Context#getPermissionInfo()}. The consuming application's request
+     * {@link Context#getRoleCodes()}. The consuming application's request
      * pipeline is responsible for populating that set (the framework stays
-     * decoupled from any concrete Role / PermissionInfo model — this field is
+     * decoupled from any concrete permission model — this field is
      * the SPI). When the set is absent or lacks the required role code we
      * DENY: a {@code null} set means either the app wired no role provider or
      * the endpoint was whitelisted upstream (public / authenticated-bypass) —
@@ -90,8 +89,7 @@ public class PermissionAspect {
     @Around("@annotation(requireRole)")
     public Object requireRole(ProceedingJoinPoint joinPoint, RequireRole requireRole) throws Throwable {
         Context context = ContextHolder.getContext();
-        PermissionInfo permissionInfo = context == null ? null : context.getPermissionInfo();
-        Set<String> roleCodes = permissionInfo == null ? null : permissionInfo.getRoleCodes();
+        Set<String> roleCodes = context == null ? null : context.getRoleCodes();
         String requiredCode = requireRole.value().getCode();
         if (roleCodes == null || !roleCodes.contains(requiredCode)) {
             throw new PermissionException("Requires system role: " + requireRole.value().getName());

@@ -30,6 +30,7 @@
         <module>reference-data-starter</module>
         <module>studio-starter</module>
         <module>user-starter</module>
+        <module>permission-starter</module>
         <module>tenant-starter</module>
     </modules>
 

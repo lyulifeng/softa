@@ -20,8 +20,8 @@ import io.softa.starter.user.event.RoleGrantChangedEvent;
 import io.softa.starter.user.event.RoleNavigationChangedEvent;
 import io.softa.starter.user.event.UserRoleRelChangedEvent;
 import io.softa.starter.user.service.PermissionCacheInvalidator;
-import io.softa.starter.user.service.PermissionInfoEnricher;
 import io.softa.starter.user.service.UserRoleRelService;
+import io.softa.starter.user.util.PermissionSnapshotKey;
 
 /**
  * Redis-cache invalidator + event listeners that drive it.
@@ -48,8 +48,8 @@ import io.softa.starter.user.service.UserRoleRelService;
  *       whose nav/permission/scope grant changed.</li>
  * </ul>
  *
- * <p>Domain-flavored triggers (business events that shift the cached
- * {@code Principal.extensions} shape without touching user_role_rel) do
+ * <p>Domain-flavored triggers (business events that shift a user's cached
+ * domain context without touching user_role_rel) do
  * NOT live here — the framework has no business knowing what specific
  * domain events exist. Instead, business modules add their own bridge
  * bean that listens to their domain event and calls {@link #evictOne} on
@@ -77,7 +77,7 @@ public class PermissionCacheInvalidatorImpl implements PermissionCacheInvalidato
                     + "publisher missing ContextHolder.callWith(bootstrapCtx, ...)", userId);
             return;
         }
-        String key = PermissionInfoEnricher.cacheKey(tenantId, userId);
+        String key = PermissionSnapshotKey.forUser(tenantId, userId);
         try {
             cacheService.clear(key);
             log.debug("PermissionInfo cache evict — key={}", key);
@@ -98,7 +98,7 @@ public class PermissionCacheInvalidatorImpl implements PermissionCacheInvalidato
         }
         List<String> keys = new ArrayList<>(userIds.size());
         for (Long uid : userIds) {
-            if (uid != null) keys.add(PermissionInfoEnricher.cacheKey(tenantId, uid));
+            if (uid != null) keys.add(PermissionSnapshotKey.forUser(tenantId, uid));
         }
         if (keys.isEmpty()) return;
         try {

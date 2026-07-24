@@ -1,6 +1,7 @@
 package io.softa.framework.base.utils;
 
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.List;
 import java.util.Map;
 import tools.jackson.core.JacksonException;
@@ -210,6 +211,73 @@ public class JsonUtils {
             });
         }
         return null;
+    }
+
+    /**
+     * Lenient JSON-array value → {@code List<String>}, for a value whose runtime type
+     * varies by JDBC driver / dialect when a JSON column is read without an entity
+     * class (the ModelService <em>Map</em> overload / 约定读): a JSON {@code String}
+     * (e.g. MySQL JSON columns), an already-parsed {@link JsonNode}, or a
+     * {@link Collection}. Handles all three and never throws.
+     *
+     * <p><b>Strict-string</b>: numeric / boolean / object elements are dropped — unlike
+     * {@link #jsonNodeToStringList(JsonNode)} which uses {@code convertValue} and
+     * stringifies everything. Returns {@code null} (not an empty list) when the value
+     * is null / blank / not a non-empty string array, so callers can tell "absent"
+     * from "present but empty".
+     *
+     * @see #toStringList(Object, boolean)
+     */
+    public static List<String> toStringList(Object raw) {
+        return toStringList(raw, false);
+    }
+
+    /**
+     * As {@link #toStringList(Object)}, but when {@code coerceNumeric} is true a numeric
+     * element is kept as its string form — for id columns historically persisted as JSON
+     * numbers.
+     */
+    public static List<String> toStringList(Object raw, boolean coerceNumeric) {
+        JsonNode node = toArrayNode(raw);
+        if (node == null) {
+            return null;
+        }
+        List<String> out = new ArrayList<>(node.size());
+        for (JsonNode el : node) {
+            if (el.isString()) {
+                out.add(el.asString());
+            } else if (coerceNumeric && el.isNumber()) {
+                out.add(el.numberValue().toString());
+            }
+        }
+        return out.isEmpty() ? null : out;
+    }
+
+    /** Coerce a raw JSON-ish value (JsonNode / JSON String / Collection) into an array
+     *  {@link JsonNode}, or {@code null} if it is null / blank / not a JSON array. Never throws. */
+    private static JsonNode toArrayNode(Object raw) {
+        if (raw == null) {
+            return null;
+        }
+        JsonNode node;
+        if (raw instanceof JsonNode jn) {
+            node = jn;
+        } else if (raw instanceof CharSequence cs) {
+            String s = cs.toString().trim();
+            if (s.isEmpty()) {
+                return null;
+            }
+            try {
+                node = stringToObject(s, JsonNode.class);
+            } catch (Exception e) {
+                return null;
+            }
+        } else if (raw instanceof Collection<?> col) {
+            node = objectToJsonNode(col);
+        } else {
+            return null;
+        }
+        return (node != null && node.isArray()) ? node : null;
     }
 
     /**
