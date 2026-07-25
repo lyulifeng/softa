@@ -28,6 +28,9 @@ public class OptionReference implements Serializable  {
     @Schema(description = "Option Item Icon")
     private String itemIcon;
 
+    @Schema(description = "Parent option item code (for hierarchical / discriminated option sets)")
+    private String parentItemCode;
+
     /**
      * Create an OptionReference object.
      *
@@ -55,6 +58,24 @@ public class OptionReference implements Serializable  {
         OptionReference optionReference = OptionReference.of(itemCode, label);
         optionReference.setItemTone(itemTone);
         optionReference.setItemIcon(itemIcon);
+        return optionReference;
+    }
+
+    /**
+     * Create an OptionReference object, carrying the parent item code so callers
+     * can filter hierarchical / discriminated option sets client-side.
+     *
+     * @param itemCode Option item code
+     * @param label Option item label
+     * @param itemTone Option item tone
+     * @param itemIcon Option item icon
+     * @param parentItemCode Parent option item code
+     * @return OptionReference object
+     */
+    static public OptionReference of(String itemCode, String label, String itemTone, String itemIcon,
+            String parentItemCode) {
+        OptionReference optionReference = OptionReference.of(itemCode, label, itemTone, itemIcon);
+        optionReference.setParentItemCode(parentItemCode);
         return optionReference;
     }
 }
