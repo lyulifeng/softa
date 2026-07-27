@@ -13,10 +13,12 @@ import io.softa.framework.orm.domain.Filters;
 import io.softa.starter.user.entity.RoleDataScope;
 import io.softa.starter.user.entity.RoleNavigation;
 import io.softa.starter.user.entity.RoleSensitiveFieldSet;
+import io.softa.starter.user.entity.UserAccount;
 import io.softa.starter.user.service.PermissionCacheInvalidator;
 import io.softa.starter.user.service.RoleDataScopeService;
 import io.softa.starter.user.service.RoleNavigationService;
 import io.softa.starter.user.service.RoleSensitiveFieldSetService;
+import io.softa.starter.user.service.UserAccountService;
 import io.softa.starter.user.util.NavIds;
 
 /**
@@ -37,7 +39,13 @@ import io.softa.starter.user.util.NavIds;
  *       to unrestricted, and its grants may still apply to models it can reach (directly or as a
  *       related read) — those stay the admin's to re-tighten (matching no-auto-restore).</li>
  * </ol>
- * Then evicts every affected role's users' {@code perm:} snapshots.
+ * Then evicts <b>every user in the tenant</b>'s {@code perm:} snapshot — not just the users of the
+ * roles this cleanup touched. The snapshot carries the tenant's {@code entitledModules} (the FE
+ * narrows the sidebar with it), so a plan change invalidates every user's snapshot even when no
+ * grant moved: an <i>upgrade</i> strips nothing, and {@code TENANT_ADMIN} is runtime-computed with
+ * no static nav grants at all, so it never appears in {@code affectedRoles}. Evicting only the
+ * affected roles left tenant admins on their pre-change module set until the 1h TTL — two admins of
+ * the same tenant could see different modules depending on when each snapshot was built.
  *
  * <p>Lives in user-starter (owns the RBAC grants); driven by {@code EntitlementCleanupConsumer}
  * off the entitlement-change MQ message — no dependency on tenant-starter (the message DTO is a
@@ -50,15 +58,18 @@ public class EntitlementRoleCleanupService {
     private final RoleNavigationService roleNavigationService;
     private final RoleDataScopeService roleDataScopeService;
     private final RoleSensitiveFieldSetService roleSensitiveFieldSetService;
+    private final UserAccountService userAccountService;
     private final PermissionCacheInvalidator cacheInvalidator;
 
     public EntitlementRoleCleanupService(RoleNavigationService roleNavigationService,
                                          RoleDataScopeService roleDataScopeService,
                                          RoleSensitiveFieldSetService roleSensitiveFieldSetService,
+                                         UserAccountService userAccountService,
                                          PermissionCacheInvalidator cacheInvalidator) {
         this.roleNavigationService = roleNavigationService;
         this.roleDataScopeService = roleDataScopeService;
         this.roleSensitiveFieldSetService = roleSensitiveFieldSetService;
+        this.userAccountService = userAccountService;
         this.cacheInvalidator = cacheInvalidator;
     }
 
@@ -84,10 +95,10 @@ public class EntitlementRoleCleanupService {
                 removed++;
             }
         }
-        // Second pass + eviction. A role the downgrade stripped of its LAST nav grant now grants no
+        // Second pass. A role the downgrade stripped of its LAST nav grant now grants no
         // access → its model-keyed scope/sensitive rows are orphaned; delete them (safe — removing a
         // no-access role's rows can only shrink the per-model union, never widen). Roles that still
-        // have navs keep their grants. Every affected role's snapshot is evicted regardless.
+        // have navs keep their grants.
         int scopeRemoved = 0;
         int sfsRemoved = 0;
         for (Long roleId : affectedRoles) {
@@ -107,13 +118,41 @@ public class EntitlementRoleCleanupService {
                     sfsRemoved += sfsIds.size();
                 }
             }
-            cacheInvalidator.evictByRole(tenantId, roleId);
         }
+        // Evict the whole tenant, not just `affectedRoles` — see the class javadoc: entitledModules
+        // rides in every user's snapshot, so an upgrade (which strips nothing) and TENANT_ADMIN
+        // (runtime-computed, never in affectedRoles) both need invalidating too.
+        int evicted = evictTenant(tenantId);
         if (removed > 0 || scopeRemoved > 0 || sfsRemoved > 0) {
             log.info("entitlement cleanup — tenant {} removed {} nav grant(s), {} data-scope + "
                             + "{} sensitive-field grant(s) (from fully-stripped roles) across {} role(s)",
                     tenantId, removed, scopeRemoved, sfsRemoved, affectedRoles.size());
         }
+        log.debug("entitlement cleanup — tenant {} evicted {} user snapshot(s)", tenantId, evicted);
         return removed;
+    }
+
+    /**
+     * Evict every account in the tenant. {@link PermissionCacheInvalidator} deliberately exposes no
+     * tenant-wide entry point, so the caller enumerates the ids and goes through
+     * {@code evictBatch}. Accounts — not {@code user_role_rel} — because a snapshot exists for any
+     * user who has logged in, whether or not they hold a role.
+     *
+     * @return the number of accounts whose snapshot key was cleared.
+     */
+    private int evictTenant(Long tenantId) {
+        List<UserAccount> accounts = userAccountService.searchList(
+                Filters.of("tenantId", Operator.EQUAL, tenantId));
+        Set<Long> userIds = new HashSet<>(accounts.size());
+        for (UserAccount account : accounts) {
+            if (account.getId() != null) {
+                userIds.add(account.getId());
+            }
+        }
+        if (userIds.isEmpty()) {
+            return 0;
+        }
+        cacheInvalidator.evictBatch(tenantId, userIds);
+        return userIds.size();
     }
 }
