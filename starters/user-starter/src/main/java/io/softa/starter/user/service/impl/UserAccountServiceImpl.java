@@ -36,6 +36,26 @@ public class UserAccountServiceImpl extends EntityServiceImpl<UserAccount, Long>
     @Autowired
     private UserProfileService profileService;
 
+    /**
+     * Every single-entity account write funnels through here, so this is the one place that has to
+     * drop the cached {@code UserInfo} — covering not just this class's own lock / unlock / password
+     * paths but external callers too, above all {@code UserInvitationService.acceptToken}, which
+     * flips INVITED → ACTIVE when the invitee sets their password. Missing that eviction left the
+     * login gate (reads the account row) and {@code ContextBuilder} (reads this cache) disagreeing
+     * for the cache's one-month TTL: the invitee authenticated successfully and was then bounced
+     * back to the login screen by the next request, which saw {@code active=false}, cleared the
+     * session, and reported "Invalid session ID". The reverse case is worse — a freshly frozen
+     * account kept working, because the per-request status gate never saw the new status.
+     */
+    @Override
+    public boolean updateOne(UserAccount entity) {
+        boolean updated = super.updateOne(entity);
+        if (updated && entity != null) {
+            profileService.evictUserInfo(entity.getId());
+        }
+        return updated;
+    }
+
     // @CrossTenant: login / forgot-password resolve an account by credential BEFORE a tenant
     // context exists (UserAccount is multiTenant); without it the ORM would filter by the absent
     // tenant and never find the account. Called only by other beans → the AOP proxy applies (no self).
@@ -244,5 +264,10 @@ public class UserAccountServiceImpl extends EntityServiceImpl<UserAccount, Long>
         UserAccount updateEntity = new UserAccount();
         updateEntity.setStatus(AccountStatus.ACTIVE);
         this.updateByFilter(filters, updateEntity);
+        // updateByFilter bypasses updateOne, so evict here as well — otherwise a bulk-unlocked
+        // account stays `active=false` in the cache and every request terminates its session.
+        if (userIds != null) {
+            userIds.forEach(profileService::evictUserInfo);
+        }
     }
 }
