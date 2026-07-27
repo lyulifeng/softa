@@ -37,7 +37,7 @@ public class OptionController {
         List<MetaOptionItem> optionItems = OptionManager.getMetaOptionItems(optionSetCode);
         List<OptionReference> optionReferences = optionItems.stream()
                 .map(item -> OptionReference.of(item.getItemCode(), item.getLabel(),
-                        item.getItemTone(), item.getItemIcon(), item.getParentItemCode()))
+                        item.getItemTone(), item.getItemIcon()))
                 .toList();
         return ApiResponse.success(optionReferences);
     }
