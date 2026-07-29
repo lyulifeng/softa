@@ -83,11 +83,12 @@ public class TenantInfoController {
     }
 
     /**
-     * When the update payload carried the owned version ({@code subscriptionId}): first reconcile a
-     * future start date (active sub + future {@code effectiveFrom} → SCHEDULED, so an inline edit with a
-     * future start defers like provisioning does), then publish the entitlement-changed event so the
-     * listener evicts {@code entl:} + fans the fresh module set to MQ. Runs after the update committed;
-     * the listener's {@code fallbackExecution} covers the no-active-transaction case.
+     * When the update payload carried the owned version ({@code subscriptionId}): first reconcile the
+     * lifecycle against the edited effective dates (a lapsed {@code effectiveTo} expires, a future
+     * {@code effectiveFrom} defers, an arrived one activates — so the edit lands on save rather than at
+     * the next cron run), then publish the entitlement-changed event so the listener evicts {@code entl:}
+     * + fans the fresh module set to MQ. Runs after the update committed; the listener's
+     * {@code fallbackExecution} covers the no-active-transaction case.
      */
     private void refreshEntitlementIfVersionTouched(Map<String, Object> row) {
         if (!row.containsKey(VERSION_FIELD)) {
@@ -95,7 +96,7 @@ public class TenantInfoController {
         }
         Long tenantId = IdUtils.convertIdToLong(row.get("id"));
         if (tenantId != null) {
-            provisioningService.reconcileScheduledStart(tenantId);
+            provisioningService.reconcileLifecycleDates(tenantId);
             eventPublisher.publishEvent(new TenantEntitlementChangedEvent(tenantId));
         }
     }

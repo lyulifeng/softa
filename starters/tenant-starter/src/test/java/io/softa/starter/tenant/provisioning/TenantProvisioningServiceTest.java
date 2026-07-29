@@ -24,9 +24,11 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 /**
- * Unit tests for {@link TenantProvisioningService#reconcileScheduledStart} — the inline-edit path's
- * two-way reconcile: an active sub with a future start → SCHEDULED (defer), and a SCHEDULED sub whose
- * start has arrived → SUBSCRIBED (activate). Dates use ±2-day margins so assertions are timezone-independent.
+ * Unit tests for {@link TenantProvisioningService#reconcileLifecycleDates} — the inline-edit path's
+ * eager reconcile, so an ops edit lands on save instead of at the next {@code SubscriptionExpiryJob} run:
+ * a lapsed {@code effectiveTo} → EXPIRED, an active sub with a future start → SCHEDULED (defer), and a
+ * SCHEDULED sub whose start has arrived → SUBSCRIBED (activate). Dates use ±2-day margins so assertions
+ * are timezone-independent.
  */
 class TenantProvisioningServiceTest {
 
@@ -52,7 +54,7 @@ class TenantProvisioningServiceTest {
         when(subscriptionService.getById(SUB)).thenReturn(Optional.of(
                 sub(TenantLifecycle.SUBSCRIBED, LocalDate.now().plusDays(2))));
 
-        service.reconcileScheduledStart(TENANT);
+        service.reconcileLifecycleDates(TENANT);
 
         verify(subscriptionService).updateOne(argThat(s -> s.getLifecycle() == TenantLifecycle.SCHEDULED));
     }
@@ -63,7 +65,7 @@ class TenantProvisioningServiceTest {
         when(subscriptionService.getById(SUB)).thenReturn(Optional.of(
                 sub(TenantLifecycle.SUBSCRIBED, LocalDate.now().minusDays(2))));
 
-        service.reconcileScheduledStart(TENANT);
+        service.reconcileLifecycleDates(TENANT);
 
         verify(subscriptionService, never()).updateOne(any());
     }
@@ -74,7 +76,7 @@ class TenantProvisioningServiceTest {
         when(subscriptionService.getById(SUB)).thenReturn(Optional.of(
                 sub(TenantLifecycle.EXPIRED, LocalDate.now().plusDays(2))));
 
-        service.reconcileScheduledStart(TENANT);
+        service.reconcileLifecycleDates(TENANT);
 
         verify(subscriptionService, never()).updateOne(any());
     }
@@ -85,7 +87,7 @@ class TenantProvisioningServiceTest {
         when(subscriptionService.getById(SUB)).thenReturn(Optional.of(
                 sub(TenantLifecycle.SCHEDULED, LocalDate.now().minusDays(2))));
 
-        service.reconcileScheduledStart(TENANT);
+        service.reconcileLifecycleDates(TENANT);
 
         verify(subscriptionService).updateOne(argThat(s -> s.getLifecycle() == TenantLifecycle.SUBSCRIBED));
     }
@@ -96,7 +98,54 @@ class TenantProvisioningServiceTest {
         when(subscriptionService.getById(SUB)).thenReturn(Optional.of(
                 sub(TenantLifecycle.SCHEDULED, LocalDate.now().plusDays(2))));
 
-        service.reconcileScheduledStart(TENANT);
+        service.reconcileLifecycleDates(TENANT);
+
+        verify(subscriptionService, never()).updateOne(any());
+    }
+
+    @Test
+    void lapsedEffectiveTo_expiresOnSave() {
+        tenantHasSub();
+        when(subscriptionService.getById(SUB)).thenReturn(Optional.of(
+                sub(TenantLifecycle.SUBSCRIBED, LocalDate.now().minusDays(4), LocalDate.now().minusDays(2))));
+
+        service.reconcileLifecycleDates(TENANT);
+
+        verify(subscriptionService).updateOne(argThat(s -> s.getLifecycle() == TenantLifecycle.EXPIRED));
+    }
+
+    @Test
+    void effectiveToToday_notYetExpired() {
+        // The flip is `today.isAfter(effectiveTo)` — the last day is still inside the window.
+        tenantHasSub();
+        when(subscriptionService.getById(SUB)).thenReturn(Optional.of(
+                sub(TenantLifecycle.SUBSCRIBED, LocalDate.now().minusDays(4), LocalDate.now())));
+
+        service.reconcileLifecycleDates(TENANT);
+
+        verify(subscriptionService, never()).updateOne(any());
+    }
+
+    @Test
+    void lapsedEffectiveTo_winsOverFutureStart() {
+        // Contradictory data (from > to). Expiry is terminal and degrades to the fallback plan, so it
+        // takes precedence over deferring to SCHEDULED, which would grant the edited plan.
+        tenantHasSub();
+        when(subscriptionService.getById(SUB)).thenReturn(Optional.of(
+                sub(TenantLifecycle.SUBSCRIBED, LocalDate.now().plusDays(2), LocalDate.now().minusDays(2))));
+
+        service.reconcileLifecycleDates(TENANT);
+
+        verify(subscriptionService).updateOne(argThat(s -> s.getLifecycle() == TenantLifecycle.EXPIRED));
+    }
+
+    @Test
+    void openEndedSub_neverExpires() {
+        tenantHasSub();
+        when(subscriptionService.getById(SUB)).thenReturn(Optional.of(
+                sub(TenantLifecycle.SUBSCRIBED, LocalDate.now().minusDays(4), null)));
+
+        service.reconcileLifecycleDates(TENANT);
 
         verify(subscriptionService, never()).updateOne(any());
     }
@@ -108,7 +157,7 @@ class TenantProvisioningServiceTest {
         t.setSubscriptionId(null);
         when(tenantInfoService.getById(TENANT)).thenReturn(Optional.of(t));
 
-        service.reconcileScheduledStart(TENANT);
+        service.reconcileLifecycleDates(TENANT);
 
         verify(subscriptionService, never()).updateOne(any());
     }
@@ -122,10 +171,16 @@ class TenantProvisioningServiceTest {
     }
 
     private static TenantSubscription sub(TenantLifecycle lifecycle, LocalDate effectiveFrom) {
+        return sub(lifecycle, effectiveFrom, null);
+    }
+
+    private static TenantSubscription sub(TenantLifecycle lifecycle, LocalDate effectiveFrom,
+                                          LocalDate effectiveTo) {
         TenantSubscription s = new TenantSubscription();
         s.setId(SUB);
         s.setLifecycle(lifecycle);
         s.setEffectiveFrom(effectiveFrom);
+        s.setEffectiveTo(effectiveTo);
         return s;
     }
 }

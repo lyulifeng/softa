@@ -65,7 +65,11 @@ public class TenantInfo extends AuditableModel {
     @Field
     private Language defaultLanguage;
 
-    @Field
+    // Required: every date the tenant lifecycle turns on — subscription activation / expiry, the expiry
+    // reminder's send hour, an employee's hire date — is evaluated in THIS zone. Left unset the code falls
+    // back to UTC (Timezone.zoneIdOrUtc), which silently shifts those boundaries by up to a day for a
+    // tenant that is not actually on UTC. Making it mandatory removes the silent-wrong-answer path.
+    @Field(required = true)
     private Timezone defaultTimezone;
 
     @Field(fieldType = FieldType.MANY_TO_ONE, relatedModel = Currency.class,
@@ -73,7 +77,10 @@ public class TenantInfo extends AuditableModel {
                     + "code-as-id). Seed default for new invoices/orders.")
     private String defaultCurrency;
 
-    @Field(fieldType = FieldType.MANY_TO_ONE, relatedModel = CountryRegion.class,
+    // Required: this is the tenant's operating country, and provisioning seeds its first LegalEntity with
+    // it — which in turn selects the country-specific employee / entity field sets. There is no sound
+    // default (guessing one puts the whole org tree in the wrong country), so it has to be supplied.
+    @Field(required = true, fieldType = FieldType.MANY_TO_ONE, relatedModel = CountryRegion.class,
             description = "Default country/region — FK to country_region.id (ISO 3166-1 alpha-2, "
                     + "code-as-id). Seed default for new users, billing addresses, locale hints.")
     private String defaultCountry;
