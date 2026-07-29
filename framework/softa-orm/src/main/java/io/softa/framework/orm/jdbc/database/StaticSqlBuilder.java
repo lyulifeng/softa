@@ -65,14 +65,31 @@ public class StaticSqlBuilder {
      * @return SELECT SQL
      */
     public static <K extends Serializable> SqlParams getSelectSql(String modelName, List<String> fields, List<K> ids) {
+        return getSelectSql(modelName, fields, ids, ModelConstant.ID);
+    }
+
+    /**
+     * SELECT by an arbitrary key field, rendered as its COLUMN name:
+     *      SELECT f1,f2 FROM table_name WHERE key_column IN (?,?)
+     * Used for pk-keyed reads where the pk differs from the logical id
+     * (a timeline model's {@code sliceId} → {@code slice_id}).
+     *
+     * @param modelName model name
+     * @param fields field list
+     * @param ids key value list
+     * @param keyField the field the WHERE clause keys on
+     * @return SELECT SQL
+     */
+    public static <K extends Serializable> SqlParams getSelectSql(String modelName, List<String> fields,
+                                                                  List<K> ids, String keyField) {
         SqlParams sqlParams = new SqlParams();
         StringBuilder readSql = new StringBuilder("SELECT ");
         fields.forEach(field -> readSql.append(ModelManager.getModelField(modelName, field).getColumnName()).append(","));
         // Remove the last character.
         readSql.deleteCharAt(readSql.length() - 1);
         readSql.append(" FROM ").append(getTableName(modelName));
-        appendIdSql(readSql, ids.size());
-        // Add the id list to the SQL parameter list.
+        appendKeySql(readSql, ModelManager.getModelField(modelName, keyField).getColumnName(), ids.size());
+        // Add the key list to the SQL parameter list.
         sqlParams.setArgs(new ArrayList<>(ids));
         if (ModelManager.isMultiTenantControl(modelName)) {
             // Add tenantId condition
@@ -141,7 +158,7 @@ public class StaticSqlBuilder {
      */
     public static SqlParams getDeleteSql(String modelName, List<?> ids) {
         StringBuilder deleteSql = new StringBuilder("DELETE FROM ").append(getTableName(modelName));
-        appendIdSql(deleteSql, ids.size());
+        appendKeySql(deleteSql, ModelConstant.ID, ids.size());
         // SQL params
         SqlParams sqlParams = new SqlParams(deleteSql.toString());
         sqlParams.setArgs(new ArrayList<>(ids));
@@ -169,19 +186,20 @@ public class StaticSqlBuilder {
     }
 
     /**
-     * Add where condition according to the size of ids.
+     * Append the WHERE clause keyed on the given COLUMN: `WHERE col = ?` / `WHERE col IN (?,?)`.
      *
      * @param sqlBuilder sb
+     * @param keyColumn key column name
      * @param idsSize ids size
      */
-    private static void appendIdSql(StringBuilder sqlBuilder, int idsSize) {
+    private static void appendKeySql(StringBuilder sqlBuilder, String keyColumn, int idsSize) {
         if (idsSize > 1) {
-            sqlBuilder.append(" WHERE id IN (");
+            sqlBuilder.append(" WHERE ").append(keyColumn).append(" IN (");
             IntStream.range(0, idsSize).forEach(i -> sqlBuilder.append("?,"));
             sqlBuilder.deleteCharAt(sqlBuilder.length() - 1);
             sqlBuilder.append(")");
         } else {
-            sqlBuilder.append(" WHERE id = ?");
+            sqlBuilder.append(" WHERE ").append(keyColumn).append(" = ?");
         }
     }
 

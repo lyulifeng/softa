@@ -113,6 +113,9 @@ class ContinuousIntervalMaintainerTest {
             return copyRows(sliceLookupResult);
         });
 
+        // updateSlices now returns the REAL jdbc count — the mock must not return null.
+        when(jdbc.updateList(eq(MODEL), anyList(), any())).thenReturn(1);
+
         timeline = new TimelineServiceImpl<>();
         ReflectionTestUtils.setField(timeline, "jdbcService", jdbc);
     }
@@ -339,6 +342,19 @@ class ContinuousIntervalMaintainerTest {
         Assertions.assertEquals(11L, row.get(ModelConstant.SLICE_ID));
         UpdateListCall update = captureSingleUpdateList();
         Assertions.assertEquals(Set.of("name"), update.fields);
+    }
+
+    @Test
+    void updateReturnsTheRealJdbcCountNotTheAttemptCount() {
+        // The diff layer inside jdbc updateList may find nothing to write: the API-level
+        // result must then be "0 updated", aligning timeline with non-timeline semantics
+        // (the old `return rows.size()` reported the ATTEMPT count — a false positive).
+        when(jdbc.updateList(eq(MODEL), anyList(), any())).thenReturn(0);
+        Map<String, Object> row = mutableRow(Map.of(ModelConstant.SLICE_ID, 11L, "name", "unchanged"));
+
+        Integer count = withCtx(() -> timeline.updateSlices(MODEL, listOf(row)));
+
+        Assertions.assertEquals(0, count);
     }
 
     @Test

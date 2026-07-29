@@ -320,11 +320,20 @@ public class JdbcServiceImpl<K extends Serializable> implements JdbcService<K> {
      */
     private Map<Serializable, Map<String, Object>> getOriginalRowMap(String modelName, List<Map<String, Object>> rows, Set<String> differFields) {
         // TODO: Extract to the upper layer, perform permission check in this method, and query the database one less time.
-        // Get the original value
+        // The pk values identify the PHYSICAL rows, so the originals are fetched by the
+        // primary-key COLUMN (`id`; `slice_id` for timeline models). selectByIds is not
+        // usable here: it queries the logical id column by contract (entity-level reads).
         String primaryKey = ModelManager.getModelPrimaryKey(modelName);
         List<K> pKeys = Cast.of(rows.stream().map(row -> row.get(primaryKey)).collect(Collectors.toList()));
         List<String> readFields = new ArrayList<>(differFields);
-        List<Map<String, Object>> originalRows = this.selectByIds(modelName, pKeys, readFields, ConvertType.ORIGINAL);
+        if (readFields.isEmpty()) {
+            readFields = ModelManager.getModelStoredFields(modelName);
+        } else if (!readFields.contains(primaryKey)) {
+            readFields.add(primaryKey);
+            readFields.add(ModelConstant.ID);
+        }
+        SqlParams sqlParams = StaticSqlBuilder.getSelectSql(modelName, readFields, pKeys, primaryKey);
+        List<Map<String, Object>> originalRows = jdbcProxy.queryForList(modelName, sqlParams);
         // Get the original data map with the primary key as the key
         return originalRows.stream().collect(Collectors.toMap(map -> (Serializable) map.get(primaryKey), Function.identity()));
     }
