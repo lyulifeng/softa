@@ -55,6 +55,35 @@ class StaticSqlBuilderTest {
         }
     }
 
+    @Test
+    void selectSqlKeyedOnSliceIdRendersTheColumnName() {
+        try (MockedStatic<ModelManager> mm = Mockito.mockStatic(ModelManager.class)) {
+            stubModel(mm, "DeptInfo", "dept_info", ModelConstant.SLICE_ID);
+            stubField(mm, "DeptInfo", ModelConstant.SLICE_ID, "slice_id");
+            stubField(mm, "DeptInfo", "name", "name");
+
+            SqlParams sqlParams = StaticSqlBuilder.getSelectSql("DeptInfo",
+                    java.util.List.of("name"), java.util.List.of(11L, 12L), ModelConstant.SLICE_ID);
+
+            assertEquals("SELECT name FROM dept_info WHERE slice_id IN (?,?)", sqlParams.getSql());
+            assertEquals(java.util.List.of(11L, 12L), sqlParams.getArgs());
+        }
+    }
+
+    @Test
+    void selectSqlDefaultsToTheIdColumn() {
+        try (MockedStatic<ModelManager> mm = Mockito.mockStatic(ModelManager.class)) {
+            stubModel(mm, "EmpInfo", "emp_info", ModelConstant.ID);
+            stubField(mm, "EmpInfo", ModelConstant.ID, "id");
+            stubField(mm, "EmpInfo", "name", "name");
+
+            SqlParams sqlParams = StaticSqlBuilder.getSelectSql("EmpInfo",
+                    java.util.List.of("name"), java.util.List.of(6L));
+
+            assertEquals("SELECT name FROM emp_info WHERE id = ?", sqlParams.getSql());
+        }
+    }
+
     private void stubModel(MockedStatic<ModelManager> mm, String modelName, String tableName, String pk) {
         MetaModel metaModel = new MetaModel();
         ReflectionTestUtils.setField(metaModel, "modelName", modelName);
