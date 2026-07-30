@@ -530,6 +530,13 @@ public class ModelManager {
             Assert.notTrue(IdStrategy.DB_AUTO_ID.equals(getIdStrategy(modelName)),
                     "Timeline model {0} requires an app-generated logical id: use idStrategy = "
                             + "DISTRIBUTED_LONG / DISTRIBUTED_STRING / EXTERNAL_ID.", modelName);
+            // Timeline storage makes every field per-slice, which would silently mutate
+            // activeControl's entity-level semantics into a per-period one — and the interval
+            // algorithm's neighbor probes would go blind to `active = false` slices.
+            Assert.notTrue(isActiveControl(modelName),
+                    "Timeline model {0} must not declare activeControl: `active` is an entity-level "
+                            + "switch, while every timeline field is per-slice. Express period state as a "
+                            + "versioned business field, and terminate the timeline via `setEndDate`.", modelName);
         }
     }
 

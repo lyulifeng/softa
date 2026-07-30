@@ -124,6 +124,50 @@ public class TimelineServiceImpl<K extends Serializable> implements TimelineServ
     }
 
     /**
+     * Set the `effectiveEndDate` of the LAST slice of a timeline entity — the single
+     * sanctioned write to the system-computed end date. The tail is resolved server-side
+     * by the logical id, so callers never race a stale sliceId. A later `addVersion`
+     * whose start is after a terminated end date revives the entity as a new segment,
+     * leaving a deliberate gap (as-of reads inside it return nothing).
+     *
+     * @param modelName model name
+     * @param id the logical id of the timeline entity
+     * @param endDate the new end date of the LAST slice (`MAX_EFFECTIVE_END_DATE` reopens)
+     * @return true when the tail row was written; false when it already carried `endDate`
+     */
+    @Override
+    public boolean setEndDate(String modelName, Serializable id, LocalDate endDate) {
+        Assert.notNull(id, "Timeline model {0}: `id` is required to set the end date.", modelName);
+        Assert.notNull(endDate, "Timeline model {0}: `endDate` is required.", modelName);
+        TimelineSlice lastSlice = this.getLastSlice(modelName, id);
+        Assert.notTrue(endDate.isBefore(lastSlice.getEffectiveStartDate()),
+                "Timeline model {0}: endDate {1} precedes the last slice''s start date {2}. "
+                        + "Delete the trailing version(s) first (deleteBySliceId) to terminate earlier.",
+                modelName, endDate, lastSlice.getEffectiveStartDate());
+        if (endDate.equals(lastSlice.getEffectiveEndDate())) {
+            return false;
+        }
+        return this.correctSliceEndDate(modelName, lastSlice.getSliceId(), endDate) > 0;
+    }
+
+    /**
+     * Get the LAST slice (max `effectiveStartDate`) of a timeline entity by its logical id.
+     *
+     * @param modelName model name
+     * @param id the logical id of the timeline entity
+     * @return the last slice
+     */
+    private TimelineSlice getLastSlice(String modelName, Serializable id) {
+        Set<String> fields = new HashSet<>(ModelConstant.TIMELINE_FIELDS);
+        FlexQuery flexQuery = new FlexQuery(fields, new Filters().eq(ModelConstant.ID, id)).acrossTimelineData();
+        flexQuery.setOrders(Orders.ofDesc(ModelConstant.EFFECTIVE_START_DATE));
+        flexQuery.setLimitSize(1);
+        List<Map<String, Object>> rows = jdbcService.selectByFilter(modelName, flexQuery);
+        Assert.notEmpty(rows, "Timeline model {0} does not exist data for id={1}.", modelName, id);
+        return BeanTool.mapToObject(rows.getFirst(), TimelineSlice.class);
+    }
+
+    /**
      * Create multiple slices of a timeline model, and return the data list with `sliceId`.
      *
      * @param modelName model name
@@ -453,12 +497,12 @@ public class TimelineServiceImpl<K extends Serializable> implements TimelineServ
      * @param pKey sliceId of the timeline data
      * @param effectiveEndDate the new `effectiveEndDate` date
      */
-    private void correctSliceEndDate(String modelName, Serializable pKey, LocalDate effectiveEndDate) {
+    private Integer correctSliceEndDate(String modelName, Serializable pKey, LocalDate effectiveEndDate) {
         Map<String, Object> value = MapUtils.<String, Object>builder()
                 .put(ModelConstant.EFFECTIVE_END_DATE, effectiveEndDate)
                 .put(ModelConstant.SLICE_ID, pKey)
                 .build();
-        jdbcService.updateOne(modelName, value);
+        return jdbcService.updateOne(modelName, value);
     }
 
     /**

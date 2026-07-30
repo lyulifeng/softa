@@ -1,6 +1,7 @@
 package io.softa.framework.orm.service;
 
 import java.io.Serializable;
+import java.time.LocalDate;
 import java.util.List;
 import java.util.Map;
 
@@ -72,5 +73,19 @@ public interface TimelineService {
      * @return the number of rows updated
      */
     Integer updateSlices(String modelName, List<Map<String, Object>> rows);
+
+    /**
+     * Set the `effectiveEndDate` of the LAST slice of a timeline entity — the single
+     * sanctioned write to the system-computed end date. An `endDate` before
+     * `MAX_EFFECTIVE_END_DATE` terminates the timeline (as-of reads after it return
+     * nothing); passing `MAX_EFFECTIVE_END_DATE` reopens it. The end date must not
+     * precede the last slice's start date.
+     *
+     * @param modelName model name
+     * @param id the logical id of the timeline entity
+     * @param endDate the new end date of the LAST slice
+     * @return true when the tail row was written; false when it already carried `endDate`
+     */
+    boolean setEndDate(String modelName, Serializable id, LocalDate endDate);
 
 }

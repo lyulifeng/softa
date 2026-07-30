@@ -370,54 +370,6 @@ public class ModelController<K extends Serializable> {
     }
 
     /**
-     * Delete one slice of the timeline model by `sliceId`, the primary key of the timeline model.
-     *
-     * @param modelName model name
-     * @param sliceId   data id
-     * @return True / Exception
-     */
-    @PostMapping(value = "/deleteBySliceId")
-    @Operation(description = "Delete one slice of the timeline model by `sliceId`.")
-    @Parameter(name = "sliceId", description = "`sliceId` of the timeline slice data to delete.", schema = @Schema(type = "string"))
-    public ApiResponse<Boolean> deleteBySliceId(@PathVariable String modelName, @RequestParam Serializable sliceId) {
-        return ApiResponse.success(modelService.deleteBySliceId(modelName, sliceId));
-    }
-
-    /**
-     * Add a version (slice) to an existing timeline entity. Counterpart of `deleteBySliceId`.
-     *
-     * @param modelName model name
-     * @param row       version data, carrying the existing entity's `id`
-     * @return the new version's sliceId
-     */
-    @PostMapping(value = "/addVersion")
-    @Operation(description = "Timeline models only: add a version (slice) to an EXISTING entity. "
-            + "The row must carry the entity's `id`; `effectiveStartDate` defaults to the context effective "
-            + "date. Adjacent slices are split/corrected automatically. Returns the new version's `sliceId` "
-            + "(the existing sliceId when a same-start slice is corrected in place).")
-    @DataMask
-    public ApiResponse<Serializable> addVersion(@PathVariable String modelName,
-                                                @RequestBody Map<String, Object> row) {
-        return ApiResponse.success(modelService.addVersion(modelName, row));
-    }
-
-    /**
-     * Add a version like `addVersion`, then fetch the version row by its sliceId.
-     *
-     * @param modelName model name
-     * @param row       version data, carrying the existing entity's `id`
-     * @return the created/corrected version row, including sliceId and effective dates
-     */
-    @PostMapping(value = "/addVersionAndFetch")
-    @Operation(description = "Timeline models only: add a version to an EXISTING entity and fetch the "
-            + "version row (by its `sliceId`, across the timeline).")
-    @DataMask
-    public ApiResponse<Map<String, Object>> addVersionAndFetch(@PathVariable String modelName,
-                                                               @RequestBody Map<String, Object> row) {
-        return ApiResponse.success(modelService.addVersionAndFetch(modelName, row, ConvertType.REFERENCE));
-    }
-
-    /**
      * Delete multiple rows by ids.
      *
      * @param modelName model name
