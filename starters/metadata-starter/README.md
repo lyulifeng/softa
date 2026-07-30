@@ -104,7 +104,8 @@ need to specify):
 - `columnName` = `snake_case(fieldName)`
 - `fieldType` = Java type → maps via `TypeInference` table
   (`String → STRING`, `Integer → INTEGER`, `enum → OPTION`,
-  `List<enum> → MULTI_OPTION`, `@Model POJO → MANY_TO_ONE`, etc.)
+  `List<enum> → MULTI_OPTION`, `@Model POJO → MANY_TO_ONE`,
+  `DTOFieldObject POJO → DTO`, etc.)
 - `optionSetCode` = enum class `getSimpleName()` (always derived; not declarable)
 - `itemCode` = `@JsonValue` field/method value on the enum constant
 - `OPTION` / `MULTI_OPTION` cannot be written explicitly — only inferred

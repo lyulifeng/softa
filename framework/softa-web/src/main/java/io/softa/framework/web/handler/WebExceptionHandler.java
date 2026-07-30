@@ -26,18 +26,19 @@ import org.springframework.web.servlet.NoHandlerFoundException;
 import io.softa.framework.base.context.ContextHolder;
 import io.softa.framework.base.enums.ResponseCode;
 import io.softa.framework.base.exception.BaseException;
-import io.softa.framework.base.exception.BusinessException;
 import io.softa.framework.base.i18n.I18n;
 import io.softa.framework.web.response.ApiResponse;
 import io.softa.framework.web.response.ApiResponseErrorDetails;
 
 /**
  * Web request exception handler, which catch the API exception that requires specifying responseCode.
- * Error response body:
+ * Error response body (see {@link ApiResponseErrorDetails}):
  * {
  * "code": responseCode,
- * "message": statusMessage as request Exception category,
- * "data": errorMessage for end users
+ * "message": category label of the response code,
+ * "data": optional error payload,
+ * "error": user-facing error message (i18n-resolved),
+ * "traceId": server-side trace ID for log correlation
  * }
  */
 @Slf4j
@@ -49,7 +50,7 @@ public class WebExceptionHandler {
 
     /**
      * Handling exception and logging errors.
-     * errorMessage is joint/translated already, which would be put in response data.
+     * errorMessage is joint/translated already, which would be put in the response `error` field.
      *
      * @param responseCode responseCode
      * @return ResponseEntity
@@ -105,17 +106,21 @@ public class WebExceptionHandler {
      */
     @ExceptionHandler(value = Throwable.class)
     public ResponseEntity<ApiResponse<Void>> handleException(Exception e) {
-        String clientExceptionMessage;
-        if (ContextHolder.getContext().isDebug()) {
-            clientExceptionMessage = e.toString();
-        } else {
-            clientExceptionMessage = e.getMessage();
-        }
-        return handler(ResponseCode.ERROR, e, clientExceptionMessage);
+        // The full detail always goes to the error log; the client payload
+        // carries it only in debug mode — raw messages of unexpected
+        // exceptions can leak internals (SQL fragments, file paths, class
+        // names). Non-debug clients get the generic category message plus the
+        // traceId to hand to support.
+        log.error(e + messageHandler.getRequestInfo(), e);
+        String clientExceptionMessage = ContextHolder.getContext().isDebug() ? e.toString() : null;
+        return wrapResponse(ResponseCode.ERROR, clientExceptionMessage);
     }
 
     /**
-     * Handle BaseException and its children exceptions.
+     * Handle BaseException and its children exceptions (BusinessException
+     * included — its WARN log level is honored by the level-aware logging in
+     * {@link #handler(ResponseCode, Throwable, String)}, and the message is
+     * already i18n-resolved at construction).
      *
      * @param e Exception
      * @return ResponseEntity
@@ -262,19 +267,6 @@ public class WebExceptionHandler {
     @ExceptionHandler(value = ValidationException.class)
     public ResponseEntity<ApiResponse<Void>> handleException(ValidationException e) {
         return handler(ResponseCode.ERROR, e);
-    }
-
-    /**
-     * Handle ValidationException
-     *
-     * @param e Exception
-     * @return ResponseEntity
-     */
-    @ExceptionHandler(value = BusinessException.class)
-    public ResponseEntity<ApiResponse<Void>> handleException(BusinessException e) {
-        ApiResponse<Void> response = ApiResponseErrorDetails.exception(e.getResponseCode(), e.getMessage());
-        log.warn("BusinessException: {}", e.getMessage(), e);
-        return new ResponseEntity<>(response, HttpStatus.OK);
     }
 
     /**
