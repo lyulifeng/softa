@@ -27,7 +27,8 @@ import io.softa.starter.tenant.enums.TenantStatus;
  *
  * <p>It owns the optional 1:1 link to the tenant's version via {@link #subscriptionId}
  * (owner-side FK to {@link TenantSubscription}). The link is nullable — apps that don't sell
- * versions leave it unset and the entitlement resolver defaults to Free.
+ * versions leave it unset and the entitlement resolver falls back to the floor plan (the catalog's
+ * lowest tier, whatever the deployment named it; empty when there is no catalog).
  */
 @Data
 @EqualsAndHashCode(callSuper = true)
@@ -90,7 +91,8 @@ public class TenantInfo extends AuditableModel {
 
     @Field(fieldType = FieldType.ONE_TO_ONE, relatedModel = TenantSubscription.class,
             description = "The tenant's version/subscription (1:1; owner-side FK). Nullable — apps "
-                    + "that don't sell versions leave it unset and the resolver defaults to Free.")
+                    + "that don't sell versions leave it unset and the resolver falls back to the "
+                    + "floor plan (the catalog's lowest tier).")
     private Long subscriptionId;
 
     @Field(label = "Provisioning Status",

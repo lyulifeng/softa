@@ -19,7 +19,7 @@ import io.softa.starter.tenant.entity.Plan;
 import io.softa.starter.tenant.entity.PlanEntitlement;
 import io.softa.starter.tenant.entity.TenantInfo;
 import io.softa.starter.tenant.entity.TenantSubscription;
-import io.softa.starter.tenant.enums.TenantLifecycle;
+import io.softa.starter.tenant.service.SubscriptionProjectionService;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
@@ -30,9 +30,9 @@ import static org.mockito.Mockito.when;
 
 /**
  * Resolution logic for {@link EntitlementResolver}. Feeds a mocked {@link ModelService} (cache always
- * misses) and asserts the effective module set: plan = the 1:1 subscription's planId (degraded to the
- * FALLBACK plan when no sub / lifecycle EXPIRED), modules = plan_entitlement, fail-closed to the
- * fallback set. The fallback is the lowest-{@code tier} plan — <b>no plan id is hardcoded</b>; see
+ * misses) and asserts the effective module set: plan = the subscription row's projected planId (null
+ * there means no period covers today, so the floor plan applies), modules = plan_entitlement,
+ * fail-closed to the floor set. The fallback is the lowest-{@code tier} plan — <b>no plan id is hardcoded</b>; see
  * {@link #fallbackIsLowestTierPlan_notByHardcodedId()} and {@link #noPlansConfigured_emptyEntitlement()}.
  */
 class EntitlementResolverTest {
@@ -51,7 +51,12 @@ class EntitlementResolverTest {
         modelService = mock(ModelService.class);
         CacheService cacheService = mock(CacheService.class);
         when(cacheService.get(anyString(), eq(EntitlementInfo.class))).thenReturn(null);  // always miss → compute
-        resolver = new EntitlementResolver(modelService, cacheService);
+        // The projection refresh is exercised by SubscriptionProjectionServiceImplTest; here it is a
+        // no-op so these cases isolate the plan → modules resolution.
+        SubscriptionProjectionService projectionService = mock(SubscriptionProjectionService.class);
+        when(projectionService.refresh(any(TenantInfo.class)))
+                .thenAnswer(inv -> subs.isEmpty() ? null : subs.getFirst());
+        resolver = new EntitlementResolver(modelService, cacheService, projectionService);
 
         subs = new ArrayList<>();
         // Default catalog: free(0) < pro(10) < enterprise(20). Lowest tier (free) is the fallback.
@@ -86,41 +91,33 @@ class EntitlementResolverTest {
 
     @Test
     void proPlan_yieldsProModules() {
-        subs.add(sub(PlanConstant.PLAN_PRO, TenantLifecycle.SUBSCRIBED));
+        subs.add(sub(PlanConstant.PLAN_PRO));
         assertThat(modules(TENANT)).containsExactlyInAnyOrder(
                 ModuleConstant.CORE_HR, ModuleConstant.USERS, ModuleConstant.SYSTEM,
                 ModuleConstant.ATTENDANCE, ModuleConstant.ADMIN);
     }
 
     @Test
-    void trialEnterprise_yieldsEnterpriseModules() {
-        subs.add(sub(PlanConstant.PLAN_ENTERPRISE, TenantLifecycle.TRIAL));  // trial is active
+    void enterprisePlan_yieldsEnterpriseModules() {
+        subs.add(sub(PlanConstant.PLAN_ENTERPRISE));  // trial and paid grant the same modules
         assertThat(modules(TENANT)).contains(ModuleConstant.AI);
     }
 
     @Test
-    void expiredLifecycle_degradesToFallback() {
-        subs.add(sub(PlanConstant.PLAN_ENTERPRISE, TenantLifecycle.EXPIRED));
+    void noPeriodCoversToday_degradesToFloor() {
+        // Lapsed, scheduled-but-not-started and never-bought all project to a null plan — one branch
+        // here, because all three grant the same thing. Telling them apart is a display concern.
+        subs.add(noCurrentPeriod());
         assertThat(modules(TENANT)).containsExactlyInAnyOrder(
                 ModuleConstant.CORE_HR, ModuleConstant.USERS, ModuleConstant.SYSTEM);
-        assertThat(resolver.resolve(TENANT).planId()).isEqualTo(PlanConstant.PLAN_FREE);  // = the lowest tier
-    }
-
-    @Test
-    void scheduledLifecycle_notYetActive_degradesToFallback() {
-        // A SCHEDULED sub (start date not yet reached) is NOT active → resolver serves the fallback,
-        // not the plan, until the lifecycle job flips it to SUBSCRIBED.
-        subs.add(sub(PlanConstant.PLAN_ENTERPRISE, TenantLifecycle.SCHEDULED));
-        assertThat(modules(TENANT)).containsExactlyInAnyOrder(
-                ModuleConstant.CORE_HR, ModuleConstant.USERS, ModuleConstant.SYSTEM);
-        assertThat(resolver.resolve(TENANT).planId()).isEqualTo(PlanConstant.PLAN_FREE);
+        assertThat(resolver.resolve(TENANT).planId()).isEqualTo(PlanConstant.PLAN_FREE);  // = lowest tier
     }
 
     // ─── fail-closed ───
 
     @Test
     void unconfiguredPlan_failsClosedToFallbackBase() {
-        subs.add(sub(PlanConstant.PLAN_PRO, TenantLifecycle.SUBSCRIBED));
+        subs.add(sub(PlanConstant.PLAN_PRO));
         planModules.remove(PlanConstant.PLAN_PRO);   // pro's modules missing
         assertThat(modules(TENANT)).containsExactlyInAnyOrder(
                 ModuleConstant.CORE_HR, ModuleConstant.USERS, ModuleConstant.SYSTEM);
@@ -184,11 +181,19 @@ class EntitlementResolverTest {
         return String.valueOf(q.getFilters().getFilterUnit().getValue());
     }
 
-    private static TenantSubscription sub(String planId, TenantLifecycle lifecycle) {
+    /** A subscription row whose projection says "this plan covers today". */
+    private static TenantSubscription sub(String planId) {
         TenantSubscription s = new TenantSubscription();
         s.setId(SUB_ID);
         s.setPlanId(planId);
-        s.setLifecycle(lifecycle);
+        return s;
+    }
+
+    /** A subscription row whose projection says "no period covers today" — the floor applies. */
+    private static TenantSubscription noCurrentPeriod() {
+        TenantSubscription s = new TenantSubscription();
+        s.setId(SUB_ID);
+        s.setPlanId(null);
         return s;
     }
 

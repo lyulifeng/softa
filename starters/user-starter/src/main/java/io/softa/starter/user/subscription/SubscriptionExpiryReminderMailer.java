@@ -39,6 +39,11 @@ public class SubscriptionExpiryReminderMailer {
      *  A purchased plan gets renewal wording; a trial gets upgrade wording. */
     static final String TEMPLATE_EXPIRY_REMINDER = "subscription.expiry-reminder";
     static final String TEMPLATE_TRIAL_EXPIRY_REMINDER = "subscription.trial-expiry-reminder";
+    /**
+     * Used when a later period exists but does not start the day after this one ends. "Please renew" is the
+     * wrong ask — they have renewed — so this template names the uncovered stretch instead.
+     */
+    static final String TEMPLATE_GAP_REMINDER = "subscription.gap-reminder";
 
     private final RoleService roleService;
     private final UserRoleRelService userRoleRelService;
@@ -83,14 +88,28 @@ public class SubscriptionExpiryReminderMailer {
                 "tenantName", message.tenantName() == null ? "" : message.tenantName(),
                 "planId", message.planId() == null ? "" : message.planId(),
                 "expiryDate", message.effectiveTo() == null ? "" : message.effectiveTo(),
-                "daysLeft", message.daysLeft());
-        // Trial → upgrade wording; purchased plan → renewal wording (two platform templates).
-        String templateCode = message.trial() ? TEMPLATE_TRIAL_EXPIRY_REMINDER : TEMPLATE_EXPIRY_REMINDER;
+                "daysLeft", message.daysLeft(),
+                "nextStartDate", message.nextStartDate() == null ? "" : message.nextStartDate());
+        // Three mutually exclusive asks. The gap case is checked first and wins over `trial`, because what
+        // matters to the reader is the uncovered stretch, not which kind of period is ending: a trial that
+        // ends with a paid period already booked for later still leaves the customer on the free plan in
+        // between, and "upgrade to keep access" would read as though nothing had been bought.
+        String templateCode;
+        if (message.nextStartDate() != null && !message.nextStartDate().isBlank()) {
+            templateCode = TEMPLATE_GAP_REMINDER;
+        } else if (message.trial()) {
+            templateCode = TEMPLATE_TRIAL_EXPIRY_REMINDER;
+        } else {
+            templateCode = TEMPLATE_EXPIRY_REMINDER;
+        }
         for (String email : emails) {
             eventPublisher.publishEvent(new MailRequestMessage(List.of(email), templateCode, variables));
         }
-        log.info("Published {} {} reminder mail(s) for tenant {} ({} day(s) left, expires {})",
-                emails.size(), message.trial() ? "trial-expiry" : "subscription-expiry",
+        // The template code itself, not a re-derivation of it: a two-branch guess here logged a gap reminder
+        // as "subscription-expiry", so the log disagreed with the mail that was actually sent — exactly the
+        // wrong signal when someone is investigating why a customer got the wording they did.
+        log.info("Published {} '{}' reminder mail(s) for tenant {} ({} day(s) left, expires {})",
+                emails.size(), templateCode,
                 message.tenantId(), message.daysLeft(), message.effectiveTo());
     }
 }

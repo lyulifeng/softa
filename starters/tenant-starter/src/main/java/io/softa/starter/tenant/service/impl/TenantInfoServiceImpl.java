@@ -1,6 +1,7 @@
 package io.softa.starter.tenant.service.impl;
 
 import java.time.LocalDateTime;
+import java.util.Arrays;
 import java.util.List;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -26,6 +27,13 @@ import io.softa.starter.tenant.enums.TenantStatus;
 @Slf4j
 @Component
 public class TenantInfoServiceImpl extends EntityServiceImpl<TenantInfo, Long> implements TenantInfoService {
+
+    /**
+     * The platform tenant's own row ({@code tenant_info.id = -1}). It exists because the runtime rejects
+     * any account whose tenant is not active — including the platform admins' — so suspending or closing
+     * it would lock them out with no way back in.
+     */
+    private static final Long PLATFORM_TENANT_ID = -1L;
 
     @Autowired
     private CacheService cacheService;
@@ -60,16 +68,55 @@ public class TenantInfoServiceImpl extends EntityServiceImpl<TenantInfo, Long> i
 
     @Override
     public void deactivate(Long tenantId) {
-        TenantInfo tenant = this.getById(tenantId)
-                .orElse(null);
+        transitionTo(tenantId, TenantStatus.SUSPENDED, TenantStatus.ACTIVE);
+    }
+
+    @Override
+    public void activate(Long tenantId) {
+        transitionTo(tenantId, TenantStatus.ACTIVE, TenantStatus.SUSPENDED);
+    }
+
+    @Override
+    public void close(Long tenantId) {
+        transitionTo(tenantId, TenantStatus.CLOSED, TenantStatus.ACTIVE, TenantStatus.SUSPENDED);
+    }
+
+    /**
+     * The one write path for {@link TenantStatus}: check the transition is legal, stamp the timestamp
+     * belonging to the target status and clear the other two, then evict the tenant caches.
+     *
+     * <p>Exactly one timestamp is ever set, which keeps the trio a function of the status — an ACTIVE
+     * tenant can never display a suspended time. Round-trip history (how often, how long) is the change
+     * log's job; three flat columns could not hold it anyway.
+     *
+     * <p>The eviction is the part that cannot be skipped: {@code isTenantActive()} reads through the
+     * cache, so without it a suspension does not take effect until the entry expires and the tenant's
+     * users keep working meanwhile.
+     */
+    private void transitionTo(Long tenantId, TenantStatus target, TenantStatus... allowedFrom) {
+        // Suspending or closing the platform tenant would lock the platform admins out permanently —
+        // they could not log in to undo it, and there is no other path back.
+        Assert.notTrue(PLATFORM_TENANT_ID.equals(tenantId),
+                "The platform tenant's operational status cannot be changed.");
+        TenantInfo tenant = this.getById(tenantId).orElse(null);
         Assert.notNull(tenant, "Tenant not found for tenantId: {0}", tenantId);
-        tenant.setStatus(TenantStatus.SUSPENDED);
-        tenant.setSuspendedTime(LocalDateTime.now());
+        if (target.equals(tenant.getStatus())) {
+            return;   // idempotent — already there, nothing to write or evict
+        }
+        Assert.isTrue(Arrays.asList(allowedFrom).contains(tenant.getStatus()),
+                "Tenant {0} cannot move from {1} to {2}.", tenantId, tenant.getStatus(), target);
+
+        TenantStatus previous = tenant.getStatus();
+        LocalDateTime now = LocalDateTime.now();
+        tenant.setActivatedTime(target == TenantStatus.ACTIVE ? now : null);
+        tenant.setSuspendedTime(target == TenantStatus.SUSPENDED ? now : null);
+        tenant.setClosedTime(target == TenantStatus.CLOSED ? now : null);
+        tenant.setStatus(target);
         this.updateOne(tenant);
-        // Evict caches so isTenantActive() and active-id filtering see the change immediately;
-        // the tenant's users are then forced to re-login on their next request.
+
         cacheService.clear(RedisConstant.TENANT_INFO + tenantId);
         cacheService.clear(RedisConstant.TENANT_IDS);
+        log.info("Tenant {} status {} -> {}", tenantId, previous, target);
     }
 
     /**

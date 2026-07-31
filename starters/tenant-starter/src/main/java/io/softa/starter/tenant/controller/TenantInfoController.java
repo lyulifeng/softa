@@ -1,13 +1,17 @@
 package io.softa.starter.tenant.controller;
 
+import java.util.LinkedHashMap;
 import java.util.Map;
 
+import com.fasterxml.jackson.annotation.JsonAnySetter;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
-import org.springframework.context.ApplicationEventPublisher;
+import lombok.Data;
+import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
 import io.softa.framework.base.utils.Assert;
@@ -15,9 +19,12 @@ import io.softa.framework.orm.enums.ConvertType;
 import io.softa.framework.orm.service.ModelService;
 import io.softa.framework.orm.utils.IdUtils;
 import io.softa.framework.web.response.ApiResponse;
-import io.softa.starter.tenant.entitlement.TenantEntitlementChangedEvent;
+import io.softa.starter.tenant.entity.TenantInfo;
 import io.softa.starter.tenant.provisioning.ProvisionTenantRequest;
 import io.softa.starter.tenant.provisioning.TenantProvisioningService;
+import io.softa.starter.tenant.service.SubscriptionPeriodPatch;
+import io.softa.starter.tenant.service.TenantSubscriptionPeriodService;
+import io.softa.starter.tenant.service.impl.TenantInfoServiceImpl;
 
 /**
  * Shadows the generic {@code /{modelName}} write endpoints for TenantInfo (Spring routes the literal
@@ -25,11 +32,11 @@ import io.softa.starter.tenant.provisioning.TenantProvisioningService;
  * <ul>
  *   <li>{@code createOne} — tenant creation must provision (registry row + owned version + seed),
  *       not bare-insert; delegates to {@link TenantProvisioningService}.</li>
- *   <li>{@code updateOne} / {@code updateOneAndFetch} — the owned 1:1 version is edited inline on the
- *       Tenant Info form. A plain update cascades into {@code TenantSubscription} but does NOT refresh
- *       entitlement, so when the payload touched the version ({@code subscriptionId}) we publish
- *       {@link TenantEntitlementChangedEvent} to evict the {@code entl:} cache + MQ-fan the fresh
- *       module set — otherwise a plan / lifecycle change wouldn't take effect until the 1h TTL.</li>
+ *   <li>{@code updateOne} / {@code updateOneAndFetch} — the owned 1:1 subscription is rendered inline on
+ *       the Tenant Info form, so its {@code periods} relation arrives nested in the payload. It is lifted
+ *       out and replayed through {@link TenantSubscriptionPeriodService}, which is what applies the write
+ *       guards and refreshes the projection; letting the framework's nested-relation pipeline persist it
+ *       would skip both. The rest of the nested object is dropped — every column on it is projected.</li>
  * </ul>
  * Platform-only: {@code /TenantInfo/**} is in {@code permission.platform-only-patterns}.
  */
@@ -39,19 +46,51 @@ import io.softa.starter.tenant.provisioning.TenantProvisioningService;
 public class TenantInfoController {
 
     private static final String MODEL = "TenantInfo";
-    /** The owned-version relation field; its presence in an update payload = the version changed. */
+    /** The owned 1:1 subscription relation, as it appears nested in a form payload. */
     private static final String VERSION_FIELD = "subscriptionId";
+    /** The subscription's period relation — the one part of that nested object this endpoint accepts. */
+    private static final String PERIODS_FIELD = "periods";
 
     private final TenantProvisioningService provisioningService;
+    private final TenantInfoServiceImpl tenantInfoService;
     private final ModelService<Long> modelService;
-    private final ApplicationEventPublisher eventPublisher;
+    private final TenantSubscriptionPeriodService periodService;
 
     public TenantInfoController(TenantProvisioningService provisioningService,
+                               TenantInfoServiceImpl tenantInfoService,
                                ModelService<Long> modelService,
-                               ApplicationEventPublisher eventPublisher) {
+                               TenantSubscriptionPeriodService periodService) {
         this.provisioningService = provisioningService;
+        this.tenantInfoService = tenantInfoService;
         this.modelService = modelService;
-        this.eventPublisher = eventPublisher;
+        this.periodService = periodService;
+    }
+
+    // ─── Operational status: the only sanctioned way to change it ───
+    // Each of these stamps the matching timestamp, clears the other two, and evicts the tenant caches.
+    // Editing the status column through the generic updateOne would skip the eviction, so the login gate
+    // would keep reading the cached old value and a suspension would not take effect — which is why the
+    // field is rendered read-only in the UI and changed only here.
+
+    @Operation(summary = "Suspend a tenant — blocks login at once and forces its users to re-login")
+    @PostMapping("/deactivate")
+    public ApiResponse<Boolean> deactivate(@RequestParam Long id) {
+        tenantInfoService.deactivate(id);
+        return ApiResponse.success(true);
+    }
+
+    @Operation(summary = "Reactivate a suspended tenant")
+    @PostMapping("/activate")
+    public ApiResponse<Boolean> activate(@RequestParam Long id) {
+        tenantInfoService.activate(id);
+        return ApiResponse.success(true);
+    }
+
+    @Operation(summary = "Close a tenant — terminal; data is retained")
+    @PostMapping("/close")
+    public ApiResponse<Boolean> close(@RequestParam Long id) {
+        tenantInfoService.close(id);
+        return ApiResponse.success(true);
     }
 
     @Operation(summary = "Create a tenant (registry row + owned version + per-tenant seed)")
@@ -60,44 +99,89 @@ public class TenantInfoController {
         return ApiResponse.success(provisioningService.provision(request).tenantId());
     }
 
-    @Operation(summary = "Update a tenant — refreshes entitlement when the inline version changed")
+    // One transaction per submit: a period patch that trips a guard must not leave the tenant's own edits
+    // committed alongside an unchanged period list, which is what ops would then be looking at.
+
+    @Operation(summary = "Update a tenant — nested subscription periods go through their guarded service")
     @PostMapping("/updateOne")
-    public ApiResponse<Boolean> updateOne(@RequestBody Map<String, Object> row) {
+    @Transactional(rollbackFor = Exception.class)
+    public ApiResponse<Boolean> updateOne(@RequestBody TenantUpdateRequest request) {
+        Map<String, Object> row = request.getRow();
         Assert.notEmpty(row, "The data to be updated cannot be empty!");
         Assert.notNull(row.get("id"), "`id` cannot be null or missing when updating data!");
+        Object tenantId = row.get("id");
         IdUtils.formatMapId(MODEL, row);
         boolean ok = modelService.updateOne(MODEL, row);
-        refreshEntitlementIfVersionTouched(row);
+        // After the tenant update: a timezone change in the same submit decides what "today" means for a
+        // period recorded without a start date.
+        applyPeriodPatch(tenantId, request.periodPatch());
         return ApiResponse.success(ok);
     }
 
-    @Operation(summary = "Update a tenant and fetch — refreshes entitlement when the inline version changed")
+    @Operation(summary = "Update a tenant and fetch — nested subscription periods go through their guarded service")
     @PostMapping("/updateOneAndFetch")
-    public ApiResponse<Map<String, Object>> updateOneAndFetch(@RequestBody Map<String, Object> row) {
+    @Transactional(rollbackFor = Exception.class)
+    public ApiResponse<Map<String, Object>> updateOneAndFetch(@RequestBody TenantUpdateRequest request) {
+        Map<String, Object> row = request.getRow();
         Assert.notEmpty(row, "The data to be updated cannot be empty!");
         Assert.notNull(row.get("id"), "`id` cannot be null or missing when updating data!");
+        Object tenantId = row.get("id");
         IdUtils.formatMapId(MODEL, row);
         Map<String, Object> result = modelService.updateOneAndFetch(MODEL, row, ConvertType.REFERENCE);
-        refreshEntitlementIfVersionTouched(row);
+        applyPeriodPatch(tenantId, request.periodPatch());
         return ApiResponse.success(result);
     }
 
     /**
-     * When the update payload carried the owned version ({@code subscriptionId}): first reconcile the
-     * lifecycle against the edited effective dates (a lapsed {@code effectiveTo} expires, a future
-     * {@code effectiveFrom} defers, an arrived one activates — so the edit lands on save rather than at
-     * the next cron run), then publish the entitlement-changed event so the listener evicts {@code entl:}
-     * + fans the fresh module set to MQ. Runs after the update committed; the listener's
-     * {@code fallbackExecution} covers the no-active-transaction case.
+     * The tenant update payload, split by Jackson rather than by hand.
+     *
+     * <p>{@code subscriptionId} is declared, so it binds to the typed field and — being a known property —
+     * never reaches {@code @JsonAnySetter}. Everything else lands in {@link #row}, which is what the generic
+     * update receives. That split does the two jobs this endpoint owes:
+     *
+     * <p>The periods patch is intercepted. Left in the payload, the framework's nested-relation pipeline
+     * would persist it through the generic {@code ModelService}, which runs none of the period write guards
+     * and leaves the projection stale; it is replayed through the guarded service instead.
+     *
+     * <p>The rest of the nested object is dropped. Every column on {@code TenantSubscription} is projected,
+     * with the refresh logic as its only legitimate writer. The form renders those fields read-only and so
+     * echoes back what it read — harmless today, but the same path would cascade a hand-crafted payload
+     * straight onto the row authorization reads.
+     *
+     * <p>Binding it here rather than converting a {@code Map} through the mapper's tree API is deliberate:
+     * {@code JsonMapper.treeToValue} blew up at runtime with {@code NoSuchMethodError} — the deployed
+     * softa-base and the deployed Jackson disagree on that signature, and a request-body binding does not
+     * depend on it.
      */
-    private void refreshEntitlementIfVersionTouched(Map<String, Object> row) {
-        if (!row.containsKey(VERSION_FIELD)) {
+    @Data
+    public static class TenantUpdateRequest {
+
+        /** The owned 1:1 subscription as the form posts it; only its {@code periods} relation is accepted. */
+        private ProvisionTenantRequest.SubscriptionInput subscriptionId;
+
+        /** Every other property, i.e. the tenant's own columns. Mutable — {@code formatMapId} rewrites it. */
+        private final Map<String, Object> row = new LinkedHashMap<>();
+
+        @JsonAnySetter
+        public void putTenantField(String name, Object value) {
+            row.put(name, value);
+        }
+
+        /** The periods patch, or null when the payload carried no subscription / no periods. */
+        public SubscriptionPeriodPatch periodPatch() {
+            return subscriptionId == null ? null : subscriptionId.getPeriods();
+        }
+    }
+
+    /** Applies the patch against the tenant's own subscription — the owner is never taken from the payload. */
+    private void applyPeriodPatch(Object tenantIdValue, SubscriptionPeriodPatch patch) {
+        if (patch == null) {
             return;
         }
-        Long tenantId = IdUtils.convertIdToLong(row.get("id"));
-        if (tenantId != null) {
-            provisioningService.reconcileLifecycleDates(tenantId);
-            eventPublisher.publishEvent(new TenantEntitlementChangedEvent(tenantId));
-        }
+        Long tenantId = IdUtils.convertIdToLong(tenantIdValue);
+        TenantInfo tenant = tenantId == null ? null : tenantInfoService.getById(tenantId).orElse(null);
+        Assert.notNull(tenant == null ? null : tenant.getSubscriptionId(),
+                "This tenant has no subscription row, so it cannot have periods.");
+        periodService.applyPatch(tenant.getSubscriptionId(), patch);
     }
 }
