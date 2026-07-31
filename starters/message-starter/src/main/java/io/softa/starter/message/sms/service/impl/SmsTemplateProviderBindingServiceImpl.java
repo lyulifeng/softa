@@ -71,7 +71,7 @@ public class SmsTemplateProviderBindingServiceImpl extends EntityServiceImpl<Sms
         String region = binding.getRegionCode().trim().toUpperCase(Locale.ROOT);
         countryRegionService.findByCode(region)
                 .orElseThrow(() -> new BusinessException(
-                        "Unknown country code {0}; not in country_region.", region));
+                        "Unknown country/region code {0}.", region));
         binding.setRegionCode(region);
     }
 }

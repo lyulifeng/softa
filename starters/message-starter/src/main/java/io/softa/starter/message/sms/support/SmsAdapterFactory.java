@@ -48,8 +48,7 @@ public class SmsAdapterFactory {
         SmsProviderAdapter adapter = adapterMap.get(provider);
         if (adapter == null) {
             throw new BusinessException(
-                    "No SMS adapter registered for provider: {0}. "
-                    + "Please ensure the adapter component is on the classpath.", provider.getCode());
+                    "SMS provider {0} is not supported by this deployment.", provider.getCode());
         }
         return adapter;
     }

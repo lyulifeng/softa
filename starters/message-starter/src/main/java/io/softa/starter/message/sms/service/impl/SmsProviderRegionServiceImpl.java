@@ -60,13 +60,12 @@ public class SmsProviderRegionServiceImpl extends EntityServiceImpl<SmsProviderR
 
     private void validateRegionCode(SmsProviderRegion region) {
         if (!StringUtils.hasText(region.getRegionCode())) {
-            throw new BusinessException("regionCode is required on SmsProviderRegion");
+            throw new BusinessException("Region code is required.");
         }
         countryRegionService.findByCode(region.getRegionCode())
                 .orElseThrow(() -> new BusinessException(
-                        "Unknown country code {0}; not in country_region. "
-                      + "Load reference data via POST /SysPreData/loadPreSystemData "
-                      + "with [\"Currency.AllCurrencies.json\",\"CountryRegion.AllCountries.json\"].",
+                        "Unknown country/region code {0}. "
+                      + "Load the country/region reference data first.",
                         region.getRegionCode()));
     }
 }

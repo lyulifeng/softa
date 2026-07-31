@@ -8,7 +8,6 @@ import lombok.EqualsAndHashCode;
 import io.softa.framework.orm.annotation.Field;
 import io.softa.framework.orm.annotation.Index;
 import io.softa.framework.orm.annotation.Model;
-import io.softa.framework.orm.enums.FieldType;
 import io.softa.framework.orm.enums.IdStrategy;
 import io.softa.framework.orm.entity.AuditableModel;
 import io.softa.starter.flow.design.DesignFlowDefinition;
@@ -69,7 +68,7 @@ public class FlowBundle extends AuditableModel {
     @Field(length = 100000, description = "Compiled flow definition (JSON)")
     private String compiledJson;
 
-    @Field(fieldType = FieldType.DTO, description = "Design flow definition at publish time (auto-converted by ORM)")
+    @Field(description = "Design flow definition at publish time (auto-converted by ORM)")
     private DesignFlowDefinition designJson;
 
     @Field(description = "Compile timestamp")

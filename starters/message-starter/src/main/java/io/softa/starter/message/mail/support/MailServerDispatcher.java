@@ -43,8 +43,8 @@ public class MailServerDispatcher {
                         .orElse(null));
         if (config == null) {
             throw new BusinessException(
-                    "No sending mail server config found. "
-                    + "Please configure one in MailSendServerConfig.");
+                    "No sending mail server is configured for this tenant. "
+                    + "Ask your administrator to add and enable one.");
         }
         return config;
     }
@@ -71,8 +71,8 @@ public class MailServerDispatcher {
         return receiveConfigService.findTenantDefault()
                 .or(receiveConfigService::findPlatformDefault)
                 .orElseThrow(() -> new BusinessException(
-                        "No receiving mail server config found. "
-                        + "Please configure one in MailReceiveServerConfig."));
+                        "No receiving mail server is configured for this tenant. "
+                        + "Ask your administrator to add and enable one."));
     }
 
     /**

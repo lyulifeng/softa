@@ -199,6 +199,7 @@ when the type is ambiguous.
 | `List<String>` | MULTI_STRING | 256 | |
 | a `@Model` POJO | MANY_TO_ONE | — | related model inferred from the type |
 | `List<`a `@Model` POJO`>` | ONE_TO_MANY | — | set `relatedField` = the child's FK column |
+| a POJO implementing `DTOFieldObject` | DTO | — | typed value object stored as a JSON string; reads come back as the declared class |
 | `Long` + explicit `fieldType = FILE` | FILE | — | single attachment stored as a file id |
 | `List<Long>` + explicit `fieldType = MULTI_FILE` | MULTI_FILE | 1024 | multiple attachments stored as file ids |
 | `List<Long>`, `byte[]`, `Map`, raw `List` | **ambiguous** | — | you must specify `fieldType` (or the parser rejects it) |

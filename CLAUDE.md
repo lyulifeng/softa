@@ -141,7 +141,8 @@ public enum CustomerTier {
 
 **Key inference rules**:
 - `fieldType` inferred from Java type (`String→STRING`, `Integer→INTEGER`,
-  `enum→OPTION`, `List<enum>→MULTI_OPTION`, `@Model POJO→MANY_TO_ONE`, etc.)
+  `enum→OPTION`, `List<enum>→MULTI_OPTION`, `@Model POJO→MANY_TO_ONE`,
+  `DTOFieldObject POJO→DTO`, etc.)
 - `OPTION` / `MULTI_OPTION` **cannot be written explicitly** — only inferred
   from `enum` / `List<enum>` Java types
 - **Code-as-id for rich reference masters**: a TO_ONE

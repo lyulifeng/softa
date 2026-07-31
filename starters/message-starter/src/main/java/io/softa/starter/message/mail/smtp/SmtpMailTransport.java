@@ -154,7 +154,7 @@ public class SmtpMailTransport {
         if (!CollectionUtils.isEmpty(req.getAttachments())) {
             if (fileService == null) {
                 throw new BusinessException(
-                        "FileService is not on the classpath; cannot resolve attachment fileIds for SMTP send");
+                        "Attachments are not supported on this deployment: the file service module is not installed.");
             }
             for (FileInfo attachment : req.getAttachments()) {
                 Long fileId = attachment.getFileId();

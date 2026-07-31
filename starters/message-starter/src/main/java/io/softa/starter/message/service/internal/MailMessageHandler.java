@@ -123,14 +123,14 @@ final class MailMessageHandler {
                 immutableCopy(dto.getTo()), immutableCopy(dto.getCc()), immutableCopy(dto.getBcc()),
                 subject, textBody, htmlBody, bodyMode, immutableCopy(attachments), serverConfigId,
                 replyTo, dto.getReadReceiptRequested(), priority);
-        requireRecipients(resolved.to(), "SendMailDTO.to");
+        requireRecipients(resolved.to());
         requireBody(resolved);
         return resolved;
     }
 
-    private static void requireRecipients(List<String> to, String field) {
+    private static void requireRecipients(List<String> to) {
         if (CollectionUtils.isEmpty(to)) {
-            throw new BusinessException("Mail send rejected: {0} must contain at least one recipient", field);
+            throw new BusinessException("Mail send rejected: at least one recipient is required");
         }
     }
 

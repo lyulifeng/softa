@@ -11,6 +11,7 @@ import org.junit.jupiter.api.Test;
 import io.softa.framework.orm.annotation.Model;
 import io.softa.framework.orm.domain.Filters;
 import io.softa.framework.orm.domain.Orders;
+import io.softa.framework.orm.dto.DTOFieldObject;
 import io.softa.framework.orm.enums.FieldType;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -31,6 +32,10 @@ class TypeInferenceTest {
     @Model
     static class FixtureModel {
         // empty body — only the @Model presence matters for relation inference
+    }
+
+    static class FixtureDto implements DTOFieldObject {
+        // empty body — only the DTOFieldObject presence matters for DTO inference
     }
 
     // ------- Tier 1: exact ---------------------------------------------
@@ -63,6 +68,11 @@ class TypeInferenceTest {
         TypeInference.FieldTypeResolution r = TypeInference.infer(FixtureModel.class, null);
         assertEquals(FieldType.MANY_TO_ONE, r.fieldType());
         assertEquals("FixtureModel", r.relatedModel());
+    }
+
+    @Test
+    void pojoImplementingDTOFieldObject_isDto() {
+        assertEquals(FieldType.DTO, TypeInference.infer(FixtureDto.class, null).fieldType());
     }
 
     // ------- Tier 2: default-with-override -----------------------------
