@@ -25,6 +25,22 @@ public interface ModelConstant {
     // Reserved field: Tenant ID identifier
     String TENANT_ID = "tenantId";
     String TENANT_ID_COLUMN = "tenant_id";
+
+    /**
+     * The reference-data master that a multi-country model partitions by. Named by
+     * string rather than by class: {@code CountryRegion} lives in reference-data-starter,
+     * which the ORM must not depend on.
+     */
+    String COUNTRY_REGION_MODEL = "CountryRegion";
+
+    /**
+     * The model naming the employing company. Hard-coded rather than configured, matching the way
+     * {@code EmployeeContextEnricher} hard-codes its HR model names: an application either has this
+     * dimension under this name or does not have it at all, and every mechanism keyed on it degrades
+     * to a no-op when the model is absent. One constant so the company-scoped narrowing and the
+     * request enricher cannot drift apart on what "the company" is.
+     */
+    String COMPANY_MODEL = "LegalEntity";
     // Reserved field: Version number identifier, used for optimistic lock control
     String VERSION = "version";
     Integer DEFAULT_VERSION = 1;

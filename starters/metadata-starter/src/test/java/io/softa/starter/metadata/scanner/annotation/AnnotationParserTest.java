@@ -103,6 +103,76 @@ class AnnotationParserTest {
         assertEquals(Boolean.FALSE, m.getCopyable());
     }
 
+    // ------- request-scoped narrowing attributes -------------------------
+    //
+    // companyScoped / companyField / multiCountry are what CompanyScope and MultiCountryScope read at
+    // runtime to decide whether a read is narrowed at all. A parser that dropped any of them would not
+    // fail anything — it would write a sys_model row saying "not scoped", and every company's rows
+    // would show up in every other company's screens with nothing to indicate it. Pin all three,
+    // including the defaults, since "false by default" is the half that silences the mechanism.
+
+    @Test
+    void modelScopingAttributes_defaultToOff() {
+        SysModel m = parser.parse(List.of(Customer.class), List.of()).models().get(0);
+
+        assertEquals(Boolean.FALSE, m.getCompanyScoped());
+        assertEquals(Boolean.FALSE, m.getMultiCountry());
+        assertTrue(m.getCompanyField() == null || m.getCompanyField().isEmpty(),
+                "no declared path when the model is not company-scoped");
+    }
+
+    @Test
+    void companyScoped_withDeclaredPath_isParsed() {
+        // The declared-path form: a per-department statistic reaches its company through the
+        // department rather than owning the column. ModelManager validates that the path resolves; the
+        // parser's job is only to carry it through verbatim.
+        @Model(companyScoped = true, companyField = "deptId.legalEntityId")
+        @SuppressWarnings("unused")
+        class DeptStat extends AuditableModel {
+            @Override
+            public Serializable getId() {
+                return null;
+            }
+        }
+        SysModel m = parser.parse(List.of(DeptStat.class), List.of()).models().get(0);
+
+        assertEquals(Boolean.TRUE, m.getCompanyScoped());
+        assertEquals("deptId.legalEntityId", m.getCompanyField());
+    }
+
+    @Test
+    void companyScoped_withoutAPath_leavesTheAnchorForModelManagerToDerive() {
+        // The common form: the model owns a reference to the company, so the anchor is derived at boot
+        // from the model's own fields. The parser must not invent one.
+        @Model(companyScoped = true)
+        @SuppressWarnings("unused")
+        class Document extends AuditableModel {
+            @Override
+            public Serializable getId() {
+                return null;
+            }
+        }
+        SysModel m = parser.parse(List.of(Document.class), List.of()).models().get(0);
+
+        assertEquals(Boolean.TRUE, m.getCompanyScoped());
+        assertTrue(m.getCompanyField() == null || m.getCompanyField().isEmpty());
+    }
+
+    @Test
+    void multiCountry_isParsed() {
+        @Model(multiCountry = true)
+        @SuppressWarnings("unused")
+        class EmploymentTypeLike extends AuditableModel {
+            @Override
+            public Serializable getId() {
+                return null;
+            }
+        }
+        SysModel m = parser.parse(List.of(EmploymentTypeLike.class), List.of()).models().get(0);
+
+        assertEquals(Boolean.TRUE, m.getMultiCountry());
+    }
+
     @Test
     void fieldCopyable_defaultsTrue_andParsesExplicitFalse() {
         AnnotationScanResult result = parser.parse(List.of(Customer.class), List.of());

@@ -62,6 +62,20 @@ public class PermissionInfo implements Serializable {
     private Map<String, Set<String>> modelSensitiveFieldSetsMap;
 
     /**
+     * Legal entities this user's roles may reach, unioned across roles. Bounds every company-scoped
+     * model, independently of {@link #modelScopeMap} — which companies a role may reach is a property
+     * of the role, not of any one model.
+     *
+     * <p><b>Empty means unrestricted, not denied.</b> The grant is opt-in: a role nobody configured
+     * keeps whatever its other permissions allow. Fail-closed here would empty every screen for every
+     * existing role the day this ships.
+     *
+     * <p>Cached with the rest of the snapshot, so a read pays no query for it. Roles change → the
+     * snapshot is evicted → this is rebuilt with them.
+     */
+    private Set<Long> grantedCompanyIds;
+
+    /**
      * Single source of truth for the SUPER_ADMIN short-circuit consulted by every
      * layer (route-admission + data-plane + enricher). True iff the user holds the
      * {@link #CODE_SUPER_ADMIN} role.

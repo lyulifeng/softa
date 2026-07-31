@@ -73,6 +73,55 @@ public @interface Model {
     boolean multiTenant() default false;
 
     /**
+     * This model's rows are partitioned by country — one independent set per country,
+     * so a value domain that differs between countries is stored as separate rows
+     * rather than shared ones. Queries are then narrowed to the country of the
+     * company selected in the request context, automatically and for every
+     * read path (list / page / count / reference lookup).
+     *
+     * <p>Boot-enforced: the model must carry a {@code MANY_TO_ONE} field onto
+     * {@code CountryRegion} (see {@link io.softa.framework.orm.meta.ModelManager}).
+     *
+     * <p>Declare it <b>only</b> when the rows really are replicated per country.
+     * A field merely recording <i>which country a record belongs to</i> — a legal
+     * entity's country, an address's country — is not this: marking such a model
+     * silently hides rows from every other country.
+     */
+    boolean multiCountry() default false;
+
+    /**
+     * Rows belong to one company, and reads are narrowed to the company selected
+     * in the request context — automatically, on every read path.
+     *
+     * <p>The company is resolved from the model's own {@code MANY_TO_ONE} onto
+     * {@code LegalEntity} when it has exactly one; declare {@link #companyField()}
+     * instead when it is reached through another model.
+     *
+     * <p>Unlike {@link #multiCountry()} this is about <i>ownership</i>, not
+     * replication: the rows are not copies per company, they each belong to one.
+     * Do not declare it on data shared across companies — a tenant-wide code
+     * table, a model whose company field merely records a preference — or every
+     * other company's rows become invisible.
+     */
+    boolean companyScoped() default false;
+
+    /**
+     * Path to the company for {@link #companyScoped()}, when it is not a field on
+     * this model. Dot-separated and resolved through {@code MANY_TO_ONE} /
+     * {@code ONE_TO_ONE} hops, e.g. {@code deptId.legalEntityId} for a
+     * per-department statistic that has no company of its own.
+     *
+     * <p>Leave unset to have it derived from this model's own reference onto
+     * {@code LegalEntity}. Declaring it is required precisely when derivation
+     * cannot be trusted: several relations may lead to a company, and which one
+     * the rows belong to is not something to guess at.
+     *
+     * <p>Boot-enforced: the path must resolve and must land on
+     * {@code LegalEntity}.
+     */
+    String companyField() default "";
+
+    /**
      * Whether rows of this model may be duplicated via {@code copyById} /
      * {@code copyByIds} / {@code getCopyableFields}. Set {@code false} on
      * runtime / log models (execution traces, send records, histories) that

@@ -87,6 +87,22 @@ public class SysModel extends AuditableModel {
     @Field(label = "Enable Multi-tenancy")
     private Boolean multiTenant;
 
+    // Rows are partitioned by country (one set per country). The partitioning field itself
+    // is derived at ModelManager init from the model's CountryRegion reference, so it needs
+    // no column here.
+    @Field(label = "Enable Multi-country", defaultValue = "false")
+    private Boolean multiCountry = Boolean.FALSE;
+
+    // Rows belong to one company; reads are narrowed to the one selected in the request. Unlike
+    // multiCountry the anchor CAN need declaring, so it gets a column: it is derived from the model's
+    // own LegalEntity reference when it has one, and spelled out when the company is reached through
+    // another model (a per-department statistic reaching it via deptId.legalEntityId).
+    @Field(label = "Enable Company Scope", defaultValue = "false")
+    private Boolean companyScoped = Boolean.FALSE;
+
+    @Field(label = "Company Field", length = 128)
+    private String companyField;
+
     // Initialized to true (the column is NOT NULL DEFAULT 1) so hand-constructed
     // instances — scanner paths go through AnnotationParser — never insert NULL.
     @Field(defaultValue = "true")

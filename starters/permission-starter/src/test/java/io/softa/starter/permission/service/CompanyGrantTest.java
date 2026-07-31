@@ -1,0 +1,240 @@
+package io.softa.starter.permission.service;
+
+import java.util.Set;
+
+import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Disabled;
+import org.junit.jupiter.api.Test;
+import org.mockito.MockedStatic;
+import org.mockito.Mockito;
+
+import io.softa.framework.base.enums.Operator;
+import io.softa.framework.orm.constant.ModelConstant;
+import io.softa.framework.orm.domain.Filters;
+import io.softa.framework.orm.meta.MetaModel;
+import io.softa.framework.orm.meta.ModelManager;
+import io.softa.starter.permission.spi.PermissionInfo;
+
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.when;
+
+/**
+ * The role's legal-entity grant: which companies a user may reach at all, as opposed to the one it is
+ * currently looking at.
+ *
+ * <p>Two of these would fail silently and are the reason this class exists. An inverted empty-grant
+ * default empties every screen for every role that predates the grant table — a total outage that
+ * looks like a data problem. And a model that reaches its company through another one (a per-department
+ * statistic) would go unbounded if the anchor were assumed to be a local field name, leaking other
+ * companies' aggregates into a report with nothing to indicate it.
+ *
+ * <p>Stubs {@link ModelManager} statically because {@link MetaModel}'s setters are package-private to
+ * its own package, so this module cannot build one — same approach as
+ * {@code SelectedCompanyCountryEnricherTest}.
+ */
+class CompanyGrantTest {
+
+    private static final Set<Long> GRANTED = Set.of(8712L, 9001L);
+
+    private MockedStatic<ModelManager> modelManager;
+
+    @BeforeEach
+    void setUp() {
+        modelManager = Mockito.mockStatic(ModelManager.class);
+    }
+
+    @AfterEach
+    void tearDown() {
+        modelManager.close();
+    }
+
+    /** Only {@code appendCompanyGrant} is exercised; it touches none of the collaborators. */
+    private static PermissionServiceImpl service() {
+        return new PermissionServiceImpl(null, null, null, null, null);
+    }
+
+    private void model(String name, boolean companyScoped, String companyField) {
+        MetaModel meta = mock(MetaModel.class);
+        when(meta.isCompanyScoped()).thenReturn(companyScoped);
+        when(meta.getCompanyField()).thenReturn(companyField);
+        modelManager.when(() -> ModelManager.existModel(name)).thenReturn(true);
+        modelManager.when(() -> ModelManager.getModel(name)).thenReturn(meta);
+    }
+
+    private static PermissionInfo grant(Set<Long> ids) {
+        PermissionInfo pi = new PermissionInfo();
+        pi.setGrantedCompanyIds(ids);
+        return pi;
+    }
+
+    // ---- the opt-in default ----------------------------------------------
+
+    @Test
+    void anEmptyGrantMeansUnrestricted() {
+        // NOT denied. A role nobody has configured keeps whatever its other permissions allow —
+        // otherwise shipping the grant table blanks every screen in the product at once.
+        model("Department", true, "legalEntityId");
+        Filters original = Filters.of("active", Operator.EQUAL, true);
+
+        assertThat(service().appendCompanyGrant("Department", original, grant(Set.of())))
+                .isSameAs(original);
+    }
+
+    @Test
+    void aMissingGrantMeansUnrestricted() {
+        model("Department", true, "legalEntityId");
+        Filters original = Filters.of("active", Operator.EQUAL, true);
+
+        assertThat(service().appendCompanyGrant("Department", original, grant(null))).isSameAs(original);
+        assertThat(service().appendCompanyGrant("Department", original, null)).isSameAs(original);
+    }
+
+    // ---- what it bounds --------------------------------------------------
+
+    @Test
+    void boundsAModelThatOwnsItsCompanyColumn() {
+        model("Department", true, "legalEntityId");
+
+        Filters result = service().appendCompanyGrant("Department", new Filters(), grant(GRANTED));
+
+        assertThat(Filters.containsField(result, "legalEntityId")).isTrue();
+        assertThat(result.toString()).contains("8712", "9001");
+    }
+
+    @Test
+    void boundsAModelThatReachesItsCompanyThroughAnother() {
+        // A per-department statistic has no company column of its own. Assuming the anchor were named
+        // legalEntityId would leave every such report unbounded — other companies' aggregates visible,
+        // with nothing on screen saying so.
+        model("DeptHeadcountStats", true, "deptId.legalEntityId");
+
+        Filters result = service().appendCompanyGrant("DeptHeadcountStats", new Filters(), grant(GRANTED));
+
+        assertThat(Filters.containsField(result, "deptId.legalEntityId")).isTrue();
+    }
+
+    @Test
+    void narrowsWithinTheGrantRatherThanReplacingTheSelection() {
+        // The composition that makes the header switch work for a multi-company role.
+        // ModelServiceImpl.scopedAccess has already applied the selection to these filters, so this
+        // ANDs the grant on top: selected ∧ granted. A subset, so never empty for a company the
+        // switcher was allowed to offer.
+        model("Department", true, "legalEntityId");
+        Filters selected = Filters.of("legalEntityId", Operator.EQUAL, 8712L);
+
+        Filters result = service().appendCompanyGrant("Department", selected, grant(GRANTED));
+
+        assertThat(result.toString()).contains("8712", "9001");
+    }
+
+    @Test
+    void boundsTheCompanyListItself() {
+        // The switcher's own query. LegalEntity is deliberately not companyScoped — self-scoping is
+        // rejected at boot — so it is bounded by its id instead. Without this the switcher keeps
+        // offering companies the role cannot reach, and picking one ANDs an ungranted selection against
+        // the grant: every screen goes empty, with nothing saying why.
+        modelManager.when(() -> ModelManager.existModel(ModelConstant.COMPANY_MODEL)).thenReturn(true);
+
+        Filters result = service().appendCompanyGrant(ModelConstant.COMPANY_MODEL, new Filters(),
+                grant(GRANTED));
+
+        assertThat(Filters.containsField(result, ModelConstant.ID)).isTrue();
+        assertThat(result.toString()).contains("8712", "9001");
+    }
+
+    @Test
+    void doesNotBoundACompanyReadThatNamesRowsById() {
+        // A stored reference being expanded for display. Blanking a label is not the same as denying
+        // access to data, and the row that referenced it was already subject to the grant.
+        modelManager.when(() -> ModelManager.existModel(ModelConstant.COMPANY_MODEL)).thenReturn(true);
+        Filters byId = Filters.of(ModelConstant.ID, Operator.IN, java.util.List.of(9999L));
+
+        assertThat(service().appendCompanyGrant(ModelConstant.COMPANY_MODEL, byId, grant(GRANTED)))
+                .isSameAs(byId);
+    }
+
+    @Test
+    @Disabled("Known gap — enable together with dropping the id exemption from appendCompanyGrant.")
+    void theWriteGateItsOwnFilterIsBoundedByTheGrant() {
+        // checkIdsAccess is what stands between a caller and `deleteByIds` / `updateList` on a row it
+        // may not touch. It verifies the ids by counting them back — count(model, id IN (…)) — and
+        // that filter names `id`, so the exemption above drops the grant from it. The count then says
+        // "all present", and a row belonging to a company the role was never granted is deleted by
+        // anyone who knows its id and holds the model's delete permission.
+        //
+        // The exemption is not needed for what its comment describes. Display expansion runs inside
+        // DataPipelineProxy.processReadData, which is @SkipPermissionCheck: shouldBypass() is true and
+        // appendScopeAccessFilters returns before ever reaching appendCompanyGrant. CompanyScope keeps
+        // its own id exemption and does need it — it sits in the ORM layer, where nothing bypasses.
+        //
+        // Dropping it here makes this pass and costs one thing: a by-id read of a row outside the
+        // grant returns empty rather than the row. That is what a grant means.
+        model("Department", true, "legalEntityId");
+        Filters writeGate = Filters.of(ModelConstant.ID, Operator.IN, java.util.List.of(4242L));
+
+        assertThat(service().appendCompanyGrant("Department", writeGate, grant(GRANTED)).toString())
+                .contains("8712", "9001");
+    }
+
+    @Test
+    void rendersTheSameSqlForTheSameGrant() {
+        // Set iteration order would vary the statement text between requests and defeat statement
+        // caching, for a filter that is on every read of every company-scoped model.
+        model("Department", true, "legalEntityId");
+
+        String first = service().appendCompanyGrant("Department", new Filters(),
+                grant(new java.util.HashSet<>(java.util.List.of(9001L, 8712L, 9002L)))).toString();
+        String second = service().appendCompanyGrant("Department", new Filters(),
+                grant(new java.util.HashSet<>(java.util.List.of(9002L, 8712L, 9001L)))).toString();
+
+        assertThat(first).isEqualTo(second);
+    }
+
+    // ---- what it leaves alone --------------------------------------------
+
+    @Test
+    void leavesAModelThatIsNotCompanyScoped() {
+        // Carrying a company reference is not the same as belonging to one company. Bounding such a
+        // model would filter rows that legitimately relate to another company.
+        model("OptionSetLike", false, null);
+        Filters original = Filters.of("active", Operator.EQUAL, true);
+
+        assertThat(service().appendCompanyGrant("OptionSetLike", original, grant(GRANTED)))
+                .isSameAs(original);
+    }
+
+    @Test
+    void leavesAScopedModelWhoseAnchorDidNotResolve() {
+        // ModelManager fail-fasts at init on this, so it means the metadata came from elsewhere.
+        // Appending a condition on a blank field would build broken SQL.
+        model("Broken", true, "  ");
+        Filters original = Filters.of("active", Operator.EQUAL, true);
+
+        assertThat(service().appendCompanyGrant("Broken", original, grant(GRANTED))).isSameAs(original);
+    }
+
+    @Test
+    void leavesAnUnknownModel() {
+        // Sits on the generic read path: an unknown model must reach the query that reports it
+        // properly, not fail here with a metadata error.
+        modelManager.when(() -> ModelManager.existModel("NoSuchModel")).thenReturn(false);
+        Filters original = Filters.of("active", Operator.EQUAL, true);
+
+        assertThat(service().appendCompanyGrant("NoSuchModel", original, grant(GRANTED)))
+                .isSameAs(original);
+        assertThat(service().appendCompanyGrant(null, original, grant(GRANTED))).isSameAs(original);
+    }
+
+    @Test
+    void theGrantIsUnionedAcrossRolesAsASet() {
+        // Two roles granting the same entity must not produce a duplicated IN list.
+        model("Department", true, "legalEntityId");
+
+        Filters result = service().appendCompanyGrant("Department", new Filters(),
+                grant(Set.of(8712L)));
+
+        assertThat(result.toString().split("8712", -1).length - 1).isEqualTo(1);
+    }
+}

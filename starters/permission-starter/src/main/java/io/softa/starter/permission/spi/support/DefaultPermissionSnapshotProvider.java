@@ -21,6 +21,7 @@ import io.softa.framework.base.constant.RedisConstant;
 import io.softa.framework.base.utils.JsonUtils;
 import io.softa.framework.orm.annotation.SkipPermissionCheck;
 import io.softa.framework.orm.domain.Filters;
+import io.softa.framework.orm.meta.ModelManager;
 import io.softa.framework.orm.domain.FlexQuery;
 import io.softa.framework.orm.service.CacheService;
 import io.softa.framework.orm.service.ModelService;
@@ -75,6 +76,10 @@ public class DefaultPermissionSnapshotProvider implements PermissionSnapshotProv
     private static final String M_ROLE_NAV = "RoleNavigation";
     private static final String M_ROLE_SCOPE = "RoleDataScope";
     private static final String M_ROLE_SFS = "RoleSensitiveFieldSet";
+    private static final String M_ROLE_COMPANY = "RoleCompany";
+    /** The grant's own field, named after the framework's company dimension — not after the HR model
+     *  {@link io.softa.framework.orm.constant.ModelConstant#COMPANY_MODEL} happens to bind it to. */
+    private static final String F_COMPANY_ID = "companyId";
     private static final String M_NAV = "Navigation";
     private static final String M_PERMISSION = "Permission";
 
@@ -145,6 +150,35 @@ public class DefaultPermissionSnapshotProvider implements PermissionSnapshotProv
 
     // ─────────────────────── DB build (约定读) ───────────────────────
 
+    /**
+     * The companies these roles may reach, unioned — {@code RoleCompany} rows, flattened to ids.
+     *
+     * <p>Extracted so the two wire names below are assertable. They are strings, not types: this
+     * module cannot see {@code RoleCompany}, which lives in user-starter, so nothing links the two at
+     * compile time. Rename the model or its column without changing these and the query silently
+     * returns nothing — and an empty grant means <b>unrestricted</b>, so the failure mode is every
+     * role reaching every company, with no error anywhere.
+     *
+     * <p>Absent model = an application without a company dimension (the framework's own demo apps),
+     * which must cost neither a query nor an exception — same degradation as
+     * {@code SelectedCompanyCountryEnricher}.
+     */
+    Set<Long> readGrantedCompanyIds(List<Long> roleIds) {
+        Set<Long> grantedCompanyIds = new HashSet<>();
+        if (!ModelManager.existModel(M_ROLE_COMPANY)) {
+            return grantedCompanyIds;
+        }
+        List<Map<String, Object>> companyGrants = modelService.searchList(M_ROLE_COMPANY,
+                new FlexQuery(List.of(F_COMPANY_ID), new Filters().in("roleId", roleIds)));
+        for (Map<String, Object> row : companyGrants) {
+            Object id = row.get(F_COMPANY_ID);
+            if (id instanceof Number n) {
+                grantedCompanyIds.add(n.longValue());
+            }
+        }
+        return grantedCompanyIds;
+    }
+
     private PermissionInfo loadFromDb(Long tenantId, Long userId) {
         try {
             return doLoadFromDb(userId);
@@ -211,6 +245,8 @@ public class DefaultPermissionSnapshotProvider implements PermissionSnapshotProv
             }
         }
 
+        // 3b-2. Company grants, unioned across roles.
+        Set<Long> grantedCompanyIds = readGrantedCompanyIds(roleIds);
         // 3c. Sensitive-field-set grants, keyed by the SFS's canonical model.
         Map<String, Set<String>> modelSensitiveFieldSetsMap = new HashMap<>();
         List<RoleSfsView> sfsGrants = modelService.searchList(M_ROLE_SFS,
@@ -236,6 +272,7 @@ public class DefaultPermissionSnapshotProvider implements PermissionSnapshotProv
         info.setPermissions(permissions);
         info.setModelScopeMap(modelScopeMap);
         info.setModelSensitiveFieldSetsMap(modelSensitiveFieldSetsMap);
+        info.setGrantedCompanyIds(grantedCompanyIds);
         return info;
     }
 

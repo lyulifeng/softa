@@ -10,6 +10,9 @@ import io.softa.framework.orm.constant.ModelConstant;
 import io.softa.framework.orm.enums.AccessType;
 import io.softa.framework.orm.enums.FieldType;
 import io.softa.framework.orm.meta.MetaField;
+import org.apache.commons.lang3.StringUtils;
+
+import io.softa.framework.orm.meta.MetaModel;
 import io.softa.framework.orm.meta.ModelManager;
 import io.softa.framework.orm.service.ModelService;
 import io.softa.framework.orm.service.PermissionService;
@@ -95,6 +98,11 @@ public class PermissionServiceImpl implements PermissionService {
         if (shouldBypass()) return originalFilters;
         PermissionInfo pi = currentPi();
         if (PermissionInfo.isAdmin(pi)) return originalFilters;
+        // The company grant bounds every company-scoped model, on its own axis: which legal entities a
+        // role may reach is a property of the role, so it does not ride the per-model rules below and
+        // is not waived by an ALL rule on some model. Admins are already past — a tenant admin sees
+        // every company in its tenant.
+        originalFilters = appendCompanyGrant(model, originalFilters, pi);
         if (hasExplicitRules(pi, model)) {
             Filters scope = scopeCompiler.compile(rulesFor(pi, model), model);
             if (scope == null) return originalFilters; // ALL rule → no restriction
@@ -342,6 +350,64 @@ public class PermissionServiceImpl implements PermissionService {
     }
 
     // ───────── metadata-derived scope for anchorless related models ─────────
+
+    /**
+     * AND the role's legal-entity grant onto a company-scoped model's read.
+     *
+     * <p>Reads the anchor from the model's metadata rather than assuming a field name, so a model that
+     * reaches its company through another one — a per-department statistic, whose companyField is
+     * {@code deptId.legalEntityId} — is bounded by the same grant as a model that owns the column.
+     *
+     * <p>An empty grant means unrestricted. That is the opt-in convention, not an oversight: the
+     * alternative empties every screen for every role that predates this table.
+     *
+     * <p>Composes with the header selection by construction. {@code ModelServiceImpl.scopedAccess}
+     * applies that selection to the filters it passes in here, so by this point the caller's filters
+     * already carry {@code companyField = <selected>} and this ANDs {@code IN (<granted>)} on top:
+     * the selection narrows within the grant, and since the switcher only offers granted entities the
+     * result is one company rather than nothing.
+     */
+    // Package-private for test: the empty-grant default and the path-anchored case both fail silently.
+    Filters appendCompanyGrant(String model, Filters filters, PermissionInfo pi) {
+        Set<Long> granted = pi == null ? null : pi.getGrantedCompanyIds();
+        if (granted == null || granted.isEmpty()) {
+            return filters;
+        }
+        if (model == null || !ModelManager.existModel(model)) {
+            return filters;
+        }
+        // The company model itself is bounded by its own id. It is deliberately NOT companyScoped
+        // (self-scoping is rejected at boot: it would reduce the switcher to the company already
+        // selected), so without this branch the grant would never reach the one list that most needs
+        // it — the switcher would keep offering companies the role cannot reach, and picking one would
+        // AND an ungranted selection against the grant and silently empty every screen.
+        String companyField = ModelConstant.COMPANY_MODEL.equals(model)
+                ? ModelConstant.ID
+                : companyAnchorOf(model);
+        if (companyField == null) {
+            return filters;
+        }
+        if (Filters.containsField(filters, ModelConstant.ID)) {
+            // Same exemption the selection makes: a by-id read is a display expansion or a cascade
+            // resolving a stored value, and blanking a label is not the same as denying access to data.
+            return filters;
+        }
+        // Sorted so the same grant renders the same SQL every time — set iteration order would vary
+        // the statement text between requests and defeat statement caching.
+        List<Serializable> ids = new ArrayList<>(granted);
+        ids.sort(null);
+        return combineAnd(filters, Filters.of(companyField, Operator.IN, ids));
+    }
+
+    /** The anchor a company-scoped model reaches its company through, or null when it is not one. */
+    private String companyAnchorOf(String model) {
+        MetaModel metaModel = ModelManager.getModel(model);
+        if (!metaModel.isCompanyScoped()) {
+            return null;
+        }
+        String companyField = metaModel.getCompanyField();
+        return StringUtils.isBlank(companyField) ? null : companyField;
+    }
 
     private boolean hasExplicitRules(PermissionInfo pi, String model) {
         List<ScopeRule> r = rulesFor(pi, model);

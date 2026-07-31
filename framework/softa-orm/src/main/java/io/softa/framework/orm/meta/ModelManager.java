@@ -205,6 +205,10 @@ public class ModelManager {
             validateTimelineFields(metaModel.getModelName());
             // Check if the multi-tenant model contains the tenantId field
             validateMultiTenant(metaModel);
+            // Check the multi-country model references CountryRegion, and resolve which field does
+            validateMultiCountry(metaModel);
+            // Check the company-scoped model can name its owning company, and resolve the path
+            validateCompanyScoped(metaModel);
             // Check if the optimistic lock control model contains the version field
             validateVersionField(metaModel);
             // Check if the model dataSource attribute is valid
@@ -543,6 +547,107 @@ public class ModelManager {
             Assert.isTrue(modelFields().get(metaModel.getModelName()).containsKey(ModelConstant.TENANT_ID),
                     "The multi-tenant model {0} must contain the `tenantId` field!", metaModel.getModelName());
         }
+    }
+
+    /**
+     * Validate that a multi-country model references {@code CountryRegion}, and resolve which
+     * field carries the partition into {@link MetaModel#getCountryField()} as a ready-to-use
+     * filter path.
+     *
+     * <p>Resolving here rather than declaring it keeps the annotation to a single attribute and
+     * {@code sys_model} to a single new column. Failing closed on "no reference" matters more
+     * than it looks: without it the country narrowing silently does nothing, which reads exactly
+     * like a model that was never marked — the failure mode this whole mechanism exists to remove.
+     *
+     * @param metaModel model metadata object
+     */
+    private static void validateMultiCountry(MetaModel metaModel) {
+        if (!metaModel.isMultiCountry()) {
+            return;
+        }
+        String modelName = metaModel.getModelName();
+        List<String> paths = new ArrayList<>();
+        for (MetaField field : modelFields().get(modelName).values()) {
+            if (!ModelConstant.COUNTRY_REGION_MODEL.equals(field.getRelatedModel())) {
+                continue;
+            }
+            if (FieldType.TO_ONE_TYPES.contains(field.getFieldType())) {
+                paths.add(field.getFieldName());
+            } else if (FieldType.MANY_TO_MANY.equals(field.getFieldType())) {
+                // A to-many tail is expanded by FilterXToManyParser, so the id path filters it.
+                paths.add(field.getFieldName() + "." + ModelConstant.ID);
+            }
+        }
+        Assert.notEmpty(paths,
+                "The multi-country model {0} must reference `{1}` through a ManyToOne or ManyToMany "
+                        + "field: without it the per-country narrowing cannot be applied.",
+                modelName, ModelConstant.COUNTRY_REGION_MODEL);
+        Assert.isTrue(paths.size() == 1,
+                "The multi-country model {0} references `{1}` through {2} fields {3}: exactly one is "
+                        + "required so the country to narrow by is unambiguous.",
+                modelName, ModelConstant.COUNTRY_REGION_MODEL, paths.size(), paths);
+        metaModel.setCountryField(paths.getFirst());
+    }
+
+    /**
+     * Resolve which field a company-scoped model reaches its owning company through, and fail the
+     * boot if it cannot be established.
+     *
+     * <p>Two shapes. A model that references {@code LegalEntity} itself needs nothing declared: the
+     * reference is derived, and requiring exactly one keeps "which relation do the rows belong to"
+     * from being a guess when several lead to a company. A model that has no company of its own —
+     * a per-department statistic, say — declares the path to one, and it is walked here so a typo or
+     * a since-renamed field fails at boot rather than silently disabling the narrowing on a live
+     * system.
+     *
+     * <p>The declared path is required to land on {@code LegalEntity}. Without that check a path
+     * ending one hop short still resolves and still filters — against the wrong ids, which looks
+     * like missing data rather than a misconfiguration.
+     */
+    private static void validateCompanyScoped(MetaModel metaModel) {
+        if (!metaModel.isCompanyScoped()) {
+            return;
+        }
+        String modelName = metaModel.getModelName();
+        Assert.isTrue(!ModelConstant.COMPANY_MODEL.equals(modelName),
+                "The model {0} IS the company; it cannot be company-scoped. Narrowing it by the "
+                        + "selected company would leave the company switcher with a single choice — "
+                        + "the one already selected.",
+                modelName);
+
+        String declared = metaModel.getCompanyField();
+        if (StringUtils.isNotBlank(declared)) {
+            CascadeFieldWalker.Result result =
+                    CascadeFieldWalker.walk(modelName, declared, CascadeFieldWalker.Visitor.NOOP);
+            Assert.isTrue(result instanceof CascadeFieldWalker.Result.Ok,
+                    "The company-scoped model {0} declares companyField `{1}`, which does not resolve: {2}",
+                    modelName, declared,
+                    result instanceof CascadeFieldWalker.Result.Failure f ? f.message() : result);
+            MetaField leaf = ((CascadeFieldWalker.Result.Ok) result).leaf();
+            Assert.isTrue(ModelConstant.COMPANY_MODEL.equals(leaf.getRelatedModel()),
+                    "The company-scoped model {0} declares companyField `{1}`, but it lands on `{2}` "
+                            + "rather than `{3}`: the narrowing would compare company ids against "
+                            + "another model's ids and quietly match nothing.",
+                    modelName, declared, leaf.getRelatedModel(), ModelConstant.COMPANY_MODEL);
+            return;
+        }
+
+        List<String> paths = new ArrayList<>();
+        for (MetaField field : modelFields().get(modelName).values()) {
+            if (ModelConstant.COMPANY_MODEL.equals(field.getRelatedModel())
+                    && FieldType.TO_ONE_TYPES.contains(field.getFieldType())) {
+                paths.add(field.getFieldName());
+            }
+        }
+        Assert.notEmpty(paths,
+                "The company-scoped model {0} neither references `{1}` through a ManyToOne/OneToOne "
+                        + "nor declares a companyField path to one: there is nothing to narrow by.",
+                modelName, ModelConstant.COMPANY_MODEL);
+        Assert.isTrue(paths.size() == 1,
+                "The company-scoped model {0} references `{1}` through {2} fields {3}: declare "
+                        + "companyField to say which one the rows belong to.",
+                modelName, ModelConstant.COMPANY_MODEL, paths.size(), paths);
+        metaModel.setCompanyField(paths.getFirst());
     }
 
     /**

@@ -113,6 +113,8 @@ rows by business key. Per-tenant metadata customization is **not supported**.
     businessKey = {"code"},
     idStrategy = IdStrategy.DB_AUTO_ID,         // default DB_AUTO_ID
     multiTenant = false,                        // default false
+    multiCountry = false,                       // default false; rows partitioned by country
+    companyScoped = false, companyField = "",   // default false / derived; rows belong to one company
     storageType = StorageType.RDBMS,
     softDelete = false, activeControl = false, timeline = false,
     versionLock = false,
@@ -195,6 +197,24 @@ public enum CustomerTier {
   id); slice-level `deleteBySliceId` keeps the entity alive and does not trigger it. Runtime guard:
   a `CASCADE`/`SET_NULL` affecting more than `MAX_BATCH_SIZE` referrers per level is rejected (accidental
   high-fanout), and large deletes are chunked to `DEFAULT_BATCH_SIZE` to bound statement size.
+
+- `multiCountry` / `companyScoped` (**request-scoped narrowing**): mark a model whose rows are
+  partitioned by country / belong to one employing company, and the ORM narrows every read to the
+  country / company selected for the current request. One input drives both — the client sends only a
+  company id (`X-Company-Id`), the country is resolved server-side from it and is **never** taken from
+  the client. The anchor field is resolved at boot from the model's own `CountryRegion` / company
+  reference; declare `companyField` only when the company is reached **through another model**
+  (`companyField = "deptId.legalEntityId"` for a per-department statistic). Boot-rejected: no reference
+  and no path, two candidate references with nothing to disambiguate them, a path that does not
+  resolve, a path whose leaf is not the company model, and the company model itself being
+  `companyScoped`. Narrowing is skipped — silently, because an over-eager condition empties a list the
+  user needs — when nothing is selected, when the caller filters by `id` (display expansion / by-id
+  read / cascade), or when the caller already constrains the anchor field. Applied in
+  `ModelServiceImpl.scopedAccess` as the **input** to
+  `PermissionService.appendScopeAccessFilters`, never around its result: fed as the input the selection
+  narrows *within* a role's grant, whereas wrapping the output would make a multi-company grant look
+  like a caller that already chose one and the selection would skip. Full reference:
+  [`framework/softa-orm/README.md`](framework/softa-orm/README.md) §Request-scoped narrowing.
 
 **Omit redundant attributes** (an explicit value that equals what the parser
 would derive is noise — a present attribute should signal a real override): omit

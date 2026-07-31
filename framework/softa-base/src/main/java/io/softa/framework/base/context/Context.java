@@ -30,6 +30,25 @@ public class Context implements Serializable {
     private Long companyId;
     private Long tenantId;
 
+    /**
+     * The company selected for this request via the header switcher — "which company am I looking
+     * at", a per-request view choice. Distinct from {@code EmpInfo.companyId}, which is "the
+     * company I belong to" and anchors permission rules, and from the unused {@code companyId}
+     * declared above. The HR app calls this a legal entity; the framework says company throughout,
+     * the same translation {@code USER_COMP_ID} already makes.
+     *
+     * <p>Never cached in the session: a cached value defeats switching, and multiple browser tabs
+     * would overwrite each other.
+     */
+    private Long selectedCompanyId;
+
+    /**
+     * ISO 3166-1 alpha-2 country of {@link #selectedCompanyId}, resolved server-side by a
+     * ContextEnricher (the app supplies it, since only the app knows what a company row is).
+     * Never read from the client — a forged value would bypass per-country narrowing.
+     */
+    private String selectedCompanyCountry;
+
     private String token;
     private String traceId;
 
@@ -129,6 +148,8 @@ public class Context implements Serializable {
         newContext.setTimezone(this.timezone);
         newContext.setCompanyId(this.companyId);
         newContext.setTenantId(this.tenantId);
+        newContext.setSelectedCompanyId(this.selectedCompanyId);
+        newContext.setSelectedCompanyCountry(this.selectedCompanyCountry);
         newContext.setUserInfo(this.userInfo);
         newContext.setEmpInfo(this.empInfo);
         newContext.setSkipAutoAudit(this.skipAutoAudit);

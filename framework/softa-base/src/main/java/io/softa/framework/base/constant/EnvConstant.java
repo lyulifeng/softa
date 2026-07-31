@@ -14,13 +14,27 @@ public interface EnvConstant {
     String USER_DEPT_ID = "USER_DEPT_ID";
     String USER_COMP_ID = "USER_COMP_ID";
 
+    /**
+     * The company selected for the current request (the header switcher), NOT the one the user
+     * belongs to — that is {@link #USER_COMP_ID}, which anchors permission rules and must keep
+     * meaning "my own company".
+     */
+    String SELECTED_COMP_ID = "SELECTED_COMP_ID";
+
+    /** The country of {@link #SELECTED_COMP_ID}, resolved server-side (never taken from the client). */
+    String SELECTED_COMP_COUNTRY = "SELECTED_COMP_COUNTRY";
+
     String NOW = "NOW";
     String TODAY = "TODAY";
     String YESTERDAY = "YESTERDAY";
 
     Set<String> TIME_PARAMS = Set.of(NOW, TODAY, YESTERDAY);
     Set<String> EMP_INFO_PARAMS = Set.of(USER_EMP_ID, USER_POSITION_ID, USER_DEPT_ID, USER_COMP_ID);
-    Set<String> ENV_PARAMS = Set.of(USER_ID, USER_EMP_ID, USER_POSITION_ID, USER_DEPT_ID, USER_COMP_ID, NOW, TODAY, YESTERDAY);
+    /** Placeholders resolved from the selected company; unlike EMP_INFO_PARAMS these need no EmpInfo. */
+    Set<String> SELECTED_COMP_PARAMS = Set.of(SELECTED_COMP_ID, SELECTED_COMP_COUNTRY);
+    /** Every substitutable placeholder. A placeholder absent here is bound as a literal string, silently. */
+    Set<String> ENV_PARAMS = Set.of(USER_ID, USER_EMP_ID, USER_POSITION_ID, USER_DEPT_ID, USER_COMP_ID,
+            SELECTED_COMP_ID, SELECTED_COMP_COUNTRY, NOW, TODAY, YESTERDAY);
 
     static Map<String, Object> getEnv() {
         return MapUtils.strObj()

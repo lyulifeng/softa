@@ -159,6 +159,16 @@ public class FilterUnitParser {
                 case EnvConstant.USER_COMP_ID -> empInfo.getCompanyId();
                 default -> throw new IllegalArgumentException("Not support the env parameter {0}! ", value);
             };
+        } else if (EnvConstant.SELECTED_COMP_PARAMS.contains(value)) {
+            // Deliberately NOT folded into the EMP_INFO branch above: that branch is gated on an
+            // EmpInfo being bound, and the selected company has nothing to do with the
+            // caller's own employment — a pure user (an administrator who is not an employee)
+            // would otherwise fall through to the switch below and get an exception.
+            return switch (value) {
+                case EnvConstant.SELECTED_COMP_ID -> context.getSelectedCompanyId();
+                case EnvConstant.SELECTED_COMP_COUNTRY -> context.getSelectedCompanyCountry();
+                default -> throw new IllegalArgumentException("Not support the env parameter {0}! ", value);
+            };
         } else {
             return switch (value) {
                 case EnvConstant.NOW -> EnvConstant.getNow();

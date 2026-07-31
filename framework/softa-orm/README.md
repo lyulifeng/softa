@@ -88,6 +88,9 @@ public enum CustomerTier {
 | `storageType` | `StorageType` | `RDBMS` | `storageType` | |
 | `versionLock` | boolean | `false` | `versionLock` | optimistic-lock column |
 | `multiTenant` | boolean | `false` | `multiTenant` | requires a `tenantId` field on the class |
+| `multiCountry` | boolean | `false` | `multiCountry` | rows are partitioned by country; reads narrow to the request's selected country (see [Request-scoped narrowing](#request-scoped-narrowing)) |
+| `companyScoped` | boolean | `false` | `companyScoped` | rows belong to one company; reads narrow to the request's selected company (see [Request-scoped narrowing](#request-scoped-narrowing)) |
+| `companyField` | String | `""` | `companyField` | only when the company is reached through another model, e.g. `"deptId.legalEntityId"`; leave empty to derive it from the model's own company reference |
 | `copyable` | boolean | `true` | `copyable` | `false` ⇒ copy APIs reject the model; UI hides Duplicate |
 | `dataSource` | String | `""` | `dataSource` | empty → primary datasource |
 | `businessKey` | String[] | `{}` | `businessKey` | composite supported |
@@ -446,6 +449,53 @@ Use cases:
 Important rule:
 - Do not combine `@PerTenant` with upstream fan-out that already split work per tenant
   (for example, `cron-starter` with `SysCron.tenantJobMode=PerTenant`), otherwise the job is expanded twice.
+
+## Request-scoped narrowing
+
+Tenant isolation is not the only read narrowing the ORM applies on its own. Two more are driven by **which company the caller selected for this request**, declared per model with `@Model(multiCountry = true)` and `@Model(companyScoped = true)`.
+
+One input, two axes. The client sends only a company id (`X-Company-Id`); the country is resolved server-side from that company and is never taken from the client. A company therefore decides both *whose records* these are (itself) and *which statutory rules* apply (its country) — and the two cannot be collapsed into one mechanism, because two companies in the same country share their value domains but not their records.
+
+```
+X-Company-Id: 8712
+   └─ Context.selectedCompanyId ─────────────────────────→ CompanyScope       → companyField = {{SELECTED_COMP_ID}}
+        └─ SelectedCompanyCountryEnricher (getById + cache)
+             └─ Context.selectedCompanyCountry ─────────→ MultiCountryScope  → countryField = {{SELECTED_COMP_COUNTRY}}
+```
+
+`ModelServiceImpl` applies both on every read, then the role data scope on top:
+
+```java
+permissionService.appendScopeAccessFilters(model,
+        CompanyScope.append(model,
+                MultiCountryScope.append(model, callerFilters)));
+```
+
+**The selections feed the permission call; they do not wrap its result.** That is not interchangeable. Both skip when the caller already constrains their field — which is what lets a form scope its dropdowns by the entity picked *in the form* rather than the one in the header. Applied to the permission call's output, that check would also see the conditions a role grant just added, so a role granting several companies would look like a caller that already chose one: the selection would skip and the user would get every granted company at once with the switch doing nothing. Fed as the input, the selection narrows *within* the grant (`selected ∧ granted`) — a subset, so never empty for a company the user was allowed to pick.
+
+### Resolving the anchor
+
+Which field carries the partition is resolved at boot, and `ModelManager` fails fast rather than letting a marked model quietly go unnarrowed:
+
+| declaration | anchor |
+|---|---|
+| `multiCountry = true` | the model's single `CountryRegion` reference (or `countries.id` for a many-to-many) |
+| `companyScoped = true` | the model's single company reference, e.g. `legalEntityId` |
+| `companyScoped = true, companyField = "deptId.legalEntityId"` | the declared path — for a model with no company of its own, such as a per-department statistic |
+
+Rejected at boot: no reference and no path; two candidate references with no `companyField` to disambiguate; a path that does not resolve; a path whose leaf is not the company model (this one would otherwise *run*, comparing company ids against another model's ids and matching nothing — indistinguishable from missing data); and the company model itself being `companyScoped` (which would reduce the company switcher to the company already selected).
+
+### When narrowing is skipped
+
+Every skip is silent by design: an over-eager condition empties a list the user needs, which is worse than showing too much.
+
+- **no selection in context** — anonymous and public endpoints, service-to-service calls, a tenant with no company yet. Also how a deliberate "all companies" view works: send no header and nothing narrows by company.
+- **the caller filters by `id`** — a display expansion, a by-id read, a cascade resolving stored values. `XToOneGroupProcessor` expands a stored `ManyToOne` with `searchList(relatedModel, id IN (…))`; narrowing that would render a row's stored reference blank whenever it belongs to another company or country. Note `FilterControl.bypassAll()` does *not* cover this — it only waives active-control and soft-delete.
+- **the caller already constrains the anchor field** — see above.
+
+### Cost
+
+`CompanyScope` needs nothing but the id in the context, so it costs nothing. `MultiCountryScope` depends on the enricher's company → country lookup, cached in Redis for five minutes — short deliberately, because the country is an editable field on the company's own form and there is no eviction hook on the generic write path. The two degrade independently: if the country cannot be resolved (a deleted company, a row with no country, an application with no company model at all), country narrowing turns off while company narrowing keeps working.
 
 ## Configuration
 ### MQ Topic

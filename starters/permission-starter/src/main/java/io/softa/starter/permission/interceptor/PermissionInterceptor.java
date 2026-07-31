@@ -157,10 +157,30 @@ public class PermissionInterceptor implements HandlerInterceptor {
         if (pi != null && pi.getRoleCodes() != null) codes.addAll(pi.getRoleCodes());
         if (PermissionInfo.isSuperAdmin(pi)) {
             for (SystemRole r : SystemRole.values()) codes.add(r.getCode());
-            // Platform super-admin operates cross-tenant (sees every tenant's data + the
-            // non-tenant-filtered Ops models). A TENANT_ADMIN does NOT get this — it stays
-            // tenant-isolated (crossTenant remains false).
-            ctx.setCrossTenant(true);
+            // NOT crossTenant. Reaching across tenants is a property of an operation, not of an
+            // identity, so it is opted into where it is needed — @CrossTenant on the method, or an
+            // explicit ContextUtils.inSystemContext / inTenantContext window — never granted here for
+            // the whole request.
+            //
+            // This used to set crossTenant = true, which waived tenant isolation for every read AND
+            // stopped AutofillFields from stamping tenant_id on every write. The reads made
+            // tenant-scoped screens list other tenants' rows (a company switcher offering a dozen
+            // unrelated tenants' legal entities was how it surfaced); the writes produced rows with no
+            // tenant at all, which nobody but a super-admin can then see. It also made
+            // SequenceServiceImpl reject every allocation, so a super-admin could not create a record
+            // carrying an auto-numbered code.
+            //
+            // What still reaches across tenants, and how, now that this does not:
+            //   - TenantInfo / TenantSubscription — not multiTenant models, never filtered.
+            //   - Tenant provisioning — ContextUtils.inSystemContext().
+            //   - Creating a tenant's first admin — ContextUtils.inTenantContext(targetTenant), with
+            //     the globally-unique email check on @CrossTenant getUserByEmail before pinning.
+            //   - The super-admin's account roster (admins of every tenant plus its own tenant's
+            //     users) — a window the UserAccount search endpoints open around a scope filter they
+            //     compute themselves; see UserAccountController.inRosterScope.
+            // Menus, navigation, permission items and data-scope types are unaffected either way:
+            // those models are not multiTenant, and the full-catalog view a super-admin gets comes
+            // from the role-code bypass below, not from tenant isolation.
         }
         ctx.setRoleCodes(codes);
     }

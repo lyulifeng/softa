@@ -95,6 +95,17 @@ public class DesignModel extends AuditableModel {
     @Field(label = "Enable Multi-tenancy")
     private Boolean multiTenant;
 
+    // Mirrors SysModel.multiCountry: rows are partitioned by country.
+    @Field(label = "Enable Multi-country", defaultValue = "false")
+    private Boolean multiCountry = Boolean.FALSE;
+
+    // Mirrors SysModel.companyScoped / companyField: rows belong to one company.
+    @Field(label = "Enable Company Scope", defaultValue = "false")
+    private Boolean companyScoped = Boolean.FALSE;
+
+    @Field(label = "Company Field", length = 128)
+    private String companyField;
+
     // Structural mirror of sys_model.copyable governance; the cross-lane checksum requires
     // design_* and sys_* to match field-for-field. Initialized true (column is NOT NULL DEFAULT 1).
     @Field(defaultValue = "true")
