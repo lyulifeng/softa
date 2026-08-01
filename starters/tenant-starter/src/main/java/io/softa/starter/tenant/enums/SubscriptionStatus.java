@@ -29,6 +29,14 @@ import io.softa.framework.base.enums.OptionItemTone;
  * </ul>
  */
 @Getter
+/*
+ * Labels deliberately differ from item codes on three of these. The code is persisted and read by the
+ * frontend, so it is fixed for good; the label is display text and should read well. Making them match would
+ * let a decision taken for storage stability dictate the wording ops sees — "Paid" lands as a payment state
+ * rather than a subscription one, in a set whose other members are subscription states. Where the derived
+ * name is already right (SCHEDULED, EXPIRED) no label is declared at all, so a declared one always signals a
+ * deliberate override.
+ */
 @OptionSet(description = "Projected subscription standing of a tenant as of its local today", renamedFrom = "SubscriptionStatus")
 public enum SubscriptionStatus {
 
@@ -44,7 +52,7 @@ public enum SubscriptionStatus {
      * No period covers the projection date, but a later one exists. The tenant runs on the floor plan
      * until it starts — scheduling is not early activation, and the UI must say so.
      */
-    @OptionItem(label = "Scheduled", itemTone = OptionItemTone.NEUTRAL, sequence = 3)
+    @OptionItem(itemTone = OptionItemTone.NEUTRAL, sequence = 3)
     SCHEDULED("Scheduled"),
 
     /**
@@ -52,7 +60,7 @@ public enum SubscriptionStatus {
      * and lapsed. Distinguished from {@link #NEVER_SUBSCRIBED} purely by "are there any period rows",
      * which costs nothing extra to determine.
      */
-    @OptionItem(label = "Expired", itemTone = OptionItemTone.NEUTRAL, sequence = 4)
+    @OptionItem(itemTone = OptionItemTone.NEUTRAL, sequence = 4)
     EXPIRED("Expired"),
 
     /**
