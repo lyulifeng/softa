@@ -66,6 +66,28 @@ public class TenantInfoServiceImpl extends EntityServiceImpl<TenantInfo, Long> i
         return tenantInfo != null && TenantStatus.ACTIVE.equals(tenantInfo.getStatus());
     }
 
+    /**
+     * Reads through the same per-tenant cache as {@link #isTenantActive}, so it costs nothing extra on the
+     * login path.
+     *
+     * <p>Null is READY, not "not ready". Every tenant that predates the provisioning axis has a null column,
+     * and treating those as unprovisioned would lock out every existing customer on the deploy that
+     * introduced it. Only the two in-flight states deny.
+     */
+    @Override
+    public boolean isTenantProvisioned(Long tenantId) {
+        if (tenantId == null) {
+            return false;
+        }
+        TenantInfo tenantInfo = getTenantInfo(tenantId);
+        if (tenantInfo == null) {
+            return false;
+        }
+        TenantProvisioningStatus status = tenantInfo.getProvisioningStatus();
+        return status != TenantProvisioningStatus.INITIALIZING
+                && status != TenantProvisioningStatus.FAILED;
+    }
+
     @Override
     public void deactivate(Long tenantId) {
         transitionTo(tenantId, TenantStatus.SUSPENDED, TenantStatus.ACTIVE);

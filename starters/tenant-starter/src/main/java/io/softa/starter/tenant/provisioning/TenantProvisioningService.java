@@ -103,7 +103,7 @@ public class TenantProvisioningService {
 
         // Synchronous, same-transaction: app-side listeners (seed per-tenant data, create first admin)
         // run before commit, so any failure there rolls back tenant creation too.
-        eventPublisher.publishEvent(new TenantProvisionedEvent(tenantId, code, request.getName().trim()));
+        eventPublisher.publishEvent(new TenantProvisionedEvent(tenantId, code, request.getName().trim(), false));
 
         log.info("Provisioned tenant id={} code={}", tenantId, code);
         return new ProvisionResult(tenantId, code);

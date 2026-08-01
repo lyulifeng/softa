@@ -67,6 +67,13 @@ public class LoginServiceImpl implements LoginService {
         if (tenantInfoService == null || !tenantInfoService.isTenantActive(tenantId)) {
             throw new BusinessException("Login denied: tenant is not active.");
         }
+        // Second axis, distinct message: the tenant is allowed to operate but is not built yet. Letting a user
+        // in mid-seed shows them a workspace whose roles and org masters are still arriving over MQ, and lets
+        // them create records pointing at masters that do not exist. It is also what makes discarding a failed
+        // setup safe — if nobody can get in before READY, every row in the tenant came from a seeder.
+        if (!tenantInfoService.isTenantProvisioned(tenantId)) {
+            throw new BusinessException("Login denied: this workspace is still being set up.");
+        }
     }
 
     /**

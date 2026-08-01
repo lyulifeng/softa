@@ -11,6 +11,7 @@ import io.softa.framework.base.constant.RedisConstant;
 import io.softa.framework.base.exception.IllegalArgumentException;
 import io.softa.framework.orm.service.CacheService;
 import io.softa.starter.tenant.entity.TenantInfo;
+import io.softa.starter.tenant.enums.TenantProvisioningStatus;
 import io.softa.starter.tenant.enums.TenantStatus;
 
 import static org.junit.jupiter.api.Assertions.*;
@@ -151,5 +152,57 @@ class TenantInfoServiceImplTest {
         doReturn(Optional.of(tenant)).when(svc).getById(1L);
         doReturn(true).when(svc).updateOne(any(TenantInfo.class));
         return svc;
+    }
+
+    // ─── the provisioning axis, which login also gates on ───
+
+    @Test
+    @DisplayName("a tenant still seeding, or whose seed failed, is not provisioned")
+    void inFlightProvisioning_notProvisioned() {
+        // Login has to refuse these. A user let in mid-seed sees a workspace whose roles and org masters are
+        // still arriving over MQ; and the whole "discard the seed output and set it up again" remedy depends on
+        // no human having written anything before READY.
+        TenantInfoServiceImpl svc = Mockito.spy(new TenantInfoServiceImpl());
+        doReturn(withProvisioning(TenantProvisioningStatus.INITIALIZING)).when(svc).getTenantInfo(1L);
+        doReturn(withProvisioning(TenantProvisioningStatus.FAILED)).when(svc).getTenantInfo(2L);
+
+        assertFalse(svc.isTenantProvisioned(1L), "INITIALIZING is not provisioned");
+        assertFalse(svc.isTenantProvisioned(2L), "FAILED is not provisioned");
+    }
+
+    @Test
+    @DisplayName("READY, and a null axis, both count as provisioned")
+    void readyOrUnset_provisioned() {
+        // Null is the important half: every tenant created before this column existed has one, and reading it
+        // as "not provisioned" would lock every existing customer out on the deploy that introduced the gate.
+        TenantInfoServiceImpl svc = Mockito.spy(new TenantInfoServiceImpl());
+        doReturn(withProvisioning(TenantProvisioningStatus.READY)).when(svc).getTenantInfo(1L);
+        doReturn(withProvisioning(null)).when(svc).getTenantInfo(2L);
+        doReturn(null).when(svc).getTenantInfo(3L);
+
+        assertTrue(svc.isTenantProvisioned(1L));
+        assertTrue(svc.isTenantProvisioned(2L), "a tenant predating the axis must not be locked out");
+        assertFalse(svc.isTenantProvisioned(3L), "a missing tenant is not provisioned");
+        assertFalse(svc.isTenantProvisioned(null));
+    }
+
+    @Test
+    @DisplayName("the two axes are independent — being ACTIVE says nothing about being built")
+    void axesAreIndependent() {
+        // A tenant is ACTIVE from birth; it has to be, or its own seeders could not write to it. Folding this
+        // into isTenantActive would therefore either break seeding or fail to gate anything.
+        TenantInfoServiceImpl svc = Mockito.spy(new TenantInfoServiceImpl());
+        TenantInfo seeding = tenant(TenantStatus.ACTIVE);
+        seeding.setProvisioningStatus(TenantProvisioningStatus.INITIALIZING);
+        doReturn(seeding).when(svc).getTenantInfo(1L);
+
+        assertTrue(svc.isTenantActive(1L), "still ACTIVE — its seeders need to write to it");
+        assertFalse(svc.isTenantProvisioned(1L), "but not yet built");
+    }
+
+    private static TenantInfo withProvisioning(TenantProvisioningStatus status) {
+        TenantInfo t = tenant(TenantStatus.ACTIVE);
+        t.setProvisioningStatus(status);
+        return t;
     }
 }
