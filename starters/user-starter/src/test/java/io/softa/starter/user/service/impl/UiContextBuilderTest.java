@@ -7,6 +7,8 @@ import java.util.Set;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.test.util.ReflectionTestUtils;
+import io.softa.framework.base.context.ContextHolder;
+import io.softa.framework.base.context.Context;
 import tools.jackson.databind.node.ArrayNode;
 import tools.jackson.databind.node.JsonNodeFactory;
 
@@ -183,6 +185,77 @@ class UiContextBuilderTest {
         // "ai" module not entitled → its nav + permission dropped; "core-hr" kept.
         assertThat(access.getNavigations()).containsExactly("core-hr.employee");
         assertThat(access.getPermissions()).containsExactly("employee.view");
+    }
+
+    // ─── build() for a tenant admin — the live uiContext, not the role-detail display ───
+    //
+    // The two paths above compute the same thing for the role-detail page, which is read-only. These
+    // cover build(), which is what a logged-in admin's own uiContext comes from, and which had no plan
+    // narrowing at all: the sidebar showed modules the tenant no longer pays for. Worth pinning
+    // separately because nothing makes the two paths agree — they are hand-written twins.
+
+    /** A tenant admin logged into tenant 7, with the two-module nav tree the plan cases below narrow. */
+    private void tenantAdminOf(Long tenantId) {
+        when(userRoleRelService.searchList(any(FlexQuery.class))).thenReturn(List.of(rel(42L, 1L)));
+        when(roleService.searchList(any(FlexQuery.class))).thenReturn(List.of(role(1L, "TENANT_ADMIN")));
+        when(navigationModelResolver.allNavigations()).thenReturn(List.of(
+                nav("core-hr.employee", null, NavigationType.MENU),
+                nav("payroll.pay-item", null, NavigationType.MENU)));
+        when(modelService.searchList(eq("Permission"), any(FlexQuery.class))).thenReturn(List.of(
+                Map.of("id", "employee.view", "navigationId", "core-hr.employee"),
+                Map.of("id", "pay-item.view", "navigationId", "payroll.pay-item")));
+        Context ctx = new Context();
+        ctx.setTenantId(tenantId);
+        ctx.setUserId(42L);
+        this.ctx = ctx;
+    }
+
+    private Context ctx;
+
+    private UiContext buildAsTenantAdmin() {
+        return ContextHolder.callWith(ctx, () -> builder.build(42L));
+    }
+
+    @Test
+    void build_tenantAdmin_narrowedByPlanEntitlement() {
+        // The reported bug: after a Pro→Free downgrade, uiContext still listed navigation.payroll.
+        // A tenant admin holds no static nav grants, so the downgrade cleanup had nothing to strip for
+        // it — narrowing here is the only thing that can take the module away.
+        tenantAdminOf(7L);
+        EntitlementService gate = mock(EntitlementService.class);
+        when(gate.entitledModules(7L)).thenReturn(Set.of("core-hr"));
+        ReflectionTestUtils.setField(builder, "entitlementService", gate);
+
+        UiContext out = buildAsTenantAdmin();
+
+        assertThat(out.getNavigations()).containsExactly("core-hr.employee");
+        assertThat(out.getPermissions()).containsExactly("employee.view");
+    }
+
+    @Test
+    void build_tenantAdmin_resolvesTheEntitledSetOncePerBuild() {
+        // The resolver is cache-aside; calling it per nav spends a Redis round-trip on each of a
+        // hundred-odd navigations to re-read one unchanging set.
+        tenantAdminOf(7L);
+        EntitlementService gate = mock(EntitlementService.class);
+        when(gate.entitledModules(7L)).thenReturn(Set.of("core-hr", "payroll"));
+        ReflectionTestUtils.setField(builder, "entitlementService", gate);
+
+        buildAsTenantAdmin();
+
+        org.mockito.Mockito.verify(gate, org.mockito.Mockito.times(1)).entitledModules(7L);
+    }
+
+    @Test
+    void build_tenantAdmin_noGateInstalled_keepsEveryModule() {
+        // A pure-enforce deployment without tenant-starter has no gate. Narrowing to nothing there
+        // would empty the sidebar of every admin on it.
+        tenantAdminOf(7L);   // entitlementService left unset
+
+        UiContext out = buildAsTenantAdmin();
+
+        assertThat(out.getNavigations())
+                .containsExactlyInAnyOrder("core-hr.employee", "payroll.pay-item");
     }
 
     // ─── helpers ───
