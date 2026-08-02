@@ -19,8 +19,14 @@ class EndpointIndexTest {
     }
 
     private EndpointIndex build(List<PermissionEndpointDef> permissions) {
+        return build("", permissions);
+    }
+
+    /** Same, with the host app's context path — what Spring injects via {@code @Value}. */
+    private EndpointIndex build(String contextPath, List<PermissionEndpointDef> permissions) {
         PermissionEndpointSource source = () -> permissions;
         EndpointIndex idx = new EndpointIndex(source);
+        idx.contextPath = contextPath;
         idx.init();
         return idx;
     }
@@ -35,10 +41,42 @@ class EndpointIndexTest {
     }
 
     @Test
-    void endpointWithApiPrefix_throws() {
-        assertThatThrownBy(() -> build(List.of(explicit("bad", "POST /api/Employee/searchList"))))
+    void endpointRepeatingTheContextPath_throws() {
+        assertThatThrownBy(() -> build("/api/hcm",
+                List.of(explicit("bad", "POST /api/hcm/Employee/searchList"))))
                 .isInstanceOf(IllegalStateException.class)
-                .hasMessageContaining("must NOT include the '/api' prefix");
+                .hasMessageContaining("must NOT include the '/api/hcm' context path");
+    }
+
+    @Test
+    void endpointEqualToTheContextPath_throws() {
+        assertThatThrownBy(() -> build("/api/hcm", List.of(explicit("bad", "POST /api/hcm"))))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("must NOT include the '/api/hcm' context path");
+    }
+
+    /**
+     * The reason this check keys off the configured context path rather than the literal
+     * {@code "/api"}: a controller may own an {@code /api/*} namespace <i>inside</i> the context.
+     * message-starter's MailApiController is mapped to {@code /api/mail}, so under the context
+     * {@code /api/hcm} the browser calls {@code /api/hcm/api/mail/templates/preview} and the
+     * servletPath the index matches is {@code /api/mail/templates/preview} — legitimately starting
+     * with {@code /api}. A literal prefix test rejected it and took the whole app down at boot.
+     */
+    @Test
+    void endpointUnderAnApiNamespaceInsideTheContext_isRegistered() {
+        EndpointIndex idx = build("/api/hcm",
+                List.of(explicit("mail.preview", "POST /api/mail/templates/preview")));
+
+        assertThat(idx.lookup("/api/mail/templates/preview", "POST")).containsExactly("mail.preview");
+    }
+
+    /** No context path configured (app served at the root) — there is no prefix to repeat. */
+    @Test
+    void endpointWithApiPrefix_whenAppServedAtRoot_isRegistered() {
+        EndpointIndex idx = build(List.of(explicit("mail.send", "POST /api/mail/send")));
+
+        assertThat(idx.lookup("/api/mail/send", "POST")).containsExactly("mail.send");
     }
 
     @Test
