@@ -41,10 +41,24 @@ public class Permission extends AuditableModel {
     @Field(length = 128, description = "Display name shown in admin Wizard (e.g. 'Transfer Employee')")
     private String name;
 
-    @Field(description = "Explicit endpoint list for non-conventional URLs; null means EndpointIndex derives by convention. "
-            + "Format: ['POST /<Model>/<action>', ...] — NO /api prefix (EndpointIndex matches against servletPath which is "
-            + "already stripped of the app context by Spring). Path must start with '/'; entries with a leading '/api' or "
-            + "missing '/' are rejected at startup.")
+    /**
+     * Explicit endpoints, or null to let {@code EndpointIndex} derive them by convention.
+     *
+     * <p>Entries are matched against {@code HttpServletRequest.getServletPath()}, which Spring has
+     * already stripped of {@code server.servlet.context-path} — so write the in-app path and leave
+     * the context out. Repeating it (or omitting the leading {@code '/'}) is rejected at startup
+     * rather than silently producing a permission that matches nothing.
+     *
+     * <p>A path may legitimately begin with {@code /api}: message-starter's {@code MailApiController}
+     * and {@code SmsApiController} own the {@code /api/mail} and {@code /api/sms} namespaces
+     * <i>inside</i> the context, so under {@code /api/hcm} the browser calls
+     * {@code /api/hcm/api/mail/send} and the servletPath is {@code /api/mail/send}. The check keys
+     * off the configured context path for exactly this reason.
+     */
+    @Field(description = "Explicit endpoint list for non-conventional URLs; null means EndpointIndex derives by "
+            + "convention. Format: ['POST /<Model>/<action>', ...]. Write the in-app path — the app context is "
+            + "already stripped before matching, so entries repeating it or missing the leading '/' are rejected "
+            + "at startup.")
     private JsonNode endpoints;
 
     @Field(length = 256, description = "Optional description")
