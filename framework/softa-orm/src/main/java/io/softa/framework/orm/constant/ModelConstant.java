@@ -27,7 +27,10 @@ public interface ModelConstant {
     String TENANT_ID_COLUMN = "tenant_id";
     // Reserved field: Version number identifier, used for optimistic lock control
     String VERSION = "version";
-    Integer DEFAULT_VERSION = 1;
+    // Starting value of the optimistic-lock version, materialized into the catalog
+    // (sys_field/design_field.default_value) by both authoring lanes and stamped onto
+    // every insert by DataCreatePipeline.
+    Integer DEFAULT_VERSION = 0;
 
     // Model translation suffix
     String MODEL_TRANS_SUFFIX = "Trans";

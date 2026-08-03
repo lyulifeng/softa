@@ -559,9 +559,15 @@ public class ModelManager {
      */
     private static void validateVersionField(MetaModel metaModel) {
         if (metaModel.isVersionLock()) {
-            Assert.isTrue(modelFields().get(metaModel.getModelName()).containsKey(ModelConstant.VERSION),
-                    "The model {0} must contain the `version` field when using optimistic lock control!",
+            MetaField versionField = modelFields().get(metaModel.getModelName()).get(ModelConstant.VERSION);
+            Assert.notNull(versionField, "The model {0} must contain the `version` field when using optimistic lock control!",
                     metaModel.getModelName());
+            // version is readonly (see verifyReadonlyAttribute) and stamped by DataCreatePipeline on
+            // every insert, so it always needs a concrete starting value. Only fill the gap when the
+            // field author declared none — an explicit @Field(defaultValue=...) still wins.
+            if (versionField.getDefaultValueObject() == null) {
+                versionField.setDefaultValueObject(ModelConstant.DEFAULT_VERSION);
+            }
         }
     }
 

@@ -70,6 +70,9 @@ public class DataCreatePipeline extends DataPipeline {
         if (ModelManager.isMultiTenantModel(modelName)) {
             this.storedFields.add(ModelConstant.TENANT_ID);
         }
+        if (ModelManager.isVersionControl(modelName)) {
+            this.storedFields.add(ModelConstant.VERSION);
+        }
     }
 
     /**
@@ -117,6 +120,8 @@ public class DataCreatePipeline extends DataPipeline {
         AutofillFields.fillAuditFieldsForInsert(modelName, rows, createdTime);
         // Fill in the tenant field for multi-tenant models
         AutofillFields.fillTenantFieldForInsert(modelName, rows);
+        // Fill in the optimistic-lock version's starting value for versionLock models
+        AutofillFields.fillVersionFieldForInsert(modelName, rows);
         return rows;
     }
 
