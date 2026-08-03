@@ -76,7 +76,7 @@ CREATE TABLE sys_field(
     copyable TINYINT(1) NOT NULL DEFAULT 1 COMMENT 'Copyable' ,
     unsearchable TINYINT(1)   DEFAULT 0 COMMENT 'Unsearchable' ,
     computed TINYINT(1)   DEFAULT 0 COMMENT 'Is Computed' ,
-    expression TEXT(20000)    COMMENT 'Expression' ,
+    expression MEDIUMTEXT    COMMENT 'Expression' ,
     dynamic TINYINT(1)   DEFAULT 0 COMMENT 'Dynamic Field' ,
     encrypted TINYINT(1)   DEFAULT 0 COMMENT 'Is Encrypted' ,
     auto_sequence TINYINT(1)   DEFAULT 0 COMMENT 'Auto Sequence;Auto-fill from a sequence on INSERT when blank' ,
