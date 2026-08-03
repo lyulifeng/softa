@@ -1,5 +1,6 @@
 package io.softa.starter.metadata.scanner;
 
+import java.time.LocalDateTime;
 import java.util.*;
 import java.util.stream.Collectors;
 import lombok.extern.slf4j.Slf4j;
@@ -10,9 +11,13 @@ import org.springframework.stereotype.Component;
 
 import io.softa.framework.base.config.SystemConfig;
 import io.softa.framework.orm.meta.MetadataInitializer;
+import io.softa.starter.metadata.checksum.CatalogFingerprint;
 import io.softa.starter.metadata.config.MetadataProperties;
 import io.softa.starter.metadata.ddl.DdlOrchestrator;
 import io.softa.starter.metadata.ddl.ReferenceColumnResolver;
+import io.softa.starter.metadata.ddl.introspect.PhysicalDriftAuditor;
+import io.softa.starter.metadata.ddl.introspect.PhysicalDriftReport;
+import io.softa.starter.metadata.ddl.introspect.PhysicalSchema;
 import io.softa.starter.metadata.ddl.spi.BuiltinDdlMetadataResolver;
 import io.softa.starter.metadata.entity.SysField;
 import io.softa.starter.metadata.entity.SysModel;
@@ -196,6 +201,18 @@ public class MetadataAnnotationScanner implements MetadataInitializer {
                 fromDb.models().size(), fromDb.fields().size(),
                 fromDb.optionSets().size(), fromDb.optionItems().size());
 
+        // One physical snapshot serves the whole-catalog drift audit AND the DDL recovery
+        // planning below (null when introspection failed — recovery then degrades to plain
+        // diff planning). The audit runs on every boot — an idempotent diff can still hide
+        // hand-made physical drift, and this consolidated report surfaces all of it at once.
+        PhysicalSchema facts = ddlOrchestrator.introspect(fromCode.models());
+        PhysicalDriftReport physicalDrift = null;
+        if (facts != null) {
+            physicalDrift = PhysicalDriftAuditor.audit(
+                    fromCode.models(), fromCode.fields(), fromCode.modelIndexes(), facts);
+            PhysicalDriftAuditor.warn(physicalDrift, "MetadataAnnotationScanner");
+        }
+
         SchemaDiff diff = pipeline.diff(fromCode, fromDb);
         if (diff.isEmpty()) {
             log.info("MetadataAnnotationScanner: no changes detected (idempotent boot)");
@@ -210,7 +227,7 @@ public class MetadataAnnotationScanner implements MetadataInitializer {
             // empty and the failed DDL is never re-attempted. Re-running DDL that
             // already succeeded is absorbed by DdlErrorClassifier's
             // already-applied degradation (1050/1060/1061/42P07 → WARN).
-            ddlOrchestrator.apply(diff, fromCode.models(), fromCode.fields());
+            ddlOrchestrator.apply(diff, fromCode.models(), fromCode.fields(), fromCode.modelIndexes(), facts);
             writer.apply(diff);
             log.info("MetadataAnnotationScanner: applied {} row change(s) to sys_*", diff.totalCount());
         }
@@ -230,5 +247,13 @@ public class MetadataAnnotationScanner implements MetadataInitializer {
         if (linked > 0) {
             log.info("MetadataAnnotationScanner: resolved surrogate FK(s) on {} sys_* row(s)", linked);
         }
+
+        // Boot health snapshot for GET /metadata/status. The in-scope catalog now equals the
+        // code by construction (either the diff was empty or it was just applied), so both
+        // fingerprints are the code-side one.
+        String fingerprint = CatalogFingerprint.of(fromCode.models(), fromCode.fields(),
+                fromCode.modelIndexes(), fromCode.optionSets(), fromCode.optionItems());
+        MetadataStatus.record(new MetadataStatus("scanner", fingerprint, fingerprint,
+                true, diff.totalCount(), physicalDrift, LocalDateTime.now()));
     }
 }

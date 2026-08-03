@@ -1,4 +1,4 @@
-package io.softa.starter.studio.release.connector;
+package io.softa.starter.metadata.ddl.introspect;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNull;

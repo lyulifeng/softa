@@ -1,4 +1,4 @@
-package io.softa.starter.studio.release.connector;
+package io.softa.starter.metadata.ddl.introspect;
 
 import java.sql.Types;
 import java.util.Map;
@@ -61,6 +61,15 @@ public final class JdbcTypeReverse {
             Map.entry(Types.TIME_WITH_TIMEZONE, FieldType.TIME),
             Map.entry(Types.TIMESTAMP, FieldType.DATE_TIME),
             Map.entry(Types.TIMESTAMP_WITH_TIMEZONE, FieldType.DATE_TIME));
+
+    /**
+     * The primitive equivalence class a JDBC type code belongs to, or {@code null} when
+     * unmapped — unlike {@link #reverse}, no STRING placeholder: {@code PhysicalTypeCompat}
+     * treats an unmapped physical type as incomparable rather than pretending it is text.
+     */
+    public static FieldType primitiveClass(int jdbcType) {
+        return PRIMITIVE.get(jdbcType);
+    }
 
     /**
      * Reverse a physical column to its logical {@link ReversedColumn}.

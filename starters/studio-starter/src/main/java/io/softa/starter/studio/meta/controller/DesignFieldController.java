@@ -13,6 +13,7 @@ import io.softa.framework.web.response.ApiResponse;
 import io.softa.starter.studio.meta.entity.DesignField;
 import io.softa.starter.studio.meta.service.DesignFieldService;
 import io.softa.starter.studio.meta.support.DesignFieldRelationStamper;
+import io.softa.starter.studio.meta.support.DesignVersionDefaultStamper;
 
 /**
  * DesignField Model Controller.
@@ -20,8 +21,9 @@ import io.softa.starter.studio.meta.support.DesignFieldRelationStamper;
  * <p>On top of the per-env identity stamp inherited from {@link AbstractDesignWriteController}, each
  * write row also has the system-computed {@code relatedFieldType} (and mirrored {@code length}/{@code
  * scale}) stamped — so a TO_ONE FK's physical type is materialized at edit time and read straight
- * back by every DDL path. All other model APIs (getById, search, delete, copy, ...) fall through to
- * the generic controller unchanged.
+ * back by every DDL path — and a {@code version} field of a versionLock model has its starting
+ * default materialized ({@link DesignVersionDefaultStamper}). All other model APIs (getById, search,
+ * delete, copy, ...) fall through to the generic controller unchanged.
  */
 @Tag(name = "DesignField")
 @RestController
@@ -32,6 +34,9 @@ public class DesignFieldController extends AbstractDesignWriteController<DesignF
 
     @Autowired
     private DesignFieldRelationStamper relationStamper;
+
+    @Autowired
+    private DesignVersionDefaultStamper versionDefaultStamper;
 
     @Override
     protected String modelName() {
@@ -47,12 +52,14 @@ public class DesignFieldController extends AbstractDesignWriteController<DesignF
     protected void onCreate(Map<String, Object> row) {
         super.onCreate(row);
         relationStamper.stamp(row);
+        versionDefaultStamper.stamp(row);
     }
 
     @Override
     protected void onUpdate(Map<String, Object> row) {
         super.onUpdate(row);
         relationStamper.stamp(row);
+        versionDefaultStamper.stamp(row);
     }
 
     /**

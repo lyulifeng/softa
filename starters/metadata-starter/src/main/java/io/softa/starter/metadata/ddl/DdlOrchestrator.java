@@ -3,21 +3,25 @@ package io.softa.starter.metadata.ddl;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.function.Function;
 import java.util.stream.Collectors;
+import javax.sql.DataSource;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.dao.DataAccessException;
 import org.springframework.jdbc.BadSqlGrammarException;
 import org.springframework.jdbc.core.JdbcTemplate;
 
-import io.softa.framework.base.utils.StringTools;
 import io.softa.framework.orm.enums.DatabaseType;
 import io.softa.framework.orm.jdbc.database.DBUtil;
 import io.softa.starter.metadata.ddl.DdlPolicy.ModelOps;
 import io.softa.starter.metadata.ddl.context.ModelDdlCtx;
 import io.softa.starter.metadata.ddl.dialect.DdlDialect;
+import io.softa.starter.metadata.ddl.introspect.PhysicalSchema;
+import io.softa.starter.metadata.ddl.introspect.PhysicalSchemaReader;
+import io.softa.starter.metadata.ddl.introspect.PhysicalTypeCompat;
 import io.softa.starter.metadata.ddl.spi.DdlMetadataResolver;
 import io.softa.starter.metadata.entity.SysField;
 import io.softa.starter.metadata.entity.SysModel;
@@ -68,6 +72,19 @@ import io.softa.starter.metadata.scanner.diff.SchemaDiff;
  * WARN for that statement only (assumes manual run of equivalent SQL already
  * happened); the remaining statements still execute.
  *
+ * <p><b>Physical recovery</b>: the diff is
+ * computed against {@code sys_*}, which a hand-touched database can leave out of step with the
+ * physical schema — a planned MODIFY can target a hand-dropped column, planned ALTERs a
+ * hand-dropped table, a planned CREATE a pre-existing table. Before rendering, the orchestrator
+ * snapshots the managed tables ({@link PhysicalSchemaReader}) and prepends <b>additive-only</b>
+ * recovery units (labelled {@code [physical-recovery]}): the missing column / table is
+ * recreated from the code definition, a pre-existing table is adopted column-by-column. The
+ * originally planned statements always still render <i>after</i> the recovery unit — on a true
+ * recovery they re-assert as no-ops or degrade as already-applied, and when the introspection
+ * itself was stale they carry the real change — so wrong facts can only add WARN noise, never
+ * lose a change. Introspection failure logs a WARN and disables recovery for that run (the
+ * planning then runs purely from the metadata diff — no knob, graceful degradation only).
+ *
  * <p>Failure handling: non-degradable SQL errors propagate as runtime
  * exceptions, which surface in {@code MetadataAnnotationScanner.initialize()}
  * and fail the {@code AppStartup} sequence (fail-fast while the scanner is
@@ -80,6 +97,9 @@ import io.softa.starter.metadata.scanner.diff.SchemaDiff;
 @Slf4j
 public class DdlOrchestrator {
 
+    /** Label marker on units the physical-recovery planning prepended. */
+    static final String RECOVERY_TAG = "[physical-recovery]";
+
     private final JdbcTemplate jdbcTemplate;
     private final DdlMetadataResolver metadataResolver;
     private final String datasourceUrl;
@@ -90,6 +110,18 @@ public class DdlOrchestrator {
         this.jdbcTemplate = jdbcTemplate;
         this.metadataResolver = metadataResolver;
         this.datasourceUrl = datasourceUrl;
+    }
+
+    /** Compatibility overload without from-code indexes (physical table recovery then recreates without them). */
+    public void apply(SchemaDiff diff, List<SysModel> allCodeModels, List<SysField> allCodeFields) {
+        apply(diff, allCodeModels, allCodeFields, List.of());
+    }
+
+    /** Self-introspecting overload: snapshots the managed tables itself (skipped on an empty diff). */
+    public void apply(SchemaDiff diff, List<SysModel> allCodeModels, List<SysField> allCodeFields,
+                      List<SysModelIndex> allCodeIndexes) {
+        apply(diff, allCodeModels, allCodeFields, allCodeIndexes,
+                diff.isEmpty() ? null : introspect(allCodeModels));
     }
 
     /**
@@ -107,9 +139,21 @@ public class DdlOrchestrator {
      *                       complete field→column mapping for index DDL, so that
      *                       indexes referencing pre-existing fields with custom
      *                       {@code columnName} are resolved correctly
+     * @param allCodeIndexes all from-code {@code SysModelIndex}es — used to
+     *                       recreate the full index set when physical recovery
+     *                       rebuilds a hand-dropped table
+     * @param facts          the physical snapshot to plan recovery against, or
+     *                       {@code null} to plan purely from the metadata diff —
+     *                       the scanner shares its audit snapshot here
      */
-    public void apply(SchemaDiff diff, List<SysModel> allCodeModels, List<SysField> allCodeFields) {
-        List<RenderedDdl> rendered = render(diff, allCodeModels, allCodeFields);
+    public void apply(SchemaDiff diff, List<SysModel> allCodeModels, List<SysField> allCodeFields,
+                      List<SysModelIndex> allCodeIndexes, PhysicalSchema facts) {
+        List<RenderedDdl> rendered = render(diff, allCodeModels, allCodeFields, allCodeIndexes, facts);
+        long recovered = rendered.stream().filter(d -> d.label().contains(RECOVERY_TAG)).count();
+        if (recovered > 0) {
+            log.warn("DdlOrchestrator: physical schema drift detected — {} additive recovery unit(s) "
+                    + "prepended (see the {} labels below)", recovered, RECOVERY_TAG);
+        }
         int executed = 0;
         int skipped = 0;
         List<RenderedDdl> deferred = new ArrayList<>();
@@ -118,18 +162,49 @@ public class DdlOrchestrator {
                 deferred.add(ddl);
                 continue;
             }
+            boolean firstStatement = true;
             for (String statement : ddl.statements()) {
-                if (executeStatement(ddl.kind(), ddl.label(), statement)) {
+                boolean ran = executeStatement(ddl.kind(), ddl.label(), statement);
+                if (ran) {
                     executed++;
                 } else {
                     skipped++;
                 }
+                // A degraded CREATE TABLE means the table pre-exists with an unknown shape: the
+                // unit's remaining statements (PostgreSQL renders COMMENT ON ... separately) may
+                // reference columns the physical table lacks — skip them. Adoption / recovery
+                // units carry their own comments for whatever they actually add. Index-rebuild
+                // units keep running after a degraded DROP half (the ADD half must still apply).
+                if (firstStatement && !ran && ddl.kind() == RenderedDdl.Kind.CREATE_TABLE) {
+                    break;
+                }
+                firstStatement = false;
             }
         }
         warnDeferred(deferred);
         log.info("DdlOrchestrator: executed {} DDL statement(s), skipped {} already applied; "
-                        + "{} drop/rename operation(s) deferred to manual SQL",
+                        + "{} drop/rename/narrowing operation(s) deferred to manual SQL",
                 executed, skipped, deferred.size());
+    }
+
+    /**
+     * Snapshot the managed tables' physical shape for recovery planning — also called by the
+     * scanner so one snapshot serves both the drift audit and the recovery. Any failure
+     * (introspection is an optimization, never a gate) degrades to "no facts" — the
+     * render then plans purely from the metadata diff, the pre-introspection behavior.
+     */
+    public PhysicalSchema introspect(List<SysModel> allCodeModels) {
+        DataSource dataSource = jdbcTemplate.getDataSource();
+        if (dataSource == null) {
+            return null;
+        }
+        try {
+            return PhysicalSchemaReader.readManagedTables(dataSource, allCodeModels);
+        } catch (Exception e) {
+            log.warn("DdlOrchestrator: physical schema introspection unavailable — recovery planning "
+                    + "disabled for this run: {}", e.getMessage());
+            return null;
+        }
     }
 
     /**
@@ -145,7 +220,7 @@ public class DdlOrchestrator {
                 .map(ddl -> "-- " + ddl.label() + "\n" + ddl.sql())
                 .collect(Collectors.joining("\n\n"));
         log.warn("""
-                DdlOrchestrator: {} operation(s) not auto-executed (data-bearing changes, like DROP / RENAME).
+                DdlOrchestrator: {} operation(s) not auto-executed (data-bearing changes: DROP / RENAME / narrowing MODIFY).
                 To apply manually:
                 {}""", deferred.size(), block.indent(4).stripTrailing());
     }
@@ -157,7 +232,8 @@ public class DdlOrchestrator {
      * then per-model CREATE, per-change ALTERs (column adds / modifies / declared
      * renames, then index adds / rebuilds) and per-model DROP hints (warn).
      */
-    private List<RenderedDdl> render(SchemaDiff diff, List<SysModel> allCodeModels, List<SysField> allCodeFields) {
+    private List<RenderedDdl> render(SchemaDiff diff, List<SysModel> allCodeModels, List<SysField> allCodeFields,
+                                     List<SysModelIndex> allCodeIndexes, PhysicalSchema facts) {
         if (diff.isEmpty()) {
             return List.of();
         }
@@ -179,11 +255,24 @@ public class DdlOrchestrator {
         for (ModelOps op : ops) {
             Map<String, String> modelFieldToColumn =
                     fieldToColumnByModel.getOrDefault(op.model().getModelName(), Map.of());
+            // Physical recovery: ALTERs against a hand-dropped table would all fail on
+            // "unknown table" — recreate it from the full code definition first. The planned
+            // ALTERs still render below: on the fresh table they re-assert as no-ops /
+            // already-applied WARNs, and they carry the real change if the facts were stale.
+            boolean tableMissing = facts != null && !facts.tableExists(effectiveTableName(op.model()));
             switch (op.operation()) {
-                case CREATE_TABLE -> renderCreate(dialect, op, out);
-                case ALTER_TABLE -> renderAlter(dialect, op, modelFieldToColumn, out);
+                case CREATE_TABLE -> renderCreate(dialect, op, facts, out);
+                case ALTER_TABLE -> {
+                    if (tableMissing) {
+                        renderRecoveredCreate(dialect, op.model(), allCodeFields, allCodeIndexes, out);
+                    }
+                    renderAlter(dialect, op, modelFieldToColumn, facts, out);
+                }
                 case ALTER_TABLE_WITH_DROP_WARNING -> {
-                    renderAlter(dialect, op, modelFieldToColumn, out);
+                    if (tableMissing) {
+                        renderRecoveredCreate(dialect, op.model(), allCodeFields, allCodeIndexes, out);
+                    }
+                    renderAlter(dialect, op, modelFieldToColumn, facts, out);
                     renderDropColumn(dialect, op, out);
                     renderDropIndex(dialect, op, out);
                 }
@@ -193,9 +282,34 @@ public class DdlOrchestrator {
         return out;
     }
 
+    /**
+     * Physical recovery for a hand-dropped table behind planned ALTERs: recreate it from the
+     * complete from-code definition (all of the model's fields + indexes, not just the diff'd
+     * ones), so the subsequent ALTER units land on a fully-shaped table.
+     */
+    private void renderRecoveredCreate(DdlDialect dialect, SysModel model,
+                                       List<SysField> allCodeFields, List<SysModelIndex> allCodeIndexes,
+                                       List<RenderedDdl> out) {
+        List<SysField> modelFields = allCodeFields.stream()
+                .filter(f -> model.getModelName().equals(f.getModelName())).toList();
+        List<SysModelIndex> modelIndexes = allCodeIndexes.stream()
+                .filter(i -> model.getModelName().equals(i.getModelName())).toList();
+        ModelDdlCtx ctx = SysDdlContextBuilder.forCreate(model, modelFields, modelIndexes);
+        if (ctx.getCreatedFields().isEmpty()) {
+            log.warn("DdlOrchestrator: table {} is physically missing but the code definition has no "
+                            + "stored fields to recreate it from — the planned ALTERs will fail",
+                    effectiveTableName(model));
+            return;
+        }
+        String sql = dialect.createTableDDL(ctx).toString();
+        out.add(RenderedDdl.of(RenderedDdl.Kind.CREATE_TABLE,
+                "CREATE TABLE " + ctx.getTableName() + " " + RECOVERY_TAG + " table missing, recreated from code",
+                sql));
+    }
+
     // ---- per-operation rendering --------------------------------------
 
-    private void renderCreate(DdlDialect dialect, ModelOps op, List<RenderedDdl> out) {
+    private void renderCreate(DdlDialect dialect, ModelOps op, PhysicalSchema facts, List<RenderedDdl> out) {
         ModelDdlCtx ctx = SysDdlContextBuilder.forCreate(
                 op.model(), op.createFields(), op.createIndexes());
         if (ctx.getCreatedFields().isEmpty()) {
@@ -205,6 +319,41 @@ public class DdlOrchestrator {
         }
         String sql = dialect.createTableDDL(ctx).toString();
         out.add(RenderedDdl.of(RenderedDdl.Kind.CREATE_TABLE, "CREATE TABLE " + ctx.getTableName(), sql));
+        renderAdoptedTableChanges(dialect, op, facts, out);
+    }
+
+    /**
+     * Physical recovery for a planned CREATE whose table already exists (the model's
+     * {@code sys_*} rows were removed while the physical table survived): the CREATE above
+     * degrades to already-applied, and the pre-existing table is adopted by adding whatever
+     * declared columns / indexes it physically lacks — instead of silently keeping the drift.
+     */
+    private void renderAdoptedTableChanges(DdlDialect dialect, ModelOps op, PhysicalSchema facts,
+                                           List<RenderedDdl> out) {
+        String table = effectiveTableName(op.model());
+        if (facts == null || !facts.tableExists(table)) {
+            return;
+        }
+        for (SysField field : op.createFields()) {
+            if (!facts.columnExists(table, effectiveColumnName(field))) {
+                renderFieldChange(dialect,
+                        SysDdlContextBuilder.forAlter(op.model(), List.of(field), List.of(), List.of(), List.of()),
+                        RenderedDdl.Kind.ALTER_TABLE,
+                        "ADD COLUMN " + columnLabel(op.model(), field) + " " + RECOVERY_TAG
+                                + " adopted pre-existing table", out);
+            }
+        }
+        Map<String, String> fieldToColumn = new HashMap<>();
+        addAllFieldMappings(fieldToColumn, op.createFields());
+        for (SysModelIndex index : op.createIndexes()) {
+            if (!facts.indexExists(table, index.getIndexName())) {
+                renderIndexChange(dialect,
+                        SysDdlContextBuilder.forIndexChanges(op.model(), fieldToColumn,
+                                List.of(index), List.of(), List.of()),
+                        "ADD INDEX " + index.getIndexName() + " " + RECOVERY_TAG
+                                + " adopted pre-existing table", out);
+            }
+        }
     }
 
     /**
@@ -215,8 +364,9 @@ public class DdlOrchestrator {
      * ({@link #renderDropColumn} / {@link #renderDropIndex}).
      */
     private void renderAlter(DdlDialect dialect, ModelOps op,
-                             Map<String, String> modelFieldToColumn, List<RenderedDdl> out) {
+                             Map<String, String> modelFieldToColumn, PhysicalSchema facts, List<RenderedDdl> out) {
         SysModel model = op.model();
+        String table = effectiveTableName(model);
         for (SysField field : op.fields().added()) {
             renderFieldChange(dialect,
                     SysDdlContextBuilder.forAlter(model, List.of(field), List.of(), List.of(), List.of()),
@@ -224,12 +374,53 @@ public class DdlOrchestrator {
                     "ADD COLUMN " + columnLabel(model, field), out);
         }
         for (SysField field : op.fields().updated()) {
+            // Physical recovery: a MODIFY against a hand-dropped column would fail the boot —
+            // recreate the column first. The original MODIFY still renders below: a no-op
+            // re-assert on the recreated column, and the real change when the recovery ADD
+            // degraded because the facts were stale.
+            if (columnMissingPhysically(facts, table, field)) {
+                renderFieldChange(dialect,
+                        SysDdlContextBuilder.forAlter(model, List.of(field), List.of(), List.of(), List.of()),
+                        RenderedDdl.Kind.ALTER_TABLE,
+                        "ADD COLUMN " + columnLabel(model, field) + " " + RECOVERY_TAG
+                                + " column missing behind planned MODIFY", out);
+            }
+            // Narrowing policy: a MODIFY re-states the full column definition, so executing it
+            // against a physically wider (or type-incomparable) column could truncate data —
+            // even when the triggering delta was only a comment. Widen freely, never narrow
+            // silently; without facts the pre-introspection behavior stands.
+            PhysicalSchema.PhysicalColumn observed =
+                    facts == null ? null : facts.column(table, effectiveColumnName(field));
+            PhysicalTypeCompat.Verdict verdict =
+                    observed == null ? null : PhysicalTypeCompat.compare(field, observed);
+            if (verdict == PhysicalTypeCompat.Verdict.NARROW
+                    || verdict == PhysicalTypeCompat.Verdict.INCOMPARABLE) {
+                renderFieldChange(dialect,
+                        SysDdlContextBuilder.forAlter(model, List.of(), List.of(field), List.of(), List.of()),
+                        RenderedDdl.Kind.ALTER_NARROWING,
+                        "MODIFY COLUMN " + columnLabel(model, field)
+                                + " [" + verdict.name().toLowerCase(Locale.ROOT) + ": "
+                                + PhysicalTypeCompat.describe(field, observed) + "]", out);
+                continue;
+            }
             renderFieldChange(dialect,
                     SysDdlContextBuilder.forAlter(model, List.of(), List.of(field), List.of(), List.of()),
                     RenderedDdl.Kind.ALTER_TABLE,
                     "MODIFY COLUMN " + columnLabel(model, field), out);
         }
         for (DdlPolicy.FieldRename rename : op.fields().renamed()) {
+            // Physical recovery: a declared rename whose old AND new columns are both physically
+            // gone cannot be expressed as CHANGE COLUMN — create the new-shape column; the
+            // original CHANGE below then degrades via the old-column-gone classification.
+            if (facts != null && facts.tableExists(table)
+                    && !facts.columnExists(table, rename.oldColumnName())
+                    && !facts.columnExists(table, effectiveColumnName(rename.field()))) {
+                renderFieldChange(dialect,
+                        SysDdlContextBuilder.forAlter(model, List.of(rename.field()), List.of(), List.of(), List.of()),
+                        RenderedDdl.Kind.ALTER_TABLE,
+                        "ADD COLUMN " + columnLabel(model, rename.field()) + " " + RECOVERY_TAG
+                                + " both rename sides missing", out);
+            }
             renderFieldChange(dialect,
                     SysDdlContextBuilder.forAlter(model, List.of(), List.of(), List.of(rename), List.of()),
                     RenderedDdl.Kind.DECLARED_COLUMN_RENAME,
@@ -237,6 +428,12 @@ public class DdlOrchestrator {
                             + columnLabel(model, rename.field()), out);
         }
         renderIndexChanges(dialect, op, modelFieldToColumn, out);
+    }
+
+    /** True only on a positive fact: the table was introspected and lacks this field's column. */
+    private static boolean columnMissingPhysically(PhysicalSchema facts, String table, SysField field) {
+        return facts != null && facts.tableExists(table)
+                && !facts.columnExists(table, effectiveColumnName(field));
     }
 
     private void renderFieldChange(DdlDialect dialect, ModelDdlCtx ctx,
@@ -251,10 +448,11 @@ public class DdlOrchestrator {
     }
 
     private static String columnLabel(SysModel model, SysField field) {
-        String column = field.getColumnName() != null && !field.getColumnName().isBlank()
-                ? field.getColumnName()
-                : StringTools.toUnderscoreCase(field.getFieldName());
-        return column + " ON " + effectiveTableName(model);
+        return effectiveColumnName(field) + " ON " + effectiveTableName(model);
+    }
+
+    private static String effectiveColumnName(SysField field) {
+        return SysDdlContextBuilder.resolveColumnName(field);
     }
 
     private void renderIndexChanges(DdlDialect dialect, ModelOps op,
@@ -342,12 +540,8 @@ public class DdlOrchestrator {
         }
     }
 
-    /** Blank tableName means derived: snake_case(modelName) — compare effective names. */
     private static String effectiveTableName(SysModel model) {
-        if (model.getTableName() != null && !model.getTableName().isBlank()) {
-            return model.getTableName();
-        }
-        return StringTools.toUnderscoreCase(model.getModelName());
+        return SysDdlContextBuilder.resolveTableName(model);
     }
 
     private void renderDropTable(DdlDialect dialect, ModelOps op, List<RenderedDdl> out) {

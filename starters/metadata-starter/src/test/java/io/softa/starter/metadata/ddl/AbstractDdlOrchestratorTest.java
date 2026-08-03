@@ -286,6 +286,53 @@ abstract class AbstractDdlOrchestratorTest {
         assertEquals(256, length, "MODIFY COLUMN should have widened email to 256");
     }
 
+    // ---- scenario C2: narrowing MODIFY is NOT auto-executed (warn-only) ----
+
+    @Test
+    void narrowingModify_isDeferredNotExecuted() {
+        // The physical column is wider than the declared target. A MODIFY re-states the full
+        // column definition, so executing it could truncate data (MySQL non-strict silently
+        // truncates) — it joins the warn-only tier and the column keeps its physical width.
+        jdbcTemplate.execute("CREATE TABLE customer (id BIGINT NOT NULL PRIMARY KEY, email VARCHAR(256))");
+
+        SysField wide = field("Customer", "email", FieldType.STRING, 256, false);
+        SysField narrow = field("Customer", "email", FieldType.STRING, 64, false);
+        SchemaDiff diff = diffOf(
+                List.of(), List.of(),
+                List.of(new Modification<>(narrow, wide)),
+                List.of(), List.of());
+        applyDiff(diff, codeModels(diff, customer()), codeFields(diff));
+
+        Integer length = jdbcTemplate.queryForObject(
+                "SELECT CHARACTER_MAXIMUM_LENGTH FROM INFORMATION_SCHEMA.COLUMNS "
+                        + "WHERE LOWER(TABLE_NAME) = LOWER(?) AND LOWER(COLUMN_NAME) = LOWER(?)",
+                Integer.class, "customer", "email");
+        assertEquals(256, length, "a narrowing MODIFY must be deferred to manual SQL, not executed");
+    }
+
+    @Test
+    void narrowingModify_stillExecutes_withoutFacts() {
+        // Without facts (introspection failure) the narrowing guard cannot judge — the
+        // pre-introspection MODIFY policy stands and the statement executes.
+        jdbcTemplate.execute("CREATE TABLE customer (id BIGINT NOT NULL PRIMARY KEY, email VARCHAR(256))");
+
+        SysField wide = field("Customer", "email", FieldType.STRING, 256, false);
+        SysField narrow = field("Customer", "email", FieldType.STRING, 64, false);
+        SchemaDiff diff = diffOf(
+                List.of(), List.of(),
+                List.of(new Modification<>(narrow, wide)),
+                List.of(), List.of());
+        List<SysField> fields = codeFields(diff);
+        ReferenceColumnResolver.stampSysFields(fields);
+        orchestrator.apply(diff, codeModels(diff, customer()), fields, List.of(), null);
+
+        Integer length = jdbcTemplate.queryForObject(
+                "SELECT CHARACTER_MAXIMUM_LENGTH FROM INFORMATION_SCHEMA.COLUMNS "
+                        + "WHERE LOWER(TABLE_NAME) = LOWER(?) AND LOWER(COLUMN_NAME) = LOWER(?)",
+                Integer.class, "customer", "email");
+        assertEquals(64, length, "no facts — the pre-introspection MODIFY policy stands");
+    }
+
     // ---- scenario D: DROP COLUMN is NOT auto-executed (warn-only) -------
 
     @Test
@@ -681,10 +728,10 @@ abstract class AbstractDdlOrchestratorTest {
     }
 
     @Test
-    void modifyColumn_onMissingColumn_failsFast() {
-        // A MODIFY targeting a column that does not exist is genuine drift (e.g. a
-        // hand-run DROP) — it must fail the boot, not be mistaken for an applied
-        // rename. The unknown-column tolerance is scoped to declared renames only.
+    void modifyColumn_onMissingColumn_recreatesTheColumn() {
+        // sys_field ↔ physical drift (a hand-run DROP behind a planned MODIFY): physical
+        // recovery prepends an additive ADD from the code definition and the original MODIFY
+        // then re-asserts on the recreated column — the boot converges instead of failing.
         jdbcTemplate.execute("CREATE TABLE customer (id BIGINT NOT NULL PRIMARY KEY)");
 
         SysField v1 = field("Customer", "vanished", FieldType.STRING, 64, false);
@@ -693,9 +740,97 @@ abstract class AbstractDdlOrchestratorTest {
                 List.of(), List.of(),
                 List.of(new Modification<>(v2, v1)),
                 List.of(), List.of());
+        applyDiff(diff, codeModels(diff, customer()), codeFields(diff));
+
+        assertColumnExists("customer", "vanished");
+        Integer length = jdbcTemplate.queryForObject(
+                "SELECT CHARACTER_MAXIMUM_LENGTH FROM INFORMATION_SCHEMA.COLUMNS "
+                        + "WHERE LOWER(TABLE_NAME) = LOWER(?) AND LOWER(COLUMN_NAME) = LOWER(?)",
+                Integer.class, "customer", "vanished");
+        assertEquals(256, length, "the recreated column must carry the code definition");
+    }
+
+    @Test
+    void modifyColumn_onMissingColumn_failsFast_withoutFacts() {
+        // The no-facts posture stays reachable in production (introspection failure degrades
+        // to facts == null): planning then runs purely from the metadata diff, and genuine
+        // drift behind a planned MODIFY stays a hard boot failure (rows unwritten, retried).
+        jdbcTemplate.execute("CREATE TABLE customer (id BIGINT NOT NULL PRIMARY KEY)");
+
+        SysField v1 = field("Customer", "vanished", FieldType.STRING, 64, false);
+        SysField v2 = field("Customer", "vanished", FieldType.STRING, 256, false);
+        SchemaDiff diff = diffOf(
+                List.of(), List.of(),
+                List.of(new Modification<>(v2, v1)),
+                List.of(), List.of());
+        List<SysField> fields = codeFields(diff);
+        ReferenceColumnResolver.stampSysFields(fields);
 
         assertThrows(org.springframework.dao.DataAccessException.class,
-                () -> applyDiff(diff, codeModels(diff, customer()), codeFields(diff)));
+                () -> orchestrator.apply(diff, codeModels(diff, customer()), fields, List.of(), null));
+    }
+
+    @Test
+    void alterOnMissingTable_recreatesTableFromCodeDefinition() {
+        // The whole table was hand-dropped while its sys_* rows survived: the planned
+        // MODIFY would fail on "unknown table". Physical recovery prepends a full CREATE
+        // from the code definition (all fields, not just the diff'd one).
+        SysField id = idField("Customer");
+        SysField emailV1 = field("Customer", "email", FieldType.STRING, 64, false);
+        SysField emailV2 = field("Customer", "email", FieldType.STRING, 256, false);
+        SchemaDiff diff = diffOf(
+                List.of(), List.of(),
+                List.of(new Modification<>(emailV2, emailV1)),
+                List.of(), List.of());
+
+        applyDiff(diff, codeModels(diff, customer()), codeFields(diff, id));
+
+        assertTableExists("customer");
+        assertColumnExists("customer", "id");
+        assertColumnExists("customer", "email");
+    }
+
+    @Test
+    void createTable_onExistingTable_adoptsAndAddsMissingColumns() {
+        // The model's sys_* rows are gone (diff says CREATE) but the physical table
+        // survived with a partial shape. The CREATE degrades to already-applied; adoption
+        // adds the declared columns and indexes the table physically lacks — instead of
+        // silently leaving the drift in place.
+        jdbcTemplate.execute("CREATE TABLE customer (id BIGINT NOT NULL PRIMARY KEY)");
+
+        SysModel customer = customer();
+        SysField id = idField("Customer");
+        SysField name = field("Customer", "name", FieldType.STRING, 100, true);
+        SysField email = field("Customer", "email", FieldType.STRING, 255, false);
+        SysModelIndex emailIdx = idx("Customer", "uk_customer_email", List.of("email"), true);
+        SchemaDiff diff = diffWithIndexes(
+                List.of(customer),
+                List.of(id, name, email),
+                List.of(emailIdx),
+                List.of());
+        applyDiff(diff, codeModels(diff), codeFields(diff));
+
+        assertColumnExists("customer", "name");
+        assertColumnExists("customer", "email");
+        assertIndexExists("customer", "uk_customer_email");
+    }
+
+    @Test
+    void declaredFieldRename_bothColumnsMissing_addsNewColumn() {
+        // A declared rename whose old AND new columns are both physically gone cannot be a
+        // CHANGE COLUMN. Recovery adds the new-shape column; the original CHANGE then
+        // degrades via the old-column-gone classification.
+        jdbcTemplate.execute("CREATE TABLE customer (id BIGINT NOT NULL PRIMARY KEY)");
+
+        SysField oldField = fieldWithColumn("Customer", "acctNo", "acct_no", FieldType.STRING, 100, false);
+        SysField newField = fieldWithColumn("Customer", "accountNumber", "account_number", FieldType.STRING, 100, false);
+        SchemaDiff diff = diffOf(
+                List.of(), List.of(),
+                List.of(new Modification<>(newField, oldField, SchemaDiff.Kind.RENAME)),
+                List.of(), List.of());
+        applyDiff(diff, codeModels(diff, customer()), codeFields(diff));
+
+        assertColumnExists("customer", "account_number");
     }
 
     // ---- regression: string defaultValue rendered as quoted literal -------

@@ -26,6 +26,7 @@ public abstract class PostgreSqlDataType {
         FIELD_TYPE_MAP.put(FieldType.MANY_TO_ONE, "BIGINT");
         FIELD_TYPE_MAP.put(FieldType.JSON, "TEXT");
         FIELD_TYPE_MAP.put(FieldType.DTO, "TEXT");
+        FIELD_TYPE_MAP.put(FieldType.TEXT, "TEXT");
         FIELD_TYPE_MAP.put(FieldType.MULTI_STRING, "VARCHAR");
         FIELD_TYPE_MAP.put(FieldType.MULTI_OPTION, "VARCHAR");
         FIELD_TYPE_MAP.put(FieldType.FILTERS, "VARCHAR");

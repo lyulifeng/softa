@@ -106,7 +106,7 @@ class MetadataAnnotationScannerTest {
         f.scanner().initialize();
 
         InOrder inOrder = inOrder(f.ddl(), f.writer());
-        inOrder.verify(f.ddl()).apply(eq(f.diff()), anyList(), anyList());
+        inOrder.verify(f.ddl()).apply(eq(f.diff()), anyList(), anyList(), anyList(), any());
         inOrder.verify(f.writer()).apply(f.diff());
     }
 
@@ -114,7 +114,7 @@ class MetadataAnnotationScannerTest {
     void ddlFailureLeavesSysRowsUnwritten() {
         Fixture f = scannerWithOneAddedModel();
         doThrow(new IllegalStateException("CREATE TABLE failed"))
-                .when(f.ddl()).apply(any(), anyList(), anyList());
+                .when(f.ddl()).apply(any(), anyList(), anyList(), anyList(), any());
 
         assertThrows(IllegalStateException.class, f.scanner()::initialize);
 
@@ -146,7 +146,7 @@ class MetadataAnnotationScannerTest {
         f.scanner().initialize();
 
         // Steady-state boot: an empty diff applies no DDL and no rows...
-        verify(f.ddl(), never()).apply(any(), anyList(), anyList());
+        verify(f.ddl(), never()).apply(any(), anyList(), anyList(), anyList(), any());
         verify(f.writer(), never()).apply(any(SchemaDiff.class));
         // ...but backfill + FK resolution are unconditional, so a row left NULL / unlinked by a prior
         // partial boot self-heals on the next (idempotent) restart.

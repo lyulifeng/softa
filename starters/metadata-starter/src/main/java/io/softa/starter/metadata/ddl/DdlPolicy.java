@@ -4,7 +4,6 @@ import java.util.*;
 import java.util.function.Function;
 import java.util.stream.Collectors;
 
-import io.softa.framework.base.utils.StringTools;
 import io.softa.framework.orm.enums.FieldType;
 import io.softa.starter.metadata.entity.SysField;
 import io.softa.starter.metadata.entity.SysModel;
@@ -248,7 +247,7 @@ public final class DdlPolicy {
 
     /** The type the column renders as — the resolved FK mirror when present. */
     private static FieldType physicalType(SysField f) {
-        return f.getRelatedFieldType() != null ? f.getRelatedFieldType() : f.getFieldType();
+        return SysDdlContextBuilder.resolvePhysicalFieldType(f);
     }
 
     /**
@@ -266,10 +265,7 @@ public final class DdlPolicy {
     }
 
     private static String effectiveColumnName(SysField f) {
-        if (f.getColumnName() != null && !f.getColumnName().isBlank()) {
-            return f.getColumnName();
-        }
-        return StringTools.toUnderscoreCase(f.getFieldName());
+        return SysDdlContextBuilder.resolveColumnName(f);
     }
 
     private static <K, V> List<V> bucket(Map<K, List<V>> map, K key) {

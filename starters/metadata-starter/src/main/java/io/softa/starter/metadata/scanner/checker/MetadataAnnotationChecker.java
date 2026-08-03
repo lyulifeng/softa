@@ -1,5 +1,6 @@
 package io.softa.starter.metadata.scanner.checker;
 
+import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Set;
@@ -7,12 +8,19 @@ import java.util.function.Function;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.boot.context.event.ApplicationReadyEvent;
 import org.springframework.context.event.EventListener;
+import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Component;
 
+import io.softa.starter.metadata.checksum.CatalogFingerprint;
 import io.softa.starter.metadata.config.MetadataProperties;
 import io.softa.starter.metadata.ddl.ReferenceColumnResolver;
+import io.softa.starter.metadata.ddl.introspect.PhysicalDriftAuditor;
+import io.softa.starter.metadata.ddl.introspect.PhysicalDriftReport;
+import io.softa.starter.metadata.ddl.introspect.PhysicalSchema;
+import io.softa.starter.metadata.ddl.introspect.PhysicalSchemaReader;
 import io.softa.starter.metadata.entity.SysField;
 import io.softa.starter.metadata.scanner.MetadataReadPipeline;
+import io.softa.starter.metadata.scanner.MetadataStatus;
 import io.softa.starter.metadata.scanner.ScannerScope;
 import io.softa.starter.metadata.scanner.annotation.AnnotationScanResult;
 import io.softa.starter.metadata.scanner.diff.SchemaDiff;
@@ -41,13 +49,16 @@ public class MetadataAnnotationChecker {
     private final MetadataReadPipeline pipeline;
     private final RelationShapeLinter relationLinter;
     private final MetadataProperties properties;
+    private final JdbcTemplate jdbcTemplate;
 
     public MetadataAnnotationChecker(MetadataReadPipeline pipeline,
                                      RelationShapeLinter relationLinter,
-                                     MetadataProperties properties) {
+                                     MetadataProperties properties,
+                                     JdbcTemplate jdbcTemplate) {
         this.pipeline = pipeline;
         this.relationLinter = relationLinter;
         this.properties = properties;
+        this.jdbcTemplate = jdbcTemplate;
     }
 
     @EventListener(ApplicationReadyEvent.class)
@@ -94,9 +105,43 @@ public class MetadataAnnotationChecker {
         SchemaDiff diff = pipeline.diff(fromCode, current);
         if (diff.isEmpty()) {
             log.info("MetadataAnnotationChecker: no annotation/metadata drift");
-            return;
+        } else {
+            warnDiff(diff);
         }
-        warnDiff(diff);
+
+        // Physical dimension, audited against the sys_* rows — the contract this runtime
+        // actually enforces in production (code-vs-catalog drift is already reported above).
+        PhysicalDriftReport physicalDrift = auditPhysical(current);
+
+        MetadataStatus.record(new MetadataStatus("checker",
+                CatalogFingerprint.of(fromCode.models(), fromCode.fields(), fromCode.modelIndexes(),
+                        fromCode.optionSets(), fromCode.optionItems()),
+                CatalogFingerprint.of(current.models(), current.fields(), current.modelIndexes(),
+                        current.optionSets(), current.optionItems()),
+                false, 0, physicalDrift, LocalDateTime.now()));
+    }
+
+    /**
+     * Snapshot the catalog's tables and audit them against the {@code sys_*} rows. Read-only
+     * and best-effort like the rest of the checker: introspection failure skips the physical
+     * dimension, never the boot.
+     */
+    private PhysicalDriftReport auditPhysical(AnnotationScanResult current) {
+        if (jdbcTemplate == null || jdbcTemplate.getDataSource() == null) {
+            return null;
+        }
+        try {
+            PhysicalSchema facts = PhysicalSchemaReader.readManagedTables(
+                    jdbcTemplate.getDataSource(), current.models());
+            PhysicalDriftReport report = PhysicalDriftAuditor.audit(
+                    current.models(), current.fields(), current.modelIndexes(), facts);
+            PhysicalDriftAuditor.warn(report, "MetadataAnnotationChecker");
+            return report;
+        } catch (Exception e) {
+            log.warn("MetadataAnnotationChecker: physical schema introspection unavailable — "
+                    + "physical drift check skipped: {}", e.getMessage());
+            return null;
+        }
     }
 
     private void warnDiff(SchemaDiff diff) {

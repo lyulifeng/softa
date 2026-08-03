@@ -126,9 +126,7 @@ public class SysField extends AuditableModel {
     @Field(label = "Is Computed")
     private Boolean computed;
 
-    // length > 16383 renders as TEXT on MySQL (utf8mb4 VARCHAR cap), matching
-    // the legacy TEXT(20000) column; PostgreSQL renders VARCHAR(20000).
-    @Field(length = 20000)
+    @Field(fieldType = FieldType.TEXT)
     private String expression;
 
     @Field(label = "Dynamic Field")
