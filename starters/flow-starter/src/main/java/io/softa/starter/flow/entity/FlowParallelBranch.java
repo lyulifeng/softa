@@ -8,6 +8,7 @@ import lombok.EqualsAndHashCode;
 import io.softa.framework.orm.annotation.Field;
 import io.softa.framework.orm.annotation.Index;
 import io.softa.framework.orm.annotation.Model;
+import io.softa.framework.orm.enums.FieldType;
 import io.softa.framework.orm.entity.AuditableModel;
 import io.softa.framework.orm.enums.IdStrategy;
 import io.softa.starter.flow.runtime.state.FlowExecutionStatus;
@@ -63,6 +64,6 @@ public class FlowParallelBranch extends AuditableModel {
     @Field(length = 2000, label = "Error message if the branch failed")
     private String errorMessage;
 
-    @Field(length = 100000, label = "Branch result (JSON)")
+    @Field(fieldType = FieldType.TEXT, label = "Branch result (JSON)")
     private String result;
 }

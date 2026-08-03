@@ -8,6 +8,7 @@ import lombok.EqualsAndHashCode;
 import io.softa.framework.orm.annotation.Field;
 import io.softa.framework.orm.annotation.Index;
 import io.softa.framework.orm.annotation.Model;
+import io.softa.framework.orm.enums.FieldType;
 import io.softa.framework.orm.enums.IdStrategy;
 import io.softa.framework.orm.entity.AuditableModel;
 
@@ -74,6 +75,6 @@ public class FlowEvent extends AuditableModel {
     @Field(description = "Event timestamp")
     private LocalDateTime eventTime;
 
-    @Field(length = 100000, description = "Trigger parameters (JSON)")
+    @Field(fieldType = FieldType.TEXT, description = "Trigger parameters (JSON)")
     private String parameters;
 }

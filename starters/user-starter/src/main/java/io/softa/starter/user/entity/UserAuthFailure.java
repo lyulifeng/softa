@@ -8,6 +8,7 @@ import tools.jackson.databind.JsonNode;
 import io.softa.framework.orm.annotation.Field;
 import io.softa.framework.orm.annotation.Model;
 import io.softa.framework.orm.entity.AuditableModel;
+import io.softa.framework.orm.enums.FieldType;
 import io.softa.framework.orm.enums.IdStrategy;
 
 /**
@@ -36,7 +37,7 @@ public class UserAuthFailure extends AuditableModel {
     @Field(length = 1000)
     private String failureReason;
 
-    @Field(length = 20000)
+    @Field(fieldType = FieldType.TEXT)
     private String errorStack;
 
     @Field(label = "IP Address")

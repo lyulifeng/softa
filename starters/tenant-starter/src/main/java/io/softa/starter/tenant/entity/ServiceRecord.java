@@ -8,6 +8,7 @@ import tools.jackson.databind.JsonNode;
 import io.softa.framework.orm.annotation.Field;
 import io.softa.framework.orm.annotation.Model;
 import io.softa.framework.orm.entity.AuditableModel;
+import io.softa.framework.orm.enums.FieldType;
 import io.softa.framework.orm.enums.IdStrategy;
 
 /**
@@ -43,7 +44,7 @@ public class ServiceRecord extends AuditableModel {
     @Field(length = 3000)
     private String resultSummary;
 
-    @Field(length = 20000)
+    @Field(fieldType = FieldType.TEXT)
     private String resultDetail;
 
     @Field

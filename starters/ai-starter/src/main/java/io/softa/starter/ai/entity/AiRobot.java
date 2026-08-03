@@ -51,7 +51,7 @@ public class AiRobot extends AuditableModel {
                     + "framework-maintained stored cascade (readonly, drift-free).")
     private AiModelProvider aiProvider;
 
-    @Field(length = 20000)
+    @Field(fieldType = FieldType.TEXT)
     private String systemPrompt;
 
     @Field(label = "Model Max Context Tokens", cascadedField = "aiModelId.maxTokens",

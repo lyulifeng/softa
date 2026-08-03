@@ -15,7 +15,7 @@ CREATE TABLE IF NOT EXISTS message_outbox
     aggregate_type  VARCHAR(50)  NOT NULL COMMENT 'Aggregate type, e.g. MailSendRecord / SmsSendRecord',
     aggregate_id    BIGINT       NOT NULL COMMENT 'Aggregate primary key the message refers to',
     route           VARCHAR(30)  NOT NULL COMMENT 'Logical delivery route (MAIL_SEND / SMS_SEND)',
-    payload         TEXT         NOT NULL COMMENT 'Message body serialized as JSON (recordId / tenantId / traceId)',
+    payload         VARCHAR(512) NOT NULL COMMENT 'Thin claim-check envelope (recordId / tenantId / traceId as JSON); message bodies live on the aggregate record',
     status          VARCHAR(20)  NOT NULL DEFAULT 'New' COMMENT 'New / Publishing / Published / Dead',
     attempts        INT          NOT NULL DEFAULT 0 COMMENT 'Number of publish attempts so far',
     last_error      VARCHAR(500)          COMMENT 'Last publish error message (for dead rows)',

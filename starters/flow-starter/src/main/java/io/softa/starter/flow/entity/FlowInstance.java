@@ -8,6 +8,7 @@ import lombok.EqualsAndHashCode;
 import io.softa.framework.orm.annotation.Field;
 import io.softa.framework.orm.annotation.Index;
 import io.softa.framework.orm.annotation.Model;
+import io.softa.framework.orm.enums.FieldType;
 import io.softa.framework.orm.entity.AuditableModel;
 import io.softa.framework.orm.enums.IdStrategy;
 import io.softa.starter.flow.runtime.state.FlowExecutionStatus;
@@ -84,30 +85,30 @@ public class FlowInstance extends AuditableModel {
     @Field(label = "Failed Node ID", length = 100, description = "Node where execution failed (set when status = Failed)")
     private String failedNodeId;
 
-    @Field(length = 100000, description = "Immutable trigger payload (JSON)")
+    @Field(fieldType = FieldType.TEXT, description = "Immutable trigger payload (JSON)")
     private String inputPayload;
 
-    @Field(length = 100000, description = "Execution variables (JSON)")
+    @Field(fieldType = FieldType.TEXT, description = "Execution variables (JSON)")
     private String variables;
 
-    @Field(length = 100000, description = "Active timer/async waits (JSON array); pending approvals are tracked separately")
+    @Field(fieldType = FieldType.TEXT, description = "Active timer/async waits (JSON array); pending approvals are tracked separately")
     private String waitTokens;
 
     @Field(description = "Earliest due time across timer waits (denormalized from waitTokens for the sweep index)")
     private LocalDateTime nextFireAt;
 
-    @Field(label = "Completed Node IDs", length = 100000, description = "Completed node ids (JSON array)")
+    @Field(label = "Completed Node IDs", fieldType = FieldType.TEXT, description = "Completed node ids (JSON array)")
     private String completedNodeIds;
 
-    @Field(length = 100000, description = "Pending approvals (JSON array)")
+    @Field(fieldType = FieldType.TEXT, description = "Pending approvals (JSON array)")
     private String pendingApprovals;
 
-    @Field(length = 100000, description = "Returned approval context (JSON)")
+    @Field(fieldType = FieldType.TEXT, description = "Returned approval context (JSON)")
     private String returnedApproval;
 
-    @Field(length = 100000, description = "Parallel join arrival counts (JSON map)")
+    @Field(fieldType = FieldType.TEXT, description = "Parallel join arrival counts (JSON map)")
     private String joinArrivalCounts;
 
-    @Field(length = 100000, description = "Return data from ReturnValue nodes (JSON)")
+    @Field(fieldType = FieldType.TEXT, description = "Return data from ReturnValue nodes (JSON)")
     private String returnData;
 }

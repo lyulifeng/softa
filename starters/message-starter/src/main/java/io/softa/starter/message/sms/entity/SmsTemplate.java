@@ -7,6 +7,7 @@ import lombok.EqualsAndHashCode;
 import io.softa.framework.orm.annotation.Field;
 import io.softa.framework.orm.annotation.Index;
 import io.softa.framework.orm.annotation.Model;
+import io.softa.framework.orm.enums.FieldType;
 import io.softa.framework.orm.enums.IdStrategy;
 import io.softa.framework.orm.entity.AuditableModel;
 
@@ -53,7 +54,7 @@ public class SmsTemplate extends AuditableModel {
     @Field(length = 500)
     private String description;
 
-    @Field(length = 65535,
+    @Field(fieldType = FieldType.TEXT,
             description = "SMS body template with {{ variable }} placeholders")
     private String content;
 

@@ -21,7 +21,9 @@ public class NormalProcessorFactory implements FieldProcessorFactory {
     @Override
     public FieldProcessor createProcessor(MetaField metaField, AccessType accessType) {
         FieldType fieldType = metaField.getFieldType();
-        if (FieldType.STRING.equals(fieldType)) {
+        if (FieldType.STRING.equals(fieldType) || FieldType.TEXT.equals(fieldType)) {
+            // TEXT shares String semantics: trim, readonly guard, and the
+            // OPTIONAL app-level length check (no declared length → no check).
             return new StringProcessor(metaField, accessType);
         } else if (FieldType.BOOLEAN.equals(fieldType)) {
             return new BooleanProcessor(metaField, accessType);

@@ -8,6 +8,7 @@ import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
 
 import io.softa.framework.base.exception.BusinessException;
+import io.softa.starter.message.config.MessageProperties;
 import io.softa.starter.message.mail.dto.SendMailDTO;
 import io.softa.starter.message.mail.entity.MailSendRecord;
 import io.softa.starter.message.mail.entity.MailSendServerConfig;
@@ -22,6 +23,7 @@ import io.softa.starter.message.mq.outbox.OutboxRecordWriter;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
@@ -37,6 +39,7 @@ class MailMessageHandlerTest {
     private MailSendRecordService recordService;
     private MailTemplateService templateService;
     private OutboxRecordWriter outboxRecordWriter;
+    private MessageProperties messageProperties;
     private MailMessageHandler handler;
 
     @BeforeEach
@@ -45,12 +48,27 @@ class MailMessageHandlerTest {
         recordService = mock(MailSendRecordService.class);
         templateService = mock(MailTemplateService.class);
         outboxRecordWriter = mock(OutboxRecordWriter.class);
-        handler = new MailMessageHandler(dispatcher, recordService, templateService, outboxRecordWriter);
+        messageProperties = new MessageProperties();
+        handler = new MailMessageHandler(dispatcher, recordService, templateService, outboxRecordWriter,
+                messageProperties);
 
         when(outboxRecordWriter.persistAndEnqueue(any(), eq("MailSendRecord"), eq(TopicRoute.MAIL_SEND)))
                 .thenAnswer(invocation -> ((Supplier<Long>) invocation.getArgument(0)).get());
         when(recordService.createOne(any(MailSendRecord.class))).thenReturn(42L);
         when(dispatcher.resolveSend()).thenReturn(config(10L));
+    }
+
+    @Test
+    void bodyOverConfiguredLimitIsRejected() {
+        messageProperties.getMail().setMaxBodyChars(10);
+        SendMailDTO dto = new SendMailDTO();
+        dto.setTo(List.of("alice@example.com"));
+        dto.setSubject("Hi");
+        dto.setTextBody("x".repeat(11));
+
+        BusinessException ex = assertThrows(BusinessException.class, () -> handler.send(dto));
+        assertTrue(ex.getMessage().contains("maximum length"));
+        verifyNoInteractions(outboxRecordWriter);
     }
 
     @Test

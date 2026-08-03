@@ -8,6 +8,7 @@ import lombok.EqualsAndHashCode;
 import io.softa.framework.orm.annotation.Field;
 import io.softa.framework.orm.annotation.Index;
 import io.softa.framework.orm.annotation.Model;
+import io.softa.framework.orm.enums.FieldType;
 import io.softa.framework.orm.enums.IdStrategy;
 import io.softa.framework.orm.entity.AuditableModel;
 import io.softa.starter.flow.runtime.state.FlowExecutionStatus;
@@ -64,13 +65,13 @@ public class FlowDebugHistory extends AuditableModel {
     @Field(label = "Duration (ms)")
     private Long durationMs;
 
-    @Field(length = 100000, description = "Trigger event message (JSON)")
+    @Field(fieldType = FieldType.TEXT, description = "Trigger event message (JSON)")
     private String eventMessage;
 
-    @Field(length = 100000, description = "Full node execution trace (JSON)")
+    @Field(fieldType = FieldType.TEXT, description = "Full node execution trace (JSON)")
     private String nodeTrace;
 
-    @Field(length = 100000, description = "Final variables snapshot (JSON)")
+    @Field(fieldType = FieldType.TEXT, description = "Final variables snapshot (JSON)")
     private String finalVariables;
 
     @Field(length = 2000, description = "Error message if execution failed")
