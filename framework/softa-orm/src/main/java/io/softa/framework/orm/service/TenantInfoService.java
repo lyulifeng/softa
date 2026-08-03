@@ -27,12 +27,40 @@ public interface TenantInfoService {
     boolean isTenantActive(Long tenantId);
 
     /**
-     * Deactivate a tenant — the single sanctioned path out of ACTIVE: set its status to
-     * SUSPENDED and evict the tenant caches so {@link #isTenantActive} and active-id
-     * filtering reflect it immediately. Existing users are then forced to re-login on their
-     * next request (the per-request tenant gate rejects them and drops their session).
+     * Suspend a tenant — ACTIVE → SUSPENDED. See {@link #activate} for the contract these three share.
      *
      * @param tenantId tenant id
      */
     void deactivate(Long tenantId);
+
+    /**
+     * Reactivate a suspended tenant — SUSPENDED → ACTIVE.
+     *
+     * <p>These three transitions ({@code activate} / {@link #deactivate} / {@link #close}) are the
+     * <b>only</b> sanctioned way to change a tenant's operational status, because each of them does two
+     * things that a plain column write does not:
+     *
+     * <ol>
+     *   <li>stamps the timestamp belonging to the target status and <b>clears the other two</b>, so exactly
+     *       one is ever set and the trio stays a function of the status — an active tenant can never show a
+     *       suspended time;</li>
+     *   <li>evicts the tenant caches, so {@link #isTenantActive} and active-id filtering see the change at
+     *       once. Users of a tenant leaving ACTIVE are then forced to re-login on their next request (the
+     *       per-request gate rejects them and drops their session).</li>
+     * </ol>
+     *
+     * Without the eviction a suspension does not take effect until the cache expires — the tenant's users
+     * keep working meanwhile — which is why the status column must not be exposed as an editable field.
+     *
+     * @param tenantId tenant id
+     */
+    void activate(Long tenantId);
+
+    /**
+     * Close a tenant — ACTIVE / SUSPENDED → CLOSED. Terminal; data is retained. See {@link #activate} for
+     * the shared contract.
+     *
+     * @param tenantId tenant id
+     */
+    void close(Long tenantId);
 }

@@ -2,6 +2,7 @@ package io.softa.starter.tenant.entitlement;
 
 import io.softa.framework.base.constant.RedisConstant;
 import io.softa.framework.base.enums.Operator;
+import io.softa.framework.base.enums.Timezone;
 import io.softa.framework.orm.annotation.SkipPermissionCheck;
 import io.softa.framework.orm.domain.Filters;
 import io.softa.framework.orm.domain.FlexQuery;
@@ -11,9 +12,14 @@ import io.softa.starter.tenant.entity.Plan;
 import io.softa.starter.tenant.entity.PlanEntitlement;
 import io.softa.starter.tenant.entity.TenantInfo;
 import io.softa.starter.tenant.entity.TenantSubscription;
+import io.softa.starter.tenant.service.SubscriptionProjectionService;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 
+import java.time.Duration;
+import java.time.LocalDate;
+import java.time.ZoneId;
+import java.time.ZonedDateTime;
 import java.util.Comparator;
 import java.util.HashSet;
 import java.util.List;
@@ -21,30 +27,39 @@ import java.util.Set;
 
 /**
  * Resolves a tenant's effective entitlement (the {@link EntitlementInfo} behind the
- * {@link io.softa.framework.orm.service.EntitlementService} SPI). Self-contained in
- * tenant-starter: reads the tenant's 1:1 {@code TenantSubscription} (via
- * {@code TenantInfo.subscriptionId}) + plan_entitlement, never the nav tree — so tenant-starter
- * needs no user-starter dependency.
+ * {@link io.softa.framework.orm.service.EntitlementService} SPI). Self-contained in tenant-starter:
+ * reads the tenant's 1:1 {@code TenantSubscription} (via {@code TenantInfo.subscriptionId}) +
+ * plan_entitlement, never the nav tree — so tenant-starter needs no user-starter dependency.
  *
  * <h3>Resolution</h3>
  * <pre>
- *   sub     = TenantInfo(tenantId).subscriptionId → tenant_subscription   (owned 1:1)
- *   plan    = sub.planId   (degraded to the FALLBACK plan if no sub / null, or lifecycle = EXPIRED)
+ *   sub     = TenantInfo(tenantId).subscriptionId → tenant_subscription   (one row per tenant)
+ *   sub     = refreshed on the spot when sub.projectedForDate != that tenant's local today
+ *   plan    = sub.planId   (null → the tenant has no period covering today → floor plan)
  *   modules = ( plan_entitlement.moduleId WHERE planId = plan )
- *   fail-closed: an empty/unconfigured plan set → the fallback plan's set, never a partial one.
+ *   fail-closed: an empty/unconfigured plan set → the floor plan's set, never a partial one.
  * </pre>
- * Version axis = {@code planId} (which plan) + {@code lifecycle} (TRIAL / SUBSCRIBED / GRACE_PERIOD
- * active; EXPIRED degrades). {@code effectiveFrom}/{@code effectiveTo} are NOT read here — the resolver
- * gates on {@code lifecycle}; {@code SubscriptionExpiryJob} does the time-driven flip → EXPIRED.
  *
- * <h3>Fallback plan (no hardcoded id)</h3>
+ * <h3>Why reading a projection is safe here</h3>
+ * The subscription row is a projection of the period rows, so it can be stale — but it carries the date
+ * it was projected for. This resolver compares that against the tenant's local today and recomputes
+ * inline when they differ, so a missed scheduled refresh degrades to "recomputed on first request", not
+ * to "yesterday's plan served". The old design gated on a stored {@code lifecycle} with no such marker,
+ * which is why it needed a job to chase the dates and drifted when the job did not run.
+ *
+ * <h3>⚠️ The cache short-circuits the self-heal</h3>
+ * A cache hit returns before the subscription row is read, so the staleness check never runs. The TTL
+ * therefore must not let an entry outlive the tenant's local midnight — see
+ * {@link #ttlUntilTenantMidnight}. Cache and self-heal are one mechanism: the cache guarantees "no
+ * recompute before midnight", the self-heal guarantees "always recompute after it". Get either wrong and
+ * a tenant is served the previous day's plan across the boundary.
+ *
+ * <h3>Floor plan (no hardcoded id)</h3>
  * The degrade target is the catalog's <b>lowest-tier plan</b> (min {@code Plan.tier}), NOT a fixed id
  * like {@code "plan.free"} — so any deployment's own plan naming works out of the box. If the catalog
- * has no plan at all, the fallback is the <b>empty</b> entitlement (unpaid ⇒ no access); a deployment
- * that wants a free floor simply seeds a lowest-tier plan with a base module set.
- *
- * <h3>Caching</h3>
- * Redis {@code entl:{tenantId}} (TTL 1h) → DB resolve.
+ * has no plan at all, the floor is the <b>empty</b> entitlement (unpaid ⇒ no access); a deployment that
+ * wants a free floor seeds a lowest-tier plan with a base module set, one whose floor is paid seeds a
+ * zero-module placeholder instead.
  *
  * <p>All reads run under {@link SkipPermissionCheck} — fires on the cross-bean call from
  * {@code EntitlementServiceImpl}.
@@ -55,10 +70,13 @@ public class EntitlementResolver {
 
     private final ModelService<?> modelService;
     private final CacheService cacheService;
+    private final SubscriptionProjectionService projectionService;
 
-    public EntitlementResolver(ModelService<?> modelService, CacheService cacheService) {
+    public EntitlementResolver(ModelService<?> modelService, CacheService cacheService,
+                              SubscriptionProjectionService projectionService) {
         this.modelService = modelService;
         this.cacheService = cacheService;
+        this.projectionService = projectionService;
     }
 
     /** Resolve (cache-aside) the tenant's effective entitlement. Never null. */
@@ -70,11 +88,28 @@ public class EntitlementResolver {
         String key = RedisConstant.ENTITLEMENT + tenantId;
         EntitlementInfo cached = cacheService.get(key, EntitlementInfo.class);
         if (cached != null) {
+            // Returns before the subscription row is touched, so the staleness check below never runs on
+            // this path — which is exactly why the TTL is capped at the tenant's local midnight.
             return cached;
         }
-        EntitlementInfo info = compute(tenantId);
-        cacheService.save(key, info, RedisConstant.ONE_HOUR);
+        TenantInfo tenant = loadTenant(tenantId);
+        EntitlementInfo info = compute(tenant);
+        cacheService.save(key, info, ttlUntilTenantMidnight(tenant));
         return info;
+    }
+
+    /**
+     * Seconds until the owning tenant's next local midnight, capped at an hour and floored at a minute.
+     *
+     * <p>A fixed hour would not do: an entry written at 23:30 local would live until 00:30 the next local
+     * day, and a period boundary falling on that midnight would be served stale. Capping at the boundary
+     * makes it structurally impossible for a cached entry to span a plan change.
+     */
+    private int ttlUntilTenantMidnight(TenantInfo tenant) {
+        ZoneId zone = Timezone.zoneIdOrUtc(tenant == null ? null : tenant.getDefaultTimezone());
+        long seconds = Duration.between(ZonedDateTime.now(zone),
+                LocalDate.now(zone).plusDays(1).atStartOfDay(zone)).getSeconds();
+        return (int) Math.min(RedisConstant.ONE_HOUR, Math.max(60L, seconds));
     }
 
     /** Evict the tenant's {@code entl:} snapshot — call after any plan / lifecycle change. */
@@ -84,20 +119,19 @@ public class EntitlementResolver {
         }
     }
 
-    private EntitlementInfo compute(Long tenantId) {
-        TenantSubscription sub = loadSubscription(tenantId);
-        // Active subscription on a real plan → use it; otherwise (no sub / null plan / EXPIRED) degrade
-        // to the fallback plan.
-        if (sub != null && sub.getPlanId() != null
-                && sub.getLifecycle() != null && sub.getLifecycle().isEntitlementActive()) {
+    private EntitlementInfo compute(TenantInfo tenant) {
+        TenantSubscription sub = loadSubscription(tenant);
+        // planId set = a period covers this tenant's local today. Null = no covering period (never
+        // bought / lapsed / scheduled-but-not-started), all of which run on the floor plan.
+        if (sub != null && sub.getPlanId() != null) {
             Set<String> modules = new HashSet<>(planModules(sub.getPlanId()));
             if (!modules.isEmpty()) {
                 Plan plan = planById(sub.getPlanId());
                 int tier = (plan != null && plan.getTier() != null) ? plan.getTier() : 0;
                 return new EntitlementInfo(sub.getPlanId(), tier, modules);
             }
-            // plan_entitlement missing / plan deleted → fail closed to the fallback plan below,
-            // never a partial / 0-module set (which would look like site-wide loss of access).
+            // plan_entitlement missing / plan deleted → fail closed to the floor plan below, never a
+            // partial / 0-module set (which would look like site-wide loss of access).
         }
         return fallbackInfo();
     }
@@ -123,18 +157,39 @@ public class EntitlementResolver {
                 .orElse(null);
     }
 
-    private TenantSubscription loadSubscription(Long tenantId) {
-        // Flipped FK: TenantInfo owns subscriptionId → TenantSubscription (1:1). Read the registry
-        // row, then the version it points at. No tenant / no subscriptionId → no version → fallback.
+    private TenantInfo loadTenant(Long tenantId) {
         List<TenantInfo> tenants = modelService.searchList("TenantInfo",
                 new FlexQuery(Filters.of("id", Operator.EQUAL, tenantId)), TenantInfo.class);
-        if (tenants.isEmpty() || tenants.get(0).getSubscriptionId() == null) {
+        return tenants.isEmpty() ? null : tenants.getFirst();
+    }
+
+    /**
+     * The tenant's subscription row, brought up to date first.
+     *
+     * <p>{@code TenantInfo} owns {@code subscriptionId} (1:1), so read the registry row, then the
+     * subscription it points at. No tenant / no {@code subscriptionId} → no subscription → floor plan.
+     *
+     * <p>The refresh is best-effort on purpose: this is a read path, and a failed projection write must
+     * not fail authorization. When it cannot persist, the projection service still returns the freshly
+     * computed row, so this request is answered correctly and the write is retried on the next one.
+     */
+    private TenantSubscription loadSubscription(TenantInfo tenant) {
+        if (tenant == null || tenant.getSubscriptionId() == null) {
             return null;
         }
+        try {
+            TenantSubscription refreshed = projectionService.refresh(tenant);
+            if (refreshed != null) {
+                return refreshed;
+            }
+        } catch (Exception e) {
+            log.warn("Entitlement resolve — projection refresh failed for tenant {}, falling back to the "
+                    + "stored projection: {}", tenant.getId(), e.getMessage());
+        }
         List<TenantSubscription> subs = modelService.searchList("TenantSubscription",
-                new FlexQuery(Filters.of("id", Operator.EQUAL, tenants.get(0).getSubscriptionId())),
+                new FlexQuery(Filters.of("id", Operator.EQUAL, tenant.getSubscriptionId())),
                 TenantSubscription.class);
-        return subs.isEmpty() ? null : subs.get(0);
+        return subs.isEmpty() ? null : subs.getFirst();
     }
 
     private Set<String> planModules(String planId) {

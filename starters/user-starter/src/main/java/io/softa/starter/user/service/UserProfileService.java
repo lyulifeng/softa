@@ -32,6 +32,22 @@ public interface UserProfileService extends EntityService<UserProfile, Long> {
     UserInfo getUserInfo(Long userId);
 
     /**
+     * Drop a user's cached {@code UserInfo} so the next read rebuilds it from the database.
+     *
+     * <p>Must be called whenever something the snapshot carries changes — above all
+     * {@code UserAccount.status}, which {@code buildUserInfo} folds into {@code UserInfo.active}.
+     * {@code ContextBuilder} re-checks that flag on <b>every</b> request and terminates the session
+     * when it is false, while the login gate reads the account row from the database: leave the
+     * cache stale and the two disagree for the full one-month TTL. An account activated after an
+     * invitation then passes login but is kicked out by the very next request, and — the dangerous
+     * direction — a frozen account keeps working because the per-request gate never sees the new
+     * status.
+     *
+     * @param userId User ID; ignored when null
+     */
+    void evictUserInfo(Long userId);
+
+    /**
      * Register new user profile when user register
      *
      * @param userId User ID

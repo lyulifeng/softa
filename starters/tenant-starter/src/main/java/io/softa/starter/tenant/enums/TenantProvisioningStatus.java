@@ -8,7 +8,7 @@ import io.softa.framework.base.annotation.OptionSet;
 
 /**
  * Tenant initialization (seed) status — a third axis, orthogonal to {@link TenantStatus} (operational)
- * and {@link TenantLifecycle} (billing). Tracks whether the tenant's post-creation business-data seeding
+ * and the billing axis. Tracks whether the tenant's post-creation business-data seeding
  * has completed. Does NOT gate login (that keys off {@code TenantStatus == ACTIVE}); it drives display,
  * alerting, and the {@code createAdmin} readiness gate.
  */

@@ -17,12 +17,18 @@ import java.util.Set;
 public interface EntitlementService {
 
     /**
-     * The module ids the tenant is currently entitled to: plan modules ∪ active GRANT
-     * overrides − active REVOKE overrides. Fail-closed — an unknown / unconfigured /
-     * suspended tenant resolves to the free plan's base module set, never an empty set.
+     * The module ids the tenant is currently entitled to — the modules of the plan whose
+     * subscription covers today. Fail-closed: an unknown / unconfigured / suspended tenant, or one
+     * with no covering subscription, resolves to the <b>floor plan</b> (the catalog's lowest
+     * {@code tier}) instead.
+     *
+     * <p><b>Not necessarily non-empty.</b> The floor is whatever the deployment seeded as its
+     * lowest tier, and the empty set is a legitimate answer: a product with no free tier seeds a
+     * zero-module floor so that an expired tenant is entitled to nothing, and a catalog with no
+     * plans at all resolves to empty as well. Never {@code null}, though.
      *
      * @param tenantId tenant id
-     * @return entitled module ids (never {@code null})
+     * @return entitled module ids (never {@code null}, possibly empty)
      */
     Set<String> entitledModules(Long tenantId);
 }

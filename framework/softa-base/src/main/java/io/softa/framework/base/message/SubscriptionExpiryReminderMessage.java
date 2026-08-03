@@ -16,7 +16,13 @@ package io.softa.framework.base.message;
  * @param daysLeft   whole days remaining until {@code effectiveTo} in the tenant's timezone (0 = last day)
  * @param trial      {@code true} if the expiring subscription is a trial (lifecycle {@code TRIAL}) rather
  *                   than a purchased plan — consumers use it to pick trial-vs-renewal wording
+ * @param nextStartDate when coverage resumes after this period, ISO-8601, or {@code null} when nothing
+ *                   follows it. Non-null means the customer has <b>already renewed</b> but not from the day
+ *                   after — there is an uncovered stretch in between, on the floor plan. Asking such a
+ *                   customer to renew is wrong, so consumers must pick different wording; a seamless
+ *                   renewal never produces a message at all
  */
 public record SubscriptionExpiryReminderMessage(Long tenantId, String tenantName, String planId,
-                                                String effectiveTo, int daysLeft, boolean trial) {
+                                                String effectiveTo, int daysLeft, boolean trial,
+                                                String nextStartDate) {
 }

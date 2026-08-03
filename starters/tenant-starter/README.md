@@ -42,7 +42,8 @@ Under `io.softa.starter.tenant.entity`:
 | Entity | Purpose |
 |---|---|
 | `TenantInfo` | Tenant registry — `code`, `name`, `status` (ACTIVE/SUSPENDED/CLOSED), `defaultLanguage`/`defaultTimezone`/`defaultCurrency`(→`Currency.id`)/`defaultCountry`(→`CountryRegion.id`), `dataRegion`, and a nullable `subscriptionId` (1:1 owner FK → `TenantSubscription`); soft-delete, distributed id. **No plan/lifecycle columns** — the version lives on `TenantSubscription`. |
-| `TenantSubscription` | The tenant's owned 1:1 version — `planId` (FK → `Plan`), `lifecycle` (`SCHEDULED` not-yet-effective / `TRIAL`·`SUBSCRIBED`·`GRACE_PERIOD` active / `EXPIRED` → fallback), `effectiveFrom`/`effectiveTo` (`LocalDate`). Owned via `TenantInfo.subscriptionId`; carries no `tenantId` (one row per tenant, not append-only segments) |
+| `TenantSubscription` | The tenant's owned 1:1 subscription — one row per tenant, owned via `TenantInfo.subscriptionId`, carrying no `tenantId`. **Every business column is a projection** of the tenant's period rows as of its own local today: `subscriptionStatus`, `planId` (FK → `Plan`), `periodType`, `currentPeriodId`, `currentStartDate`/`currentEndDate`, `nextStartDate`, plus `projectedForDate`/`projectedTime`. Ops never edits it. Also declares a virtual `periods` (`ONE_TO_MANY`) so a create form can render period inputs from metadata — **not** a write path (see Provisioning below) |
+| `TenantSubscriptionPeriod` | The record layer: one row per period sold — `subscriptionId` (FK, `CASCADE`), `effectiveStartDate`, `effectiveEndDate` (null = open-ended), `planId`, `periodType` (`TRIAL`/`PAID`), `lastReminderDate`. Unique on `(subscriptionId, effectiveStartDate)`. Gaps between periods are legitimate: the tenant runs on the floor plan in between |
 | `Plan` / `PlanEntitlement` | System-level plan catalog — code-as-id, `tier` (ordering; lowest = the fallback floor), `active` — plus the module ids each plan entitles. Deployment-authored seed data (no plan id is hardcoded in the starter) |
 | `ServiceProduct` | Commerce catalog (`category`, `price`, `duration`, `active`) — a separate sub-domain from plan/entitlement |
 | `ServiceOrder` | Orders (`orderNumber`, `orderStatus`, `amount`) |
@@ -56,44 +57,65 @@ tenant-starter needs no user-starter dependency:
 
 - **`EntitlementResolver`** (behind the framework `EntitlementService` SPI) reads
   `TenantSubscription.planId` → `plan_entitlement` → module set, cached in Redis (`entl:{tenantId}`,
-  TTL 1h). It gates on **`lifecycle` only** (TRIAL/SUBSCRIBED/GRACE_PERIOD active; EXPIRED degrades) —
-  it does **not** read the effective dates, so there is no per-request date comparison / drift.
+  TTL capped at the tenant's local midnight so the cache cannot outlive the day it was computed for).
+  It reads the projected main-table row rather than scanning periods per request — but never blindly:
+  it first compares `projectedForDate` against that tenant's local today and **recomputes on the spot**
+  when they differ, so a stale projection repairs itself on first touch. Compared with `!=`, never `<`:
+  moving a tenant's timezone westward moves its local today *backwards*, and a "projected before today"
+  test would then never fire again. `null` (never projected) also takes the recompute branch, which is why
+  the migration needs no backfill.
 - **Fallback / floor** = the catalog's **lowest-`tier` plan** — no plan id is hardcoded, so any
-  deployment's own plan naming works. No plan seeded → empty entitlement (unpaid = no access); a
-  deployment wanting a free floor simply seeds a lowest-tier plan with a base module set. The same rule
-  supplies the default plan at provisioning.
-- **`SubscriptionExpiryJob`** wires the effective *dates* to the `lifecycle` gate via two symmetric
-  passes, each firing at the owning tenant's local midnight (`TenantInfo.defaultTimezone`): **activate**
-  a `SCHEDULED` subscription once `effectiveFrom` arrives (→ `SUBSCRIBED`), and **expire** an active one
-  once `effectiveTo` passes (→ `EXPIRED`). Each transition fires an entitlement-changed event (evict
-  `entl:` + MQ role-grant cleanup). It is **not** `@Scheduled`; **tenant-starter's own
+  deployment's own plan naming works. No plan seeded → empty entitlement (unpaid = no access). The same
+  rule supplies the default plan at provisioning. Two ways to seed the floor, both supported without code
+  changes:
+  - **Free floor** (a product with a free tier): seed the lowest-tier plan with a base module set — an
+    expired tenant lands on it and keeps the base modules.
+  - **Paid floor** (a product whose cheapest tier costs money): seed a lowest-tier plan with **zero**
+    `plan_entitlement` rows and `active = false`, so an expired tenant is entitled to nothing. Without
+    it the floor would be the cheapest *paid* plan and expired tenants would keep it for free. The floor
+    lookup deliberately does **not** filter on `active`, so an unsellable placeholder plan works as the
+    floor; the "`planId` must not be the floor" guard then also stops ops from selling it by hand.
+- **`SubscriptionProjectionService`** is the **only** writer of the main table. `refresh(tenant)` is
+  staleness-gated (no-op when `projectedForDate` already equals the tenant's local today); `refreshNow`
+  is the unconditional variant the write path uses; `refreshAll` batches the scheduled warm-up in two
+  queries. It resolves the period covering that date, derives `subscriptionStatus`
+  (`PAID`/`TRIAL`/`SCHEDULED`/`EXPIRED`/`NEVER_SUBSCRIBED`), and fires an entitlement-changed event
+  **only when `planId` actually changed** (evict `entl:` + MQ role-grant cleanup). Overlaps are rejected
+  on write, so more than one covering period is corrupt data: it logs ERROR and picks the latest start
+  (then highest id) — deterministic, because silently varying which plan a tenant gets is worse than a
+  wrong-but-stable answer.
+- **`SubscriptionProjectionJob`** is the warm-up, not the guarantee — correctness comes from the
+  read-time self-heal above. It is **not** `@Scheduled`; **tenant-starter's own
   `TenantMaintenanceCronConsumer`** drives it off an hourly `sys_cron` row `SubscriptionExpiry`
-  (`CrossTenant`; tenant-starter depends on cron-starter), so tenants spanning 24 UTC hours each
-  transition at their own local midnight. This cron's domain is billing / tenant lifecycle, so its
-  trigger lives here in tenant-starter, not in the HR business module. `lifecycle` stays the single source of truth the resolver
-  reads (the job only *sets* it from the dates; no read-time drift). A row's life:
-  `SCHEDULED →(effectiveFrom)→ SUBSCRIBED →(effectiveTo)→ EXPIRED`. A third, **non-transitional** pass
-  (`remindUpcoming`) fires **expiry reminders**: for an active subscription a configured number of days
-  before `effectiveTo` (default 7 and 1), at the tenant-local reminder hour (default 10:00), it publishes
-  a `SubscriptionExpiryReminderEvent` → `SubscriptionExpiryReminderMessage` (softa-base MQ) so a user
-  module can email the tenant's admins — it changes no `lifecycle`. It fires **once per tenant-local day**,
-  at or after the reminder hour, deduped via `TenantSubscription.lastReminderDate` (so a misfire catch-up or
-  manual re-run the same day does not double-send, and a missed reminder hour still sends later that day).
-  The message carries a `trial` flag (`lifecycle == TRIAL`) so the notifier can pick trial-vs-renewal wording.
-  Cadence overridable via `tenant.subscription.reminder.{hour,days-before}`; the pure `dueReminderDays` seam
-  keeps the day/hour/dedup decision clock-free for tests. Expire + remind share one `effectiveTo` query and a
-  single batch owner-load (no per-row `TenantInfo` N+1).
+  (`CrossTenant`; tenant-starter depends on cron-starter), so tenants spanning 24 UTC hours each roll over
+  at their own local midnight. This cron's domain is billing, so its trigger lives here in tenant-starter,
+  not in the HR business module. A second, **non-projecting** pass (`remindUpcoming`) fires **expiry
+  reminders**: a configured number of days before the current period's end (default 7 and 1), at the
+  tenant-local reminder hour (default 10:00), it publishes a `SubscriptionExpiryReminderEvent` →
+  `SubscriptionExpiryReminderMessage` (softa-base MQ) so a user module can email the tenant's admins. It
+  fires **once per tenant-local day**, at or after the reminder hour, deduped via the period's
+  `lastReminderDate` (so a misfire catch-up or manual re-run the same day does not double-send, and a
+  missed reminder hour still sends later that day). The message carries a `trial` flag so the notifier can
+  pick trial-vs-renewal wording. Cadence overridable via `tenant.subscription.reminder.{hour,days-before}`;
+  the pure `dueReminderDays` seam keeps the day/hour/dedup decision clock-free for tests. Reminders run
+  their own query — only the batch owner-load is shared with the refresh (no per-row `TenantInfo` N+1).
+- **`TenantSubscriptionPeriodService`** is the single guarded entry point for period writes. Four guards:
+  the plan must not be the floor (a floor period and no period say the same thing), a trial must sit above
+  the floor, periods must not overlap (checked against the *stored* row on update, so a half-specified
+  patch cannot slip past), and the end must not precede the start. Every write refreshes the projection
+  afterwards. Because `ModelServiceImpl` does **not** route through per-model `EntityService`, shadow
+  controllers cover all 16 generic write endpoints on both models — the period table's forward to this
+  service, the main table's are rejected outright — and a reflective test fails if upstream adds a 17th.
 - **Provisioning** (`TenantProvisioningService`, behind the shadowed `POST /TenantInfo/createOne`)
-  creates the registry row + the owned subscription. A tenant may only be created as `TRIAL` or
-  `SUBSCRIBED` (a future `effectiveFrom` parks it as `SCHEDULED` until the job activates it;
-  GRACE_PERIOD/EXPIRED are reached only via lapse / the job). Version edits flow
-  through the standard Tenant Info form (`POST /TenantInfo/updateOne`, inline `subscriptionId`), which
-  the ORM cascade-updates onto `TenantSubscription` and which republishes entitlement — there is no
-  separate plan/lifecycle endpoint. `reconcileScheduledStart` then fixes the lifecycle **both ways**:
-  a future `effectiveFrom` on an active sub parks it as `SCHEDULED`, and bringing a `SCHEDULED` sub's
-  `effectiveFrom` forward to today/past activates it to `SUBSCRIBED` on save (mirroring the job's
-  `activateDue`) — so a start-date change takes effect immediately, not only at create or on the next
-  hourly job run.
+  creates the registry row plus an empty projection row (`NEVER_SUBSCRIBED`), then records any periods the
+  request carried under `subscriptionId.periods.Create[]` — so a customer buying Pro on day one is one
+  submit rather than "create on the floor plan, then upgrade". That relation is parsed here and pushed
+  through the period service **one row at a time**, deliberately *not* handed to the framework's
+  nested-relation pipeline: that persists via the generic `ModelService`, which runs none of the guards
+  and does not refresh the projection. Sequential calls also let the overlap guard see each earlier row of
+  the same payload. For the same reason `updateOne` / `updateOneAndFetch` **reject** a nested
+  `subscriptionId.periods` patch — on update there is no typed path to route it through, and editing
+  periods belongs to `/TenantSubscriptionPeriod/**`.
 
 ## Provisioning status (seed orchestration)
 
@@ -116,7 +138,7 @@ only, it does **not** gate login.
   self-sufficient, no dependency on an app-side DLQ. The same consumer also carries `SubscriptionExpiry`.
   **cron-starter is optional** (`@ConditionalOnClass` on the consumer + `<optional>true</optional>` in the
   pom): a deployment on a different scheduler (Quartz, `@Scheduled`, XXL-Job, …) omits cron-starter — the
-  consumer stays dormant and the app drives `failTimedOut()` / `SubscriptionExpiryJob` from its own trigger.
+  consumer stays dormant and the app drives `failTimedOut()` / `SubscriptionProjectionJob` from its own trigger.
 
 ## How isolation works
 

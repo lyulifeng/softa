@@ -27,7 +27,8 @@ import io.softa.starter.tenant.enums.TenantStatus;
  *
  * <p>It owns the optional 1:1 link to the tenant's version via {@link #subscriptionId}
  * (owner-side FK to {@link TenantSubscription}). The link is nullable — apps that don't sell
- * versions leave it unset and the entitlement resolver defaults to Free.
+ * versions leave it unset and the entitlement resolver falls back to the floor plan (the catalog's
+ * lowest tier, whatever the deployment named it; empty when there is no catalog).
  */
 @Data
 @EqualsAndHashCode(callSuper = true)
@@ -65,7 +66,11 @@ public class TenantInfo extends AuditableModel {
     @Field
     private Language defaultLanguage;
 
-    @Field
+    // Required: every date the tenant lifecycle turns on — subscription activation / expiry, the expiry
+    // reminder's send hour, an employee's hire date — is evaluated in THIS zone. Left unset the code falls
+    // back to UTC (Timezone.zoneIdOrUtc), which silently shifts those boundaries by up to a day for a
+    // tenant that is not actually on UTC. Making it mandatory removes the silent-wrong-answer path.
+    @Field(required = true)
     private Timezone defaultTimezone;
 
     @Field(fieldType = FieldType.MANY_TO_ONE, relatedModel = Currency.class,
@@ -73,7 +78,10 @@ public class TenantInfo extends AuditableModel {
                     + "code-as-id). Seed default for new invoices/orders.")
     private String defaultCurrency;
 
-    @Field(fieldType = FieldType.MANY_TO_ONE, relatedModel = CountryRegion.class,
+    // Required: this is the tenant's operating country, and provisioning seeds its first LegalEntity with
+    // it — which in turn selects the country-specific employee / entity field sets. There is no sound
+    // default (guessing one puts the whole org tree in the wrong country), so it has to be supplied.
+    @Field(required = true, fieldType = FieldType.MANY_TO_ONE, relatedModel = CountryRegion.class,
             description = "Default country/region — FK to country_region.id (ISO 3166-1 alpha-2, "
                     + "code-as-id). Seed default for new users, billing addresses, locale hints.")
     private String defaultCountry;
@@ -83,7 +91,8 @@ public class TenantInfo extends AuditableModel {
 
     @Field(fieldType = FieldType.ONE_TO_ONE, relatedModel = TenantSubscription.class,
             description = "The tenant's version/subscription (1:1; owner-side FK). Nullable — apps "
-                    + "that don't sell versions leave it unset and the resolver defaults to Free.")
+                    + "that don't sell versions leave it unset and the resolver falls back to the "
+                    + "floor plan (the catalog's lowest tier).")
     private Long subscriptionId;
 
     @Field(label = "Provisioning Status",
