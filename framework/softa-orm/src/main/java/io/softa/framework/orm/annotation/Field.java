@@ -182,7 +182,7 @@ public @interface Field {
      * UI widget type override. Empty array = no override; the framework picks
      * the default presentation for the field's {@code fieldType} at runtime
      * (no compile-time auto-inference). Single element = explicit override,
-     * e.g. {@code widgetType = WidgetType.TEXT}. AI / human writes the
+     * e.g. {@code widgetType = WidgetType.PLAIN_TEXT}. AI / human writes the
      * single value directly — Java auto-wraps it into a single-element array.
      */
     WidgetType[] widgetType() default {};
