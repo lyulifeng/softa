@@ -10,7 +10,7 @@ import io.softa.starter.flow.runtime.state.ApprovalActionType;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 
-class FlowApprovalRecordServiceImplTest {
+class FlowApprovalRecordQueryServiceImplTest {
 
     @Test
     void shouldComposeSentCcHistoryWithMatchedReadStatus() {
@@ -21,7 +21,7 @@ class FlowApprovalRecordServiceImplTest {
         var read = record(11L, 2, "recipient-1", "leave", "inst-1", "approvalA",
                 ApprovalActionType.READ, readAt, "sender-1", 1, "seen");
 
-        var result = FlowApprovalRecordServiceImpl.composeSentCcHistory(
+        var result = FlowApprovalRecordQueryServiceImpl.composeSentCcHistory(
                 List.of(sentCc, read), "sender-1", null, "leave", "inst-1", null);
 
         assertEquals(1, result.size());
@@ -39,7 +39,7 @@ class FlowApprovalRecordServiceImplTest {
         var sentCc = record(20L, 1, "sender-1", "leave", "inst-1", "approvalA",
                 ApprovalActionType.CC, sentAt, "recipient-1", 1, "fyi");
 
-        var result = FlowApprovalRecordServiceImpl.composeSentCcHistory(
+        var result = FlowApprovalRecordQueryServiceImpl.composeSentCcHistory(
                 List.of(sentCc), "sender-1", false, "leave", "inst-1", null);
 
         assertEquals(1, result.size());
@@ -59,7 +59,7 @@ class FlowApprovalRecordServiceImplTest {
         var wrongSenderRead = record(33L, 4, "recipient-1", "leave", "inst-1", "approvalA",
                 ApprovalActionType.READ, LocalDateTime.now().minusMinutes(6), "sender-2", 1, "seen");
 
-        var result = FlowApprovalRecordServiceImpl.composeSentCcHistory(
+        var result = FlowApprovalRecordQueryServiceImpl.composeSentCcHistory(
                 List.of(sentCc, wrongCycleRead, wrongNodeRead, wrongSenderRead),
                 "sender-1", null, "leave", "inst-1", null);
 
@@ -79,7 +79,7 @@ class FlowApprovalRecordServiceImplTest {
         var latestRead = record(42L, 3, "recipient-1", "leave", "inst-1", "approvalA",
                 ApprovalActionType.READ, latestReadAt, "sender-1", 1, "acknowledged");
 
-        var result = FlowApprovalRecordServiceImpl.composeSentCcHistory(
+        var result = FlowApprovalRecordQueryServiceImpl.composeSentCcHistory(
                 List.of(sentCc, earlierRead, latestRead), "sender-1", null, "leave", "inst-1", "approvalA");
 
         assertEquals(1, result.size());
@@ -99,9 +99,9 @@ class FlowApprovalRecordServiceImplTest {
         var unreadCc = record(52L, 3, "sender-1", "leave", "inst-1", "approvalB",
                 ApprovalActionType.CC, unreadSentAt, "recipient-2", 1, "for reference");
 
-        var readOnly = FlowApprovalRecordServiceImpl.composeSentCcHistory(
+        var readOnly = FlowApprovalRecordQueryServiceImpl.composeSentCcHistory(
                 List.of(readCc, readAck, unreadCc), "sender-1", true, "leave", "inst-1", null);
-        var unreadOnly = FlowApprovalRecordServiceImpl.composeSentCcHistory(
+        var unreadOnly = FlowApprovalRecordQueryServiceImpl.composeSentCcHistory(
                 List.of(readCc, readAck, unreadCc), "sender-1", false, "leave", "inst-1", null);
 
         assertEquals(1, readOnly.size());
