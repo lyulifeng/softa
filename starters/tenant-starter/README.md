@@ -79,7 +79,7 @@ tenant-starter needs no user-starter dependency:
   staleness-gated (no-op when `projectedForDate` already equals the tenant's local today); `refreshNow`
   is the unconditional variant the write path uses; `refreshAll` batches the scheduled warm-up in two
   queries. It resolves the period covering that date, derives `subscriptionStatus`
-  (`PAID`/`TRIAL`/`SCHEDULED`/`EXPIRED`/`NEVER_SUBSCRIBED`), and fires an entitlement-changed event
+  (`PAID`/`TRIAL`/`PENDING`/`EXPIRED`), and fires an entitlement-changed event
   **only when `planId` actually changed** (evict `entl:` + MQ role-grant cleanup). Overlaps are rejected
   on write, so more than one covering period is corrupt data: it logs ERROR and picks the latest start
   (then highest id) — deterministic, because silently varying which plan a tenant gets is worse than a
@@ -95,45 +95,73 @@ tenant-starter needs no user-starter dependency:
   `SubscriptionExpiryReminderMessage` (softa-base MQ) so a user module can email the tenant's admins. It
   fires **once per tenant-local day**, at or after the reminder hour, deduped via the period's
   `lastReminderDate` (so a misfire catch-up or manual re-run the same day does not double-send, and a
-  missed reminder hour still sends later that day). The message carries a `trial` flag so the notifier can
-  pick trial-vs-renewal wording. Cadence overridable via `tenant.subscription.reminder.{hour,days-before}`;
+  missed reminder hour still sends later that day). Whether — and what — to remind is decided by
+  **what will apply the day after** the period ends, through the same tier rule the projection writes with:
+  a same-or-higher successor is silent (renewed, or a higher plan already covers); a **lower** one is a
+  *downgrade* and carries `successorPlanId` so the mail can say "you drop to this" instead of the untrue
+  "you lose access"; a gap-separated successor carries `nextStartDate`; nothing at all gets the plain expiry
+  ask. Asking "is there a period starting after this one" instead — the pre-overlap rule — got both of the
+  first two wrong, because the floor period starts at tenant creation and so is never *after* anything. The
+  message also carries a `trial` flag for trial-vs-renewal wording, which the downgrade case outranks. Cadence overridable via `tenant.subscription.reminder.{hour,days-before}`;
   the pure `dueReminderDays` seam keeps the day/hour/dedup decision clock-free for tests. Reminders run
   their own query — only the batch owner-load is shared with the refresh (no per-row `TenantInfo` N+1).
 - **`TenantSubscriptionPeriodService`** is the single guarded entry point for period writes. Four guards:
-  the plan must not be the floor (a floor period and no period say the same thing), a trial must sit above
-  the floor, periods must not overlap (checked against the *stored* row on update, so a half-specified
-  patch cannot slip past), and the end must not precede the start. Every write refreshes the projection
-  afterwards. Because `ModelServiceImpl` does **not** route through per-model `EntityService`, shadow
+  the end must not precede the start; **at most one** period on the floor plan (that row is the tenant's
+  baseline free access, written by provisioning — a second would put one entitlement in two places); the
+  floor period's **start date is immutable** (it is the tenant's creation day, which is history, not a
+  setting — its *end* date is settable and that is the whole mechanism for time-boxing free access); and the
+  floor period **cannot be deleted** (the resolver reads a missing floor row as "predates the migration" and
+  falls back to granting the floor plan's modules, so deleting it would silently restore access an operator
+  had just revoked by ending it). Update guards check the *stored* row, so a half-specified patch cannot slip
+  past. Every write refreshes the projection afterwards.
+
+  **Overlap is deliberately not guarded.** It used to be, along with "the plan must not be the floor" and "a
+  trial must sit above the floor" — all three were removed. Provisioning gives every tenant an open-ended
+  floor period, so every sale overlaps at least that one and rejecting overlap would make selling impossible.
+  Which period applies is decided by **plan tier** instead (`PeriodSelection.winnerOn` — highest tier
+  covering the date, ties by latest start then id), which is what makes "sell Pro on top of free" mean the
+  tenant gets Pro. That one rule is shared by the projection and the expiry reminder rather than copied:
+  a reminder disagreeing with the projection is two beliefs about one subscription, and the customer is told
+  the wrong one. Because `ModelServiceImpl` does **not** route through per-model `EntityService`, shadow
   controllers cover all 16 generic write endpoints on both models — the period table's forward to this
   service, the main table's are rejected outright — and a reflective test fails if upstream adds a 17th.
 - **Provisioning** (`TenantProvisioningService`, behind the shadowed `POST /TenantInfo/createOne`)
-  creates the registry row plus an empty projection row (`NEVER_SUBSCRIBED`), then records any periods the
+  creates the registry row plus an empty projection row, writes the open-ended floor-plan period every
+  tenant owns (`ensureFreePeriod` — idempotent, and provisioning **refuses outright** when the catalog has no
+  tiered plan, because a tenant with no period looks created while resolving to nothing), then records any
+  periods the
   request carried under `subscriptionId.periods.Create[]` — so a customer buying Pro on day one is one
   submit rather than "create on the floor plan, then upgrade". That relation is parsed here and pushed
   through the period service **one row at a time**, deliberately *not* handed to the framework's
   nested-relation pipeline: that persists via the generic `ModelService`, which runs none of the guards
-  and does not refresh the projection. Sequential calls also let the overlap guard see each earlier row of
+  and does not refresh the projection. Sequential calls also let the floor-cardinality guard see each earlier row of
   the same payload. For the same reason `updateOne` / `updateOneAndFetch` **reject** a nested
   `subscriptionId.periods` patch — on update there is no typed path to route it through, and editing
   periods belongs to `/TenantSubscriptionPeriod/**`.
 
 ## Provisioning status (seed orchestration)
 
-A newly provisioned tenant's business data is seeded across modules asynchronously over MQ;
-`provisioningStatus` is a **third, orthogonal axis** on `TenantInfo` (`INITIALIZING` / `READY` /
-`FAILED`), separate from `TenantStatus` (login gate) and `TenantLifecycle` (billing) — observability
-only, it does **not** gate login.
+A newly provisioned tenant's business data is seeded across modules asynchronously over MQ, and how far
+that has got is carried by **`TenantStatus` itself** — `DRAFT` at creation, `INITIALIZING` while seeders
+run, `ACTIVE` once they are all in.
+
+There used to be a second, orthogonal `provisioningStatus` axis (`INITIALIZING` / `READY` / `FAILED`)
+alongside it. It was merged away: two columns described one tenant, so "is this tenant usable" needed both
+and the pair could disagree. `READY` became `ACTIVE`, and `FAILED` became `DRAFT` — a tenant that was never
+built and one whose build failed are the same thing to look at, and `DRAFT` is where the rebuild starts
+from. Unlike the old axis this one **does** gate login: a tenant mid-setup is refused with "still being set
+up" rather than a generic failure, checked before the active check so that specific message survives.
 
 - **`TenantProvisioningStatusService`** — the per-tenant completion latch. Owns `TenantSeedProgress`
   (`{tenantId, seederKey}`) and folds each seeder's completion (`SeederCompletedMessage` → the
-  `SeederCompletedCoordinator`) into the status: `READY` once `doneKeys ⊇ expected-seeders`
+  `SeederCompletedCoordinator`) into the status: `ACTIVE` once `doneKeys ⊇ expected-seeders`
   (`softa.tenant.provisioning.expected-seeders`). Business-agnostic — it only ever sees opaque
   `seederKey` strings, never imports a business module.
 - **Dependency gate** — `dependenciesSatisfied(tenantId, dependsOn, justCompletedKey)` = `doneKeys ⊇
   dependsOn` (set-containment, order-independent), so a downstream seeder can wait on its upstreams.
-- **Timeout guard (authoritative `FAILED` source)** — `failTimedOut()` sweeps tenants stuck in
-  `INITIALIZING` past `readyTimeoutSeconds` (default 600s) → `FAILED` (idempotent, self-heals back to
-  READY if the seed later completes). Triggered by tenant-starter's own `TenantMaintenanceCronConsumer`
+- **Timeout guard (authoritative failure source)** — `failTimedOut()` sweeps tenants stuck in
+  `INITIALIZING` past `readyTimeoutSeconds` (default 600s) → `DRAFT` (idempotent, self-heals back to
+  `ACTIVE` if the seed later completes). Triggered by tenant-starter's own `TenantMaintenanceCronConsumer`
   (`ProvisioningTimeout` sys_cron, shipped in `data-system/SysCron.TenantMaintenance.json`) — softa
   self-sufficient, no dependency on an app-side DLQ. The same consumer also carries `SubscriptionExpiry`.
   **cron-starter is optional** (`@ConditionalOnClass` on the consumer + `<optional>true</optional>` in the
