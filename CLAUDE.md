@@ -213,9 +213,42 @@ public enum CustomerTier {
   rewrites a condition on it back to the cascade path, so the narrowing compiles to a LEFT JOIN and the
   anchor stays a plain field name that can also be filtered, sorted and displayed. Boot-rejected: the
   anchor field missing, a field of that name that is not a to-one onto the target model, and the company
-  model itself being `multiCompany`. Narrowing is skipped — silently, because an over-eager condition empties a list the
+  model itself being `multiCompany`.
+
+  **Selection, grant, affiliation — three different things, never merged.** The narrowing above applies
+  the *selection* (`Context.companyId`, from `X-Company-Id`): which of my companies am I looking at. What
+  bounds the set it picks from is the role's *grant* (`PermissionInfo.grantedCompanyIds`, applied by
+  `PermissionServiceImpl.appendCompanyGrant`), and they compose as `selected ∧ granted`, so a header
+  switch can never reach outside the grant. The grant has **no store of its own**: it is the role's data
+  scope on the company model (`role_data_scope` where `model = 'LegalEntity'`), resolved into ids by
+  `DefaultPermissionSnapshotProvider.readGrantedCompanyIds` — one row bounds both the company switcher
+  and every model belonging to a company, because two stores for one boundary can disagree (that was
+  `RoleCompany`, now deleted). `ALL` resolves to `null`, never to the materialised list of every id. There
+  is deliberately **no company scope type**: `ScopeType.LEGAL_ENTITY` compiled to
+  `legalEntityId = USER_COMP_ID` — the caller's own company — so one role behaved differently per holder;
+  it is retired (migration `V40`, which must run *before* the patched binary: the snapshot silently drops
+  a scope type it cannot parse, so a stored rule would widen to unrestricted). `RoleController` refuses
+  the one ambiguous configuration — `ALL` rows on a `multiCompany` model with no company scope — because
+  "I meant all companies" and "I forgot" are otherwise the same payload. The grant is **tri-state**:
+  `null` = unrestricted (what an
+  unconfigured role resolves to, so shipping the axis blanks nobody's screens), **empty** = reaches no
+  company at all (only ever an explicit configuration — a self-service role whose own `SELF` row scope is
+  what lets it see itself), non-empty = exactly those. Collapsing the first two, as it used to, makes
+  "configured to reach nothing" inexpressible. The *affiliation* — `EmpInfo.companyId` /
+  `USER_COMP_ID`, "the company I belong to" — anchors permission rules and must stay out of both: a rule
+  anchored on the selection widens with every switch, and a grant derived from the affiliation makes one
+  role behave differently per user (an HR in company A seeing all of A's salaries, the same role in B
+  seeing B's). Narrowing is skipped — silently, because an over-eager condition empties a list the
   user needs — when nothing is selected, when the caller filters by `id` (display expansion / by-id
-  read / cascade), or when the caller already constrains the anchor field. Applied in
+  read / cascade), or when the caller already constrains the anchor field. **One exception, on the
+  country axis only**: a role granted no company selects none, so skipping would show a self-service
+  employee every country's value domains — the enricher falls back to the country of
+  `EmpInfo.companyId`, so `Context.companyCountry` may be set with `Context.companyId` null. The
+  `SELECTED_COMP_COUNTRY` placeholder does **not** follow it (guarded on `companyId` in
+  `FilterUnitParser`; `MultiCountryScope` emits the resolved value instead): partitioning is data
+  correctness, but a scope rule written against the header is authorization and must keep matching what
+  it matched when it was written. No such fallback on the company axis — that would be a grant invented
+  from an affiliation. Applied in
   `ModelServiceImpl.scopedAccess` as the **input** to
   `PermissionService.appendScopeAccessFilters`, never around its result: fed as the input the selection
   narrows *within* a role's grant, whereas wrapping the output would make a multi-company grant look

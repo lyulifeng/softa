@@ -1,6 +1,7 @@
 package io.softa.framework.orm.scope;
 
 import io.softa.framework.base.constant.EnvConstant;
+import io.softa.framework.base.context.Context;
 import io.softa.framework.base.context.ContextHolder;
 import io.softa.framework.base.enums.Operator;
 import io.softa.framework.orm.constant.ModelConstant;
@@ -70,7 +71,8 @@ public final class MultiCountryScope {
         // Fixed by convention, asserted at init (ModelManager.validateMultiCountry) — nothing to
         // resolve or look up per model.
         String countryField = ModelConstant.COUNTRY_FIELD;
-        if (StringUtils.isBlank(ContextHolder.getContext().getSelectedCompanyCountry())) {
+        Context context = ContextHolder.getContext();
+        if (StringUtils.isBlank(context.getCompanyCountry())) {
             // No company selected: anonymous/public endpoints and service-to-service calls
             // build a context without one. Those callers must pass the country themselves —
             // narrowing to nothing here would empty required dropdowns instead.
@@ -89,6 +91,15 @@ public final class MultiCountryScope {
             log.debug("Caller already constrains {}.{}; keeping its condition", modelName, countryField);
             return filters;
         }
-        return Filters.and(filters, Filters.of(countryField, Operator.EQUAL, EnvConstant.SELECTED_COMP_COUNTRY));
+        // The placeholder when a company is actually selected, the resolved value when it is not.
+        // Both mean the same country here, but the placeholder means strictly "the selected company's
+        // country" to everything else that substitutes it (FilterUnitParser, and through it any CUSTOM
+        // scope rule that names it) — so it cannot carry the no-company fallback without widening
+        // those rules. Emitting the value directly is what keeps the narrowing working for a caller
+        // that has no company to select while leaving the placeholder's meaning intact.
+        Object country = context.getCompanyId() != null
+                ? EnvConstant.COMPANY_COUNTRY
+                : context.getCompanyCountry();
+        return Filters.and(filters, Filters.of(countryField, Operator.EQUAL, country));
     }
 }

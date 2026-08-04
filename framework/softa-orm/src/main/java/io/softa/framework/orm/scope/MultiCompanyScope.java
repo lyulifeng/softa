@@ -69,8 +69,8 @@ public final class MultiCompanyScope {
         // Fixed by convention, asserted at init (ModelManager.validateMultiCompany) — nothing to
         // resolve or look up per model.
         String companyField = ModelConstant.COMPANY_FIELD;
-        Long selectedCompanyId = ContextHolder.getContext().getSelectedCompanyId();
-        if (selectedCompanyId == null) {
+        Long companyId = ContextHolder.getContext().getCompanyId();
+        if (companyId == null) {
             // No company selected: anonymous and public endpoints, service-to-service calls, and a
             // tenant that has not created its first company yet. Narrowing to nothing here would
             // empty every list on the way to creating one.
@@ -88,6 +88,6 @@ public final class MultiCompanyScope {
             log.debug("Caller already constrains {}.{}; keeping its condition", modelName, companyField);
             return filters;
         }
-        return Filters.and(filters, Filters.of(companyField, Operator.EQUAL, EnvConstant.SELECTED_COMP_ID));
+        return Filters.and(filters, Filters.of(companyField, Operator.EQUAL, EnvConstant.COMPANY_ID));
     }
 }

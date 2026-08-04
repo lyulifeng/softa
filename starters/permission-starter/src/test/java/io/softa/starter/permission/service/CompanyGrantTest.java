@@ -32,7 +32,7 @@ import static org.mockito.Mockito.when;
  *
  * <p>Stubs {@link ModelManager} statically because {@link MetaModel}'s setters are package-private to
  * its own package, so this module cannot build one — same approach as
- * {@code SelectedCompanyCountryEnricherTest}.
+ * {@code CompanyCountryEnricherTest}.
  */
 class CompanyGrantTest {
 
@@ -68,21 +68,27 @@ class CompanyGrantTest {
         return pi;
     }
 
-    // ---- the opt-in default ----------------------------------------------
+    // ---- the three states ------------------------------------------------
 
     @Test
-    void anEmptyGrantMeansUnrestricted() {
-        // NOT denied. A role nobody has configured keeps whatever its other permissions allow —
-        // otherwise shipping the grant table blanks every screen in the product at once.
+    void anEmptyGrantMeansNoCompanyAtAll() {
+        // Distinct from a missing one. An empty set is only ever produced by an explicit configuration
+        // — a role written to reach no company, such as a self-service employee role — and it has to
+        // fail closed, or "configured to reach nothing" would be inexpressible.
         model("Department", true);
         Filters original = Filters.of("active", Operator.EQUAL, true);
 
-        assertThat(service().appendCompanyGrant("Department", original, grant(Set.of())))
-                .isSameAs(original);
+        Filters result = service().appendCompanyGrant("Department", original, grant(Set.of()));
+
+        assertThat(result).isNotSameAs(original);
+        // matchNone() is an IN over an empty list; the dialect renders it as 1 = 0 at SQL-build time.
+        assertThat(result.toString()).contains("\"IN\",[]");
     }
 
     @Test
     void aMissingGrantMeansUnrestricted() {
+        // null is what an unconfigured role resolves to (DefaultPermissionSnapshotProvider returns it
+        // for zero grant rows), so shipping the axis blanks nobody's screen.
         model("Department", true);
         Filters original = Filters.of("active", Operator.EQUAL, true);
 

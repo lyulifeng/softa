@@ -31,7 +31,7 @@ import io.softa.framework.orm.enums.IdStrategy;
  * and this data agree by convention.
  *
  * <h3>Applicability + compile, both expressed as one filter template (2026-07-17)</h3>
- * <b>Identity types</b> (SELF / DIRECT_REPORTS / CREATED_BY_SELF / LEGAL_ENTITY)
+ * <b>Identity types</b> (SELF / DIRECT_REPORTS / CREATED_BY_SELF)
  * carry a {@link #filter} template — a Filters-shape JSON whose leaf values are env
  * placeholders (e.g. {@code ["employeeId","=","USER_EMP_ID"]}). That single template
  * drives BOTH sides:

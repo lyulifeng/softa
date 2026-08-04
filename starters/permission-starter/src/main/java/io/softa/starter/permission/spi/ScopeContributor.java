@@ -19,7 +19,7 @@ import io.softa.framework.orm.domain.Filters;
  * <h3>Why a registry, not a switch</h3>
  * The generic scope types (ALL, CUSTOM, CREATED_BY_SELF) are domain-agnostic —
  * they live in {@code permission-starter}. Domain-specific types (SELF,
- * DIRECT_REPORTS, DEPT_SUBTREE, MANAGED_DEPARTMENTS, LEGAL_ENTITY) carry
+ * DIRECT_REPORTS, DEPT_SUBTREE, MANAGED_DEPARTMENTS) carry
  * semantics that depend on the consuming app's business shape. Dispatching
  * through this registry lets the same compiler handle both, without the engine
  * importing business concepts.

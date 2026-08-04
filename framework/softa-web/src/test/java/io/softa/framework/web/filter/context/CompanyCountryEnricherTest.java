@@ -12,6 +12,7 @@ import org.mockito.Mockito;
 
 import io.softa.framework.base.constant.RedisConstant;
 import io.softa.framework.base.context.Context;
+import io.softa.framework.base.context.EmpInfo;
 import io.softa.framework.orm.meta.ModelManager;
 import io.softa.framework.orm.service.CacheService;
 import io.softa.framework.orm.service.ModelService;
@@ -34,7 +35,7 @@ import static org.mockito.Mockito.when;
  * simply not narrowed, which looks exactly like a deployment that never configured the feature.
  * Hence a test per path rather than one happy case.
  */
-class SelectedCompanyCountryEnricherTest {
+class CompanyCountryEnricherTest {
 
     private static final String COMPANY_MODEL = "LegalEntity";
 
@@ -58,8 +59,15 @@ class SelectedCompanyCountryEnricherTest {
 
     private static Context contextWith(Long companyId) {
         Context context = new Context();
-        context.setSelectedCompanyId(companyId);
+        context.setCompanyId(companyId);
         return context;
+    }
+
+    /** The caller's own employing company — the affiliation, not the selection. */
+    private static EmpInfo empInfoWithCompany(Long companyId) {
+        EmpInfo empInfo = new EmpInfo();
+        empInfo.setCompanyId(companyId);
+        return empInfo;
     }
 
     // ---- the model has to be there ---------------------------------------
@@ -72,7 +80,7 @@ class SelectedCompanyCountryEnricherTest {
         ModelService<Long> models = models();
         CacheService cache = mock(CacheService.class);
 
-        new SelectedCompanyCountryEnricher(models, cache).enrich(contextWith(8712L));
+        new CompanyCountryEnricher(models, cache).enrich(contextWith(8712L));
 
         verifyNoInteractions(models);
         verifyNoInteractions(cache);
@@ -86,9 +94,9 @@ class SelectedCompanyCountryEnricherTest {
         when(models.getById(eq("LegalEntity"), eq(8712L))).thenReturn(Optional.of(Map.of("country", "SG")));
         Context context = contextWith(8712L);
 
-        new SelectedCompanyCountryEnricher(models, mock(CacheService.class)).enrich(context);
+        new CompanyCountryEnricher(models, mock(CacheService.class)).enrich(context);
 
-        assertThat(context.getSelectedCompanyCountry()).isEqualTo("SG");
+        assertThat(context.getCompanyCountry()).isEqualTo("SG");
     }
 
     // ---- resolution ------------------------------------------------------
@@ -100,9 +108,9 @@ class SelectedCompanyCountryEnricherTest {
         CacheService cache = mock(CacheService.class);
         Context context = contextWith(8712L);
 
-        new SelectedCompanyCountryEnricher(models, cache).enrich(context);
+        new CompanyCountryEnricher(models, cache).enrich(context);
 
-        assertThat(context.getSelectedCompanyCountry()).isEqualTo("SG");
+        assertThat(context.getCompanyCountry()).isEqualTo("SG");
         verify(cache).save(eq(RedisConstant.COMPANY_COUNTRY + 8712L), eq("SG"),
                 eq(RedisConstant.FIVE_MINUTES));
     }
@@ -116,9 +124,9 @@ class SelectedCompanyCountryEnricherTest {
         when(cache.get(eq(RedisConstant.COMPANY_COUNTRY + 8712L), eq(String.class))).thenReturn("NZ");
         Context context = contextWith(8712L);
 
-        new SelectedCompanyCountryEnricher(models, cache).enrich(context);
+        new CompanyCountryEnricher(models, cache).enrich(context);
 
-        assertThat(context.getSelectedCompanyCountry()).isEqualTo("NZ");
+        assertThat(context.getCompanyCountry()).isEqualTo("NZ");
         verifyNoInteractions(models);
     }
 
@@ -128,9 +136,9 @@ class SelectedCompanyCountryEnricherTest {
         when(models.getById(anyString(), any())).thenReturn(Optional.of(Map.of("country", " SG ")));
         Context context = contextWith(8712L);
 
-        new SelectedCompanyCountryEnricher(models, mock(CacheService.class)).enrich(context);
+        new CompanyCountryEnricher(models, mock(CacheService.class)).enrich(context);
 
-        assertThat(context.getSelectedCompanyCountry()).isEqualTo("SG");
+        assertThat(context.getCompanyCountry()).isEqualTo("SG");
     }
 
     @Test
@@ -140,7 +148,7 @@ class SelectedCompanyCountryEnricherTest {
         ModelService<Long> models = models();
         when(models.getById(anyString(), any())).thenReturn(Optional.of(Map.of("country", "SG")));
         CacheService cache = mock(CacheService.class);
-        SelectedCompanyCountryEnricher enricher = new SelectedCompanyCountryEnricher(models, cache);
+        CompanyCountryEnricher enricher = new CompanyCountryEnricher(models, cache);
 
         enricher.enrich(contextWith(1L));
         enricher.enrich(contextWith(2L));
@@ -152,16 +160,66 @@ class SelectedCompanyCountryEnricherTest {
     // ---- the silent paths ------------------------------------------------
 
     @Test
-    void noSelectedCompanyTouchesNothing() {
-        // Anonymous requests (a public form), service-to-service calls, and any client that predates
-        // the header. None may pay for a lookup.
+    void noCompanyAtAllTouchesNothing() {
+        // Neither selected nor affiliated: anonymous requests (a public form), service-to-service
+        // calls, a pure administrator who is not an employee, and any client that predates the header.
+        // None may pay for a lookup.
         ModelService<Long> models = models();
         CacheService cache = mock(CacheService.class);
 
-        new SelectedCompanyCountryEnricher(models, cache).enrich(contextWith(null));
+        new CompanyCountryEnricher(models, cache).enrich(contextWith(null));
 
         verifyNoInteractions(models);
         verifyNoInteractions(cache);
+    }
+
+    // ---- the fallback ----------------------------------------------------
+
+    @Test
+    void fallsBackToTheCompanyTheCallerBelongsTo() {
+        // A role granted no company selects nothing, so no header goes out and there is no country to
+        // narrow by — leaving a self-service employee looking at every country's value domains. They
+        // belong to exactly one company, so that country is never in doubt.
+        ModelService<Long> models = models();
+        when(models.getById(anyString(), eq(4242L))).thenReturn(Optional.of(Map.of("country", "SG")));
+        Context context = contextWith(null);
+        context.setEmpInfo(empInfoWithCompany(4242L));
+
+        new CompanyCountryEnricher(models, mock(CacheService.class)).enrich(context);
+
+        assertThat(context.getCompanyCountry()).isEqualTo("SG");
+        // The selection itself stays empty — it is what tells the scope layer this is the fallback and
+        // not a header, which is what keeps the SELECTED_COMP_COUNTRY placeholder resolving to null.
+        assertThat(context.getCompanyId()).isNull();
+    }
+
+    @Test
+    void theSelectionWinsOverTheAffiliation() {
+        // The whole point of the header for a multi-company user: looking at another of their companies
+        // must show that company's value domains, not the one they happen to be employed by.
+        ModelService<Long> models = models();
+        when(models.getById(anyString(), eq(8712L))).thenReturn(Optional.of(Map.of("country", "NZ")));
+        Context context = contextWith(8712L);
+        context.setEmpInfo(empInfoWithCompany(4242L));
+
+        new CompanyCountryEnricher(models, mock(CacheService.class)).enrich(context);
+
+        assertThat(context.getCompanyCountry()).isEqualTo("NZ");
+        verify(models, never()).getById(anyString(), eq(4242L));
+    }
+
+    @Test
+    void anEmployeeWithNoCompanyIsNotAFallback() {
+        // EmpInfo is present but carries no legal entity — an employee record mid-setup. Resolving
+        // nothing beats resolving null and narrowing every value domain to country = NULL.
+        ModelService<Long> models = models();
+        Context context = contextWith(null);
+        context.setEmpInfo(empInfoWithCompany(null));
+
+        new CompanyCountryEnricher(models, mock(CacheService.class)).enrich(context);
+
+        assertThat(context.getCompanyCountry()).isNull();
+        verifyNoInteractions(models);
     }
 
     @Test
@@ -172,9 +230,9 @@ class SelectedCompanyCountryEnricherTest {
         when(models.getById(anyString(), any())).thenReturn(Optional.empty());
         Context context = contextWith(8712L);
 
-        new SelectedCompanyCountryEnricher(models, mock(CacheService.class)).enrich(context);
+        new CompanyCountryEnricher(models, mock(CacheService.class)).enrich(context);
 
-        assertThat(context.getSelectedCompanyCountry()).isNull();
+        assertThat(context.getCompanyCountry()).isNull();
     }
 
     @Test
@@ -185,9 +243,9 @@ class SelectedCompanyCountryEnricherTest {
         when(models.getById(anyString(), any())).thenReturn(Optional.of(row));
         Context context = contextWith(8712L);
 
-        new SelectedCompanyCountryEnricher(models, mock(CacheService.class)).enrich(context);
+        new CompanyCountryEnricher(models, mock(CacheService.class)).enrich(context);
 
-        assertThat(context.getSelectedCompanyCountry()).isNull();
+        assertThat(context.getCompanyCountry()).isNull();
     }
 
     @Test
@@ -200,7 +258,7 @@ class SelectedCompanyCountryEnricherTest {
         when(models.getById(anyString(), any())).thenReturn(Optional.of(Map.of("country", "SG")));
         CacheService cache = mock(CacheService.class);
 
-        new SelectedCompanyCountryEnricher(models, cache).enrich(contextWith(8712L));
+        new CompanyCountryEnricher(models, cache).enrich(contextWith(8712L));
 
         verify(cache).save(anyString(), any(), eq(RedisConstant.FIVE_MINUTES));
         assertThat(RedisConstant.FIVE_MINUTES).isLessThanOrEqualTo(RedisConstant.ONE_HOUR);
@@ -213,7 +271,7 @@ class SelectedCompanyCountryEnricherTest {
         when(models.getById(anyString(), any())).thenReturn(Optional.of(Map.of("country", "  ")));
         CacheService cache = mock(CacheService.class);
 
-        new SelectedCompanyCountryEnricher(models, cache).enrich(contextWith(8712L));
+        new CompanyCountryEnricher(models, cache).enrich(contextWith(8712L));
 
         verify(cache, never()).save(anyString(), any(), anyInt());
     }

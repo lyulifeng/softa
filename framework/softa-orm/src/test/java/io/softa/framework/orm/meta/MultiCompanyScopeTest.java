@@ -113,7 +113,7 @@ class MultiCompanyScopeTest {
 
             Filters result = withCompany(4021L, () -> MultiCompanyScope.append("Stats", new Filters()));
             assertTrue(Filters.containsField(result, ModelConstant.COMPANY_FIELD));
-            assertTrue(result.toString().contains(EnvConstant.SELECTED_COMP_ID), result.toString());
+            assertTrue(result.toString().contains(EnvConstant.COMPANY_ID), result.toString());
         } finally {
             snapshotField().set(null, good);
         }
@@ -172,7 +172,7 @@ class MultiCompanyScopeTest {
         assertTrue(Filters.containsField(result, "legalEntityId"));
         // The bound value stays a placeholder: FilterUnitParser substitutes it when building SQL, so
         // the compiled Filters must carry the token rather than the resolved id.
-        assertTrue(result.toString().contains(EnvConstant.SELECTED_COMP_ID), result.toString());
+        assertTrue(result.toString().contains(EnvConstant.COMPANY_ID), result.toString());
     }
 
     @Test
@@ -183,7 +183,7 @@ class MultiCompanyScopeTest {
         Filters result = withCompany(8712L, () -> MultiCompanyScope.append("DeptStats", new Filters()));
 
         assertTrue(Filters.containsField(result, ModelConstant.COMPANY_FIELD));
-        assertTrue(result.toString().contains(EnvConstant.SELECTED_COMP_ID), result.toString());
+        assertTrue(result.toString().contains(EnvConstant.COMPANY_ID), result.toString());
     }
 
     @Test
@@ -196,7 +196,7 @@ class MultiCompanyScopeTest {
         Filters result = withCompany(8712L, () -> MultiCompanyScope.append("Department", byId));
 
         assertSame(byId, result);
-        assertFalse(result.toString().contains(EnvConstant.SELECTED_COMP_ID), result.toString());
+        assertFalse(result.toString().contains(EnvConstant.COMPANY_ID), result.toString());
     }
 
     @Test
@@ -208,7 +208,7 @@ class MultiCompanyScopeTest {
 
         Filters result = withCompany(8712L, () -> MultiCompanyScope.append("Department", byIdAndActive));
 
-        assertFalse(result.toString().contains(EnvConstant.SELECTED_COMP_ID), result.toString());
+        assertFalse(result.toString().contains(EnvConstant.COMPANY_ID), result.toString());
     }
 
     @Test
@@ -218,7 +218,7 @@ class MultiCompanyScopeTest {
         Filters result = withCompany(8712L,
                 () -> MultiCompanyScope.append("Department", Filters.of("active", Operator.EQUAL, true)));
 
-        assertTrue(result.toString().contains(EnvConstant.SELECTED_COMP_ID), result.toString());
+        assertTrue(result.toString().contains(EnvConstant.COMPANY_ID), result.toString());
     }
 
     @Test
@@ -247,7 +247,7 @@ class MultiCompanyScopeTest {
         Filters result = withCompany(8712L, () -> MultiCompanyScope.append("Department", callerScoped));
 
         assertSame(callerScoped, result);
-        assertFalse(result.toString().contains(EnvConstant.SELECTED_COMP_ID), result.toString());
+        assertFalse(result.toString().contains(EnvConstant.COMPANY_ID), result.toString());
     }
 
     @Test
@@ -277,7 +277,7 @@ class MultiCompanyScopeTest {
         Filters granted = Filters.and(selected,
                 Filters.of("legalEntityId", Operator.IN, List.of(8712L, 9001L, 9002L)));
 
-        assertTrue(granted.toString().contains(EnvConstant.SELECTED_COMP_ID), granted.toString());
+        assertTrue(granted.toString().contains(EnvConstant.COMPANY_ID), granted.toString());
         // Both terms present: the selection is a subset of the grant, so this resolves to one company
         // rather than to nothing.
         assertTrue(granted.toString().contains("9001"), granted.toString());
@@ -288,8 +288,8 @@ class MultiCompanyScopeTest {
         // The two compose on a model that is both: different fields, so neither swallows the other.
         // Chained in this order by ModelServiceImpl.scopedAccess.
         Context context = new Context();
-        context.setSelectedCompanyId(8712L);
-        context.setSelectedCompanyCountry("SG");
+        context.setCompanyId(8712L);
+        context.setCompanyCountry("SG");
         Filters result = ContextHolder.callWith(context, () ->
                 MultiCompanyScope.append("BothScoped",
                         io.softa.framework.orm.scope.MultiCountryScope.append("BothScoped", new Filters())));
@@ -303,7 +303,7 @@ class MultiCompanyScopeTest {
     /** Runs {@code op} with a context carrying the given selected company. */
     private static Filters withCompany(Long companyId, java.util.function.Supplier<Filters> op) {
         Context context = new Context();
-        context.setSelectedCompanyId(companyId);
+        context.setCompanyId(companyId);
         return ContextHolder.callWith(context, op::get);
     }
 

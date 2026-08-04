@@ -390,8 +390,8 @@ public class PermissionServiceImpl implements PermissionService {
     // Package-private for test: the empty-grant default and the path-anchored case both fail silently.
     Filters appendCompanyGrant(String model, Filters filters, PermissionInfo pi) {
         Set<Long> granted = pi == null ? null : pi.getGrantedCompanyIds();
-        if (granted == null || granted.isEmpty()) {
-            return filters;
+        if (granted == null) {
+            return filters;   // no company axis configured → unrestricted
         }
         if (model == null || !ModelManager.existModel(model)) {
             return filters;
@@ -411,6 +411,12 @@ public class PermissionServiceImpl implements PermissionService {
             // Same exemption the selection makes: a by-id read is a display expansion or a cascade
             // resolving a stored value, and blanking a label is not the same as denying access to data.
             return filters;
+        }
+        if (granted.isEmpty()) {
+            // Configured to reach no company — distinct from unconfigured, handled above. Matching
+            // nothing is the point: a role written this way (a self-service employee role) must not
+            // see a multi-company row, and its own row scope is what still lets it see itself.
+            return combineAnd(filters, ScopeRuleCompiler.matchNone());
         }
         // Sorted so the same grant renders the same SQL every time — set iteration order would vary
         // the statement text between requests and defeat statement caching.

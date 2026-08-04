@@ -66,9 +66,21 @@ public class PermissionInfo implements Serializable {
      * model, independently of {@link #modelScopeMap} — which companies a role may reach is a property
      * of the role, not of any one model.
      *
-     * <p><b>Empty means unrestricted, not denied.</b> The grant is opt-in: a role nobody configured
-     * keeps whatever its other permissions allow. Fail-closed here would empty every screen for every
-     * existing role the day this ships.
+     * <p><b>Three states, and the difference between two of them is the point:</b>
+     * <ul>
+     *   <li>{@code null} — <b>unrestricted</b>. No company axis applies. This is what a role nobody
+     *       has configured resolves to, so the grant stays opt-in and shipping it empties nobody's
+     *       screen.</li>
+     *   <li><b>empty</b> — <b>no company at all</b>: every multi-company read matches nothing. Only an
+     *       explicit configuration produces this, never the absence of one.</li>
+     *   <li>non-empty — exactly those companies.</li>
+     * </ul>
+     *
+     * <p>"Not configured" and "configured to nothing" used to collapse into the same empty set, which
+     * made the second inexpressible: a role meant to reach no company at all — a self-service employee
+     * role, say — could only be written as the absence of a grant, and absence means unrestricted.
+     * Splitting them is what lets a company axis be mandatory for the roles that need one without
+     * forcing every existing role to be reconfigured first.
      *
      * <p>Cached with the rest of the snapshot, so a read pays no query for it. Roles change → the
      * snapshot is evicted → this is rebuilt with them.

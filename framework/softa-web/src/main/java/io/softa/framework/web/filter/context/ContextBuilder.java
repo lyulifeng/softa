@@ -230,7 +230,7 @@ public class ContextBuilder implements SmartInitializingSingleton {
             return;
         }
         try {
-            context.setSelectedCompanyId(Long.valueOf(raw.trim()));
+            context.setCompanyId(Long.valueOf(raw.trim()));
         } catch (NumberFormatException e) {
             log.warn("Ignoring malformed {} header: {}", BaseConstant.COMPANY_ID_HEADER, raw);
         }

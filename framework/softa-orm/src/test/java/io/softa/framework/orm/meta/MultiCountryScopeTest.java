@@ -113,7 +113,26 @@ class MultiCountryScopeTest {
         assertTrue(Filters.containsField(result, "country"));
         // The bound value stays a placeholder: FilterUnitParser substitutes it when building SQL,
         // so the compiled Filters must carry the token, not the resolved 'SG'.
-        assertTrue(result.toString().contains(EnvConstant.SELECTED_COMP_COUNTRY), result.toString());
+        assertTrue(result.toString().contains(EnvConstant.COMPANY_COUNTRY), result.toString());
+    }
+
+    @Test
+    void narrowsWithTheResolvedCountryWhenNoCompanyIsSelected() {
+        // A role granted no company selects nothing, so no header goes out — and it is the one caller
+        // whose country is never in doubt, since the enricher falls back to the company it belongs to.
+        // That is a self-service employee, and without this it sees every country's value domains.
+        //
+        // The value has to be the resolved country rather than the placeholder, even though both mean
+        // the same country here: FilterUnitParser resolves SELECTED_COMP_COUNTRY to null when nothing
+        // is selected — on purpose, so a CUSTOM scope rule naming it cannot silently start matching the
+        // caller's own country — and emitting the token here would compile to country = NULL, matching
+        // nothing. Empty is worse than unnarrowed: it blanks a required dropdown.
+        Filters result = withFallbackCountry("SG",
+                () -> MultiCountryScope.append("PassType", Filters.of("active", Operator.EQUAL, true)));
+
+        assertTrue(Filters.containsField(result, "country"));
+        assertFalse(result.toString().contains(EnvConstant.COMPANY_COUNTRY), result.toString());
+        assertTrue(result.toString().contains("SG"), result.toString());
     }
 
     @Test
@@ -128,7 +147,7 @@ class MultiCountryScopeTest {
         Filters result = withCountry("SG", () -> MultiCountryScope.append("PassType", byId));
 
         assertSame(byId, result);
-        assertFalse(result.toString().contains(EnvConstant.SELECTED_COMP_COUNTRY), result.toString());
+        assertFalse(result.toString().contains(EnvConstant.COMPANY_COUNTRY), result.toString());
     }
 
     @Test
@@ -140,7 +159,7 @@ class MultiCountryScopeTest {
 
         Filters result = withCountry("SG", () -> MultiCountryScope.append("PassType", byIdAndDeleted));
 
-        assertFalse(result.toString().contains(EnvConstant.SELECTED_COMP_COUNTRY), result.toString());
+        assertFalse(result.toString().contains(EnvConstant.COMPANY_COUNTRY), result.toString());
     }
 
     @Test
@@ -150,7 +169,7 @@ class MultiCountryScopeTest {
         Filters result = withCountry("SG",
                 () -> MultiCountryScope.append("PassType", Filters.of("active", Operator.EQUAL, true)));
 
-        assertTrue(result.toString().contains(EnvConstant.SELECTED_COMP_COUNTRY), result.toString());
+        assertTrue(result.toString().contains(EnvConstant.COMPANY_COUNTRY), result.toString());
     }
 
     @Test
@@ -180,7 +199,7 @@ class MultiCountryScopeTest {
         Filters result = withCountry("SG", () -> MultiCountryScope.append("PassType", callerScoped));
 
         assertSame(callerScoped, result);
-        assertFalse(result.toString().contains(EnvConstant.SELECTED_COMP_COUNTRY), result.toString());
+        assertFalse(result.toString().contains(EnvConstant.COMPANY_COUNTRY), result.toString());
     }
 
     @Test
@@ -198,8 +217,18 @@ class MultiCountryScopeTest {
     /** Runs {@code op} with a context carrying the given selected-company country. */
     private static Filters withCountry(String country, java.util.function.Supplier<Filters> op) {
         Context context = new Context();
-        context.setSelectedCompanyId(8712L);
-        context.setSelectedCompanyCountry(country);
+        context.setCompanyId(8712L);
+        context.setCompanyCountry(country);
+        return ContextHolder.callWith(context, op::get);
+    }
+
+    /**
+     * Runs {@code op} with a country but no selection — what the enricher leaves behind when it falls
+     * back to the caller's own company. The only state in which the two fields disagree.
+     */
+    private static Filters withFallbackCountry(String country, java.util.function.Supplier<Filters> op) {
+        Context context = new Context();
+        context.setCompanyCountry(country);
         return ContextHolder.callWith(context, op::get);
     }
 
