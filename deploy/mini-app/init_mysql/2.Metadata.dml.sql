@@ -1,9 +1,13 @@
 -- Residual metadata seed: MODELS DEFINED ONLY IN METADATA (no Java class).
 -- Everything that has an @Model-annotated Java class is materialized by the
 -- MetadataAnnotationScanner at boot and was removed from this file.
--- These rows ship ownership='STUDIO_MANAGED': platform no-code
--- definitions with no Java source, evolved henceforth via the Studio design
--- workspace + signed envelope. (PLATFORM_DEFAULT is retired on sys_* — V7.)
+-- These are platform no-code definitions with no Java source, evolved henceforth
+-- via the Studio design workspace + signed envelope. The scanner leaves them
+-- alone under EVERY scanner-scope, ["*"] included: a catalog aggregate root
+-- (sys_model / sys_option_set) with no Java class is never auto-deleted, and its
+-- fields / indexes / option items follow their root. There is no `ownership`
+-- column to tag them with — that tier was retired (see the Ownership javadoc);
+-- survival comes from the aggregate-root rule, not from a marker.
 
 -- Model headers (reconstructed from HEAD; label_name -> label per current schema)
 INSERT INTO sys_model(label, model_name, table_name, description, default_order, display_name, search_name, timeline, id_strategy, soft_delete, soft_delete_field, active_control, multi_tenant, version_lock, data_source, service_name, business_key, partition_field)
@@ -202,6 +206,3 @@ INSERT INTO sys_field(label, field_name, column_name, model_name, description, f
 INSERT INTO sys_field(label, field_name, column_name, model_name, description, field_type, option_set_code, related_model, related_field, join_model, join_left, join_right, cascaded_field, filters, default_value, length, scale, required, readonly, translatable, non_copyable, unsearchable, computed, expression, dynamic, encrypted, masking_type, widget_type)
     VALUES('Changed Time', 'changedTime', 'changed_time', 'ChangeLog', '', 'DateTime', '', '', '', '', '', '', '', '', "", 0, 0, false, 0, 0, 0, 0, 0, '', 0, 0, '', '');
 
--- Mark every residual row as PLATFORM_DEFAULT (column default is TENANT).
-UPDATE sys_model SET ownership='STUDIO_MANAGED' WHERE model_name IN ('AuthRegisteredClient', 'ChangeLog', 'SysModelOnchange', 'SysModelValidation', 'SysViewDefault');
-UPDATE sys_field SET ownership='STUDIO_MANAGED' WHERE model_name IN ('AuthRegisteredClient', 'ChangeLog', 'SysModelOnchange', 'SysModelValidation', 'SysViewDefault');

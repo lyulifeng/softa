@@ -45,7 +45,7 @@ system:
 
 | Your `scanner-scope` | What happens |
 |---|---|
-| `["io\\.acme\\.myapp.*"]` (dev) | The framework reads your annotations and auto-runs `CREATE TABLE` / `ADD COLUMN` / `MODIFY COLUMN` / `ADD INDEX`. It **never auto-drops** — a removed field/model/index is logged as a WARN with copy-paste SQL for you to run by hand. |
+| `["io\\.acme\\.myapp.*"]` (dev) | The framework reads your annotations and auto-runs `CREATE TABLE` / `ADD COLUMN` / `MODIFY COLUMN` / `ADD INDEX`. It **never auto-drops** — a removed field/model/index is logged as a WARN with copy-paste SQL for you to run by hand. Deleting a whole `@Model` / `@OptionSet` class also leaves its **metadata rows** in place (they may belong to a no-code definition instead of being orphaned); the WARN names them with the `DELETE` SQL. |
 | empty / unset (production default) | No DDL runs. After boot it checks code-vs-DB and logs a WARN if they drift. Ship schema changes through your normal release process. |
 
 Normal dev loop: **edit annotations → restart your dev app → tables update → watch the log.**

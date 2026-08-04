@@ -148,11 +148,12 @@ class ScannerScopeTest {
     }
 
     @Test
-    void confineUnderMatchAllReturnsEverything() {
-        // matchAll owns the whole catalog → no confinement, even with empty key
-        // sets. Guards the regression where a whole model/option-set removed from
-        // code must still be seen by the diff (catalog rows deleted) under
-        // scanner-scope = ["*"] (match-all).
+    void confineAppliesUnderMatchAllToo_soCodelessRootsAreNeverDeleted() {
+        // An aggregate root with no Java class is confined out under EVERY scope,
+        // ["*"] included: the catalog cannot tell an orphan from a deliberately
+        // code-less (Studio- / seed-authored) definition, so it is never placed in
+        // the diff's removed bucket. Guards the regression where scanner-scope =
+        // ["*"] wiped hand-authored model rows on every boot.
         AnnotationScanResult fromDb = new AnnotationScanResult(
                 List.of(model("Customer"), model("Order")),
                 List.of(field("Customer", "tier")),
@@ -163,11 +164,30 @@ class ScannerScopeTest {
         AnnotationScanResult out = ScannerScope.of(List.of("*"))
                 .confineFromDb(fromDb, Set.of(), Set.of());
 
-        assertEquals(2, out.models().size());
+        assertTrue(out.isEmpty(), "no root exists in code → nothing may reach the diff");
+    }
+
+    @Test
+    void confineUnderMatchAllKeepsRootsThatExistInCode_withTheirAttributes() {
+        // The other half of the rule: when the root IS in code, its attribute rows
+        // enter the diff so removed fields / indexes / option items still get
+        // deleted — the annotations own the root's attribute set.
+        AnnotationScanResult fromDb = new AnnotationScanResult(
+                List.of(model("Customer"), model("Order")),
+                List.of(field("Customer", "tier"), field("Order", "shippedAt")),
+                List.of(optionSet("Tier")),
+                List.of(optionItem("Tier", "g")),
+                List.of(index("Customer", "uk"), index("Order", "idx_order")));
+
+        AnnotationScanResult out = ScannerScope.of(List.of("*"))
+                .confineFromDb(fromDb, Set.of("Customer"), Set.of("Tier"));
+
+        assertEquals(1, out.models().size());
+        assertEquals("Customer", out.models().get(0).getModelName());
         assertEquals(1, out.fields().size());
+        assertEquals(1, out.modelIndexes().size());
         assertEquals(1, out.optionSets().size());
         assertEquals(1, out.optionItems().size());
-        assertEquals(1, out.modelIndexes().size());
     }
 
     // ---- fixtures -------------------------------------------------------

@@ -1,6 +1,10 @@
 package io.softa.starter.metadata.ddl.introspect;
 
+import java.lang.reflect.InvocationTargetException;
+import java.lang.reflect.Method;
+import java.lang.reflect.Proxy;
 import java.sql.Connection;
+import java.sql.DatabaseMetaData;
 import java.sql.SQLException;
 import java.sql.Types;
 import java.util.Set;
@@ -96,5 +100,65 @@ class PhysicalSchemaReaderTest {
         assertFalse(schema.tableExists("dropped_by_hand"));
         assertFalse(schema.columnExists("dropped_by_hand", "id"));
         assertFalse(schema.indexExists("dropped_by_hand", "uk_x"));
+    }
+
+    /**
+     * The round-trip contract: columns are read in ONE metadata pass no matter how many tables
+     * are in scope. A per-table loop is invisible locally and pathological against a remote
+     * database (hundreds of serial round trips on every boot), so the count is asserted, not
+     * just the result.
+     */
+    @Test
+    void columnsAreReadInOneMetadataPassRegardlessOfTableCount() throws SQLException {
+        jdbcTemplate.execute("CREATE TABLE extra_one (id BIGINT NOT NULL PRIMARY KEY, note VARCHAR(10))");
+        jdbcTemplate.execute("CREATE TABLE extra_two (id BIGINT NOT NULL PRIMARY KEY, note VARCHAR(10))");
+
+        CallCounter counter = new CallCounter();
+        try (Connection connection = dataSource.getConnection()) {
+            PhysicalSchema schema = PhysicalSchemaReader.read(
+                    counter.wrap(connection), Set.of("customer", "extra_one", "extra_two"), false);
+
+            assertEquals(3, schema.tables().size());
+            assertEquals(1, counter.getColumnsCalls,
+                    "columns must be read in a single catalog-wide pass, not once per table");
+            // Grouping must not leak same-named columns across tables.
+            assertTrue(schema.columnExists("extra_one", "note"));
+            assertTrue(schema.columnExists("extra_two", "note"));
+            assertFalse(schema.columnExists("customer", "note"));
+        }
+    }
+
+    /** Counts the metadata calls a read performs, delegating everything else. */
+    private static final class CallCounter {
+        private int getColumnsCalls;
+
+        Connection wrap(Connection delegate) {
+            return (Connection) Proxy.newProxyInstance(
+                    getClass().getClassLoader(), new Class<?>[]{Connection.class},
+                    (proxy, method, args) -> {
+                        Object result = invoke(delegate, method, args);
+                        return "getMetaData".equals(method.getName())
+                                ? wrapMetaData((DatabaseMetaData) result) : result;
+                    });
+        }
+
+        private DatabaseMetaData wrapMetaData(DatabaseMetaData delegate) {
+            return (DatabaseMetaData) Proxy.newProxyInstance(
+                    getClass().getClassLoader(), new Class<?>[]{DatabaseMetaData.class},
+                    (proxy, method, args) -> {
+                        if ("getColumns".equals(method.getName())) {
+                            getColumnsCalls++;
+                        }
+                        return invoke(delegate, method, args);
+                    });
+        }
+
+        private static Object invoke(Object target, Method method, Object[] args) throws Throwable {
+            try {
+                return method.invoke(target, args);
+            } catch (InvocationTargetException e) {
+                throw e.getCause();
+            }
+        }
     }
 }

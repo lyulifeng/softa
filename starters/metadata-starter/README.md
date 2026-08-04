@@ -145,7 +145,7 @@ empty / unset = manage nothing.
 
 | `system.metadata.scanner-scope` | Scanner runs | DDL execution | Drift detection |
 |---|---|---|---|
-| `["*"]` | Boot-time, eager, all packages | Auto: `CREATE TABLE` / `ADD COLUMN` / `MODIFY COLUMN` / `ADD INDEX`. **Never auto-DROP** | n/a |
+| `["*"]` | Boot-time, eager, all packages | Auto: `CREATE TABLE` / `ADD COLUMN` / `MODIFY COLUMN` / `ADD INDEX`. **Never auto-DROP** | Code-less catalog roots named in a WARN with copy-paste SQL |
 | `["io\\.acme\\.foo.*", …]` | Boot-time, in-scope packages only | Same auto-policy, in-scope models only | n/a |
 | empty / unset (default, prod) | n/a | n/a | `MetadataAnnotationChecker` runs post-boot on a virtual thread; logs WARN if code-vs-DB drift detected, audits the physical schema against `sys_*` (see Physical recovery), and records the `GET /metadata/status` snapshot |
 
@@ -154,6 +154,24 @@ packages) so the scanner only reconciles the Java packages they are actively
 changing. Scope is per-package, not per-class, and it is not an ownership
 barrier; app identity is still `app_code`, and physical table-name collisions
 remain a database-level concern.
+
+### Catalog row policy (what the scanner writes to `sys_*`)
+
+The catalog is an aggregate: `sys_model` / `sys_option_set` are the **roots**, `sys_field` /
+`sys_model_index` / `sys_option_item` their attributes.
+
+| Change | Applied |
+|---|---|
+| Root added / modified (model, option set) | ✅ |
+| Attribute added / modified / **removed**, on a root whose class is present | ✅ — the annotations own the root's attribute set |
+| **Root removed** (a `sys_model` / `sys_option_set` row with no `@Model` / `@OptionSet` class) | ❌ under **every** scope, `["*"]` included — the root and all its attribute rows are left untouched; `["*"]` logs a WARN naming them with copy-paste `DELETE` SQL |
+
+Rationale, and why this differs from a Java-class deletion being "obvious drift": a code-less root
+is a **first-class** state here — the Studio no-code lane and metadata seed files author models
+that never have a Java class, and nothing in the catalog records row ownership (the `Ownership`
+enum is retained but unused). So "orphan" and "deliberately code-less" are indistinguishable, and
+auto-deleting would silently destroy hand-authored definitions on every boot. Same asymmetry as
+the physical schema below: grow automatically, destroy only when a human says so.
 
 **DDL auto-execute policy**:
 
@@ -177,7 +195,12 @@ out of step with the physical schema — a planned `MODIFY` can target a
 hand-dropped column, planned ALTERs a hand-dropped table, a planned `CREATE` a
 pre-existing table. The orchestrator therefore snapshots the managed tables via
 `DatabaseMetaData` before rendering and prepends **additive-only** recovery DDL
-(labelled `[physical-recovery]` in the logs). There is no switch for this —
+(labelled `[physical-recovery]` in the logs). The snapshot runs on **every**
+boot (the drift audit needs it too) and costs a constant number of round trips
+regardless of model count — tables and columns are each one catalog-wide
+metadata pass filtered in memory, index names one dialect query (MySQL /
+PostgreSQL; other engines fall back to one `getIndexInfo` per table). It is
+logged as `physical snapshot = N managed table(s)`. There is no switch for this —
 posture follows `scanner-scope` alone (active scope recovers, empty scope
 audits read-only), and an introspection failure degrades gracefully:
 
@@ -193,8 +216,8 @@ Type comparison is by `java.sql.Types` **equivalence class** on both sides (the
 declared side through `FieldType.getSqlType()` / the TO_ONE FK's resolved
 mirror; the observed side through the same reverse map the studio JDBC
 connector uses) — never by parsing engine type-name strings. Within a class,
-widths compare numerically (JSON/DTO and physical TEXT/CLOB count as
-unbounded); `INTEGER ⊂ LONG ⊂ BIG_DECIMAL` may widen along the lattice; a
+widths compare numerically (declared TEXT/JSON/DTO and physical TEXT/CLOB count
+as unbounded); `INTEGER ⊂ LONG ⊂ BIG_DECIMAL` may widen along the lattice; a
 declared BOOLEAN accepts an integer-class column (MySQL renders BOOLEAN as
 TINYINT). Anything the comparison cannot classify degrades to
 report-not-act. Non-EQUAL verdicts also appear in the drift audit's

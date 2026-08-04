@@ -48,6 +48,27 @@ logs a consolidated physical drift audit, and `GET /metadata/status` serves the
 boot snapshot (code vs catalog fingerprints + the drift report) — details in the
 [metadata-starter README](../../../starters/metadata-starter/README.md).
 
+## Catalog row policy (`sys_*` rows)
+
+The catalog is an aggregate: `sys_model` / `sys_option_set` are the **roots**,
+`sys_field` / `sys_model_index` / `sys_option_item` their attributes.
+
+| Change | Applied |
+|---|---|
+| Root added / modified | ✅ |
+| Attribute added / modified / **removed**, on a root whose class is present | ✅ — the annotations own the root's attribute set |
+| **Root removed** (a row with no `@Model` / `@OptionSet` class) | ❌ under **every** scope, `["*"]` included — the root and its attribute rows are confined out of the diff, untouched; `["*"]` logs a WARN naming them with copy-paste `DELETE` SQL |
+
+So deleting a `@Model` class does **not** clean its catalog rows: expect the WARN
+and run the SQL yourself. The reason is that a code-less root is a first-class
+state here — Studio no-code and seed-authored models never have a Java class,
+nothing records row ownership (`Ownership` is retained but unused), so "orphan"
+and "deliberately code-less" are indistinguishable and auto-deleting would wipe
+hand-authored definitions on every dev boot. Attributes follow their root so a
+definition is never left as a headless or field-less husk. Implementation:
+`ScannerScope#confineFromDb` (no match-all short-circuit) +
+`MetadataAnnotationScanner#warnCodelessRoots`.
+
 ## DDL auto-execute policy
 
 When the model's package is in `system.metadata.scanner-scope` (e.g.

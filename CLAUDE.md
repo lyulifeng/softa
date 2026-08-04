@@ -271,6 +271,18 @@ out-of-scope rows are never read, written, or deleted. Caveats (not solved by
 scoping): scope is per-package not per-class, the baseline is the shared live
 `sys_*`, and physical-table collisions remain.
 
+**Catalog aggregate roots are never auto-deleted** — under *every* scope, `["*"]`
+included. `sys_model` / `sys_option_set` are the roots; `sys_field` /
+`sys_model_index` / `sys_option_item` are their attributes. A root with no
+`@Model` / `@OptionSet` class is confined out of the diff together with its
+attribute rows (they follow their root), because a code-less root is a
+first-class state here — Studio no-code and seed-authored models never have a
+Java class, and nothing records row ownership (`Ownership` is retained but
+unused), so "orphan" and "deliberately code-less" are indistinguishable.
+`["*"]` names them in a WARN with copy-paste `DELETE` SQL; cleanup is a human
+decision. Attribute removals on a root that IS in code still auto-apply — there
+the annotations own the attribute set.
+
 **Renames: declare the `renamedFrom` attribute** (the earlier
 standalone `@RenamedFrom` annotation is retired). The scanner's set-based diff is
 keyed by `fieldName` / `modelName` / `itemCode`, so an *undeclared* rename still
