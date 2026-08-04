@@ -99,12 +99,9 @@ public class DesignModel extends AuditableModel {
     @Field(label = "Enable Multi-country", defaultValue = "false")
     private Boolean multiCountry = Boolean.FALSE;
 
-    // Mirrors SysModel.companyScoped / companyField: rows belong to one company.
-    @Field(label = "Enable Company Scope", defaultValue = "false")
-    private Boolean companyScoped = Boolean.FALSE;
-
-    @Field(label = "Company Field", length = 128)
-    private String companyField;
+    // Mirrors SysModel.multiCompany: rows belong to one company.
+    @Field(label = "Enable Multi-company", defaultValue = "false", renamedFrom = "companyScoped")
+    private Boolean multiCompany = Boolean.FALSE;
 
     // Structural mirror of sys_model.copyable governance; the cross-lane checksum requires
     // design_* and sys_* to match field-for-field. Initialized true (column is NOT NULL DEFAULT 1).

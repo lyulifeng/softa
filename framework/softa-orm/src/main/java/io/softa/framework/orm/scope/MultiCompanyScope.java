@@ -8,11 +8,10 @@ import io.softa.framework.orm.domain.Filters;
 import io.softa.framework.orm.meta.MetaModel;
 import io.softa.framework.orm.meta.ModelManager;
 import lombok.extern.slf4j.Slf4j;
-import org.apache.commons.lang3.StringUtils;
 
 /**
- * Narrows reads of a company-scoped model — one whose rows belong to one employing company, see
- * {@code @Model(companyScoped = true)} — to the company selected for the current request.
+ * Narrows reads of a multi-company model — one whose rows belong to one employing company, see
+ * {@code @Model(multiCompany = true)} — to the company selected for the current request.
  *
  * <p>Sibling of {@link MultiCountryScope}, and applied the same way and for the same reason: around
  * {@code PermissionService.appendScopeAccessFilters} rather than inside it. See that class for why
@@ -44,13 +43,13 @@ import org.apache.commons.lang3.StringUtils;
  * always match nothing.
  */
 @Slf4j
-public final class CompanyScope {
+public final class MultiCompanyScope {
 
-    private CompanyScope() {
+    private MultiCompanyScope() {
     }
 
     /**
-     * Append the per-company condition when {@code modelName} is company-scoped and the request
+     * Append the per-company condition when {@code modelName} is multi-company and the request
      * carries a selected company.
      *
      * @param modelName model being queried
@@ -64,17 +63,12 @@ public final class CompanyScope {
             return filters;
         }
         MetaModel metaModel = ModelManager.getModel(modelName);
-        if (!metaModel.isCompanyScoped()) {
+        if (!metaModel.isMultiCompany()) {
             return filters;
         }
-        String companyField = metaModel.getCompanyField();
-        if (StringUtils.isBlank(companyField)) {
-            // ModelManager fail-fasts at init when a company-scoped model cannot name its company,
-            // so reaching here means the metadata was built by some other path.
-            log.warn("Model {} is company-scoped but no company field was resolved; "
-                    + "skipping the per-company narrowing", modelName);
-            return filters;
-        }
+        // Fixed by convention, asserted at init (ModelManager.validateMultiCompany) — nothing to
+        // resolve or look up per model.
+        String companyField = ModelConstant.COMPANY_FIELD;
         Long selectedCompanyId = ContextHolder.getContext().getSelectedCompanyId();
         if (selectedCompanyId == null) {
             // No company selected: anonymous and public endpoints, service-to-service calls, and a

@@ -33,7 +33,7 @@ import io.softa.framework.orm.jdbc.JdbcService;
 import io.softa.framework.orm.meta.MetaField;
 import io.softa.framework.orm.meta.ModelManager;
 import io.softa.framework.orm.service.ModelService;
-import io.softa.framework.orm.scope.CompanyScope;
+import io.softa.framework.orm.scope.MultiCompanyScope;
 import io.softa.framework.orm.scope.MultiCountryScope;
 import io.softa.framework.orm.service.PermissionService;
 import io.softa.framework.orm.service.relation.RelationDeleteHandler;
@@ -371,7 +371,7 @@ public class ModelServiceImpl<K extends Serializable> implements ModelService<K>
         // Order between the two selections is irrelevant — independent AND terms on different fields.
         // Their position relative to the permission call is NOT (see above).
         return permissionService.appendScopeAccessFilters(modelName,
-                CompanyScope.append(modelName,
+                MultiCompanyScope.append(modelName,
                         MultiCountryScope.append(modelName, filters)));
     }
 

@@ -63,45 +63,44 @@ class MultiCountryScopeTest {
             RuntimeException e = assertThrows(RuntimeException.class, () -> initWith(
                     new ArrayList<>(List.of(orphan)),
                     new ArrayList<>(List.of(field("NoCountry", "id", "id", FieldType.STRING)))));
-            assertTrue(e.getMessage().contains("must reference"), e.getMessage());
+            assertTrue(e.getMessage().contains("must declare"), e.getMessage());
         } finally {
             snapshotField().set(null, good);
         }
     }
 
     @Test
-    void multiCountryModelWithTwoCountryReferencesIsRejectedAtInit() throws Exception {
-        // Two references means "narrow by which one?" — answering it by picking the first would
-        // be a coin flip baked into the data path.
+    void aSecondCountryReferenceIsNotAnAnchor() throws Exception {
+        // A value domain partitioned by country can still record another country as an attribute —
+        // the country that issued a pass type is not the country the row belongs to. Only the field
+        // named `country` is the partition, and without it boot fails rather than picking one.
         Object good = snapshotField().get(null);
         try {
-            MetaModel ambiguous = multiCountryModel("TwoCountries", "two_countries");
             RuntimeException e = assertThrows(RuntimeException.class, () -> initWith(
-                    new ArrayList<>(List.of(ambiguous, countryRegion())),
+                    new ArrayList<>(List.of(multiCountryModel("TwoCountries", "two_countries"),
+                            countryRegion())),
                     new ArrayList<>(List.of(
                             field("TwoCountries", "id", "id", FieldType.STRING),
-                            countryRef("TwoCountries", "country"),
                             countryRef("TwoCountries", "issuingCountry"),
+                            countryRef("TwoCountries", "residenceCountry"),
                             field("CountryRegion", "id", "id", FieldType.STRING)))));
-            assertTrue(e.getMessage().contains("exactly one"), e.getMessage());
+            assertTrue(e.getMessage().contains(ModelConstant.COUNTRY_FIELD), e.getMessage());
         } finally {
             snapshotField().set(null, good);
         }
     }
 
     @Test
-    void countryFieldIsResolvedForBothSingleValueAndManyToManyShapes() {
-        // Bank ships the many-to-many shape in production, so supporting only the single-value
-        // one would leave it unnarrowed.
-        assertEquals("country", ModelManager.getModel("PassType").getCountryField());
-        assertEquals("countries." + ModelConstant.ID,
-                ModelManager.getModel("BankLike").getCountryField());
+    void aToManyCountryReferenceIsNotAnAnchor() {
+        // A bank serving many countries is not partitioned by them — that field is an attribute, and
+        // the model is simply not multi-country. If one ever needs to be, the partition is a single
+        // `country` field (a dynamic cascaded one when the country is reached through another model).
+        assertFalse(ModelManager.getModel("BankLike").isMultiCountry());
     }
 
     @Test
-    void aPlainModelKeepsNoCountryField() {
+    void aPlainModelIsNotOnTheCountryAxis() {
         assertFalse(ModelManager.getModel("Employee").isMultiCountry());
-        assertNull(ModelManager.getModel("Employee").getCountryField());
     }
 
     // ---- narrowing -------------------------------------------------------
@@ -115,13 +114,6 @@ class MultiCountryScopeTest {
         // The bound value stays a placeholder: FilterUnitParser substitutes it when building SQL,
         // so the compiled Filters must carry the token, not the resolved 'SG'.
         assertTrue(result.toString().contains(EnvConstant.SELECTED_COMP_COUNTRY), result.toString());
-    }
-
-    @Test
-    void narrowsTheManyToManyShapeByItsIdPath() {
-        Filters result = withCountry("SG", () -> MultiCountryScope.append("BankLike", new Filters()));
-
-        assertTrue(Filters.containsField(result, "countries." + ModelConstant.ID));
     }
 
     @Test
@@ -237,7 +229,8 @@ class MultiCountryScopeTest {
     private static List<MetaModel> models() {
         return new ArrayList<>(List.of(
                 multiCountryModel("PassType", "pass_type"),
-                multiCountryModel("BankLike", "bank_like"),
+                // Serves many countries but is not partitioned by them — an attribute, not an axis.
+                model("BankLike", "bank_like"),
                 model("Employee", "employee"),
                 model("BankLikeCountryRel", "bank_like_country_rel"),
                 countryRegion()));

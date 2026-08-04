@@ -34,13 +34,36 @@ public interface ModelConstant {
     String COUNTRY_REGION_MODEL = "CountryRegion";
 
     /**
+     * The field a multi-country model partitions by. <b>Required</b>, asserted at init — the
+     * narrowing filters on this name without resolving anything per model.
+     *
+     * <p>Fixing it is what separates the axis from an attribute. A model may reference a country for
+     * other reasons — the country that issued a document, the countries a bank serves — and only the
+     * field with this name says "these rows are the country's". Resolving by relation target could
+     * not tell the two apart, and guessing would narrow every read on the wrong axis.
+     */
+    String COUNTRY_FIELD = "country";
+
+    /**
      * The model naming the employing company. Hard-coded rather than configured, matching the way
      * {@code EmployeeContextEnricher} hard-codes its HR model names: an application either has this
      * dimension under this name or does not have it at all, and every mechanism keyed on it degrades
-     * to a no-op when the model is absent. One constant so the company-scoped narrowing and the
+     * to a no-op when the model is absent. One constant so the multi-company narrowing and the
      * request enricher cannot drift apart on what "the company" is.
      */
     String COMPANY_MODEL = "LegalEntity";
+
+    /**
+     * The field a multi-company model belongs through. <b>Required</b>, asserted at init — same
+     * contract as {@link #COUNTRY_FIELD}.
+     *
+     * <p>Fixing the name is what lets a model hold more than one reference to a company without
+     * declaring which is which: {@code PayGroup.payingEntityId} names the entity that pays a group,
+     * and does not make the group belong to it. A model with no company column of its own declares
+     * this name as a {@code dynamic} cascaded field ({@code cascadedField = "deptId.legalEntityId"}),
+     * which takes no column and is joined at query time.
+     */
+    String COMPANY_FIELD = "legalEntityId";
     // Reserved field: Version number identifier, used for optimistic lock control
     String VERSION = "version";
     Integer DEFAULT_VERSION = 1;

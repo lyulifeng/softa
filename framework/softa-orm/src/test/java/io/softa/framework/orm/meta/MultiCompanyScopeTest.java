@@ -18,13 +18,13 @@ import io.softa.framework.orm.constant.ModelConstant;
 import io.softa.framework.orm.domain.Filters;
 import io.softa.framework.orm.enums.FieldType;
 import io.softa.framework.orm.jdbc.JdbcService;
-import io.softa.framework.orm.scope.CompanyScope;
+import io.softa.framework.orm.scope.MultiCompanyScope;
 
 import static org.junit.jupiter.api.Assertions.*;
 
 /**
- * Covers the per-company narrowing: the boot-time resolution of which field (or path) a model reaches
- * its company through, and every way the narrowing is skipped.
+ * Covers the per-company narrowing: the boot-time resolution of which field a model reaches its
+ * company through, and every way the narrowing is skipped.
  *
  * <p>The skips carry the risk. Each one is silent by design — an over-eager condition empties a list
  * the user needs rather than merely showing too much — so this test is the only thing separating
@@ -32,7 +32,7 @@ import static org.junit.jupiter.api.Assertions.*;
  * {@code init()} with a mocked {@link JdbcService}, mirroring {@code MultiCountryScopeTest}, because
  * both the validation and the narrowing read snapshot internals.
  */
-class CompanyScopeTest {
+class MultiCompanyScopeTest {
 
     private static Object previousSnapshot;
 
@@ -53,91 +53,79 @@ class CompanyScopeTest {
     // ---- boot validation -------------------------------------------------
 
     @Test
-    void aModelWithNeitherAReferenceNorAPathIsRejectedAtInit() throws Exception {
+    void aModelWithNoCompanyReferenceIsRejectedAtInit() throws Exception {
         // Otherwise the flag is a no-op and the model silently keeps showing every company's rows —
         // indistinguishable from never having marked it, which is the failure this mechanism removes.
         Object good = snapshotField().get(null);
         try {
             RuntimeException e = assertThrows(RuntimeException.class, () -> initWith(
-                    new ArrayList<>(List.of(companyScoped("Orphan", "orphan"), legalEntity())),
+                    new ArrayList<>(List.of(multiCompany("Orphan", "orphan"), legalEntity())),
                     new ArrayList<>(List.of(
                             field("Orphan", "id", "id", FieldType.LONG),
                             field(ModelConstant.COMPANY_MODEL, "id", "id", FieldType.LONG)))));
-            assertTrue(e.getMessage().contains("neither references"), e.getMessage());
+            assertTrue(e.getMessage().contains("must declare"), e.getMessage());
         } finally {
             snapshotField().set(null, good);
         }
     }
 
     @Test
-    void twoCompanyReferencesRequireTheFieldToBeDeclared() throws Exception {
-        // "Narrow by which one?" is not a question to answer by picking the first — a payroll account
-        // referencing both an owning and a paying entity would silently pick a side.
+    void aSecondCompanyReferenceIsNotAnAnchor() throws Exception {
+        // Holding two references to a company is normal — one says the rows belong to it, the other
+        // records something about them. A pay group belongs to the entity it is set up under and names
+        // a second as the one that pays it. Requiring the name is what keeps the second from ever
+        // being mistaken for the axis; without legalEntityId present at all, boot fails rather than
+        // narrowing by whichever reference happened to be found first.
         Object good = snapshotField().get(null);
         try {
             RuntimeException e = assertThrows(RuntimeException.class, () -> initWith(
-                    new ArrayList<>(List.of(companyScoped("TwoRefs", "two_refs"), legalEntity())),
+                    new ArrayList<>(List.of(multiCompany("TwoRefs", "two_refs"), legalEntity())),
                     new ArrayList<>(List.of(
                             field("TwoRefs", "id", "id", FieldType.LONG),
-                            companyRef("TwoRefs", "legalEntityId"),
                             companyRef("TwoRefs", "payingEntityId"),
+                            companyRef("TwoRefs", "owningEntityId"),
                             field(ModelConstant.COMPANY_MODEL, "id", "id", FieldType.LONG)))));
-            assertTrue(e.getMessage().contains("declare"), e.getMessage());
+            assertTrue(e.getMessage().contains(ModelConstant.COMPANY_FIELD), e.getMessage());
         } finally {
             snapshotField().set(null, good);
         }
     }
 
     @Test
-    void anUnresolvablePathIsRejectedAtInit() throws Exception {
+    void aDynamicJoinedReferenceIsAnAnchorLikeAnyOther() throws Exception {
+        // How a per-department statistic satisfies the required anchor without a column of its own:
+        // declare legalEntityId as a dynamic cascaded field. The emitted condition names the field and
+        // WhereBuilder rewrites it back to deptId.legalEntityId, so the narrowing compiles to a LEFT
+        // JOIN. A real column would be the other option and the worse one: it goes stale the moment a
+        // department is re-parented onto another entity.
         Object good = snapshotField().get(null);
         try {
-            MetaModel bad = companyScoped("BadPath", "bad_path");
-            bad.setCompanyField("deptId.noSuchField");
-            RuntimeException e = assertThrows(RuntimeException.class, () -> initWith(
-                    new ArrayList<>(List.of(bad, model("Department", "department"), legalEntity())),
+            initWith(new ArrayList<>(List.of(multiCompany("Stats", "stats"), legalEntity(),
+                            model("Department", "department"))),
                     new ArrayList<>(List.of(
-                            field("BadPath", "id", "id", FieldType.LONG),
-                            deptRef("BadPath", "deptId"),
+                            field("Stats", "id", "id", FieldType.LONG),
+                            deptRef("Stats", "deptId"),
+                            dynamicCompanyRef("Stats", ModelConstant.COMPANY_FIELD,
+                                    "deptId." + ModelConstant.COMPANY_FIELD),
                             field("Department", "id", "id", FieldType.LONG),
-                            field(ModelConstant.COMPANY_MODEL, "id", "id", FieldType.LONG)))));
-            assertTrue(e.getMessage().contains("does not resolve"), e.getMessage());
+                            companyRef("Department", ModelConstant.COMPANY_FIELD),
+                            field(ModelConstant.COMPANY_MODEL, "id", "id", FieldType.LONG))));
+
+            Filters result = withCompany(4021L, () -> MultiCompanyScope.append("Stats", new Filters()));
+            assertTrue(Filters.containsField(result, ModelConstant.COMPANY_FIELD));
+            assertTrue(result.toString().contains(EnvConstant.SELECTED_COMP_ID), result.toString());
         } finally {
             snapshotField().set(null, good);
         }
     }
 
     @Test
-    void aPathLandingOnTheWrongModelIsRejectedAtInit() throws Exception {
-        // The nastiest misconfiguration: the path resolves and the filter runs, comparing company ids
-        // against another model's ids. It matches nothing, and reads as missing data.
-        Object good = snapshotField().get(null);
-        try {
-            MetaModel bad = companyScoped("WrongLeaf", "wrong_leaf");
-            bad.setCompanyField("deptId.managerId");
-            RuntimeException e = assertThrows(RuntimeException.class, () -> initWith(
-                    new ArrayList<>(List.of(bad, model("Department", "department"),
-                            model("Employee", "employee"), legalEntity())),
-                    new ArrayList<>(List.of(
-                            field("WrongLeaf", "id", "id", FieldType.LONG),
-                            deptRef("WrongLeaf", "deptId"),
-                            field("Department", "id", "id", FieldType.LONG),
-                            employeeRef("Department", "managerId"),
-                            field("Employee", "id", "id", FieldType.LONG),
-                            field(ModelConstant.COMPANY_MODEL, "id", "id", FieldType.LONG)))));
-            assertTrue(e.getMessage().contains("rather than"), e.getMessage());
-        } finally {
-            snapshotField().set(null, good);
-        }
-    }
-
-    @Test
-    void theCompanyModelItselfCannotBeCompanyScoped() throws Exception {
+    void theCompanyModelItselfCannotBeMultiCompany() throws Exception {
         // Self-scoping would reduce the company switcher to the company already selected — the
         // company list is the one thing that must never be narrowed by the selection.
         Object good = snapshotField().get(null);
         try {
-            MetaModel selfScoped = companyScoped(ModelConstant.COMPANY_MODEL, "legal_entity");
+            MetaModel selfScoped = multiCompany(ModelConstant.COMPANY_MODEL, "legal_entity");
             RuntimeException e = assertThrows(RuntimeException.class, () -> initWith(
                     new ArrayList<>(List.of(selfScoped)),
                     new ArrayList<>(List.of(
@@ -149,25 +137,37 @@ class CompanyScopeTest {
     }
 
     @Test
-    void aDirectReferenceIsDerivedAndADeclaredPathIsKept() {
-        assertEquals("legalEntityId", ModelManager.getModel("Department").getCompanyField());
-        assertEquals("deptId.legalEntityId", ModelManager.getModel("DeptStats").getCompanyField());
+    void anAnchorPointingAtTheWrongModelIsRejectedAtInit() throws Exception {
+        // A field of the right name pointing somewhere else is worse than a missing one: the condition
+        // would still be emitted, comparing company ids against another model's ids and matching
+        // nothing — data that looks missing rather than a configuration that looks broken.
+        Object good = snapshotField().get(null);
+        try {
+            RuntimeException e = assertThrows(RuntimeException.class, () -> initWith(
+                    new ArrayList<>(List.of(multiCompany("WrongTarget", "wrong_target"), legalEntity(),
+                            model("Department", "department"))),
+                    new ArrayList<>(List.of(
+                            field("WrongTarget", "id", "id", FieldType.LONG),
+                            deptRef("WrongTarget", ModelConstant.COMPANY_FIELD),
+                            field("Department", "id", "id", FieldType.LONG),
+                            field(ModelConstant.COMPANY_MODEL, "id", "id", FieldType.LONG)))));
+            assertTrue(e.getMessage().contains("ManyToOne/OneToOne onto"), e.getMessage());
+        } finally {
+            snapshotField().set(null, good);
+        }
     }
 
     @Test
-    void aPlainModelKeepsNoCompanyField() {
-        // Carrying a legalEntityId is not the same as belonging to one company for scoping purposes —
-        // the flag is what says so, and without it nothing is resolved or narrowed.
-        assertFalse(ModelManager.getModel("Unscoped").isCompanyScoped());
-        assertNull(ModelManager.getModel("Unscoped").getCompanyField());
+    void aPlainModelIsNotOnTheCompanyAxis() {
+        assertFalse(ModelManager.getModel("Unscoped").isMultiCompany());
     }
 
     // ---- narrowing -------------------------------------------------------
 
     @Test
-    void narrowsACompanyScopedModelByTheContextCompany() {
+    void narrowsAMultiCompanyModelByTheContextCompany() {
         Filters result = withCompany(8712L,
-                () -> CompanyScope.append("Department", Filters.of("active", Operator.EQUAL, true)));
+                () -> MultiCompanyScope.append("Department", Filters.of("active", Operator.EQUAL, true)));
 
         assertTrue(Filters.containsField(result, "legalEntityId"));
         // The bound value stays a placeholder: FilterUnitParser substitutes it when building SQL, so
@@ -176,12 +176,13 @@ class CompanyScopeTest {
     }
 
     @Test
-    void narrowsAStatisticThroughItsDeclaredPath() {
-        // The whole reason companyField exists: a per-department statistic has no company of its own,
-        // and reaching one through the department is what makes it filterable without a new column.
-        Filters result = withCompany(8712L, () -> CompanyScope.append("DeptStats", new Filters()));
+    void narrowsAStatisticThroughItsJoinedCompany() {
+        // A per-department statistic has no company of its own; the dynamic cascaded field is what
+        // makes it filterable without a column. The condition names the field — WhereBuilder rewrites
+        // it back to deptId.legalEntityId and joins.
+        Filters result = withCompany(8712L, () -> MultiCompanyScope.append("DeptStats", new Filters()));
 
-        assertTrue(Filters.containsField(result, "deptId.legalEntityId"));
+        assertTrue(Filters.containsField(result, ModelConstant.COMPANY_FIELD));
         assertTrue(result.toString().contains(EnvConstant.SELECTED_COMP_ID), result.toString());
     }
 
@@ -192,7 +193,7 @@ class CompanyScopeTest {
         // header sits elsewhere — silently, since a missing row is not an error.
         Filters byId = Filters.of(ModelConstant.ID, Operator.IN, List.of(1L, 2L));
 
-        Filters result = withCompany(8712L, () -> CompanyScope.append("Department", byId));
+        Filters result = withCompany(8712L, () -> MultiCompanyScope.append("Department", byId));
 
         assertSame(byId, result);
         assertFalse(result.toString().contains(EnvConstant.SELECTED_COMP_ID), result.toString());
@@ -205,7 +206,7 @@ class CompanyScopeTest {
         Filters byIdAndActive = Filters.of(ModelConstant.ID, Operator.IN, List.of(1L))
                 .and("active", Operator.EQUAL, true);
 
-        Filters result = withCompany(8712L, () -> CompanyScope.append("Department", byIdAndActive));
+        Filters result = withCompany(8712L, () -> MultiCompanyScope.append("Department", byIdAndActive));
 
         assertFalse(result.toString().contains(EnvConstant.SELECTED_COMP_ID), result.toString());
     }
@@ -215,7 +216,7 @@ class CompanyScopeTest {
         // The counterpart: choosing among candidates never filters by id, so the id exemption must
         // not have turned the narrowing off in general.
         Filters result = withCompany(8712L,
-                () -> CompanyScope.append("Department", Filters.of("active", Operator.EQUAL, true)));
+                () -> MultiCompanyScope.append("Department", Filters.of("active", Operator.EQUAL, true)));
 
         assertTrue(result.toString().contains(EnvConstant.SELECTED_COMP_ID), result.toString());
     }
@@ -224,7 +225,7 @@ class CompanyScopeTest {
     void leavesAnUnscopedModelUntouched() {
         Filters original = Filters.of("active", Operator.EQUAL, true);
 
-        assertSame(original, withCompany(8712L, () -> CompanyScope.append("Unscoped", original)));
+        assertSame(original, withCompany(8712L, () -> MultiCompanyScope.append("Unscoped", original)));
     }
 
     @Test
@@ -234,7 +235,7 @@ class CompanyScopeTest {
         Filters original = Filters.of("active", Operator.EQUAL, true);
 
         assertSame(original, ContextHolder.callWith(new Context(),
-                () -> CompanyScope.append("Department", original)));
+                () -> MultiCompanyScope.append("Department", original)));
     }
 
     @Test
@@ -243,7 +244,7 @@ class CompanyScopeTest {
         // in the header. AND-ing would compare two different ids and always match nothing.
         Filters callerScoped = Filters.of("legalEntityId", Operator.EQUAL, 99L);
 
-        Filters result = withCompany(8712L, () -> CompanyScope.append("Department", callerScoped));
+        Filters result = withCompany(8712L, () -> MultiCompanyScope.append("Department", callerScoped));
 
         assertSame(callerScoped, result);
         assertFalse(result.toString().contains(EnvConstant.SELECTED_COMP_ID), result.toString());
@@ -255,8 +256,8 @@ class CompanyScopeTest {
         // fail here with an unrelated metadata error.
         Filters original = Filters.of("active", Operator.EQUAL, true);
 
-        assertSame(original, withCompany(8712L, () -> CompanyScope.append("NoSuchModel", original)));
-        assertSame(original, withCompany(8712L, () -> CompanyScope.append(null, original)));
+        assertSame(original, withCompany(8712L, () -> MultiCompanyScope.append("NoSuchModel", original)));
+        assertSame(original, withCompany(8712L, () -> MultiCompanyScope.append(null, original)));
     }
 
     @Test
@@ -271,7 +272,7 @@ class CompanyScopeTest {
         // companies at once with the switch doing nothing. This test fails if anyone reorders it.
         Filters callerFilters = Filters.of("active", Operator.EQUAL, true);
 
-        Filters selected = withCompany(8712L, () -> CompanyScope.append("Department", callerFilters));
+        Filters selected = withCompany(8712L, () -> MultiCompanyScope.append("Department", callerFilters));
         // Then the permission layer ANDs the grant on top, exactly as scopedAccess does.
         Filters granted = Filters.and(selected,
                 Filters.of("legalEntityId", Operator.IN, List.of(8712L, 9001L, 9002L)));
@@ -290,7 +291,7 @@ class CompanyScopeTest {
         context.setSelectedCompanyId(8712L);
         context.setSelectedCompanyCountry("SG");
         Filters result = ContextHolder.callWith(context, () ->
-                CompanyScope.append("BothScoped",
+                MultiCompanyScope.append("BothScoped",
                         io.softa.framework.orm.scope.MultiCountryScope.append("BothScoped", new Filters())));
 
         assertTrue(Filters.containsField(result, "legalEntityId"), result.toString());
@@ -330,12 +331,11 @@ class CompanyScopeTest {
     // ArrayList, not List.of: ListUtils.allNotNull probes contains(null), which immutable
     // collections reject with NPE.
     private static List<MetaModel> models() {
-        MetaModel stats = companyScoped("DeptStats", "dept_stats");
-        stats.setCompanyField("deptId.legalEntityId");
-        MetaModel both = companyScoped("BothScoped", "both_scoped");
+        MetaModel stats = multiCompany("DeptStats", "dept_stats");
+        MetaModel both = multiCompany("BothScoped", "both_scoped");
         both.setMultiCountry(true);
         return new ArrayList<>(List.of(
-                companyScoped("Department", "department"),
+                multiCompany("Department", "department"),
                 stats,
                 both,
                 model("Unscoped", "unscoped"),
@@ -350,6 +350,10 @@ class CompanyScopeTest {
                 field("Department", "active", "active", FieldType.BOOLEAN),
                 field("DeptStats", "id", "id", FieldType.LONG),
                 deptRef("DeptStats", "deptId"),
+                // Production shape: no company column of its own, the company is joined through
+                // the department. Resolves by convention — there is no companyField to declare.
+                dynamicCompanyRef("DeptStats", ModelConstant.COMPANY_FIELD,
+                        "deptId." + ModelConstant.COMPANY_FIELD),
                 field("BothScoped", "id", "id", FieldType.LONG),
                 companyRef("BothScoped", "legalEntityId"),
                 countryRef("BothScoped", "country"),
@@ -370,9 +374,9 @@ class CompanyScopeTest {
         return metaModel;
     }
 
-    private static MetaModel companyScoped(String modelName, String tableName) {
+    private static MetaModel multiCompany(String modelName, String tableName) {
         MetaModel metaModel = model(modelName, tableName);
-        metaModel.setCompanyScoped(true);
+        metaModel.setMultiCompany(true);
         return metaModel;
     }
 
@@ -398,6 +402,14 @@ class CompanyScopeTest {
 
     private static MetaField companyRef(String modelName, String fieldName) {
         return relation(modelName, fieldName, ModelConstant.COMPANY_MODEL);
+    }
+
+    /** A company reference that is joined at query time rather than stored — no column of its own. */
+    private static MetaField dynamicCompanyRef(String modelName, String fieldName, String path) {
+        MetaField metaField = companyRef(modelName, fieldName);
+        metaField.setDynamic(true);
+        metaField.setCascadedField(path);
+        return metaField;
     }
 
     private static MetaField deptRef(String modelName, String fieldName) {

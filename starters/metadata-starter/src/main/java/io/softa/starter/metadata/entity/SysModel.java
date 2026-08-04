@@ -93,15 +93,16 @@ public class SysModel extends AuditableModel {
     @Field(label = "Enable Multi-country", defaultValue = "false")
     private Boolean multiCountry = Boolean.FALSE;
 
-    // Rows belong to one company; reads are narrowed to the one selected in the request. Unlike
-    // multiCountry the anchor CAN need declaring, so it gets a column: it is derived from the model's
-    // own LegalEntity reference when it has one, and spelled out when the company is reached through
-    // another model (a per-department statistic reaching it via deptId.legalEntityId).
-    @Field(label = "Enable Company Scope", defaultValue = "false")
-    private Boolean companyScoped = Boolean.FALSE;
-
-    @Field(label = "Company Field", length = 128)
-    private String companyField;
+    // Rows belong to one company; reads are narrowed to the one selected in the request. Like
+    // multiCountry the anchor needs no column of its own: it is resolved at ModelManager init from the
+    // model's LegalEntity reference, which a model reaching its company through another one declares
+    // as a dynamic cascaded field (deptId.legalEntityId) rather than as a separate attribute.
+    //
+    // renamedFrom carries the 19 rows already set under the old name: without it the set-based diff
+    // reads as "drop company_scoped + add multi_company", and dropping is warn-only — the new column
+    // would arrive empty and every multi-company model would silently stop being narrowed.
+    @Field(label = "Enable Multi-company", defaultValue = "false", renamedFrom = "companyScoped")
+    private Boolean multiCompany = Boolean.FALSE;
 
     // Initialized to true (the column is NOT NULL DEFAULT 1) so hand-constructed
     // instances — scanner paths go through AnnotationParser — never insert NULL.

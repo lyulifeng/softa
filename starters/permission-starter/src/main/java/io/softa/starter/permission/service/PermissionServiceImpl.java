@@ -12,7 +12,6 @@ import io.softa.framework.orm.enums.FieldType;
 import io.softa.framework.orm.meta.MetaField;
 import org.apache.commons.lang3.StringUtils;
 
-import io.softa.framework.orm.meta.MetaModel;
 import io.softa.framework.orm.meta.ModelManager;
 import io.softa.framework.orm.service.ModelService;
 import io.softa.framework.orm.service.PermissionService;
@@ -100,7 +99,7 @@ public class PermissionServiceImpl implements PermissionService {
         if (shouldBypass()) return originalFilters;
         PermissionInfo pi = currentPi();
         if (PermissionInfo.isAdmin(pi)) return originalFilters;
-        // The company grant bounds every company-scoped model, on its own axis: which legal entities a
+        // The company grant bounds every multi-company model, on its own axis: which legal entities a
         // role may reach is a property of the role, so it does not ride the per-model rules below and
         // is not waived by an ALL rule on some model. Admins are already past — a tenant admin sees
         // every company in its tenant.
@@ -373,7 +372,7 @@ public class PermissionServiceImpl implements PermissionService {
     // ───────── metadata-derived scope for anchorless related models ─────────
 
     /**
-     * AND the role's legal-entity grant onto a company-scoped model's read.
+     * AND the role's legal-entity grant onto a multi-company model's read.
      *
      * <p>Reads the anchor from the model's metadata rather than assuming a field name, so a model that
      * reaches its company through another one — a per-department statistic, whose companyField is
@@ -420,14 +419,14 @@ public class PermissionServiceImpl implements PermissionService {
         return combineAnd(filters, Filters.of(companyField, Operator.IN, ids));
     }
 
-    /** The anchor a company-scoped model reaches its company through, or null when it is not one. */
+    /**
+     * The anchor a multi-company model reaches its company through, or null when it is not one.
+     *
+     * <p>The field name is fixed ({@link ModelConstant#COMPANY_FIELD}) and asserted at init, so this
+     * only has to answer whether the model is on the company axis at all.
+     */
     private String companyAnchorOf(String model) {
-        MetaModel metaModel = ModelManager.getModel(model);
-        if (!metaModel.isCompanyScoped()) {
-            return null;
-        }
-        String companyField = metaModel.getCompanyField();
-        return StringUtils.isBlank(companyField) ? null : companyField;
+        return ModelManager.getModel(model).isMultiCompany() ? ModelConstant.COMPANY_FIELD : null;
     }
 
     private boolean hasExplicitRules(PermissionInfo pi, String model) {

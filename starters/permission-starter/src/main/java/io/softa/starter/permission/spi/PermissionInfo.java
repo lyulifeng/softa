@@ -62,7 +62,7 @@ public class PermissionInfo implements Serializable {
     private Map<String, Set<String>> modelSensitiveFieldSetsMap;
 
     /**
-     * Legal entities this user's roles may reach, unioned across roles. Bounds every company-scoped
+     * Legal entities this user's roles may reach, unioned across roles. Bounds every multi-company
      * model, independently of {@link #modelScopeMap} — which companies a role may reach is a property
      * of the role, not of any one model.
      *

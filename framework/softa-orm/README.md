@@ -89,8 +89,7 @@ public enum CustomerTier {
 | `versionLock` | boolean | `false` | `versionLock` | optimistic-lock column |
 | `multiTenant` | boolean | `false` | `multiTenant` | requires a `tenantId` field on the class |
 | `multiCountry` | boolean | `false` | `multiCountry` | rows are partitioned by country; reads narrow to the request's selected country (see [Request-scoped narrowing](#request-scoped-narrowing)) |
-| `companyScoped` | boolean | `false` | `companyScoped` | rows belong to one company; reads narrow to the request's selected company (see [Request-scoped narrowing](#request-scoped-narrowing)) |
-| `companyField` | String | `""` | `companyField` | only when the company is reached through another model, e.g. `"deptId.legalEntityId"`; leave empty to derive it from the model's own company reference |
+| `multiCompany` | boolean | `false` | `multiCompany` | rows belong to one company; reads narrow to the request's selected company (see [Request-scoped narrowing](#request-scoped-narrowing)) |
 | `copyable` | boolean | `true` | `copyable` | `false` ⇒ copy APIs reject the model; UI hides Duplicate |
 | `dataSource` | String | `""` | `dataSource` | empty → primary datasource |
 | `businessKey` | String[] | `{}` | `businessKey` | composite supported |
@@ -452,13 +451,13 @@ Important rule:
 
 ## Request-scoped narrowing
 
-Tenant isolation is not the only read narrowing the ORM applies on its own. Two more are driven by **which company the caller selected for this request**, declared per model with `@Model(multiCountry = true)` and `@Model(companyScoped = true)`.
+Tenant isolation is not the only read narrowing the ORM applies on its own. Two more are driven by **which company the caller selected for this request**, declared per model with `@Model(multiCountry = true)` and `@Model(multiCompany = true)`.
 
 One input, two axes. The client sends only a company id (`X-Company-Id`); the country is resolved server-side from that company and is never taken from the client. A company therefore decides both *whose records* these are (itself) and *which statutory rules* apply (its country) — and the two cannot be collapsed into one mechanism, because two companies in the same country share their value domains but not their records.
 
 ```
 X-Company-Id: 8712
-   └─ Context.selectedCompanyId ─────────────────────────→ CompanyScope       → companyField = {{SELECTED_COMP_ID}}
+   └─ Context.selectedCompanyId ─────────────────────────→ MultiCompanyScope       → legalEntityId = {{SELECTED_COMP_ID}}
         └─ SelectedCompanyCountryEnricher (getById + cache)
              └─ Context.selectedCompanyCountry ─────────→ MultiCountryScope  → countryField = {{SELECTED_COMP_COUNTRY}}
 ```
@@ -467,7 +466,7 @@ X-Company-Id: 8712
 
 ```java
 permissionService.appendScopeAccessFilters(model,
-        CompanyScope.append(model,
+        MultiCompanyScope.append(model,
                 MultiCountryScope.append(model, callerFilters)));
 ```
 
@@ -475,15 +474,28 @@ permissionService.appendScopeAccessFilters(model,
 
 ### Resolving the anchor
 
-Which field carries the partition is resolved at boot, and `ModelManager` fails fast rather than letting a marked model quietly go unnarrowed:
+The anchor is **fixed by name**, not resolved per model, and `ModelManager` fails the boot rather than letting a marked model quietly go unnarrowed:
 
-| declaration | anchor |
+| declaration | required anchor field |
 |---|---|
-| `multiCountry = true` | the model's single `CountryRegion` reference (or `countries.id` for a many-to-many) |
-| `companyScoped = true` | the model's single company reference, e.g. `legalEntityId` |
-| `companyScoped = true, companyField = "deptId.legalEntityId"` | the declared path — for a model with no company of its own, such as a per-department statistic |
+| `multiCountry = true` | `country` — a `MANY_TO_ONE` / `ONE_TO_ONE` onto `CountryRegion` |
+| `multiCompany = true` | `legalEntityId` — a `MANY_TO_ONE` / `ONE_TO_ONE` onto `LegalEntity` |
 
-Rejected at boot: no reference and no path; two candidate references with no `companyField` to disambiguate; a path that does not resolve; a path whose leaf is not the company model (this one would otherwise *run*, comparing company ids against another model's ids and matching nothing — indistinguishable from missing data); and the company model itself being `companyScoped` (which would reduce the company switcher to the company already selected).
+Fixing the name is what separates the axis from an attribute. A model may reference a country or a company for other reasons — the country that issued a document, the countries a bank serves, the entity that pays a pay group (`PayGroup.payingEntityId`) — and only the field carrying the reserved name says "these rows belong to it". Resolving by relation target alone could not tell the two apart, and guessing would narrow every read on the wrong axis: a plausible-looking wrong answer, which is worse than a visible break. Because the name is fixed, nothing has to be stored, looked up or disambiguated at runtime — the narrowing knows the field before it sees the model.
+
+A model with no company column of its own — a per-department statistic — declares the reference as a **`dynamic` cascaded field**, which takes no column and is joined at query time:
+
+```java
+@Field(label = "Company", cascadedField = "deptId.legalEntityId", dynamic = true,
+        fieldType = FieldType.MANY_TO_ONE, relatedModel = LegalEntity.class)
+private Long legalEntityId;
+```
+
+`WhereBuilder` rewrites a condition on that field back to the cascade path, so the narrowing compiles to a LEFT JOIN and the anchor stays a plain field name that can also be filtered, sorted and displayed. There used to be a `companyField` attribute naming the path directly; the cascaded field replaced it because the anchor then lives in the field list rather than the model annotation — visible in the API and in the UI — instead of being a second place to look for "what does this narrow by". A real `legal_entity_id` column is the other alternative and the worse one: it needs backfilling every time a department is re-parented, and a stale copy shows up as a report quietly missing rows.
+
+Rejected at boot: the anchor field missing entirely; a field of that name that is not a to-one onto the target model (this one would otherwise *run*, comparing ids across two models and matching nothing — indistinguishable from missing data); and the company model itself being `multiCompany` (which would reduce the company switcher to the company already selected).
+
+A to-many reference is never an anchor. A bank serving many countries is not partitioned by them — that field is an attribute, and the model is simply not `multiCountry`.
 
 ### When narrowing is skipped
 
@@ -495,7 +507,7 @@ Every skip is silent by design: an over-eager condition empties a list the user 
 
 ### Cost
 
-`CompanyScope` needs nothing but the id in the context, so it costs nothing. `MultiCountryScope` depends on the enricher's company → country lookup, cached in Redis for five minutes — short deliberately, because the country is an editable field on the company's own form and there is no eviction hook on the generic write path. The two degrade independently: if the country cannot be resolved (a deleted company, a row with no country, an application with no company model at all), country narrowing turns off while company narrowing keeps working.
+`MultiCompanyScope` needs nothing but the id in the context, so it costs nothing. `MultiCountryScope` depends on the enricher's company → country lookup, cached in Redis for five minutes — short deliberately, because the country is an editable field on the company's own form and there is no eviction hook on the generic write path. The two degrade independently: if the country cannot be resolved (a deleted company, a row with no country, an application with no company model at all), country narrowing turns off while company narrowing keeps working.
 
 ## Configuration
 ### MQ Topic

@@ -67,14 +67,9 @@ public final class MultiCountryScope {
         if (!metaModel.isMultiCountry()) {
             return filters;
         }
-        String countryField = metaModel.getCountryField();
-        if (StringUtils.isBlank(countryField)) {
-            // ModelManager fail-fasts at init when a multi-country model has no CountryRegion
-            // reference, so reaching here means the metadata was built by some other path.
-            log.warn("Model {} is multi-country but no country field was resolved; "
-                    + "skipping the per-country narrowing", modelName);
-            return filters;
-        }
+        // Fixed by convention, asserted at init (ModelManager.validateMultiCountry) — nothing to
+        // resolve or look up per model.
+        String countryField = ModelConstant.COUNTRY_FIELD;
         if (StringUtils.isBlank(ContextHolder.getContext().getSelectedCompanyCountry())) {
             // No company selected: anonymous/public endpoints and service-to-service calls
             // build a context without one. Those callers must pass the country themselves —

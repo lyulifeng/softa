@@ -207,8 +207,8 @@ public class ModelManager {
             validateMultiTenant(metaModel);
             // Check the multi-country model references CountryRegion, and resolve which field does
             validateMultiCountry(metaModel);
-            // Check the company-scoped model can name its owning company, and resolve the path
-            validateCompanyScoped(metaModel);
+            // Check the multi-company model can name its owning company, and resolve the path
+            validateMultiCompany(metaModel);
             // Check if the optimistic lock control model contains the version field
             validateVersionField(metaModel);
             // Check if the model dataSource attribute is valid
@@ -550,14 +550,24 @@ public class ModelManager {
     }
 
     /**
-     * Validate that a multi-country model references {@code CountryRegion}, and resolve which
-     * field carries the partition into {@link MetaModel#getCountryField()} as a ready-to-use
-     * filter path.
+     * Validate that a multi-country model carries the conventional partition field.
      *
-     * <p>Resolving here rather than declaring it keeps the annotation to a single attribute and
-     * {@code sys_model} to a single new column. Failing closed on "no reference" matters more
-     * than it looks: without it the country narrowing silently does nothing, which reads exactly
-     * like a model that was never marked — the failure mode this whole mechanism exists to remove.
+     * <p>The anchor is fixed by convention — {@link ModelConstant#COUNTRY_FIELD} — rather than
+     * resolved per model, so nothing has to be stored, looked up or disambiguated at runtime: the
+     * narrowing knows the field name before it sees the model. What is enforced here is that the
+     * field exists and really points at a country; a model marked multi-country without it would
+     * narrow by nothing, which reads exactly like a model that was never marked — the failure mode
+     * this whole mechanism exists to remove.
+     *
+     * <p>The name is also what separates the axis from an attribute. A model may reference a country
+     * for other reasons — the country that issued a document, the countries a bank serves — and only
+     * the field called {@code country} says "these rows are the country's". Resolving by relation
+     * target alone could not tell the two apart.
+     *
+     * <p>A model whose country is only reachable through another one declares
+     * {@code country} as a {@code dynamic} cascaded field, exactly as a per-department statistic
+     * does for its company. That also covers the to-many shape: a bank serving many countries is
+     * not partitioned by them, and if it ever needs to be, the partition is one named field.
      *
      * @param metaModel model metadata object
      */
@@ -565,89 +575,65 @@ public class ModelManager {
         if (!metaModel.isMultiCountry()) {
             return;
         }
-        String modelName = metaModel.getModelName();
-        List<String> paths = new ArrayList<>();
-        for (MetaField field : modelFields().get(modelName).values()) {
-            if (!ModelConstant.COUNTRY_REGION_MODEL.equals(field.getRelatedModel())) {
-                continue;
-            }
-            if (FieldType.TO_ONE_TYPES.contains(field.getFieldType())) {
-                paths.add(field.getFieldName());
-            } else if (FieldType.MANY_TO_MANY.equals(field.getFieldType())) {
-                // A to-many tail is expanded by FilterXToManyParser, so the id path filters it.
-                paths.add(field.getFieldName() + "." + ModelConstant.ID);
-            }
-        }
-        Assert.notEmpty(paths,
-                "The multi-country model {0} must reference `{1}` through a ManyToOne or ManyToMany "
-                        + "field: without it the per-country narrowing cannot be applied.",
-                modelName, ModelConstant.COUNTRY_REGION_MODEL);
-        Assert.isTrue(paths.size() == 1,
-                "The multi-country model {0} references `{1}` through {2} fields {3}: exactly one is "
-                        + "required so the country to narrow by is unambiguous.",
-                modelName, ModelConstant.COUNTRY_REGION_MODEL, paths.size(), paths);
-        metaModel.setCountryField(paths.getFirst());
+        requireAnchorField(metaModel.getModelName(), ModelConstant.COUNTRY_FIELD,
+                ModelConstant.COUNTRY_REGION_MODEL, "multi-country");
     }
 
     /**
-     * Resolve which field a company-scoped model reaches its owning company through, and fail the
-     * boot if it cannot be established.
+     * Validate that a multi-company model carries the conventional company field.
      *
-     * <p>Two shapes. A model that references {@code LegalEntity} itself needs nothing declared: the
-     * reference is derived, and requiring exactly one keeps "which relation do the rows belong to"
-     * from being a guess when several lead to a company. A model that has no company of its own —
-     * a per-department statistic, say — declares the path to one, and it is walked here so a typo or
-     * a since-renamed field fails at boot rather than silently disabling the narrowing on a live
-     * system.
+     * <p>Mirrors {@link #validateMultiCountry}: the anchor is {@link ModelConstant#COMPANY_FIELD},
+     * fixed rather than resolved. A model with no company column of its own — a per-department
+     * statistic — declares {@code legalEntityId} as a {@code dynamic} cascaded field
+     * ({@code cascadedField = "deptId.legalEntityId"}), which takes no column and is joined at query
+     * time; {@code WhereBuilder} rewrites a condition on it back to the cascade path, so the SQL is
+     * the same LEFT JOIN either way.
      *
-     * <p>The declared path is required to land on {@code LegalEntity}. Without that check a path
-     * ending one hop short still resolves and still filters — against the wrong ids, which looks
-     * like missing data rather than a misconfiguration.
+     * <p>Requiring the name is what lets a model hold more than one reference to a company without
+     * declaring which is which: {@code PayGroup.payingEntityId} names the entity that pays a group,
+     * and does not make the group belong to it. Only {@code legalEntityId} is the axis.
+     *
+     * @param metaModel model metadata object
      */
-    private static void validateCompanyScoped(MetaModel metaModel) {
-        if (!metaModel.isCompanyScoped()) {
+    private static void validateMultiCompany(MetaModel metaModel) {
+        if (!metaModel.isMultiCompany()) {
             return;
         }
         String modelName = metaModel.getModelName();
         Assert.isTrue(!ModelConstant.COMPANY_MODEL.equals(modelName),
-                "The model {0} IS the company; it cannot be company-scoped. Narrowing it by the "
+                "The model {0} IS the company; it cannot be multi-company. Narrowing it by the "
                         + "selected company would leave the company switcher with a single choice — "
                         + "the one already selected.",
                 modelName);
+        requireAnchorField(modelName, ModelConstant.COMPANY_FIELD, ModelConstant.COMPANY_MODEL,
+                "multi-company");
+    }
 
-        String declared = metaModel.getCompanyField();
-        if (StringUtils.isNotBlank(declared)) {
-            CascadeFieldWalker.Result result =
-                    CascadeFieldWalker.walk(modelName, declared, CascadeFieldWalker.Visitor.NOOP);
-            Assert.isTrue(result instanceof CascadeFieldWalker.Result.Ok,
-                    "The company-scoped model {0} declares companyField `{1}`, which does not resolve: {2}",
-                    modelName, declared,
-                    result instanceof CascadeFieldWalker.Result.Failure f ? f.message() : result);
-            MetaField leaf = ((CascadeFieldWalker.Result.Ok) result).leaf();
-            Assert.isTrue(ModelConstant.COMPANY_MODEL.equals(leaf.getRelatedModel()),
-                    "The company-scoped model {0} declares companyField `{1}`, but it lands on `{2}` "
-                            + "rather than `{3}`: the narrowing would compare company ids against "
-                            + "another model's ids and quietly match nothing.",
-                    modelName, declared, leaf.getRelatedModel(), ModelConstant.COMPANY_MODEL);
-            return;
-        }
-
-        List<String> paths = new ArrayList<>();
-        for (MetaField field : modelFields().get(modelName).values()) {
-            if (ModelConstant.COMPANY_MODEL.equals(field.getRelatedModel())
-                    && FieldType.TO_ONE_TYPES.contains(field.getFieldType())) {
-                paths.add(field.getFieldName());
-            }
-        }
-        Assert.notEmpty(paths,
-                "The company-scoped model {0} neither references `{1}` through a ManyToOne/OneToOne "
-                        + "nor declares a companyField path to one: there is nothing to narrow by.",
-                modelName, ModelConstant.COMPANY_MODEL);
-        Assert.isTrue(paths.size() == 1,
-                "The company-scoped model {0} references `{1}` through {2} fields {3}: declare "
-                        + "companyField to say which one the rows belong to.",
-                modelName, ModelConstant.COMPANY_MODEL, paths.size(), paths);
-        metaModel.setCompanyField(paths.getFirst());
+    /**
+     * Assert that {@code modelName} carries {@code anchorField} as a to-one reference onto
+     * {@code targetModel} — the fixed anchor every request-scoped narrowing filters on.
+     *
+     * <p>Both halves are checked. A missing field means the narrowing has nothing to filter by; a
+     * field of that name pointing somewhere else (or not a relation at all) is worse, because the
+     * condition would still be emitted and would compare ids across two different models, matching
+     * nothing — data that looks missing rather than a configuration that looks broken.
+     */
+    private static void requireAnchorField(String modelName, String anchorField, String targetModel,
+                                           String axis) {
+        MetaField field = modelFields().get(modelName).get(anchorField);
+        Assert.notNull(field,
+                "The {0} model {1} must declare a `{2}` field referencing `{3}`: without it there is "
+                        + "nothing to narrow by. A model that reaches it through another one declares "
+                        + "it as a dynamic cascaded field, e.g. @Field(cascadedField = "
+                        + "\"deptId.{2}\", dynamic = true, fieldType = MANY_TO_ONE, relatedModel = "
+                        + "{3}.class).",
+                axis, modelName, anchorField, targetModel);
+        Assert.isTrue(FieldType.TO_ONE_TYPES.contains(field.getFieldType())
+                        && targetModel.equals(field.getRelatedModel()),
+                "The {0} model {1} declares `{2}` as {3} onto `{4}`, but the anchor must be a "
+                        + "ManyToOne/OneToOne onto `{5}`: otherwise the narrowing compares ids across "
+                        + "two models and quietly matches nothing.",
+                axis, modelName, anchorField, field.getFieldType(), field.getRelatedModel(), targetModel);
     }
 
     /**

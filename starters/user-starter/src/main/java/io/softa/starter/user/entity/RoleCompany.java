@@ -19,7 +19,7 @@ import io.softa.framework.orm.enums.OnDelete;
  *
  * <p>A <b>grant</b>, not a view. It bounds what a user can see at all and is configured by an
  * administrator; which of the granted companies the user is looking at right now is the separate,
- * per-request header selection applied by {@code CompanyScope}. The two compose: the grant bounds the
+ * per-request header selection applied by {@code MultiCompanyScope}. The two compose: the grant bounds the
  * set, the selection picks one out of it.
  *
  * <p><b>No rows means no restriction, not no access.</b> The grant is opt-in: a role nobody has
@@ -32,15 +32,15 @@ import io.softa.framework.orm.enums.OnDelete;
  * so does the model that holds it — but that model is HR's, and this module cannot see it (see
  * {@link #getCompanyId()}). Which model is "the company" binds in exactly one place,
  * {@link ModelConstant#COMPANY_MODEL}, deliberately: its own javadoc says one constant, so the
- * company-scoped narrowing and the request enricher cannot drift apart on what the company is. Spelling
+ * multi-company narrowing and the request enricher cannot drift apart on what the company is. Spelling
  * that binding a second time in a class, column and table name is the drift the constant exists to
- * prevent, so everything in this layer says company — {@code CompanyScope},
- * {@code @Model(companyScoped)}, {@code Context.selectedCompanyId}, {@code grantedCompanyIds} — and the
+ * prevent, so everything in this layer says company — {@code MultiCompanyScope},
+ * {@code @Model(multiCompany)}, {@code Context.selectedCompanyId}, {@code grantedCompanyIds} — and the
  * HR word stays in the HR models, where {@code Department.legalEntityId} is correctly named.
  *
  * <p><b>Why a table rather than a key in {@link RoleDataScope#getDataScopes()}.</b> That row is keyed
  * by (tenant, role, <i>model</i>) and its {@code scopeExpr} is JSON, so the same list of companies would
- * have to be stored once per company-scoped model — eighteen copies today, updated in lockstep, with
+ * have to be stored once per multi-company model — eighteen copies today, updated in lockstep, with
  * nothing detecting a missed one and no error when they disagree. But which companies a role may reach
  * has nothing to do with any particular model: it is a property of the role, so it belongs in a row of
  * its own, next to the other grants. That also buys a plain query for "which roles can reach this

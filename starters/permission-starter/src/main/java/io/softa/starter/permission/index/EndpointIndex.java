@@ -379,6 +379,26 @@ public class EndpointIndex {
      * (e.g. parent has both a direct LeaveType FK and a nested one through
      * LeavePolicyDetail) get the L1 treatment — visited tracks the first
      * appearance.
+     *
+     * <p><b>A {@code dynamic} relation derives the same L1 set as a stored one</b>, deliberately. Such a
+     * field is joined at query time rather than picked in a form — a per-department statistic reaching
+     * its company through {@code deptId.legalEntityId}, a countdown report reaching an employee's pass
+     * type — so on the face of it the picker subset would be enough, and it would keep a report
+     * permission from implying the target's full read surface. It is not narrowed because the targets
+     * are business masters with pages of their own: {@code Department}, {@code Employee},
+     * {@code JobPosition} and {@code LegalEntity} are all reached this way from leave, overtime,
+     * document and report models. This frontend is metadata-driven, so any of those pages may start
+     * issuing a list query against one of them — a filter panel, a tree side panel, a sidecar join —
+     * and the resulting 403 would surface in a business screen with its cause two derivation layers
+     * away. A slightly wide grant is the cheaper failure.
+     *
+     * <p>What that costs: a role holding only, say, the FTE-statistics view permission can also call
+     * {@code /LegalEntity/searchPage}, {@code count} and {@code getUnmaskedField}. The row scope still
+     * bounds what comes back (an unconfigured role hits {@code matchNone} and reads nothing), and the
+     * unmask endpoints are inert today because none of these eight targets declares a
+     * {@code maskingType} field — {@code getUnmaskedFields} fail-fasts on a field that has none.
+     * <b>Re-evaluate this trade the moment one of them gains a masked or encrypted field</b>: the
+     * implied grant becomes a real unmasking capability, and the endpoint carries no {@code @DataMask}.
      */
     private List<String> deriveLookupEndpoints(String model, String action) {
         if (!LOOKUP_TRIGGERS.contains(action)) return List.of();

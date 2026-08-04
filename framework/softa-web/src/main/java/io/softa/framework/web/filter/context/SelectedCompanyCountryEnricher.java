@@ -44,7 +44,7 @@ import io.softa.framework.orm.service.ModelService;
 @RequiredArgsConstructor
 public class SelectedCompanyCountryEnricher implements ContextEnricher {
 
-    /** Shared with the company-scoped narrowing, so the two cannot disagree on what "the company" is. */
+    /** Shared with the multi-company narrowing, so the two cannot disagree on what "the company" is. */
     private static final String COMPANY_MODEL = ModelConstant.COMPANY_MODEL;
     private static final String COUNTRY_FIELD = "country";
 

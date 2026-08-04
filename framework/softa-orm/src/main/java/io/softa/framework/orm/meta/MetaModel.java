@@ -62,17 +62,8 @@ public class MetaModel implements Serializable {
     /** Rows are partitioned by country; reads are narrowed to the context's selected company country. */
     private boolean multiCountry;
 
-    /** The MANY_TO_ONE → CountryRegion field carrying the partition; resolved at init, not declared. */
-    private String countryField;
-
     /** Rows belong to one company; reads are narrowed to the context's selected company. */
-    private boolean companyScoped;
-
-    /**
-     * Field or dot-separated path to the owning company. Declared only for the indirect case;
-     * otherwise resolved at init from the model's own reference onto {@code LegalEntity}.
-     */
-    private String companyField;
+    private boolean multiCompany;
 
     // Default true: the sys_model column is NOT NULL DEFAULT 1; the initializer
     // covers programmatically constructed instances (tests, in-memory models).

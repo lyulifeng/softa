@@ -114,7 +114,7 @@ rows by business key. Per-tenant metadata customization is **not supported**.
     idStrategy = IdStrategy.DB_AUTO_ID,         // default DB_AUTO_ID
     multiTenant = false,                        // default false
     multiCountry = false,                       // default false; rows partitioned by country
-    companyScoped = false, companyField = "",   // default false / derived; rows belong to one company
+    multiCompany = false,                       // default false; rows belong to one company
     storageType = StorageType.RDBMS,
     softDelete = false, activeControl = false, timeline = false,
     versionLock = false,
@@ -198,16 +198,22 @@ public enum CustomerTier {
   a `CASCADE`/`SET_NULL` affecting more than `MAX_BATCH_SIZE` referrers per level is rejected (accidental
   high-fanout), and large deletes are chunked to `DEFAULT_BATCH_SIZE` to bound statement size.
 
-- `multiCountry` / `companyScoped` (**request-scoped narrowing**): mark a model whose rows are
+- `multiCountry` / `multiCompany` (**request-scoped narrowing**): mark a model whose rows are
   partitioned by country / belong to one employing company, and the ORM narrows every read to the
   country / company selected for the current request. One input drives both — the client sends only a
   company id (`X-Company-Id`), the country is resolved server-side from it and is **never** taken from
-  the client. The anchor field is resolved at boot from the model's own `CountryRegion` / company
-  reference; declare `companyField` only when the company is reached **through another model**
-  (`companyField = "deptId.legalEntityId"` for a per-department statistic). Boot-rejected: no reference
-  and no path, two candidate references with nothing to disambiguate them, a path that does not
-  resolve, a path whose leaf is not the company model, and the company model itself being
-  `companyScoped`. Narrowing is skipped — silently, because an over-eager condition empties a list the
+  the client. The anchor field is **fixed by name, never declared**: `country` (a to-one onto
+  `CountryRegion`) / `legalEntityId` (a to-one onto `LegalEntity`), asserted at boot. Fixing the name is
+  what separates the axis from an attribute — a model may reference a country or a company for other
+  reasons (`PayGroup.payingEntityId` names who pays a group, it does not make the group belong to them),
+  and only the reserved name says "these rows belong to it". A model with no company column of its own —
+  a per-department statistic — declares the anchor as a **`dynamic` cascaded field**
+  (`@Field(cascadedField = "deptId.legalEntityId", dynamic = true, fieldType = MANY_TO_ONE,
+  relatedModel = LegalEntity.class)`), which takes no column and is joined at query time; `WhereBuilder`
+  rewrites a condition on it back to the cascade path, so the narrowing compiles to a LEFT JOIN and the
+  anchor stays a plain field name that can also be filtered, sorted and displayed. Boot-rejected: the
+  anchor field missing, a field of that name that is not a to-one onto the target model, and the company
+  model itself being `multiCompany`. Narrowing is skipped — silently, because an over-eager condition empties a list the
   user needs — when nothing is selected, when the caller filters by `id` (display expansion / by-id
   read / cascade), or when the caller already constrains the anchor field. Applied in
   `ModelServiceImpl.scopedAccess` as the **input** to
