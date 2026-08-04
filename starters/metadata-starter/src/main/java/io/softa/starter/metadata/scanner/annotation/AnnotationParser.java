@@ -299,7 +299,6 @@ public final class AnnotationParser {
             m.setDefaultOrder(Orders.of(ordersString));
         }
         m.setSoftDelete(anno.softDelete());
-        m.setSoftDeleteField(blankToNull(anno.softDeleteField()));
         m.setActiveControl(anno.activeControl());
         m.setTimeline(anno.timeline());
         m.setIdStrategy(anno.idStrategy());

@@ -957,8 +957,7 @@ public class ModelServiceImpl<K extends Serializable> implements ModelService<K>
         List<Map<String, Object>> originalRows = jdbcService.selectByIds(modelName, ids, Collections.emptyList(), ConvertType.ORIGINAL);
         List<Map<String, Object>> deletableRows = originalRows.stream().filter(row -> {
             if (ModelManager.isSoftDeleted(modelName)) {
-                String softDeleteField = ModelManager.getSoftDeleteField(modelName);
-                if (Boolean.TRUE.equals(row.get(softDeleteField))) {
+                if (Boolean.TRUE.equals(row.get(ModelConstant.SOFT_DELETED_FIELD))) {
                     log.warn("Data with model {}, id={} has been soft deleted, do not duplicate it.", modelName, row.get(ModelConstant.ID));
                     return false;
                 }

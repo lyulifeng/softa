@@ -63,11 +63,10 @@ public class WhereBuilder extends BaseBuilder implements SqlClauseBuilder {
         if (!ModelManager.isSoftDeleted(mainModelName)) {
             return filters;
         }
-        String softDeleteField = ModelManager.getSoftDeleteField(mainModelName);
-        if (Filters.containsField(filters, softDeleteField)) {
+        if (Filters.containsField(filters, ModelConstant.SOFT_DELETED_FIELD)) {
             return filters;
         }
-        Filters deletedFilters = new Filters().eq(softDeleteField, false);
+        Filters deletedFilters = new Filters().eq(ModelConstant.SOFT_DELETED_FIELD, false);
         return Filters.and(filters, deletedFilters);
     }
 

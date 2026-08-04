@@ -705,7 +705,6 @@ class ContinuousIntervalMaintainerTest {
         // physical branch's `WHERE id IN` does. Keying off the logical ids would probe
         // `WHERE slice_id = NULL` and silently delete nothing.
         modelManager.when(() -> ModelManager.isSoftDeleted(MODEL)).thenReturn(true);
-        modelManager.when(() -> ModelManager.getSoftDeleteField(MODEL)).thenReturn("deleted");
         modelManager.when(() -> ModelManager.isActiveControl(MODEL)).thenReturn(false);
         modelManager.when(() -> ModelManager.getModelPrimaryKey(MODEL)).thenReturn(ModelConstant.SLICE_ID);
         modelManager.when(() -> ModelManager.getModel(MODEL)).thenReturn(new MetaModel());

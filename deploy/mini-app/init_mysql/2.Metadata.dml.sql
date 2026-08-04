@@ -10,20 +10,20 @@
 -- survival comes from the aggregate-root rule, not from a marker.
 
 -- Model headers (reconstructed from HEAD; label_name -> label per current schema)
-INSERT INTO sys_model(label, model_name, table_name, description, default_order, display_name, search_name, timeline, id_strategy, soft_delete, soft_delete_field, active_control, multi_tenant, version_lock, data_source, service_name, business_key, partition_field)
-    VALUES('User Default View', 'SysViewDefault', 'sys_view_default', '', '', '', '', false, '', false,  '', false, false, false, '', '', '', '');
+INSERT INTO sys_model(label, model_name, table_name, description, default_order, display_name, search_name, timeline, id_strategy, soft_delete, active_control, multi_tenant, version_lock, data_source, service_name, business_key, partition_field)
+    VALUES('User Default View', 'SysViewDefault', 'sys_view_default', '', '', '', '', false, '', false, false, false, false, '', '', '', '');
 
-INSERT INTO sys_model(label, model_name, table_name, description, default_order, display_name, search_name, timeline, id_strategy, soft_delete, soft_delete_field, active_control, multi_tenant, version_lock, data_source, service_name, business_key, partition_field)
-    VALUES('Model Onchange Event', 'SysModelOnchange', 'sys_model_onchange', '', '', '', '', false, 'ExternalID', false,  '', false, false, false, '', '', '', '');
+INSERT INTO sys_model(label, model_name, table_name, description, default_order, display_name, search_name, timeline, id_strategy, soft_delete, active_control, multi_tenant, version_lock, data_source, service_name, business_key, partition_field)
+    VALUES('Model Onchange Event', 'SysModelOnchange', 'sys_model_onchange', '', '', '', '', false, 'ExternalID', false, false, false, false, '', '', '', '');
 
-INSERT INTO sys_model(label, model_name, table_name, description, default_order, display_name, search_name, timeline, id_strategy, soft_delete, soft_delete_field, active_control, multi_tenant, version_lock, data_source, service_name, business_key, partition_field)
-    VALUES('Model Validation', 'SysModelValidation', 'sys_model_validation', '', 'modelName,priority', '', '', false, 'ExternalID', false,  '', false, false, false, '', '', '', '');
+INSERT INTO sys_model(label, model_name, table_name, description, default_order, display_name, search_name, timeline, id_strategy, soft_delete, active_control, multi_tenant, version_lock, data_source, service_name, business_key, partition_field)
+    VALUES('Model Validation', 'SysModelValidation', 'sys_model_validation', '', 'modelName,priority', '', '', false, 'ExternalID', false, false, false, false, '', '', '', '');
 
-INSERT INTO sys_model(label, model_name, table_name, description, default_order, display_name, search_name, timeline, id_strategy, soft_delete, soft_delete_field, active_control, multi_tenant, version_lock, data_source, service_name, business_key, partition_field)
-    VALUES('Registered Client', 'AuthRegisteredClient', 'auth_registered_client', '', '', '', '', false, '', false,  '', false, false, false, '', '', '', '');
+INSERT INTO sys_model(label, model_name, table_name, description, default_order, display_name, search_name, timeline, id_strategy, soft_delete, active_control, multi_tenant, version_lock, data_source, service_name, business_key, partition_field)
+    VALUES('Registered Client', 'AuthRegisteredClient', 'auth_registered_client', '', '', '', '', false, '', false, false, false, false, '', '', '', '');
 
-INSERT INTO sys_model(label, model_name, table_name, description, default_order, display_name, search_name, timeline, id_strategy, soft_delete, soft_delete_field, active_control, multi_tenant, version_lock, data_source, service_name, business_key, partition_field)
-    VALUES('Change Log', 'ChangeLog', 'change_log', '', '', '', '', false, '', false,  '', false, false, false, '', '', '', '');
+INSERT INTO sys_model(label, model_name, table_name, description, default_order, display_name, search_name, timeline, id_strategy, soft_delete, active_control, multi_tenant, version_lock, data_source, service_name, business_key, partition_field)
+    VALUES('Change Log', 'ChangeLog', 'change_log', '', '', '', '', false, '', false, false, false, false, '', '', '', '');
 
 -- Field rows
 INSERT INTO sys_field(label, field_name, column_name, model_name, description, field_type, option_set_code, related_model, related_field, join_model, join_left, join_right, cascaded_field, filters, default_value, length, scale, required, readonly, translatable, non_copyable, unsearchable, computed, expression, dynamic, encrypted, masking_type, widget_type)

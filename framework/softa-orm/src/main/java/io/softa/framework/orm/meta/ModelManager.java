@@ -421,16 +421,10 @@ public class ModelManager {
      */
     private static void validateSoftDeleted(MetaModel metaModel) {
         if (metaModel.isSoftDelete()) {
-            String softDeleteField;
-            if (StringUtils.isBlank(metaModel.getSoftDeleteField())) {
-                softDeleteField = ModelConstant.SOFT_DELETED_FIELD;
-                metaModel.setSoftDeleteField(softDeleteField);
-            } else {
-                softDeleteField = metaModel.getSoftDeleteField();
-            }
-            MetaField deletedField = modelFields().get(metaModel.getModelName()).get(softDeleteField);
+            MetaField deletedField = modelFields().get(metaModel.getModelName())
+                    .get(ModelConstant.SOFT_DELETED_FIELD);
             Assert.notNull(deletedField, "`{0}` model enable soft delete, but not exist `{1}` field!",
-                    metaModel.getModelName(), softDeleteField);
+                    metaModel.getModelName(), ModelConstant.SOFT_DELETED_FIELD);
             deletedField.setDefaultValueObject(false);
         }
     }
@@ -1301,13 +1295,6 @@ public class ModelManager {
      */
     public static boolean isSoftDeleted(String modelName) {
         return ModelManager.getModel(modelName).isSoftDelete();
-    }
-
-    /**
-     * Get the soft delete field name of the model.
-     */
-    public static String getSoftDeleteField(String modelName) {
-        return ModelManager.getModel(modelName).getSoftDeleteField();
     }
 
     /**

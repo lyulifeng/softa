@@ -10,29 +10,29 @@
 -- survival comes from the aggregate-root rule, not from a marker.
 
 -- Model headers (reconstructed from HEAD; label_name -> label per current schema)
-INSERT INTO sys_model(label, model_name, table_name, description, default_order, display_name, search_name, timeline, id_strategy, soft_delete, soft_delete_field, active_control, multi_tenant, version_lock, data_source, service_name, business_key, partition_field)
-    VALUES('User Default View', 'SysViewDefault', 'sys_view_default', '', '', '', '', false, '', false,  '', false, false, false, '', '', '', '');
+INSERT INTO sys_model(label, model_name, table_name, description, default_order, display_name, search_name, timeline, id_strategy, soft_delete, active_control, multi_tenant, version_lock, data_source, service_name, business_key, partition_field)
+    VALUES('User Default View', 'SysViewDefault', 'sys_view_default', '', '', '', '', false, '', false, false, false, false, '', '', '', '');
 
-INSERT INTO sys_model(label, model_name, table_name, description, default_order, display_name, search_name, timeline, id_strategy, soft_delete, soft_delete_field, active_control, multi_tenant, version_lock, data_source, service_name, business_key, partition_field)
-    VALUES('Model Onchange Event', 'SysModelOnchange', 'sys_model_onchange', '', '', '', '', false, 'DistributedLong', false,  '', false, false, false, '', '', 'modelName,code', '');
+INSERT INTO sys_model(label, model_name, table_name, description, default_order, display_name, search_name, timeline, id_strategy, soft_delete, active_control, multi_tenant, version_lock, data_source, service_name, business_key, partition_field)
+    VALUES('Model Onchange Event', 'SysModelOnchange', 'sys_model_onchange', '', '', '', '', false, 'DistributedLong', false, false, false, false, '', '', 'modelName,code', '');
 
-INSERT INTO sys_model(label, model_name, table_name, description, default_order, display_name, search_name, timeline, id_strategy, soft_delete, soft_delete_field, active_control, multi_tenant, version_lock, data_source, service_name, business_key, partition_field)
-    VALUES('Model Validation', 'SysModelValidation', 'sys_model_validation', '', 'modelName,priority', '', '', false, 'DistributedLong', false,  '', false, false, false, '', '', 'modelName,code', '');
+INSERT INTO sys_model(label, model_name, table_name, description, default_order, display_name, search_name, timeline, id_strategy, soft_delete, active_control, multi_tenant, version_lock, data_source, service_name, business_key, partition_field)
+    VALUES('Model Validation', 'SysModelValidation', 'sys_model_validation', '', 'modelName,priority', '', '', false, 'DistributedLong', false, false, false, false, '', '', 'modelName,code', '');
 
-INSERT INTO sys_model(label, model_name, table_name, description, default_order, display_name, search_name, timeline, id_strategy, soft_delete, soft_delete_field, active_control, multi_tenant, version_lock, data_source, service_name, business_key, partition_field)
-    VALUES('Tenant Option Set', 'TenantOptionSet', 'tenant_option_set', '', '', 'name', '', false, 'DistributedLong', false,  '', true, false, false, '', '', '', '');
+INSERT INTO sys_model(label, model_name, table_name, description, default_order, display_name, search_name, timeline, id_strategy, soft_delete, active_control, multi_tenant, version_lock, data_source, service_name, business_key, partition_field)
+    VALUES('Tenant Option Set', 'TenantOptionSet', 'tenant_option_set', '', '', 'name', '', false, 'DistributedLong', false, true, false, false, '', '', '', '');
 
-INSERT INTO sys_model(label, model_name, table_name, description, default_order, display_name, search_name, timeline, id_strategy, soft_delete, soft_delete_field, active_control, multi_tenant, version_lock, data_source, service_name, business_key, partition_field)
-    VALUES('Tenant Option Set Translation', 'TenantOptionSetTrans', 'tenant_option_set_trans', '', '', '', '', false, '', false,  '', false, false, false, '', '', '', '');
+INSERT INTO sys_model(label, model_name, table_name, description, default_order, display_name, search_name, timeline, id_strategy, soft_delete, active_control, multi_tenant, version_lock, data_source, service_name, business_key, partition_field)
+    VALUES('Tenant Option Set Translation', 'TenantOptionSetTrans', 'tenant_option_set_trans', '', '', '', '', false, '', false, false, false, false, '', '', '', '');
 
-INSERT INTO sys_model(label, model_name, table_name, description, default_order, display_name, search_name, timeline, id_strategy, soft_delete, soft_delete_field, active_control, multi_tenant, version_lock, data_source, service_name, business_key, partition_field)
-    VALUES('Tenant Option Items', 'TenantOptionItem', 'tenant_option_item', '', 'optionSetCode,sequence', 'itemCode,label', '', false, 'DistributedLong', false,  '', true, false, false, '', '', '', '');
+INSERT INTO sys_model(label, model_name, table_name, description, default_order, display_name, search_name, timeline, id_strategy, soft_delete, active_control, multi_tenant, version_lock, data_source, service_name, business_key, partition_field)
+    VALUES('Tenant Option Items', 'TenantOptionItem', 'tenant_option_item', '', 'optionSetCode,sequence', 'itemCode,label', '', false, 'DistributedLong', false, true, false, false, '', '', '', '');
 
-INSERT INTO sys_model(label, model_name, table_name, description, default_order, display_name, search_name, timeline, id_strategy, soft_delete, soft_delete_field, active_control, multi_tenant, version_lock, data_source, service_name, business_key, partition_field)
-    VALUES('Tenant Option Items Translation', 'TenantOptionItemTrans', 'tenant_option_item_trans', '', '', '', '', false, '', false,  '', false, false, false, '', '', '', '');
+INSERT INTO sys_model(label, model_name, table_name, description, default_order, display_name, search_name, timeline, id_strategy, soft_delete, active_control, multi_tenant, version_lock, data_source, service_name, business_key, partition_field)
+    VALUES('Tenant Option Items Translation', 'TenantOptionItemTrans', 'tenant_option_item_trans', '', '', '', '', false, '', false, false, false, false, '', '', '', '');
 
-INSERT INTO sys_model(label, model_name, table_name, description, default_order, display_name, search_name, timeline, id_strategy, soft_delete, soft_delete_field, active_control, multi_tenant, version_lock, data_source, service_name, business_key, partition_field)
-    VALUES('Tenant Config', 'TenantConfig', 'tenant_config', '', 'name', 'name', '', false, 'DistributedLong', false,  '', true, false, false, '', '', '', '');
+INSERT INTO sys_model(label, model_name, table_name, description, default_order, display_name, search_name, timeline, id_strategy, soft_delete, active_control, multi_tenant, version_lock, data_source, service_name, business_key, partition_field)
+    VALUES('Tenant Config', 'TenantConfig', 'tenant_config', '', 'name', 'name', '', false, 'DistributedLong', false, true, false, false, '', '', '', '');
 
 -- Field rows
 INSERT INTO sys_field(label, field_name, column_name, model_name, description, field_type, option_set_code, related_model, related_field, join_model, join_left, join_right, cascaded_field, filters, default_value, length, scale, required, readonly, translatable, non_copyable, unsearchable, computed, expression, dynamic, encrypted, masking_type, widget_type)

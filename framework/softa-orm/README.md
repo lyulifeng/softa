@@ -81,7 +81,6 @@ public enum CustomerTier {
 | `searchName` | String[] | `{}` | `searchName` | search-field defaults |
 | `defaultOrder` | String[] | `{}` | `defaultOrder` | e.g. `"createdTime:desc"` |
 | `softDelete` | boolean | `false` | `softDelete` | |
-| `softDeleteField` | String | `"deleted"` | `softDeleteField` | effective only when `softDelete = true` |
 | `activeControl` | boolean | `false` | `activeControl` | adds `active` gate column |
 | `timeline` | boolean | `false` | `timeline` | effective-dated rows (see Timeline Model) |
 | `idStrategy` | `IdStrategy` | `DB_AUTO_ID` | `idStrategy` | |
