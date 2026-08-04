@@ -2,6 +2,7 @@ package io.softa.starter.tenant.service.impl;
 
 import java.time.LocalDateTime;
 import java.util.List;
+import java.util.Objects;
 import java.util.Set;
 import java.util.stream.Collectors;
 import lombok.extern.slf4j.Slf4j;
@@ -15,11 +16,11 @@ import io.softa.starter.tenant.config.TenantProvisioningProperties;
 import io.softa.starter.tenant.entity.TenantInfo;
 import io.softa.starter.tenant.entity.TenantSeedProgress;
 import io.softa.starter.tenant.enums.SeederStatus;
-import io.softa.starter.tenant.enums.TenantProvisioningStatus;
+import io.softa.starter.tenant.enums.TenantStatus;
 
 /**
  * Provisioning-status coordinator — the per-tenant "completion latch". Owns the {@link TenantSeedProgress}
- * ledger and folds per-seeder completions into the tenant's {@link TenantProvisioningStatus}. Framework-side
+ * ledger and folds per-seeder completions into the tenant's {@link TenantStatus}. Framework-side
  * and business-agnostic: it only ever sees opaque {@code seederKey} strings + the app's expected-seeders set;
  * it never imports or switches on a business module.
  *
@@ -28,7 +29,7 @@ import io.softa.starter.tenant.enums.TenantProvisioningStatus;
  *
  * <p><b>FAILED has a single authoritative source: {@link #failTimedOut()}</b>, the time-driven guard driven
  * by tenant-starter's own cron consumer (softa-self-sufficient — no dependency on the app opting into a DLQ).
- * The per-seeder failure path ({@link #markSeederFailed}) is currently unreachable — see its javadoc.
+ * The per-seeder failure path ({@link #markSeederFailed}) is not triggered today — see its javadoc.
  *
  * <p><b>Context</b>: every public entry point runs {@code inSystemContext} because it is driven from a Pulsar
  * consumer (no ambient tenant context) and touches shared, non-multiTenant models ({@link TenantSeedProgress}
@@ -49,27 +50,27 @@ public class TenantProvisioningStatusService extends EntityServiceImpl<TenantSee
 
     /**
      * Called at the end of {@code provision()}. No expected seeders (empty config — single-tenant / no-MQ,
-     * or rollout Step 1) → straight to READY; otherwise INITIALIZING until the expected set reports done.
+     * or rollout Step 1) → straight to ACTIVE; otherwise INITIALIZING until the expected set reports done.
      */
     public void beginProvisioning(Long tenantId) {
-        TenantProvisioningStatus initial = props.getExpectedSeeders().isEmpty()
-                ? TenantProvisioningStatus.READY
-                : TenantProvisioningStatus.INITIALIZING;
+        TenantStatus initial = props.getExpectedSeeders().isEmpty()
+                ? TenantStatus.ACTIVE
+                : TenantStatus.INITIALIZING;
         inSystemContext(() -> {
-            tenantInfoService.markProvisioningStatus(tenantId, initial);
+            tenantInfoService.markStatus(tenantId, initial);
             return null;
         });
     }
 
-    /** A seeder finished for this tenant: record DONE (idempotent), flip to READY once all expected are done. */
+    /** A seeder finished for this tenant: record DONE (idempotent), flip to ACTIVE once all expected are done. */
     @Transactional
     public void markSeederReady(Long tenantId, String seederKey) {
         inSystemContext(() -> {
             upsertProgress(tenantId, seederKey, SeederStatus.DONE);
             Set<String> done = doneKeys(tenantId);
             if (done.containsAll(props.getExpectedSeeders())) {
-                tenantInfoService.markProvisioningStatus(tenantId, TenantProvisioningStatus.READY);
-                log.info("Tenant {} provisioning READY (done seeders {})", tenantId, done);
+                tenantInfoService.markStatus(tenantId, TenantStatus.ACTIVE);
+                log.info("Tenant {} setup complete, now ACTIVE (done seeders {})", tenantId, done);
             }
             return null;
         });
@@ -79,20 +80,23 @@ public class TenantProvisioningStatusService extends EntityServiceImpl<TenantSee
      * A seeder reported terminal failure ({@code SeederCompletedMessage.success=false}): record per-seeder
      * FAILED and flag the tenant.
      *
-     * <p><b>Currently unreachable, by design.</b> Seeders publish only {@code success=true}; a seed failure is
-     * an exception → Pulsar redelivery (eventual consistency), never a {@code success=false} report. So the
-     * {@code SeederCompletedCoordinator} else-branch, this method, and {@link SeederStatus#FAILED} are not
-     * exercised today — the authoritative FAILED source is the time-driven {@link #failTimedOut()} guard
-     * (tenant-level). This path is retained (not removed) as the symmetric hook for a FUTURE DLQ integration:
-     * a redelivery-exhausted dead-letter handler would publish {@code success=false} to mark the exact failed
-     * seeder. If that never lands, delete this method + the else-branch + {@code SeederStatus.FAILED} +
-     * {@code SeederCompletedMessage.success} together.
+     * <p><b>Not triggered today, and deliberately so.</b> A seeder never reports its own failure — a failure
+     * is an exception, which MQ answers by redelivering. Redelivery is capped rather than listened to, so an
+     * exhausted message ends up on a dead-letter topic nobody reads. The tenant-level {@link #failTimedOut()}
+     * guard is therefore the only FAILED source, and "which seeder" is answered by the {@code [SEED_FAILURE]}
+     * line each consumer writes before rethrowing.
+     *
+     * <p>Kept, not deleted, because it is the receiving half of a hook that already exists on the wire
+     * ({@code SeederCompletedMessage.success}). Reporting the exact seeder would need one dead-letter listener
+     * per seeder, maintained forever, and a forgotten one fails silently — that was judged not worth it for a
+     * diagnosis the log already supports. Revisit if the seeder count grows or a slow diagnosis starts costing
+     * more than the upkeep.
      */
     @Transactional
     public void markSeederFailed(Long tenantId, String seederKey) {
         inSystemContext(() -> {
             upsertProgress(tenantId, seederKey, SeederStatus.FAILED);
-            tenantInfoService.markProvisioningStatus(tenantId, TenantProvisioningStatus.FAILED);
+            tenantInfoService.markStatus(tenantId, TenantStatus.DRAFT);
             log.error("Tenant {} provisioning FAILED at seeder {}", tenantId, seederKey);
             return null;
         });
@@ -104,26 +108,54 @@ public class TenantProvisioningStatusService extends EntityServiceImpl<TenantSee
      * MQ stalled) surfaces instead of hanging forever. Driven by tenant-starter's own cron consumer, so it is
      * <b>softa-self-sufficient</b> — it does NOT require the app to opt into a DLQ.
      *
-     * <p>Idempotent: {@code markProvisioningStatus} is a no-op at target. Not terminal either — if the seed
-     * later completes, {@code markSeederReady} flips the tenant back from FAILED to READY. Anchor =
-     * {@code createdTime} (≈ beginProvisioning); {@code TenantInfo} is a shared table, swept in system context.
+     * <p>Idempotent: {@code markStatus} is a no-op at target. Not terminal either — if the seed
+     * later completes, {@code markSeederReady} flips the tenant back from FAILED to READY. {@code TenantInfo}
+     * is a shared table, swept in system context.
+     *
+     * <h3>Stalled, not slow</h3>
+     * The anchor is the tenant's <b>last sign of progress</b> — the most recent {@link TenantSeedProgress} row
+     * for it, falling back to {@code createdTime} when no seeder has reported yet. Anchoring on
+     * {@code createdTime} alone measured total elapsed time, which is the wrong question: a large tenant, or a
+     * busy Pulsar cluster, can legitimately take longer than the timeout while completing one seeder after
+     * another. Such a tenant was marked FAILED, shown to ops as broken, and then silently un-FAILED when the
+     * last seeder landed — training everyone to ignore the state. What actually indicates a problem is a
+     * tenant that has stopped moving, and that is what this now measures.
      *
      * @return number of tenants flipped to FAILED this pass
      */
     public int failTimedOut() {
         return inSystemContext(() -> {
             LocalDateTime cutoff = LocalDateTime.now().minusSeconds(props.getReadyTimeoutSeconds());
-            Filters filters = new Filters()
-                    .eq(TenantInfo::getProvisioningStatus, TenantProvisioningStatus.INITIALIZING)
-                    .lt(TenantInfo::getCreatedTime, cutoff);
-            List<TenantInfo> stuck = tenantInfoService.searchList(filters);
-            for (TenantInfo tenant : stuck) {
-                tenantInfoService.markProvisioningStatus(tenant.getId(), TenantProvisioningStatus.FAILED);
-                log.warn("Tenant {} stuck in provisioning INITIALIZING past {}s → FAILED",
-                        tenant.getId(), props.getReadyTimeoutSeconds());
+            List<TenantInfo> initializing = tenantInfoService.searchList(new Filters()
+                    .eq(TenantInfo::getStatus, TenantStatus.INITIALIZING));
+            int failed = 0;
+            for (TenantInfo tenant : initializing) {
+                LocalDateTime lastProgress = lastProgressAt(tenant);
+                if (lastProgress != null && lastProgress.isAfter(cutoff)) {
+                    continue;   // still moving — slow is not stalled
+                }
+                tenantInfoService.markStatus(tenant.getId(), TenantStatus.DRAFT);
+                log.warn("Tenant {} made no provisioning progress since {} (past {}s) → FAILED",
+                        tenant.getId(), lastProgress, props.getReadyTimeoutSeconds());
+                failed++;
             }
-            return stuck.size();
+            return failed;
         });
+    }
+
+    /**
+     * When this tenant last moved: the newest {@link TenantSeedProgress} write, or its creation time when no
+     * seeder has reported at all. {@code updatedTime} rather than {@code createdTime} on the progress row,
+     * because a seeder re-reporting (MQ redelivery, a rebuild) is also progress.
+     */
+    private LocalDateTime lastProgressAt(TenantInfo tenant) {
+        // `this` IS the TenantSeedProgress entity service — it is what upsertProgress writes through.
+        return searchList(new Filters().eq(TenantSeedProgress::getTenantId, tenant.getId()))
+                .stream()
+                .map(p -> p.getUpdatedTime() != null ? p.getUpdatedTime() : p.getCreatedTime())
+                .filter(Objects::nonNull)
+                .max(LocalDateTime::compareTo)
+                .orElse(tenant.getCreatedTime());
     }
 
     /**

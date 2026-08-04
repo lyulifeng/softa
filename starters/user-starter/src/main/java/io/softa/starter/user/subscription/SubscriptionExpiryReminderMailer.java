@@ -39,6 +39,18 @@ public class SubscriptionExpiryReminderMailer {
      *  A purchased plan gets renewal wording; a trial gets upgrade wording. */
     static final String TEMPLATE_EXPIRY_REMINDER = "subscription.expiry-reminder";
     static final String TEMPLATE_TRIAL_EXPIRY_REMINDER = "subscription.trial-expiry-reminder";
+    /**
+     * Used when a later period exists but does not start the day after this one ends. "Please renew" is the
+     * wrong ask — they have renewed — so this template names the uncovered stretch instead.
+     */
+    static final String TEMPLATE_GAP_REMINDER = "subscription.gap-reminder";
+    /**
+     * Used when a LOWER-tier period covers the day after this one ends — the tenant is not cut off, it drops to
+     * that plan. Every other template promises a loss of access, which here would simply be false: each tenant
+     * owns an open-ended floor-plan period underneath whatever it bought, so a purchased period lapsing means a
+     * downgrade, not a lockout. Says which plan takes over and what buying again would keep.
+     */
+    static final String TEMPLATE_DOWNGRADE_REMINDER = "subscription.downgrade-reminder";
 
     private final RoleService roleService;
     private final UserRoleRelService userRoleRelService;
@@ -83,14 +95,38 @@ public class SubscriptionExpiryReminderMailer {
                 "tenantName", message.tenantName() == null ? "" : message.tenantName(),
                 "planId", message.planId() == null ? "" : message.planId(),
                 "expiryDate", message.effectiveTo() == null ? "" : message.effectiveTo(),
-                "daysLeft", message.daysLeft());
-        // Trial → upgrade wording; purchased plan → renewal wording (two platform templates).
-        String templateCode = message.trial() ? TEMPLATE_TRIAL_EXPIRY_REMINDER : TEMPLATE_EXPIRY_REMINDER;
+                "daysLeft", message.daysLeft(),
+                "nextStartDate", message.nextStartDate() == null ? "" : message.nextStartDate(),
+                "successorPlanId", message.successorPlanId() == null ? "" : message.successorPlanId());
+        // Four mutually exclusive asks, ordered by what the reader actually loses.
+        //
+        // The downgrade case is FIRST and outranks everything, because it is the only one where access does
+        // not stop: a lower-tier period covers the day after, so the tenant keeps working with fewer modules.
+        // Sending any of the other three here would tell a paying customer they are about to lose access when
+        // they are not — and a customer who discovers the claim was false stops believing the next reminder.
+        //
+        // The gap case is next and wins over `trial`, because what matters is the uncovered stretch, not which
+        // kind of period is ending: a trial that ends with a paid period booked for later still leaves the
+        // customer with nothing in between, and "upgrade to keep access" would read as though nothing had
+        // been bought.
+        String templateCode;
+        if (message.successorPlanId() != null && !message.successorPlanId().isBlank()) {
+            templateCode = TEMPLATE_DOWNGRADE_REMINDER;
+        } else if (message.nextStartDate() != null && !message.nextStartDate().isBlank()) {
+            templateCode = TEMPLATE_GAP_REMINDER;
+        } else if (message.trial()) {
+            templateCode = TEMPLATE_TRIAL_EXPIRY_REMINDER;
+        } else {
+            templateCode = TEMPLATE_EXPIRY_REMINDER;
+        }
         for (String email : emails) {
             eventPublisher.publishEvent(new MailRequestMessage(List.of(email), templateCode, variables));
         }
-        log.info("Published {} {} reminder mail(s) for tenant {} ({} day(s) left, expires {})",
-                emails.size(), message.trial() ? "trial-expiry" : "subscription-expiry",
+        // The template code itself, not a re-derivation of it: a two-branch guess here logged a gap reminder
+        // as "subscription-expiry", so the log disagreed with the mail that was actually sent — exactly the
+        // wrong signal when someone is investigating why a customer got the wording they did.
+        log.info("Published {} '{}' reminder mail(s) for tenant {} ({} day(s) left, expires {})",
+                emails.size(), templateCode,
                 message.tenantId(), message.daysLeft(), message.effectiveTo());
     }
 }

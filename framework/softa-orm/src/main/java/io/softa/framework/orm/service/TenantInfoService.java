@@ -27,12 +27,68 @@ public interface TenantInfoService {
     boolean isTenantActive(Long tenantId);
 
     /**
-     * Deactivate a tenant — the single sanctioned path out of ACTIVE: set its status to
-     * SUSPENDED and evict the tenant caches so {@link #isTenantActive} and active-id
-     * filtering reflect it immediately. Existing users are then forced to re-login on their
-     * next request (the per-request tenant gate rejects them and drops their session).
+     * Whether the tenant has finished being provisioned — its seed data is in place and it is safe to let
+     * users in.
+     *
+     * <p>A <b>separate axis</b> from {@link #isTenantActive}, deliberately not folded into it. Operational
+     * status answers "may this tenant operate at all" and is what a suspension flips; this answers "is this
+     * tenant built yet". A freshly created tenant is ACTIVE from birth — it has to be, or its own seeders
+     * could not write to it — so the two cannot share one flag.
+     *
+     * <p>Why login has to consult it: while seeding is in flight the tenant is half-built (its roles, org
+     * masters and option items arrive over MQ, out of order), so a user let in early sees a workspace that is
+     * missing pieces and can create records that reference masters which do not exist yet. It also makes
+     * discarding a failed setup safe: if nobody can log in before READY, then every row in a not-yet-READY
+     * tenant was written by a seeder, and deleting them cannot destroy anyone's work.
+     *
+     * <p>Defaulted to {@code true} rather than declared abstract, and that is about this being a published
+     * SPI: an abstract addition breaks every external implementor's compile on an upgrade that changes nothing
+     * they asked for. The default is also the honest answer for them — a deployment that tracks no provisioning
+     * axis has no tenant that is "not built yet", so the gate degrades to {@link #isTenantActive} alone, which
+     * is exactly the pre-existing behaviour.
+     *
+     * @param tenantId tenant id
+     * @return true when the tenant is fully provisioned (or the deployment tracks no provisioning axis)
+     */
+    default boolean isTenantProvisioned(Long tenantId) {
+        return true;
+    }
+
+    /**
+     * Suspend a tenant — ACTIVE → SUSPENDED. See {@link #activate} for the contract these three share.
      *
      * @param tenantId tenant id
      */
     void deactivate(Long tenantId);
+
+    /**
+     * Reactivate a suspended tenant — SUSPENDED → ACTIVE.
+     *
+     * <p>These three transitions ({@code activate} / {@link #deactivate} / {@link #close}) are the
+     * <b>only</b> sanctioned way to change a tenant's operational status, because each of them does two
+     * things that a plain column write does not:
+     *
+     * <ol>
+     *   <li>stamps the timestamp belonging to the target status and <b>clears the other two</b>, so exactly
+     *       one is ever set and the trio stays a function of the status — an active tenant can never show a
+     *       suspended time;</li>
+     *   <li>evicts the tenant caches, so {@link #isTenantActive} and active-id filtering see the change at
+     *       once. Users of a tenant leaving ACTIVE are then forced to re-login on their next request (the
+     *       per-request gate rejects them and drops their session).</li>
+     * </ol>
+     *
+     * Without the eviction a suspension does not take effect until the cache expires — the tenant's users
+     * keep working meanwhile — which is why the status column must not be exposed as an editable field.
+     *
+     * @param tenantId tenant id
+     */
+    void activate(Long tenantId);
+
+    /**
+     * Close a tenant — ACTIVE / SUSPENDED → CLOSED. Terminal; data is retained. See {@link #activate} for
+     * the shared contract.
+     *
+     * @param tenantId tenant id
+     */
+    void close(Long tenantId);
 }

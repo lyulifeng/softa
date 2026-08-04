@@ -6,13 +6,22 @@ import com.cronutils.model.Cron;
 import com.cronutils.model.CronType;
 import com.cronutils.model.definition.CronDefinitionBuilder;
 import com.cronutils.parser.CronParser;
+import com.googlecode.aviator.annotation.Import;
+import com.googlecode.aviator.annotation.ImportScope;
 
 import io.softa.framework.base.exception.IllegalArgumentException;
 
 /**
  * Expression calculation tool class.
  * Definition of static methods, and imported to calculation engine.
+ *
+ * <p>{@code @Import(ns = "Toolkit")} registers these static methods under the {@code Toolkit}
+ * namespace in the Aviator engine (via {@code ComputeUtils.importFunctions(CronUtils.class)}), so
+ * computed-field expressions can call {@code Toolkit.cronSemantic(cronExpression)} (used by
+ * {@code SysCron.cronSemantic}). Without it the methods register globally and {@code Toolkit.*}
+ * fails at evaluation with "Function not found".
  */
+@Import(ns = "Toolkit", scopes = {ImportScope.Static})
 public class CronUtils {
 
     /**

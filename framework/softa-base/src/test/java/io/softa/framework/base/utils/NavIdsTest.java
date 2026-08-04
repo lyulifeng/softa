@@ -1,4 +1,4 @@
-package io.softa.starter.user.util;
+package io.softa.framework.base.utils;
 
 import static org.assertj.core.api.Assertions.assertThat;
 

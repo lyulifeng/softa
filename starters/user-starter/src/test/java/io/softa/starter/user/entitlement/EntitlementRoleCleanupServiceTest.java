@@ -10,10 +10,12 @@ import io.softa.framework.orm.domain.Filters;
 import io.softa.starter.user.entity.RoleDataScope;
 import io.softa.starter.user.entity.RoleNavigation;
 import io.softa.starter.user.entity.RoleSensitiveFieldSet;
+import io.softa.starter.user.entity.UserAccount;
 import io.softa.starter.user.service.PermissionCacheInvalidator;
 import io.softa.starter.user.service.RoleDataScopeService;
 import io.softa.starter.user.service.RoleNavigationService;
 import io.softa.starter.user.service.RoleSensitiveFieldSetService;
+import io.softa.starter.user.service.UserAccountService;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
@@ -23,8 +25,10 @@ import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
-/** {@link EntitlementRoleCleanupService} — removes nav grants whose module isn't entitled + evicts by
- *  role, and purges the scope/sensitive grants of any role the downgrade left with no nav. */
+/** {@link EntitlementRoleCleanupService} — removes nav grants whose module isn't entitled, purges the
+ *  scope/sensitive grants of any role the downgrade left with no nav, and evicts the whole tenant's
+ *  snapshots (entitledModules rides in every one of them, so per-role eviction would miss upgrades
+ *  and the runtime-computed TENANT_ADMIN). */
 class EntitlementRoleCleanupServiceTest {
 
     private static final long TENANT = 10L;
@@ -32,6 +36,7 @@ class EntitlementRoleCleanupServiceTest {
     private RoleNavigationService roleNavigationService;
     private RoleDataScopeService roleDataScopeService;
     private RoleSensitiveFieldSetService roleSensitiveFieldSetService;
+    private UserAccountService userAccountService;
     private PermissionCacheInvalidator cacheInvalidator;
     private EntitlementRoleCleanupService service;
 
@@ -40,9 +45,20 @@ class EntitlementRoleCleanupServiceTest {
         roleNavigationService = mock(RoleNavigationService.class);
         roleDataScopeService = mock(RoleDataScopeService.class);
         roleSensitiveFieldSetService = mock(RoleSensitiveFieldSetService.class);
+        userAccountService = mock(UserAccountService.class);
         cacheInvalidator = mock(PermissionCacheInvalidator.class);
         service = new EntitlementRoleCleanupService(
-                roleNavigationService, roleDataScopeService, roleSensitiveFieldSetService, cacheInvalidator);
+                roleNavigationService, roleDataScopeService, roleSensitiveFieldSetService,
+                userAccountService, cacheInvalidator);
+        when(userAccountService.searchList(any(Filters.class)))
+                .thenReturn(List.of(account(1_001L), account(1_002L)));
+    }
+
+    private static UserAccount account(long id) {
+        UserAccount a = new UserAccount();
+        a.setId(id);
+        a.setTenantId(TENANT);
+        return a;
     }
 
     private static RoleNavigation grant(long id, long roleId, String navId) {
@@ -73,7 +89,7 @@ class EntitlementRoleCleanupServiceTest {
     }
 
     @Test
-    void removesOverPlanGrants_evictsAffectedRoles() {
+    void removesOverPlanGrants_evictsWholeTenant() {
         RoleNavigation keep = grant(1L, 100L, "navigation.core-hr.employee.list");    // entitled
         RoleNavigation dropAi = grant(2L, 100L, "navigation.ai.chat");                 // not entitled
         RoleNavigation dropAtt = grant(3L, 200L, "navigation.attendance.calendar");    // not entitled
@@ -86,12 +102,11 @@ class EntitlementRoleCleanupServiceTest {
         verify(roleNavigationService).deleteById(2L);
         verify(roleNavigationService).deleteById(3L);
         verify(roleNavigationService, never()).deleteById(1L);           // entitled grant kept
-        verify(cacheInvalidator).evictByRole(TENANT, 100L);              // roles with a removed grant
-        verify(cacheInvalidator).evictByRole(TENANT, 200L);
+        verify(cacheInvalidator).evictBatch(TENANT, Set.of(1_001L, 1_002L));   // every user, not just 100/200
     }
 
     @Test
-    void allEntitled_noRemovalNoEvict() {
+    void allEntitled_noRemovalButStillEvicts() {
         when(roleNavigationService.searchList(any(Filters.class))).thenReturn(List.of(
                 grant(1L, 100L, "navigation.core-hr.x"),
                 grant(2L, 100L, "navigation.users.y")));
@@ -100,7 +115,8 @@ class EntitlementRoleCleanupServiceTest {
 
         assertThat(removed).isZero();
         verify(roleNavigationService, never()).deleteById(any());
-        verify(cacheInvalidator, never()).evictByRole(any(), any());
+        // Still evicted: an upgrade removes no grant, yet every snapshot's entitledModules is stale.
+        verify(cacheInvalidator).evictBatch(TENANT, Set.of(1_001L, 1_002L));
     }
 
     @Test
@@ -119,7 +135,7 @@ class EntitlementRoleCleanupServiceTest {
 
         verify(roleDataScopeService).deleteByIds(List.of(50L));
         verify(roleSensitiveFieldSetService).deleteByIds(List.of(60L));
-        verify(cacheInvalidator).evictByRole(TENANT, 200L);
+        verify(cacheInvalidator).evictBatch(TENANT, Set.of(1_001L, 1_002L));
     }
 
     @Test
@@ -135,7 +151,7 @@ class EntitlementRoleCleanupServiceTest {
         verify(roleNavigationService).deleteById(2L);
         verify(roleDataScopeService, never()).deleteByIds(anyList());
         verify(roleSensitiveFieldSetService, never()).deleteByIds(anyList());
-        verify(cacheInvalidator).evictByRole(TENANT, 100L);
+        verify(cacheInvalidator).evictBatch(TENANT, Set.of(1_001L, 1_002L));
     }
 
     @Test
