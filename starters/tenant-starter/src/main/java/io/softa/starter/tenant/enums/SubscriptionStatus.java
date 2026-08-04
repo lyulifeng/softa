@@ -38,7 +38,7 @@ import io.softa.framework.base.enums.OptionItemTone;
  * frontend, so it is fixed for good; the label is display text and should read well. Making them match would
  * let a decision taken for storage stability dictate the wording ops sees — "Paid" lands as a payment state
  * rather than a subscription one, in a set whose other members are subscription states. Where the derived
- * name is already right (SCHEDULED, EXPIRED) no label is declared at all, so a declared one always signals a
+ * name is already right (PENDING, EXPIRED) no label is declared at all, so a declared one always signals a
  * deliberate override.
  */
 @OptionSet(description = "Projected subscription standing of a tenant as of its local today", renamedFrom = "SubscriptionStatus")
@@ -56,12 +56,18 @@ public enum SubscriptionStatus {
      * No period covers the projection date, but a later one exists — bought, not yet started. Recording a
      * future period is not early activation, and the UI must say so.
      *
-     * <p>Labelled "Pending": the word the requirement uses (待生效), and it reads as "waiting to begin" where
-     * "Scheduled" reads as an arrangement already in force. The code stays {@code Scheduled} — it is
-     * persisted and switched on by the frontend, so moving it costs a migration and buys nothing.
+     * <p>Named for the word the requirement uses (待生效): "Pending" reads as "waiting to begin", where
+     * "Scheduled" reads as an arrangement already in force. Code and constant both say Pending, so the value
+     * the frontend switches on and the value ops reads are the same word — the earlier split (code
+     * {@code Scheduled}, label "Pending") meant a reader of either side had to know about the other.
+     *
+     * <p>This is a replacement, not a tracked rename. The scanner therefore adds "Pending" and only warns
+     * about "Scheduled" — it never DROPs — so V37 does both halves the scanner will not: it rewrites the rows
+     * that still hold the old value (business data, which the scanner never touches) and deletes the old
+     * option item, which would otherwise stay in every picker offering a value nothing can produce.
      */
-    @OptionItem(label = "Pending", itemTone = OptionItemTone.NEUTRAL, sequence = 3)
-    SCHEDULED("Scheduled"),
+    @OptionItem(itemTone = OptionItemTone.NEUTRAL, sequence = 3)
+    PENDING("Pending"),
 
     /**
      * Periods exist but none covers the projection date and none is upcoming — the tenant lapsed. Reachable

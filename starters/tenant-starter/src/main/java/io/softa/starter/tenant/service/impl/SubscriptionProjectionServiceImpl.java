@@ -179,13 +179,13 @@ public class SubscriptionProjectionServiceImpl implements SubscriptionProjection
             sub.setPeriodType(null);
             sub.setCurrentStartDate(null);
             sub.setCurrentEndDate(null);
-            // No covering period: either one is coming (SCHEDULED) or none is (EXPIRED).
+            // No covering period: either one is coming (PENDING) or none is (EXPIRED).
             //
             // There is no longer a third case for "never bought anything": provisioning writes a free period
             // at tenant creation, so `periods` is never empty and the standing is always derivable from
             // dates. A tenant showing EXPIRED here has therefore let its free period lapse too — which only
             // happens if an operator gave that period an end date, i.e. deliberately time-boxed it.
-            sub.setSubscriptionStatus(next != null ? SubscriptionStatus.SCHEDULED : SubscriptionStatus.EXPIRED);
+            sub.setSubscriptionStatus(next != null ? SubscriptionStatus.PENDING : SubscriptionStatus.EXPIRED);
         }
         sub.setNextStartDate(next == null ? null : next.getEffectiveStartDate());
         sub.setProjectedForDate(today);

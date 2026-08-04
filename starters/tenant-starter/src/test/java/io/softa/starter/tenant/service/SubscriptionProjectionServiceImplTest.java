@@ -109,7 +109,7 @@ class SubscriptionProjectionServiceImplTest {
         periods.add(period("plan.enterprise", SubscriptionPeriodType.PAID,
                 TODAY.plusDays(30), TODAY.plusDays(395)));
         TenantSubscription out = refresh();
-        assertThat(out.getSubscriptionStatus()).isEqualTo(SubscriptionStatus.SCHEDULED);
+        assertThat(out.getSubscriptionStatus()).isEqualTo(SubscriptionStatus.PENDING);
         // Scheduling is not early activation: the plan must stay null or the tenant would get it now.
         assertThat(out.getPlanId()).isNull();
         assertThat(out.getNextStartDate()).isEqualTo(TODAY.plusDays(30));
@@ -159,14 +159,14 @@ class SubscriptionProjectionServiceImplTest {
     @Test
     void gapBetweenPeriods_scheduledAndOnFloor() {
         // Gaps are legitimate — the tenant is simply on the floor plan in between. Having lapsed earlier
-        // does not change the answer to "what applies today", so this reads as SCHEDULED, and the past
+        // does not change the answer to "what applies today", so this reads as PENDING, and the past
         // period shows as ended in the detail list.
         periods.add(period("plan.pro", SubscriptionPeriodType.PAID,
                 TODAY.minusDays(200), TODAY.minusDays(60)));
         periods.add(period("plan.enterprise", SubscriptionPeriodType.PAID,
                 TODAY.plusDays(60), TODAY.plusDays(425)));
         TenantSubscription out = refresh();
-        assertThat(out.getSubscriptionStatus()).isEqualTo(SubscriptionStatus.SCHEDULED);
+        assertThat(out.getSubscriptionStatus()).isEqualTo(SubscriptionStatus.PENDING);
         assertThat(out.getPlanId()).isNull();
         assertThat(out.getNextStartDate()).isEqualTo(TODAY.plusDays(60));
     }
