@@ -27,6 +27,7 @@ import io.softa.starter.tenant.entity.TenantSubscription;
 import io.softa.starter.tenant.entity.TenantSubscriptionPeriod;
 import io.softa.starter.tenant.enums.SubscriptionStatus;
 import io.softa.starter.tenant.enums.SubscriptionPeriodType;
+import io.softa.starter.tenant.service.PeriodSelection;
 import io.softa.starter.tenant.service.SubscriptionProjectionService;
 import io.softa.starter.tenant.service.TenantSubscriptionService;
 
@@ -149,15 +150,8 @@ public class SubscriptionProjectionServiceImpl implements SubscriptionProjection
         //
         // Ties broken by latest start then id, purely for determinism: authorization reads this projection, so
         // an arbitrary pick could flip the granted plan between refreshes with nothing having changed.
-        Map<String, Integer> tierByPlan = tierByPlan();
-        List<TenantSubscriptionPeriod> covering = periods.stream()
-                .filter(p -> covers(p, today))
-                .sorted(Comparator
-                        .<TenantSubscriptionPeriod>comparingInt(p -> tierOf(tierByPlan, p.getPlanId())).reversed()
-                        .thenComparing(Comparator.comparing(TenantSubscriptionPeriod::getEffectiveStartDate).reversed())
-                        .thenComparing(Comparator.comparing(TenantSubscriptionPeriod::getId).reversed()))
-                .toList();
-        TenantSubscriptionPeriod current = covering.isEmpty() ? null : covering.getFirst();
+        Map<String, Integer> tierByPlan = PeriodSelection.tierByPlan(modelService);
+        TenantSubscriptionPeriod current = PeriodSelection.winnerOn(periods, today, tierByPlan);
         TenantSubscriptionPeriod next = periods.stream()
                 .filter(p -> p.getEffectiveStartDate() != null
                         && p.getEffectiveStartDate().isAfter(today))
@@ -203,34 +197,6 @@ public class SubscriptionProjectionServiceImpl implements SubscriptionProjection
             eventPublisher.publishEvent(new TenantEntitlementChangedEvent(tenant.getId()));
         }
         return written;
-    }
-
-    /**
-     * planId → tier for the whole catalog, read once per refresh. Per-period lookups would issue one query
-     * per row, and a tenant with a long history has many.
-     */
-    private Map<String, Integer> tierByPlan() {
-        return modelService.searchList("Plan", new FlexQuery(new Filters()), Plan.class).stream()
-                .filter(plan -> plan.getId() != null && plan.getTier() != null)
-                .collect(Collectors.toMap(Plan::getId, Plan::getTier, (a, b) -> a));
-    }
-
-    /**
-     * A period's plan tier. An unknown or absent plan sorts LOWEST rather than throwing: a dangling planId is
-     * bad data, and letting it win would hand the tenant an unresolvable plan; letting it lose means the
-     * tenant keeps whatever else covers today, which for every tenant includes at least its free period.
-     */
-    private static int tierOf(Map<String, Integer> tierByPlan, String planId) {
-        Integer tier = planId == null ? null : tierByPlan.get(planId);
-        return tier == null ? Integer.MIN_VALUE : tier;
-    }
-
-    /** A period covers a date when it has started and has not ended; null end = open-ended. */
-    private boolean covers(TenantSubscriptionPeriod period, LocalDate date) {
-        if (period.getEffectiveStartDate() == null || period.getEffectiveStartDate().isAfter(date)) {
-            return false;
-        }
-        return period.getEffectiveEndDate() == null || !period.getEffectiveEndDate().isBefore(date);
     }
 
     /** All periods of the given subscriptions, grouped. One query regardless of how many tenants. */

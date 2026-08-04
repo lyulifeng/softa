@@ -24,5 +24,5 @@ package io.softa.framework.base.message;
  */
 public record SubscriptionExpiryReminderMessage(Long tenantId, String tenantName, String planId,
                                                 String effectiveTo, int daysLeft, boolean trial,
-                                                String nextStartDate) {
+                                                String nextStartDate, String successorPlanId) {
 }

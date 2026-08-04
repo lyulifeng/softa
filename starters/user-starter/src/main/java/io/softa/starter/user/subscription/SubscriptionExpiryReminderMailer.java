@@ -44,6 +44,13 @@ public class SubscriptionExpiryReminderMailer {
      * wrong ask — they have renewed — so this template names the uncovered stretch instead.
      */
     static final String TEMPLATE_GAP_REMINDER = "subscription.gap-reminder";
+    /**
+     * Used when a LOWER-tier period covers the day after this one ends — the tenant is not cut off, it drops to
+     * that plan. Every other template promises a loss of access, which here would simply be false: each tenant
+     * owns an open-ended floor-plan period underneath whatever it bought, so a purchased period lapsing means a
+     * downgrade, not a lockout. Says which plan takes over and what buying again would keep.
+     */
+    static final String TEMPLATE_DOWNGRADE_REMINDER = "subscription.downgrade-reminder";
 
     private final RoleService roleService;
     private final UserRoleRelService userRoleRelService;
@@ -89,13 +96,23 @@ public class SubscriptionExpiryReminderMailer {
                 "planId", message.planId() == null ? "" : message.planId(),
                 "expiryDate", message.effectiveTo() == null ? "" : message.effectiveTo(),
                 "daysLeft", message.daysLeft(),
-                "nextStartDate", message.nextStartDate() == null ? "" : message.nextStartDate());
-        // Three mutually exclusive asks. The gap case is checked first and wins over `trial`, because what
-        // matters to the reader is the uncovered stretch, not which kind of period is ending: a trial that
-        // ends with a paid period already booked for later still leaves the customer on the free plan in
-        // between, and "upgrade to keep access" would read as though nothing had been bought.
+                "nextStartDate", message.nextStartDate() == null ? "" : message.nextStartDate(),
+                "successorPlanId", message.successorPlanId() == null ? "" : message.successorPlanId());
+        // Four mutually exclusive asks, ordered by what the reader actually loses.
+        //
+        // The downgrade case is FIRST and outranks everything, because it is the only one where access does
+        // not stop: a lower-tier period covers the day after, so the tenant keeps working with fewer modules.
+        // Sending any of the other three here would tell a paying customer they are about to lose access when
+        // they are not — and a customer who discovers the claim was false stops believing the next reminder.
+        //
+        // The gap case is next and wins over `trial`, because what matters is the uncovered stretch, not which
+        // kind of period is ending: a trial that ends with a paid period booked for later still leaves the
+        // customer with nothing in between, and "upgrade to keep access" would read as though nothing had
+        // been bought.
         String templateCode;
-        if (message.nextStartDate() != null && !message.nextStartDate().isBlank()) {
+        if (message.successorPlanId() != null && !message.successorPlanId().isBlank()) {
+            templateCode = TEMPLATE_DOWNGRADE_REMINDER;
+        } else if (message.nextStartDate() != null && !message.nextStartDate().isBlank()) {
             templateCode = TEMPLATE_GAP_REMINDER;
         } else if (message.trial()) {
             templateCode = TEMPLATE_TRIAL_EXPIRY_REMINDER;
