@@ -29,10 +29,12 @@ import io.softa.starter.tenant.enums.SubscriptionPeriodType;
  * the truth that has to be chased by a job. The owning {@link TenantSubscription} row does carry a
  * projected status, but it carries a projection date with it so readers can tell whether it is stale.
  *
- * <p><b>Overlap is not enforceable in the database</b> — no column constraint can express "no two
- * periods of the same subscription may overlap", so the service layer guards it, on inserts
- * <i>and</i> on updates. Editing an already-ended period's dates is exactly as damaging as inserting an
- * overlapping one, so both go through the same single write entry point.
+ * <p><b>Overlapping periods are expected, not corruption.</b> Every tenant owns an open-ended period on the
+ * floor plan from the day it was created, so anything sold on top of it overlaps by construction — rejecting
+ * overlap would make selling impossible. Which period is in effect is decided by <b>plan tier</b>: of the
+ * periods covering a date, the highest tier wins, ties broken by id so the answer is stable. That is why the
+ * unique key includes {@code planId}: two rows for the same plan from the same day are still a mis-entry, but
+ * two different plans from the same day are the normal case.
  */
 @Data
 @EqualsAndHashCode(callSuper = true)
@@ -41,9 +43,15 @@ import io.softa.starter.tenant.enums.SubscriptionPeriodType;
 // "This customer's billing history" is the query this table exists to answer, and the tenant is how anyone
 // asks it — every other access already goes through the unique key below.
 @Index(fields = {"tenantId"})
-@Index(indexName = "uk_tenant_subscription_period", fields = {"subscriptionId", "effectiveStartDate"},
+// The plan is part of the key, not just the date. Two periods legitimately start on the same day now: every
+// tenant owns an open-ended free period from its creation date, so anything sold on that day starts alongside
+// it. Keying on (subscription, date) alone rejected exactly that — a tenant could not be created with a plan.
+// What remains worth blocking is the same plan recorded twice from the same day, which is a mis-entry rather
+// than an arrangement.
+@Index(indexName = "uk_tenant_subscription_period",
+        fields = {"subscriptionId", "effectiveStartDate", "planId"},
         unique = true,
-        message = "This subscription already has a period starting on that date.")
+        message = "This subscription already has a period for that plan starting on that date.")
 public class TenantSubscriptionPeriod extends AuditableModel {
 
     @Serial

@@ -27,6 +27,34 @@ public interface TenantInfoService {
     boolean isTenantActive(Long tenantId);
 
     /**
+     * Whether the tenant has finished being provisioned — its seed data is in place and it is safe to let
+     * users in.
+     *
+     * <p>A <b>separate axis</b> from {@link #isTenantActive}, deliberately not folded into it. Operational
+     * status answers "may this tenant operate at all" and is what a suspension flips; this answers "is this
+     * tenant built yet". A freshly created tenant is ACTIVE from birth — it has to be, or its own seeders
+     * could not write to it — so the two cannot share one flag.
+     *
+     * <p>Why login has to consult it: while seeding is in flight the tenant is half-built (its roles, org
+     * masters and option items arrive over MQ, out of order), so a user let in early sees a workspace that is
+     * missing pieces and can create records that reference masters which do not exist yet. It also makes
+     * discarding a failed setup safe: if nobody can log in before READY, then every row in a not-yet-READY
+     * tenant was written by a seeder, and deleting them cannot destroy anyone's work.
+     *
+     * <p>Defaulted to {@code true} rather than declared abstract, and that is about this being a published
+     * SPI: an abstract addition breaks every external implementor's compile on an upgrade that changes nothing
+     * they asked for. The default is also the honest answer for them — a deployment that tracks no provisioning
+     * axis has no tenant that is "not built yet", so the gate degrades to {@link #isTenantActive} alone, which
+     * is exactly the pre-existing behaviour.
+     *
+     * @param tenantId tenant id
+     * @return true when the tenant is fully provisioned (or the deployment tracks no provisioning axis)
+     */
+    default boolean isTenantProvisioned(Long tenantId) {
+        return true;
+    }
+
+    /**
      * Suspend a tenant — ACTIVE → SUSPENDED. See {@link #activate} for the contract these three share.
      *
      * @param tenantId tenant id

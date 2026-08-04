@@ -24,6 +24,7 @@ import io.softa.framework.orm.domain.Filters;
 import io.softa.framework.orm.domain.FlexQuery;
 import io.softa.framework.orm.service.CacheService;
 import io.softa.framework.orm.service.ModelService;
+import io.softa.framework.base.utils.NavIds;
 import io.softa.starter.permission.sensitive.SensitiveFieldSetCache;
 import io.softa.starter.permission.spi.PermissionInfo;
 import io.softa.starter.permission.spi.PermissionSnapshotProvider;
@@ -84,6 +85,12 @@ public class DefaultPermissionSnapshotProvider implements PermissionSnapshotProv
     /** Nav-id prefixes that are platform-only (never in a tenant admin's grant), e.g.
      *  {@code navigation.system.} / {@code navigation.studio.}. From {@code permission.platform-nav-prefixes}. */
     private final List<String> platformNavPrefixes;
+
+    /** Plan (entitlement) gate — optional: a pure-enforce deployment without tenant-starter has none,
+     *  in which case every module is treated as entitled (no plan narrowing). The SPI lives in
+     *  softa-orm, so consuming it keeps this starter ⊥ of user-starter and tenant-starter alike. */
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private io.softa.framework.orm.service.EntitlementService entitlementService;
 
     /** leafNavId → root→leaf ancestor chain; lazily built from the Navigation
      *  tree (seed data — changes only on redeploy). */
@@ -147,7 +154,7 @@ public class DefaultPermissionSnapshotProvider implements PermissionSnapshotProv
 
     private PermissionInfo loadFromDb(Long tenantId, Long userId) {
         try {
-            return doLoadFromDb(userId);
+            return doLoadFromDb(tenantId, userId);
         } catch (Throwable t) {
             // The reads throw when the RBAC models are absent (a standalone enforce
             // deployment without user-starter) — fail-closed. Such a deployment
@@ -157,7 +164,7 @@ public class DefaultPermissionSnapshotProvider implements PermissionSnapshotProv
         }
     }
 
-    private PermissionInfo doLoadFromDb(Long userId) {
+    private PermissionInfo doLoadFromDb(Long tenantId, Long userId) {
         List<RoleView> activeRoles = loadActiveRolesFor(userId);
         Set<String> roleCodes = activeRoles.stream()
                 .map(RoleView::getCode)
@@ -168,7 +175,7 @@ public class DefaultPermissionSnapshotProvider implements PermissionSnapshotProv
             return emptyGrantsSnapshot(roleCodes);
         }
         if (roleCodes.contains(TENANT_ADMIN_CODE)) {
-            return tenantAdminSnapshot(roleCodes);
+            return tenantAdminSnapshot(roleCodes, tenantId);
         }
         if (activeRoles.isEmpty()) {
             return emptyGrantsSnapshot(roleCodes);
@@ -358,17 +365,29 @@ public class DefaultPermissionSnapshotProvider implements PermissionSnapshotProv
 
     /**
      * Tenant super-admin snapshot: every tenant-facing navigation (all navs minus the configured
-     * platform-only prefixes) + those navs' permissions. The tenant's plan narrows this further on
-     * the FE via entitledModules. Scope / SFS empty — a tenant admin bypasses row-scope and sees all
-     * fields within its own tenant. Runtime-computed (mirrors user-starter's UiContextBuilder) so no
-     * static per-nav grants are needed for the seeded TENANT_ADMIN role.
+     * platform-only prefixes), narrowed by the tenant's plan, + those navs' permissions. Scope / SFS
+     * empty — a tenant admin bypasses row-scope and sees all fields within its own tenant.
+     * Runtime-computed (mirrors user-starter's UiContextBuilder) so no static per-nav grants are needed
+     * for the seeded TENANT_ADMIN role.
+     *
+     * <p><b>The plan narrowing is enforcement, not decoration.</b> It used to be left to the frontend,
+     * on the reasoning that a downgrade strips the over-plan grants anyway. That reasoning does not
+     * reach a tenant admin: it holds no static nav grants to strip, so the downgrade cleanup passes it
+     * over and its access is whatever this method computes. Narrowing here is what makes the route gate
+     * able to refuse a dropped module's endpoints — see PermissionInterceptor's tenant-admin branch,
+     * which matches against exactly this permission set.
      */
-    private PermissionInfo tenantAdminSnapshot(Set<String> roleCodes) {
+    private PermissionInfo tenantAdminSnapshot(Set<String> roleCodes, Long tenantId) {
         List<NavigationView> allNavs = modelService.searchList(M_NAV,
                 new FlexQuery(List.of("id"), new Filters()), NavigationView.class);
+        // Resolved once, not per nav: the resolver is cache-aside, so a per-nav call would spend a
+        // Redis round-trip on each of a hundred-odd navigations re-reading one unchanging set.
+        Set<String> entitled = (entitlementService != null && tenantId != null)
+                ? entitlementService.entitledModules(tenantId)
+                : null;
         Set<String> navigations = new HashSet<>();
         for (NavigationView n : allNavs) {
-            if (n.getId() != null && !isPlatformNav(n.getId())) {
+            if (n.getId() != null && !isPlatformNav(n.getId()) && isEntitled(n.getId(), entitled)) {
                 navigations.add(n.getId());
             }
         }
@@ -387,6 +406,16 @@ public class DefaultPermissionSnapshotProvider implements PermissionSnapshotProv
         info.setModelScopeMap(Collections.emptyMap());
         info.setModelSensitiveFieldSetsMap(Collections.emptyMap());
         return info;
+    }
+
+    /** Plan narrowing — mirrors the FE {@code navModuleOf} gating. Null set (no gate installed, or no
+     *  tenant) → everything entitled. */
+    private static boolean isEntitled(String navId, Set<String> entitled) {
+        if (entitled == null) {
+            return true;
+        }
+        String moduleId = NavIds.moduleOf(navId);
+        return moduleId == null || entitled.contains(moduleId);
     }
 
     /** True when a nav id falls under a configured platform-only prefix (never tenant-facing). */

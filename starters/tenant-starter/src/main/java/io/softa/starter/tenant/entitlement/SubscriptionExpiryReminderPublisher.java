@@ -41,7 +41,8 @@ public class SubscriptionExpiryReminderPublisher {
                 event.tenantId(), event.tenantName(), event.planId(),
                 event.effectiveTo() == null ? null : event.effectiveTo().toString(), event.daysLeft(),
                 event.trial(),
-                event.nextStartDate() == null ? null : event.nextStartDate().toString());
+                event.nextStartDate() == null ? null : event.nextStartDate().toString(),
+                event.successorPlanId());
         pulsarTemplate.sendAsync(topic, message).whenComplete((__, ex) -> {
             if (ex != null) {
                 log.error("failed to publish subscription-expiry-reminder for tenant {}", event.tenantId(), ex);

@@ -10,6 +10,12 @@ import org.mockito.ArgumentCaptor;
 import org.mockito.InOrder;
 import org.springframework.context.ApplicationEventPublisher;
 
+import io.softa.framework.orm.domain.FlexQuery;
+import io.softa.framework.orm.service.ModelService;
+import io.softa.starter.tenant.entity.Plan;
+import io.softa.starter.tenant.entity.TenantSubscriptionPeriod;
+import io.softa.starter.tenant.enums.SubscriptionPeriodType;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import io.softa.starter.tenant.entity.TenantInfo;
 import io.softa.starter.tenant.entity.TenantSubscription;
 import io.softa.starter.tenant.enums.SubscriptionStatus;
@@ -54,6 +60,7 @@ class TenantProvisioningServiceTest {
     private TenantSubscriptionPeriodService periodService;
     private TenantProvisioningStatusService provisioningStatusService;
     private ApplicationEventPublisher eventPublisher;
+    private ModelService<?> modelService;
     private TenantProvisioningService service;
 
     @BeforeEach
@@ -63,13 +70,30 @@ class TenantProvisioningServiceTest {
         periodService = mock(TenantSubscriptionPeriodService.class);
         provisioningStatusService = mock(TenantProvisioningStatusService.class);
         eventPublisher = mock(ApplicationEventPublisher.class);
+        modelService = mock(ModelService.class);
+
+        // The plan catalog, stubbed to the shape provisioning depends on: a lowest-tier plan exists, so
+        // ensureFreePeriod has a baseline to write. Without it provisioning refuses outright — see its
+        // javadoc for why a tenant with no period is worse than a tenant that failed to be created.
+        when(modelService.searchList(eq("Plan"), any(FlexQuery.class), eq(Plan.class)))
+                .thenReturn(List.of(plan("plan.free", 0), plan("plan.pro", 10)));
+        // No period exists yet, so the free row gets written. Overridden per test where the point is that
+        // one arrived with the request.
+        when(periodService.searchList(any(FlexQuery.class))).thenReturn(List.of());
 
         when(subscriptionService.createOne(any(TenantSubscription.class))).thenReturn(SUB_ID);
         when(tenantInfoService.createOne(any(TenantInfo.class))).thenReturn(TENANT_ID);
         when(tenantInfoService.getById(TENANT_ID)).thenReturn(Optional.of(provisionedTenant()));
 
         service = new TenantProvisioningService(tenantInfoService, subscriptionService, periodService,
-                eventPublisher, provisioningStatusService);
+                eventPublisher, provisioningStatusService, modelService);
+    }
+
+    private static Plan plan(String id, int tier) {
+        Plan p = new Plan();
+        p.setId(id);
+        p.setTier(tier);
+        return p;
     }
 
     // ─── the two rows ───
@@ -81,10 +105,11 @@ class TenantProvisioningServiceTest {
 
         ArgumentCaptor<TenantSubscription> captor = ArgumentCaptor.forClass(TenantSubscription.class);
         verify(subscriptionService).createOne(captor.capture());
-        // NEVER_SUBSCRIBED, no plan: a tenant is on the floor plan by birth, and "free is not recorded"
-        // constrains the period table, not this row. A missing row instead of an empty one would leave the
-        // tenant list and the entitlement resolver reading null.
-        assertThat(captor.getValue().getSubscriptionStatus()).isEqualTo(SubscriptionStatus.NEVER_SUBSCRIBED);
+        // The projected columns are left unset on purpose: the projection refresh is their only writer, and
+        // it fills them from the period rows moments later. Seeding a status here would be a guess that the
+        // refresh overwrites — and a wrong one for the window in between. A missing ROW would be the real
+        // problem (the tenant list and the entitlement resolver would read null), which is why one is created.
+        assertThat(captor.getValue().getSubscriptionStatus()).isNull();
         assertThat(captor.getValue().getPlanId()).isNull();
     }
 
@@ -102,7 +127,14 @@ class TenantProvisioningServiceTest {
         ArgumentCaptor<TenantInfo> captor = ArgumentCaptor.forClass(TenantInfo.class);
         verify(tenantInfoService).createOne(captor.capture());
         assertThat(captor.getValue().getSubscriptionId()).isEqualTo(SUB_ID);
-        assertThat(captor.getValue().getStatus()).isEqualTo(TenantStatus.ACTIVE);
+        // DRAFT, not ACTIVE. Setup and operation share one status field, so the row a tenant is created with
+        // must not already claim to be usable — beginProvisioning moves it on once the seeders are lined up.
+        // Creating it ACTIVE left a window (and, if beginProvisioning failed, a permanent state) in which an
+        // unbuilt tenant advertised itself as ready and its users could log in.
+        assertThat(captor.getValue().getStatus()).isEqualTo(TenantStatus.DRAFT);
+        assertThat(captor.getValue().getActivatedTime())
+                .as("the activation stamp belongs to the moment it truly becomes ACTIVE, not to creation")
+                .isNull();
     }
 
     @Test
@@ -154,25 +186,50 @@ class TenantProvisioningServiceTest {
     }
 
     @Test
-    @DisplayName("no periods on the request — nothing recorded, and that is a normal outcome")
-    void noPeriods_nothingRecorded() {
-        // A tenant nobody has sold anything to yet simply has none and runs on the floor plan.
+    @DisplayName("no periods sold — the free period is still written, open-ended and on the floor plan")
+    void noPeriods_freePeriodStillWritten() {
+        // Replaces the former "nothing recorded" rule. A tenant nobody sold anything to used to have no
+        // periods at all and lean on the resolver's floor-plan fallback; it now owns a real free period, which
+        // is what lets the fallback go away and makes its entitlement a fact about data.
+        service.provision(request(null));
+
+        ArgumentCaptor<SubscriptionPeriodPatch> captor =
+                ArgumentCaptor.forClass(SubscriptionPeriodPatch.class);
+        verify(periodService).applyPatch(eq(SUB_ID), captor.capture());
+        assertThat(captor.getValue().getCreate()).hasSize(1);
+        SubscriptionPeriodPatch.PeriodInput free = captor.getValue().getCreate().getFirst();
+        assertThat(free.getPlanId()).as("the catalog's lowest tier, not a hard-coded id").isEqualTo("plan.free");
+        assertThat(free.getPeriodType())
+                .as("nobody paid for it, so TRIAL — PAID would misreport it in every revenue read")
+                .isEqualTo(SubscriptionPeriodType.TRIAL);
+        assertThat(free.getEffectiveEndDate()).as("open-ended = permanent until an operator ends it").isNull();
+        assertThat(free.getEffectiveStartDate()).isNotNull();
+    }
+
+    @Test
+    @DisplayName("a free period already in the request is used, not duplicated")
+    void freePeriodAlreadyPresent_notDuplicated() {
+        // The create form pre-populates the free row so an operator can set an expiry at creation time, so it
+        // arrives through the patch. "Exactly one free period" is the invariant; finding the existing one is
+        // what keeps the UI path from producing a second alongside the API and seed paths.
+        TenantSubscriptionPeriod existingFree = new TenantSubscriptionPeriod();
+        existingFree.setPlanId("plan.free");
+        when(periodService.searchList(any(FlexQuery.class))).thenReturn(List.of(existingFree));
+
         service.provision(request(null));
 
         verify(periodService, never()).applyPatch(anyLong(), any(SubscriptionPeriodPatch.class));
     }
 
     @Test
-    @DisplayName("a subscription block with no periods is not treated as an empty patch")
-    void subscriptionInputWithoutPeriods_nothingRecorded() {
-        ProvisionTenantRequest request = request(null);
-        request.setSubscriptionId(new ProvisionTenantRequest.SubscriptionInput());
+    @DisplayName("an empty plan catalog refuses the create rather than making an unentitled tenant")
+    void emptyPlanCatalog_refusesProvisioning() {
+        // The alternative is a tenant with no period and no fallback: it resolves to zero modules, looks
+        // created, admits its admin, and shows an empty product with nothing to point at.
+        when(modelService.searchList(eq("Plan"), any(FlexQuery.class), eq(Plan.class))).thenReturn(List.of());
 
-        service.provision(request);
-
-        // An empty patch would still run and refresh; skipping is what keeps a plain create free of a
-        // pointless write.
-        verify(periodService, never()).applyPatch(anyLong(), any(SubscriptionPeriodPatch.class));
+        assertThatThrownBy(() -> service.provision(request(null)))
+                .hasMessageContaining("no plan with a tier");
     }
 
     // ─── what the rest of the system is told ───

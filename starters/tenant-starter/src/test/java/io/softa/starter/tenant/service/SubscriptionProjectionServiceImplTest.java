@@ -7,6 +7,7 @@ import java.util.List;
 import java.util.Optional;
 
 import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
 import org.springframework.context.ApplicationEventPublisher;
@@ -16,6 +17,7 @@ import io.softa.framework.orm.domain.FlexQuery;
 import io.softa.framework.orm.service.ModelService;
 import io.softa.starter.tenant.entitlement.TenantEntitlementChangedEvent;
 import io.softa.starter.tenant.entity.TenantInfo;
+import io.softa.starter.tenant.entity.Plan;
 import io.softa.starter.tenant.entity.TenantSubscription;
 import io.softa.starter.tenant.entity.TenantSubscriptionPeriod;
 import io.softa.starter.tenant.enums.SubscriptionStatus;
@@ -51,6 +53,7 @@ class SubscriptionProjectionServiceImplTest {
      */
     private static final LocalDate TODAY = LocalDate.now(ZoneOffset.UTC);
 
+    private ModelService<?> modelService;
     private TenantSubscriptionService subscriptionService;
     private ApplicationEventPublisher eventPublisher;
     private SubscriptionProjectionServiceImpl service;
@@ -60,7 +63,7 @@ class SubscriptionProjectionServiceImplTest {
     @BeforeEach
     @SuppressWarnings("unchecked")
     void setUp() {
-        ModelService<?> modelService = mock(ModelService.class);
+        modelService = mock(ModelService.class);
         subscriptionService = mock(TenantSubscriptionService.class);
         eventPublisher = mock(ApplicationEventPublisher.class);
         service = new SubscriptionProjectionServiceImpl(modelService, subscriptionService, eventPublisher);
@@ -73,13 +76,22 @@ class SubscriptionProjectionServiceImplTest {
         when(subscriptionService.updateProjection(any(TenantSubscription.class))).thenReturn(true);
         when(modelService.searchList(anyString(), any(FlexQuery.class), eq(TenantSubscriptionPeriod.class)))
                 .thenAnswer(inv -> periods);
+        // The plan catalog the tier-first selection reads. Tiers are what the ordering is defined on, so the
+        // stub has to carry them: free lowest, enterprise highest.
+        when(modelService.searchList(eq("Plan"), any(FlexQuery.class), eq(Plan.class)))
+                .thenReturn(List.of(plan("plan.free", 0), plan("plan.pro", 10), plan("plan.enterprise", 20)));
     }
 
-    // ─── the five statuses ───
+    // ─── the four statuses ───
 
     @Test
-    void noPeriods_neverSubscribed() {
-        assertThat(refresh().getSubscriptionStatus()).isEqualTo(SubscriptionStatus.NEVER_SUBSCRIBED);
+    @DisplayName("no periods at all falls back to EXPIRED — a shape provisioning no longer produces")
+    void noPeriods_expired() {
+        // Provisioning writes a free period at creation, so a live tenant always has at least one row and
+        // this input does not occur. Pinned anyway because the projection must still answer for a row that
+        // predates that rule, or one whose periods were deleted directly in the database: EXPIRED grants the
+        // same nothing that the old NEVER_SUBSCRIBED did, without needing a state for "never bought".
+        assertThat(refresh().getSubscriptionStatus()).isEqualTo(SubscriptionStatus.EXPIRED);
         assertThat(refresh().getPlanId()).isNull();
     }
 
@@ -88,8 +100,6 @@ class SubscriptionProjectionServiceImplTest {
         periods.add(period("plan.pro", SubscriptionPeriodType.PAID,
                 TODAY.minusDays(400), TODAY.minusDays(35)));
         TenantSubscription out = refresh();
-        // Same permissions as NEVER_SUBSCRIBED — but this one is a customer who lapsed, so ops needs to
-        // see the difference.
         assertThat(out.getSubscriptionStatus()).isEqualTo(SubscriptionStatus.EXPIRED);
         assertThat(out.getPlanId()).isNull();
     }
@@ -99,7 +109,7 @@ class SubscriptionProjectionServiceImplTest {
         periods.add(period("plan.enterprise", SubscriptionPeriodType.PAID,
                 TODAY.plusDays(30), TODAY.plusDays(395)));
         TenantSubscription out = refresh();
-        assertThat(out.getSubscriptionStatus()).isEqualTo(SubscriptionStatus.SCHEDULED);
+        assertThat(out.getSubscriptionStatus()).isEqualTo(SubscriptionStatus.PENDING);
         // Scheduling is not early activation: the plan must stay null or the tenant would get it now.
         assertThat(out.getPlanId()).isNull();
         assertThat(out.getNextStartDate()).isEqualTo(TODAY.plusDays(30));
@@ -149,14 +159,14 @@ class SubscriptionProjectionServiceImplTest {
     @Test
     void gapBetweenPeriods_scheduledAndOnFloor() {
         // Gaps are legitimate — the tenant is simply on the floor plan in between. Having lapsed earlier
-        // does not change the answer to "what applies today", so this reads as SCHEDULED, and the past
+        // does not change the answer to "what applies today", so this reads as PENDING, and the past
         // period shows as ended in the detail list.
         periods.add(period("plan.pro", SubscriptionPeriodType.PAID,
                 TODAY.minusDays(200), TODAY.minusDays(60)));
         periods.add(period("plan.enterprise", SubscriptionPeriodType.PAID,
                 TODAY.plusDays(60), TODAY.plusDays(425)));
         TenantSubscription out = refresh();
-        assertThat(out.getSubscriptionStatus()).isEqualTo(SubscriptionStatus.SCHEDULED);
+        assertThat(out.getSubscriptionStatus()).isEqualTo(SubscriptionStatus.PENDING);
         assertThat(out.getPlanId()).isNull();
         assertThat(out.getNextStartDate()).isEqualTo(TODAY.plusDays(60));
     }
@@ -286,6 +296,71 @@ class SubscriptionProjectionServiceImplTest {
         t.setSubscriptionId(SUB_ID);
         t.setDefaultTimezone(Timezone.UTC_P_00_00);
         return t;
+    }
+
+    // ─── overlapping periods: the tier decides, which is what makes the free period harmless ───
+
+    @Test
+    @DisplayName("a paid period wins over the free period that overlaps it")
+    void paidBeatsOverlappingFree() {
+        // Every tenant owns an open-ended free period, so ANY sold period overlaps it. Without tier-first
+        // ordering this is the common case that breaks: the tenant would be reported on whichever row started
+        // most recently, and a back-dated free row would silently demote a paying customer.
+        // The free row deliberately starts LATER than the paid one, which is what the old "latest start wins"
+        // rule got wrong: a free period recorded (or back-dated) after the sale would take over.
+        periods.add(period("plan.pro", SubscriptionPeriodType.PAID, TODAY.minusDays(200), TODAY.plusDays(20)));
+        periods.add(period("plan.free", SubscriptionPeriodType.TRIAL, TODAY.minusDays(10), null));
+
+        TenantSubscription out = refresh();
+
+        assertThat(out.getPlanId()).isEqualTo("plan.pro");
+        assertThat(out.getSubscriptionStatus()).isEqualTo(SubscriptionStatus.PAID);
+    }
+
+    @Test
+    @DisplayName("the higher tier wins even when the lower one started more recently")
+    void higherTierBeatsLaterStart() {
+        // Directly contradicts the former rule ("latest start wins"). Recording a Pro period today must not
+        // take an Enterprise customer down a tier.
+        periods.add(period("plan.enterprise", SubscriptionPeriodType.PAID, TODAY.minusDays(90), TODAY.plusDays(90)));
+        periods.add(period("plan.pro", SubscriptionPeriodType.PAID, TODAY, TODAY.plusDays(30)));
+
+        assertThat(refresh().getPlanId()).isEqualTo("plan.enterprise");
+    }
+
+    @Test
+    @DisplayName("a trial on a higher tier outranks a paid period on a lower one")
+    void tierOutranksPeriodType() {
+        // Tier is the only level-two criterion; period type is not a tie-break. An Enterprise trial genuinely
+        // grants more modules than a Pro subscription, and entitlement follows the plan, not the payment.
+        // Enterprise starts earlier, so "latest start" would pick Pro — the tier has to be what decides.
+        periods.add(period("plan.enterprise", SubscriptionPeriodType.TRIAL, TODAY.minusDays(60), TODAY.plusDays(14)));
+        periods.add(period("plan.pro", SubscriptionPeriodType.PAID, TODAY.minusDays(5), TODAY.plusDays(60)));
+
+        TenantSubscription out = refresh();
+
+        assertThat(out.getPlanId()).isEqualTo("plan.enterprise");
+        assertThat(out.getSubscriptionStatus())
+                .as("the winning row's own type decides the status")
+                .isEqualTo(SubscriptionStatus.TRIAL);
+    }
+
+    @Test
+    @DisplayName("a period whose plan is missing from the catalog loses rather than throwing")
+    void danglingPlanSortsLowest() {
+        // Bad data, but letting it win would hand the tenant a plan nothing can resolve. Losing means the
+        // tenant keeps whatever else covers today — which for every tenant includes its free period.
+        periods.add(period("plan.free", SubscriptionPeriodType.TRIAL, TODAY.minusDays(30), null));
+        periods.add(period("plan.deleted", SubscriptionPeriodType.PAID, TODAY.minusDays(1), TODAY.plusDays(30)));
+
+        assertThat(refresh().getPlanId()).isEqualTo("plan.free");
+    }
+
+    private static Plan plan(String id, int tier) {
+        Plan p = new Plan();
+        p.setId(id);
+        p.setTier(tier);
+        return p;
     }
 
     private TenantSubscriptionPeriod period(String planId, SubscriptionPeriodType type,

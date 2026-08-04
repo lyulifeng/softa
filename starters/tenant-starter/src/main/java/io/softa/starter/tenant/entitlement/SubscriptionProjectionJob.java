@@ -24,6 +24,7 @@ import io.softa.framework.orm.domain.FlexQuery;
 import io.softa.framework.orm.service.ModelService;
 import io.softa.starter.tenant.entity.TenantInfo;
 import io.softa.starter.tenant.entity.TenantSubscriptionPeriod;
+import io.softa.starter.tenant.service.PeriodSelection;
 import io.softa.starter.tenant.enums.SubscriptionPeriodType;
 import io.softa.starter.tenant.enums.TenantStatus;
 import io.softa.starter.tenant.service.SubscriptionProjectionService;
@@ -126,6 +127,8 @@ public class SubscriptionProjectionJob {
                 Filters.of("subscriptionId", Operator.IN, List.copyOf(bySubscription.keySet()))
                         .and("effectiveEndDate", Operator.LESS_THAN_OR_EQUAL, horizon)));
         Map<Long, List<TenantSubscriptionPeriod>> allBySubscription = periodsOf(bySubscription.keySet());
+        // Once for the sweep, not per period — the catalog is the same for every tenant in it.
+        Map<String, Integer> tierByPlan = PeriodSelection.tierByPlan(modelService);
 
         int reminded = 0;
         for (TenantSubscriptionPeriod period : ending) {
@@ -140,20 +143,37 @@ public class SubscriptionProjectionJob {
                 if (daysLeft == null) {
                     continue;   // before the reminder hour, already reminded today, or not a due point
                 }
-                // Seamless successor → already renewed; saying "about to expire" would be wrong. A gap-
-                // separated one still gets a reminder, but a different message — the coverage really does
-                // lapse in between.
-                LocalDate nextStart = successorStart(allBySubscription.get(period.getSubscriptionId()), period);
-                boolean seamless = nextStart != null
-                        && !nextStart.isAfter(period.getEffectiveEndDate().plusDays(1));
-                if (seamless) {
+                // What the tenant actually has the day after this period ends decides whether — and what —
+                // to say. Asked through the same tier rule the projection writes with, because a reminder
+                // that disagrees with the projection is not a wording problem: it is two different beliefs
+                // about one subscription, and the customer is told the one that is wrong.
+                //
+                // Overlap makes the old test ("is there a period starting after this one ends") unusable.
+                // Every tenant owns an open-ended free period that starts at tenant creation — before this
+                // period, never after — so it was never found, and a Pro period ending was reported as a
+                // total lapse when in fact the tenant drops to Free.
+                List<TenantSubscriptionPeriod> siblings =
+                        allBySubscription.getOrDefault(period.getSubscriptionId(), List.of());
+                LocalDate dayAfter = period.getEffectiveEndDate().plusDays(1);
+                TenantSubscriptionPeriod successor = PeriodSelection.winnerOn(siblings, dayAfter, tierByPlan);
+
+                if (successor != null
+                        && tierOfPeriod(tierByPlan, successor) >= tierOfPeriod(tierByPlan, period)) {
+                    // Renewed, or a higher plan already covers the day after. Nothing is lost, so nothing to
+                    // say — this is also the case where an operator time-boxes the free period while Pro runs.
                     continue;
                 }
+
+                // Either a lower tier takes over (a downgrade: the paying customer keeps working with fewer
+                // modules) or nothing covers at all (a real lapse). Both are worth an email, and they are not
+                // the same email — which is what `successorPlanId` distinguishes downstream.
+                LocalDate nextStart = successorStart(siblings, period);
                 period.setLastReminderDate(localNow.toLocalDate());   // stamp first → idempotent for the day
                 periodService.updateOne(period);
                 eventPublisher.publishEvent(new SubscriptionExpiryReminderEvent(
                         owner.getId(), owner.getName(), period.getPlanId(), period.getEffectiveEndDate(),
-                        daysLeft, period.getPeriodType() == SubscriptionPeriodType.TRIAL, nextStart));
+                        daysLeft, period.getPeriodType() == SubscriptionPeriodType.TRIAL, nextStart,
+                        successor == null ? null : successor.getPlanId()));
                 reminded++;
             } catch (RuntimeException ex) {
                 log.error("Subscription projection — failed to remind for period {}", period.getId(), ex);
@@ -189,6 +209,13 @@ public class SubscriptionProjectionJob {
      * — wrong for someone who has renewed, and its "ignore this if you already renewed" line made the one
      * message they needed to read the easiest to dismiss.
      */
+    /**
+     * The earliest period starting strictly after this one ends, or {@code null}.
+     *
+     * <p>No longer decides <i>whether</i> to remind — {@link PeriodSelection#winnerOn} does, because that is
+     * the question "what will the tenant have". This only supplies the wording detail "and coverage resumes on
+     * this date", which is a fact about start dates and so is still a start-date query.
+     */
     private LocalDate successorStart(List<TenantSubscriptionPeriod> siblings, TenantSubscriptionPeriod period) {
         if (siblings == null) {
             return null;
@@ -199,6 +226,11 @@ public class SubscriptionProjectionJob {
                 .filter(start -> start != null && start.isAfter(period.getEffectiveEndDate()))
                 .min(LocalDate::compareTo)
                 .orElse(null);
+    }
+
+    /** A period's plan tier, via the shared rule — an unknown plan sorts lowest rather than throwing. */
+    private static int tierOfPeriod(Map<String, Integer> tierByPlan, TenantSubscriptionPeriod period) {
+        return PeriodSelection.tierOf(tierByPlan, period.getPlanId());
     }
 
     private int maxReminderDaysBefore() {

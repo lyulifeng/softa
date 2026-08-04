@@ -103,16 +103,6 @@ class TenantInfoServiceImplTest {
     }
 
     @Test
-    @DisplayName("a closed tenant cannot be reactivated — closing is not a suspension")
-    void activate_rejectedFromClosed() {
-        // CLOSED is terminal by design; reviving a closed tenant is a provisioning decision, not a status
-        // toggle. Silently allowing it would resurrect a workspace whose data was meant to stop being served.
-        TenantInfoServiceImpl svc = serviceFor(tenant(TenantStatus.CLOSED));
-
-        assertThrows(IllegalArgumentException.class, () -> svc.activate(1L));
-    }
-
-    @Test
     @DisplayName("re-running a transition already in effect writes nothing")
     void transitionToCurrentStatus_isANoOp() {
         // These are reachable from an MQ consumer and from ops double-clicking. A no-op rather than an error:
@@ -151,5 +141,130 @@ class TenantInfoServiceImplTest {
         doReturn(Optional.of(tenant)).when(svc).getById(1L);
         doReturn(true).when(svc).updateOne(any(TenantInfo.class));
         return svc;
+    }
+
+    // ─── built-vs-usable, now both on one field ───
+
+    @Test
+    @DisplayName("a tenant still being set up, or never set up, is not built")
+    void notYetBuilt() {
+        // Login has to refuse these, and the "discard the output and set it up again" remedy depends on no
+        // human having written anything before the tenant went ACTIVE. DRAFT covers both "never started" and
+        // "the last attempt failed" — the timeout guard sends a stalled tenant back here.
+        TenantInfoServiceImpl svc = Mockito.spy(new TenantInfoServiceImpl());
+        doReturn(withStatus(TenantStatus.INITIALIZING)).when(svc).getTenantInfo(1L);
+        doReturn(withStatus(TenantStatus.DRAFT)).when(svc).getTenantInfo(2L);
+
+        assertFalse(svc.isTenantProvisioned(1L), "mid setup");
+        assertFalse(svc.isTenantProvisioned(2L), "not set up, or setup failed");
+    }
+
+    @Test
+    @DisplayName("built is not the same question as usable — a suspended tenant is built")
+    void builtButNotUsable() {
+        // This is why one field still answers two methods rather than one. Creating a tenant's first admin
+        // needs "has this workspace been built"; folding in "and may it be used" would refuse a suspended
+        // tenant, which is fully built and whose admin may legitimately need repairing before reinstatement.
+        TenantInfoServiceImpl svc = Mockito.spy(new TenantInfoServiceImpl());
+        doReturn(withStatus(TenantStatus.SUSPENDED)).when(svc).getTenantInfo(1L);
+
+        assertTrue(svc.isTenantProvisioned(1L), "suspended is built");
+        assertFalse(svc.isTenantActive(1L), "but not usable");
+    }
+
+    @Test
+    @DisplayName("ACTIVE, and a null status, both count as built")
+    void activeOrUnset_built() {
+        // Null is the important half: a row written before this axis existed has no status, and reading that
+        // as "not built" would refuse every pre-existing customer on the deploy that introduced it.
+        TenantInfoServiceImpl svc = Mockito.spy(new TenantInfoServiceImpl());
+        doReturn(withStatus(TenantStatus.ACTIVE)).when(svc).getTenantInfo(1L);
+        doReturn(withStatus(null)).when(svc).getTenantInfo(2L);
+        doReturn(null).when(svc).getTenantInfo(3L);
+
+        assertTrue(svc.isTenantProvisioned(1L));
+        assertTrue(svc.isTenantProvisioned(2L), "a tenant predating the axis must not be refused");
+        assertFalse(svc.isTenantProvisioned(3L), "a missing tenant is not built");
+        assertFalse(svc.isTenantProvisioned(null));
+    }
+
+    @Test
+    @DisplayName("a closed tenant can be reinstated — closing keeps the data")
+    void activate_reachableFromClosed() {
+        // Replaces the former "CLOSED is terminal" rule. Close changes the status and leaves every row in
+        // place, so refusing to reverse it would strand a recoverable workspace behind "create a new tenant".
+        TenantInfo closed = tenant(TenantStatus.CLOSED);
+        closed.setClosedTime(LocalDateTime.of(2026, 7, 1, 9, 0));
+        TenantInfoServiceImpl svc = serviceFor(closed);
+
+        svc.activate(1L);
+
+        assertEquals(TenantStatus.ACTIVE, closed.getStatus());
+        assertNotNull(closed.getActivatedTime());
+    }
+
+    // ─── markStatus: the setup-driven write path ───
+
+    @Test
+    @DisplayName("setup completion does not reopen a closed tenant")
+    void markStatus_leavesClosedAlone() {
+        // The seed messages are at-least-once, so a completion redelivered after an operator closed the
+        // tenant is ordinary. Both concerns share one field now, so without this the duplicate would move the
+        // tenant back to ACTIVE and let its users log in again — silently, since nothing failed.
+        TenantInfo closed = tenant(TenantStatus.CLOSED);
+        TenantInfoServiceImpl svc = serviceFor(closed);
+
+        svc.markStatus(1L, TenantStatus.ACTIVE);
+
+        assertEquals(TenantStatus.CLOSED, closed.getStatus(), "an operator's decision outranks setup");
+        verify(svc, never()).updateOne(any(TenantInfo.class));
+    }
+
+    @Test
+    @DisplayName("setup completion does not reopen a suspended tenant either")
+    void markStatus_leavesSuspendedAlone() {
+        TenantInfo suspended = tenant(TenantStatus.SUSPENDED);
+        TenantInfoServiceImpl svc = serviceFor(suspended);
+
+        svc.markStatus(1L, TenantStatus.ACTIVE);
+
+        assertEquals(TenantStatus.SUSPENDED, suspended.getStatus());
+    }
+
+    @Test
+    @DisplayName("reaching ACTIVE through setup stamps activatedTime, same as an operator activation")
+    void markStatus_stampsLikeTheOperatorPath() {
+        // The three timestamps are meant to be a function of the status. When only transitionTo maintained
+        // them, a tenant that became ACTIVE by finishing its setup carried no activatedTime while one an
+        // operator activated did — the same state in two shapes, and a list column that was blank for most
+        // tenants.
+        TenantInfo building = tenant(TenantStatus.INITIALIZING);
+        TenantInfoServiceImpl svc = serviceFor(building);
+
+        svc.markStatus(1L, TenantStatus.ACTIVE);
+
+        assertEquals(TenantStatus.ACTIVE, building.getStatus());
+        assertNotNull(building.getActivatedTime(), "setup-driven activation is stamped too");
+        assertNull(building.getSuspendedTime());
+        assertNull(building.getClosedTime());
+    }
+
+    @Test
+    @DisplayName("markStatus refuses the platform tenant, like transitionTo does")
+    void markStatus_platformTenantRefused() {
+        // Moving the platform tenant out of ACTIVE has no way back: the admins who would move it back log in
+        // through it. transitionTo has always refused this; the setup path has to refuse it as well now that
+        // it writes the same field.
+        TenantInfoServiceImpl svc = serviceFor(tenant(TenantStatus.ACTIVE));
+
+        assertThrows(IllegalArgumentException.class,
+                () -> svc.markStatus(PLATFORM_TENANT_ID, TenantStatus.DRAFT));
+    }
+
+    private static TenantInfo withStatus(TenantStatus status) {
+        TenantInfo t = new TenantInfo();
+        t.setId(1L);
+        t.setStatus(status);
+        return t;
     }
 }

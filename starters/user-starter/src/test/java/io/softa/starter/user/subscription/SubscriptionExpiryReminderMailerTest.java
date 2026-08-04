@@ -174,9 +174,56 @@ class SubscriptionExpiryReminderMailerTest {
         return captor.getValue();
     }
 
+    @Test
+    void downgrade_picksTheDowngradeTemplate() {
+        mailer.remindAdmins(message(false, null, "plan.free"));
+        MailRequestMessage mail = captureMail();
+
+        assertThat(mail.templateCode())
+                .isEqualTo(SubscriptionExpiryReminderMailer.TEMPLATE_DOWNGRADE_REMINDER);
+        assertThat(mail.variables()).containsEntry("successorPlanId", "plan.free");
+    }
+
+    @Test
+    void downgrade_outranksTheGapWording() {
+        // Both signals present: a later period exists AND a lower tier already covers the day after. The
+        // tenant is not cut off for a single day, so the gap wording — which names an uncovered stretch —
+        // would describe something that does not happen.
+        mailer.remindAdmins(message(false, "2026-12-01", "plan.free"));
+        MailRequestMessage mail = captureMail();
+
+        assertThat(mail.templateCode())
+                .isEqualTo(SubscriptionExpiryReminderMailer.TEMPLATE_DOWNGRADE_REMINDER);
+    }
+
+    @Test
+    void downgrade_outranksTheTrialWording() {
+        // A trial that lapses onto the free plan has not "run out" — upgrade-or-lose-access is untrue.
+        mailer.remindAdmins(message(true, null, "plan.free"));
+        MailRequestMessage mail = captureMail();
+
+        assertThat(mail.templateCode())
+                .isEqualTo(SubscriptionExpiryReminderMailer.TEMPLATE_DOWNGRADE_REMINDER);
+    }
+
+    @Test
+    void blankSuccessor_isTreatedAsNoSuccessor() {
+        mailer.remindAdmins(message(false, null, "  "));
+        MailRequestMessage mail = captureMail();
+
+        assertThat(mail.templateCode())
+                .isEqualTo(SubscriptionExpiryReminderMailer.TEMPLATE_EXPIRY_REMINDER);
+    }
+
     private static SubscriptionExpiryReminderMessage message(boolean trial, String nextStartDate) {
+        return message(trial, nextStartDate, null);
+    }
+
+    /** {@code successorPlanId} non-null = a lower-tier period covers the day after, i.e. a downgrade. */
+    private static SubscriptionExpiryReminderMessage message(boolean trial, String nextStartDate,
+                                                             String successorPlanId) {
         return new SubscriptionExpiryReminderMessage(TENANT, "Acme Corp", "plan.pro", "2026-09-01", 7,
-                trial, nextStartDate);
+                trial, nextStartDate, successorPlanId);
     }
 
     private static UserAccount account(String email) {

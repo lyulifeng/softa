@@ -22,10 +22,12 @@ import io.softa.framework.orm.domain.FlexQuery;
 import io.softa.framework.orm.service.ModelService;
 import io.softa.starter.tenant.entitlement.TenantEntitlementChangedEvent;
 import io.softa.starter.tenant.entity.TenantInfo;
+import io.softa.starter.tenant.entity.Plan;
 import io.softa.starter.tenant.entity.TenantSubscription;
 import io.softa.starter.tenant.entity.TenantSubscriptionPeriod;
 import io.softa.starter.tenant.enums.SubscriptionStatus;
 import io.softa.starter.tenant.enums.SubscriptionPeriodType;
+import io.softa.starter.tenant.service.PeriodSelection;
 import io.softa.starter.tenant.service.SubscriptionProjectionService;
 import io.softa.starter.tenant.service.TenantSubscriptionService;
 
@@ -138,24 +140,18 @@ public class SubscriptionProjectionServiceImpl implements SubscriptionProjection
         List<TenantSubscriptionPeriod> periods =
                 periodsBySubscription.getOrDefault(sub.getId(), List.of());
 
-        // Overlaps are rejected on write, so normally at most one period covers a date. Should one slip in
-        // anyway (a direct database write, an import, legacy rows), picking arbitrarily would make the
-        // granted plan non-deterministic — and it could flip between refreshes, because authorization reads
-        // this projection. So order the candidates and say so loudly: latest start wins, i.e. the most
-        // recently sold period, with the id as a final tie-break.
-        List<TenantSubscriptionPeriod> covering = periods.stream()
-                .filter(p -> covers(p, today))
-                .sorted(Comparator.comparing(TenantSubscriptionPeriod::getEffectiveStartDate).reversed()
-                        .thenComparing(Comparator.comparing(TenantSubscriptionPeriod::getId).reversed()))
-                .toList();
-        if (covering.size() > 1) {
-            log.error("Subscription projection — subscription {} has {} periods covering {}; this is "
-                            + "corrupt data (overlaps are rejected on write). Using period {} (latest "
-                            + "start). Overlapping ids: {}",
-                    sub.getId(), covering.size(), today, covering.getFirst().getId(),
-                    covering.stream().map(TenantSubscriptionPeriod::getId).toList());
-        }
-        TenantSubscriptionPeriod current = covering.isEmpty() ? null : covering.getFirst();
+        // More than one period may cover today — overlaps are allowed, and every tenant owns an open-ended
+        // free period that overlaps everything sold on top of it. So this is the normal case, not corruption.
+        //
+        // The winner is the HIGHEST PLAN TIER, which is what makes the free period harmless: a tenant on Pro
+        // is on Pro, even though its free period covers the same day. Sorting by "latest start" instead — the
+        // old rule, written when overlaps were rejected — would hand today to whichever row happened to begin
+        // most recently, so back-dating a free period would silently demote a paying customer.
+        //
+        // Ties broken by latest start then id, purely for determinism: authorization reads this projection, so
+        // an arbitrary pick could flip the granted plan between refreshes with nothing having changed.
+        Map<String, Integer> tierByPlan = PeriodSelection.tierByPlan(modelService);
+        TenantSubscriptionPeriod current = PeriodSelection.winnerOn(periods, today, tierByPlan);
         TenantSubscriptionPeriod next = periods.stream()
                 .filter(p -> p.getEffectiveStartDate() != null
                         && p.getEffectiveStartDate().isAfter(today))
@@ -177,13 +173,13 @@ public class SubscriptionProjectionServiceImpl implements SubscriptionProjection
             sub.setPeriodType(null);
             sub.setCurrentStartDate(null);
             sub.setCurrentEndDate(null);
-            // No covering period: distinguishing "scheduled" / "lapsed" / "never bought" costs nothing
-            // extra here, and the three demand opposite follow-up from ops — see SubscriptionStatus.
-            sub.setSubscriptionStatus(next != null
-                    ? SubscriptionStatus.SCHEDULED
-                    : periods.isEmpty()
-                            ? SubscriptionStatus.NEVER_SUBSCRIBED
-                            : SubscriptionStatus.EXPIRED);
+            // No covering period: either one is coming (PENDING) or none is (EXPIRED).
+            //
+            // There is no longer a third case for "never bought anything": provisioning writes a free period
+            // at tenant creation, so `periods` is never empty and the standing is always derivable from
+            // dates. A tenant showing EXPIRED here has therefore let its free period lapse too — which only
+            // happens if an operator gave that period an end date, i.e. deliberately time-boxed it.
+            sub.setSubscriptionStatus(next != null ? SubscriptionStatus.PENDING : SubscriptionStatus.EXPIRED);
         }
         sub.setNextStartDate(next == null ? null : next.getEffectiveStartDate());
         sub.setProjectedForDate(today);
@@ -201,14 +197,6 @@ public class SubscriptionProjectionServiceImpl implements SubscriptionProjection
             eventPublisher.publishEvent(new TenantEntitlementChangedEvent(tenant.getId()));
         }
         return written;
-    }
-
-    /** A period covers a date when it has started and has not ended; null end = open-ended. */
-    private boolean covers(TenantSubscriptionPeriod period, LocalDate date) {
-        if (period.getEffectiveStartDate() == null || period.getEffectiveStartDate().isAfter(date)) {
-            return false;
-        }
-        return period.getEffectiveEndDate() == null || !period.getEffectiveEndDate().isBefore(date);
     }
 
     /** All periods of the given subscriptions, grouped. One query regardless of how many tenants. */

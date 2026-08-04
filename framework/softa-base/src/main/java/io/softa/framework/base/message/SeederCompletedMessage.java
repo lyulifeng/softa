@@ -14,6 +14,11 @@ package io.softa.framework.base.message;
  *                  is retried via redelivery, not reported as false); {@code false} is reserved for a future
  *                  DLQ handler and would drive the coordinator's markSeederFailed path. Tenant-level FAILED
  *                  meanwhile comes from tenant-starter's timeout guard, not from this flag.
+ * @param rebuild  carried through from the provisioning announcement so a downstream seeder — which is
+ *                 triggered by this message rather than by that announcement — can tell a deliberate
+ *                 rebuild from an ordinary redelivery. Without it the dependency chain loses the
+ *                 distinction at its first hop, and every seeder past the first would have to guess
  */
-public record SeederCompletedMessage(Long tenantId, String seederKey, boolean success) {
+public record SeederCompletedMessage(Long tenantId, String seederKey, boolean success,
+                                     boolean rebuild) {
 }

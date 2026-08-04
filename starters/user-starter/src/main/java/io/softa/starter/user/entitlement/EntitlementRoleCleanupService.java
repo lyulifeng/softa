@@ -19,7 +19,7 @@ import io.softa.starter.user.service.RoleDataScopeService;
 import io.softa.starter.user.service.RoleNavigationService;
 import io.softa.starter.user.service.RoleSensitiveFieldSetService;
 import io.softa.starter.user.service.UserAccountService;
-import io.softa.starter.user.util.NavIds;
+import io.softa.framework.base.utils.NavIds;
 
 /**
  * Physically removes a tenant's over-plan role grants after a downgrade (版本计费 v2 §2.2 —

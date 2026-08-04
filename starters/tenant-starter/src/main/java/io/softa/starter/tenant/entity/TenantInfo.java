@@ -16,7 +16,6 @@ import io.softa.framework.orm.enums.IdStrategy;
 import io.softa.starter.referencedata.entity.CountryRegion;
 import io.softa.starter.referencedata.entity.Currency;
 import io.softa.starter.tenant.enums.DataRegion;
-import io.softa.starter.tenant.enums.TenantProvisioningStatus;
 import io.softa.starter.tenant.enums.TenantStatus;
 
 /**
@@ -94,11 +93,6 @@ public class TenantInfo extends AuditableModel {
                     + "that don't sell versions leave it unset and the resolver falls back to the "
                     + "floor plan (the catalog's lowest tier).")
     private Long subscriptionId;
-
-    @Field(label = "Provisioning Status",
-            description = "Post-creation seed progress (INITIALIZING -> READY / FAILED). Orthogonal to "
-                    + "status/lifecycle; does not gate login — drives display, alerting, the createAdmin gate.")
-    private TenantProvisioningStatus provisioningStatus;
 
     @Field
     private Boolean deleted;

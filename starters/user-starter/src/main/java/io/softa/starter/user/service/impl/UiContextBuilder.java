@@ -19,6 +19,7 @@ import jakarta.annotation.PostConstruct;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 
+import io.softa.framework.base.context.ContextHolder;
 import io.softa.framework.orm.annotation.SkipPermissionCheck;
 import io.softa.framework.orm.domain.FlexQuery;
 import io.softa.framework.orm.domain.Filters;
@@ -37,7 +38,7 @@ import io.softa.starter.user.service.RoleSensitiveFieldSetService;
 import io.softa.starter.user.service.RoleService;
 import io.softa.starter.user.service.UserRoleRelService;
 import io.softa.starter.user.util.JsonArrayUtils;
-import io.softa.starter.user.util.NavIds;
+import io.softa.framework.base.utils.NavIds;
 
 /**
  * Fallback builder for {@code /me/uiContext} when the permission engine's cached
@@ -124,11 +125,11 @@ public class UiContextBuilder {
             return emptyGrants(out);
         }
 
-        // TENANT_ADMIN → all tenant-facing navs (all minus platform-only prefixes) + their
-        // permissions, computed at runtime (mirrors DefaultPermissionSnapshotProvider). The tenant's
-        // plan narrows this further on the FE via entitledModules.
+        // TENANT_ADMIN → all tenant-facing navs (all minus platform-only prefixes) narrowed by the
+        // tenant's plan, + their permissions, computed at runtime (mirrors
+        // DefaultPermissionSnapshotProvider).
         if (roleCodes.contains(RoleConstant.CODE_TENANT_ADMIN)) {
-            return tenantAdminGrants(out);
+            return tenantAdminGrants(out, ContextHolder.getContext().getTenantId());
         }
 
         // Navigation + permission grants.
@@ -156,14 +157,23 @@ public class UiContextBuilder {
         return out;
     }
 
-    /** Tenant super-admin: every tenant-facing nav (all minus platform-only prefixes) + those navs'
-     *  permissions. Plan narrowing happens on the FE via entitledModules; SFS map empty (sees all). */
-    private UiContext tenantAdminGrants(UiContext out) {
+    /**
+     * Tenant super-admin: every tenant-facing nav (all minus platform-only prefixes), narrowed by the
+     * tenant's plan, + those navs' permissions. SFS map empty (sees all).
+     *
+     * <p>The plan narrowing has to happen here, not only on the FE. A tenant admin holds no static nav
+     * grants — its access is recomputed on every request — so a downgrade has no rows to strip for it
+     * and {@code EntitlementRoleCleanupService} passes it over entirely. Runtime narrowing is therefore
+     * the only thing that can take a dropped module away from an admin.
+     */
+    private UiContext tenantAdminGrants(UiContext out, Long tenantId) {
         Collection<Navigation> allNavs = navigationModelResolver.allNavigations();
+        Set<String> entitled = entitledModulesOrNull(tenantId);
         Set<String> navigations = new HashSet<>();
         if (allNavs != null) {
             for (Navigation n : allNavs) {
-                if (n != null && n.getId() != null && !isPlatformNav(n.getId())) {
+                if (n != null && n.getId() != null && !isPlatformNav(n.getId())
+                        && isEntitled(n.getId(), entitled)) {
                     navigations.add(n.getId());
                 }
             }
@@ -216,12 +226,13 @@ public class UiContextBuilder {
         }
         Set<String> navigations = new HashSet<>();
         Collection<Navigation> allNavs = navigationModelResolver.allNavigations();
+        Set<String> entitled = tenantAdmin ? entitledModulesOrNull(tenantId) : null;
         if (allNavs != null) {
             for (Navigation n : allNavs) {
                 if (n == null || n.getId() == null) continue;
                 String navId = n.getId();
                 // SUPER_ADMIN keeps everything; TENANT_ADMIN drops platform-only + plan-excluded navs.
-                if (tenantAdmin && (isPlatformNav(navId) || !isEntitled(navId, tenantId))) {
+                if (tenantAdmin && (isPlatformNav(navId) || !isEntitled(navId, entitled))) {
                     continue;
                 }
                 navigations.add(navId);
@@ -246,13 +257,21 @@ public class UiContextBuilder {
         return out;
     }
 
-    /** Plan ({@code entitledModules}) narrowing — mirrors the FE {@code navModuleOf} gating. No gate
-     *  installed (bean absent) or null tenant → everything entitled (no narrowing). */
-    private boolean isEntitled(String navId, Long tenantId) {
+    /**
+     * The tenant's entitled module ids, or {@code null} for "narrow nothing" — no gate installed (bean
+     * absent) or no tenant in context. Resolved ONCE per build and passed to {@link #isEntitled}: the
+     * resolver is cache-aside, so calling it per nav would spend a Redis round-trip on each of a
+     * hundred-odd navigations to re-read one unchanging set.
+     */
+    private Set<String> entitledModulesOrNull(Long tenantId) {
         if (entitlementService == null || tenantId == null) {
-            return true;
+            return null;
         }
-        Set<String> entitled = entitlementService.entitledModules(tenantId);
+        return entitlementService.entitledModules(tenantId);
+    }
+
+    /** Plan narrowing — mirrors the FE {@code navModuleOf} gating. Null set → everything entitled. */
+    private static boolean isEntitled(String navId, Set<String> entitled) {
         if (entitled == null) {
             return true;
         }

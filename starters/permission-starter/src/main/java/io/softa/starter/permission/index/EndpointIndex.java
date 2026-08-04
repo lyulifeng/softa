@@ -9,6 +9,7 @@ import java.util.Map;
 import java.util.Set;
 import java.util.regex.Pattern;
 
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 import jakarta.annotation.PostConstruct;
 import lombok.RequiredArgsConstructor;
@@ -135,6 +136,27 @@ public class EndpointIndex {
 
     private final PermissionEndpointSource endpointSource;
 
+    /**
+     * The host app's {@code server.servlet.context-path}, or empty when it runs at the root.
+     *
+     * <p>Only used to reject an explicit endpoint that repeats it. Spring strips the context path
+     * before {@code getServletPath()}, so an entry written as {@code POST /api/hcm/Employee/create}
+     * can never match anything — that is the copy-from-the-browser-URL mistake this guards against.
+     *
+     * <p>It has to be the configured value rather than a hard-coded {@code "/api"}: a controller is
+     * perfectly entitled to live under {@code /api} <i>inside</i> the context, and message-starter's
+     * {@code MailApiController} / {@code SmsApiController} do exactly that — they are the external
+     * integration API and own the {@code /api/mail} and {@code /api/sms} namespaces. Their
+     * servletPath legitimately starts with {@code /api}, so a prefix test on the literal string
+     * rejects three correct declarations along with the mistaken ones.
+     *
+     * <p>Package-private so the same-package test can set it; Spring injects it in production.
+     * Not a constructor parameter because {@link RequiredArgsConstructor} already owns the only
+     * constructor, and a second one would leave Spring with no unambiguous candidate.
+     */
+    @Value("${server.servlet.context-path:}")
+    String contextPath = "";
+
     /** Endpoint → set of permission ids that grant this endpoint. Multiple
      *  permissions can list the same endpoint in {@code permission.endpoints}
      *  (e.g. both {@code employee.view} and {@code department.view} include
@@ -221,14 +243,14 @@ public class EndpointIndex {
             for (String ep : explicit) {
                 // Reject entries that don't match the documented
                 // "VERB /Model/action" format. The two common
-                // misconfigurations are (a) a leading "/api" prefix left over
-                // from someone's copy from `@Schema` docs (EndpointIndex
-                // matches servletPath which already has the app context
-                // stripped, so /api entries never match anything) and (b) a
+                // misconfigurations are (a) a leading context path left over
+                // from someone copying the browser's URL (EndpointIndex
+                // matches servletPath, which already has the app context
+                // stripped, so such entries never match anything) and (b) a
                 // missing leading '/' after the VERB. Fail loud at startup —
                 // silent misconfiguration turns permissions into inert entries
                 // that grant nothing at runtime.
-                validateExplicitEndpoint(def.permissionId(), ep);
+                validateExplicitEndpoint(def.permissionId(), ep, contextPath);
                 out.add(ep);
             }
             return out;
@@ -238,11 +260,14 @@ public class EndpointIndex {
 
     /**
      * Validate the shape of an explicit {@code permission.endpoints} entry.
-     * Two common failure modes: (a) leading {@code /api} left over from
-     * {@code @Schema} doc examples (EndpointIndex matches servletPath,
-     * already context-stripped) and (b) missing {@code '/'} after the verb.
+     * Two common failure modes: (a) the app's context path written into the entry (EndpointIndex
+     * matches servletPath, which is already context-stripped, so it could never match) and
+     * (b) missing {@code '/'} after the verb.
+     *
+     * @param contextPath {@code server.servlet.context-path}; empty disables the (a) check, which
+     *                    is correct for an app served at the root — there is no prefix to repeat.
      */
-    private static void validateExplicitEndpoint(String permissionId, String ep) {
+    static void validateExplicitEndpoint(String permissionId, String ep, String contextPath) {
         if (ep == null || ep.isBlank()) {
             throw new IllegalStateException(
                     "Permission " + permissionId + " has a blank endpoint entry");
@@ -262,10 +287,12 @@ public class EndpointIndex {
             throw new IllegalStateException(
                     "Permission " + permissionId + " endpoint '" + ep + "' path must start with '/'");
         }
-        if (path.startsWith("/api/") || "/api".equals(path)) {
+        if (contextPath != null && !contextPath.isBlank()
+                && (path.startsWith(contextPath + "/") || path.equals(contextPath))) {
             throw new IllegalStateException(
-                    "Permission " + permissionId + " endpoint '" + ep + "' must NOT include the '/api' prefix — "
-                            + "EndpointIndex matches against servletPath which already has the app context stripped");
+                    "Permission " + permissionId + " endpoint '" + ep + "' must NOT include the '"
+                            + contextPath + "' context path — EndpointIndex matches against servletPath, "
+                            + "which already has the app context stripped");
         }
     }
 

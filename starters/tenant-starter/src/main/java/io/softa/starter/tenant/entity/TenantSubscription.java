@@ -108,7 +108,7 @@ public class TenantSubscription extends AuditableModel {
                     + "expiry date to display")
     private LocalDate currentEndDate;
 
-    @Field(description = "Projected: start date of the nearest upcoming period — drives the SCHEDULED "
+    @Field(description = "Projected: start date of the nearest upcoming period — drives the PENDING "
             + "status and the 'starts on' line in the UI")
     private LocalDate nextStartDate;
 

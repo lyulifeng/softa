@@ -25,6 +25,9 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyMap;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.doAnswer;
+import static org.mockito.ArgumentMatchers.anyLong;
+import static org.mockito.ArgumentMatchers.anyList;
 import static org.mockito.Mockito.doReturn;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.spy;
@@ -135,17 +138,46 @@ class SubscriptionPeriodValidationTest {
                 .doesNotThrowAnyException();
     }
 
-    // ─── the floor plan is not sellable ───
+    // ─── the floor plan is recorded, exactly once ───
+    //
+    // Both guards that used to live here are gone, and both rested on "a floor period and no period express
+    // the same state". Provisioning now writes an open-ended floor TRIAL period at tenant creation, so that
+    // premise is false and either guard would reject the row the tenant cannot exist without. What survives
+    // is the thing they were really protecting: one baseline, unambiguous.
 
     @Test
-    @DisplayName("the floor plan cannot be recorded as a period")
-    void floorPlanPeriod_rejected() {
-        // "On the floor plan" and "no period at all" are the same state. Two representations of one state
-        // means the projection cannot distinguish a customer who lapsed from one who was never sold
-        // anything — which is exactly the EXPIRED / NEVER_SUBSCRIBED distinction ops reads the list for.
-        assertThatThrownBy(() -> service.createOne(period(SUB_ID, START, START.plusMonths(12), FREE.getId())))
+    @DisplayName("the floor plan can be recorded — it is what provisioning writes")
+    void floorPlanPeriod_accepted() {
+        assertThatCode(() -> service.createOne(period(SUB_ID, START, START.plusMonths(12), FREE.getId())))
+                .doesNotThrowAnyException();
+    }
+
+    @Test
+    @DisplayName("a second floor period is rejected — there is exactly one, created with the tenant")
+    void secondFloorPeriod_rejected() {
+        // The cardinality rule that replaced the prohibition. Two baselines would put the tenant's floor
+        // entitlement in two places, and an operator editing one would leave the other saying otherwise.
+        stored.add(storedPeriod(1L, START, null, FREE.getId()));
+
+        assertThatThrownBy(() -> service.createOne(period(SUB_ID, START.plusYears(1), null, FREE.getId())))
                 .isInstanceOf(IllegalArgumentException.class)
-                .hasMessageContaining("floor plan cannot be sold");
+                .hasMessageContaining("already has its");
+    }
+
+    @Test
+    @DisplayName("the cardinality scan excludes the row being edited, so the one floor period stays editable")
+    void editingOwnFloorPeriod_allowed() {
+        // Setting an end date on the free period is the entire mechanism for time-boxing a free tenant, so
+        // excluding the row under edit from the scan is load-bearing, not defensive. Exercised through
+        // validate() directly: the update entry point loads the row first and this fixture has no store
+        // behind getById, so going through updateOne would fail on plumbing before reaching the guard.
+        stored.add(storedPeriod(7L, START, null, FREE.getId()));
+
+        TenantSubscriptionPeriod edit = period(SUB_ID, START, START.plusMonths(3), FREE.getId());
+        edit.setId(7L);
+
+        assertThatCode(() -> ReflectionTestUtils.invokeMethod(service, "validate", edit, 7L))
+                .doesNotThrowAnyException();
     }
 
     @Test
@@ -160,11 +192,63 @@ class SubscriptionPeriodValidationTest {
     }
 
     @Test
-    @DisplayName("only a plan above the floor can be trialled")
-    void trialOnNonUpgradePlan_rejected() {
-        // A trial's whole purpose is temporary access to something the tenant does not have. A trial of a
-        // plan no better than the floor grants nothing and then "expires", which reads to the customer as
-        // access being taken away.
+    @DisplayName("the free period's start date cannot be moved — only its end date is the operator's")
+    void floorPeriodStartDate_immutable() {
+        // The start date anchors "this tenant has had free access since it existed". Moving it forward opens a
+        // stretch nothing covers, and with the floor-plan fallback gone that means zero modules; moving it back
+        // claims access before the tenant existed.
+        stored.add(storedPeriod(9L, START, null, FREE.getId()));
+
+        TenantSubscriptionPeriod moved = period(SUB_ID, START.plusDays(10), null, FREE.getId());
+        moved.setId(9L);
+
+        assertThatThrownBy(() -> ReflectionTestUtils.invokeMethod(service, "validate", moved, 9L))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("cannot be changed");
+    }
+
+    @Test
+    @DisplayName("setting the free period's end date is allowed — that is how free access is time-boxed")
+    void floorPeriodEndDate_settable() {
+        stored.add(storedPeriod(9L, START, null, FREE.getId()));
+
+        TenantSubscriptionPeriod boxed = period(SUB_ID, START, START.plusMonths(3), FREE.getId());
+        boxed.setId(9L);
+
+        assertThatCode(() -> ReflectionTestUtils.invokeMethod(service, "validate", boxed, 9L))
+                .doesNotThrowAnyException();
+    }
+
+    @Test
+    @DisplayName("the free period cannot be deleted — the message points at the end date instead")
+    void floorPeriodDeletion_refused() {
+        // Deleting it does the opposite of what the operator intends: the resolver reads "no floor period" as
+        // "the row is missing" and falls back to granting the floor plan, so a free tenant deleted out of its
+        // baseline quietly keeps free access. Completes the invariant — without this it is "at most one floor
+        // period", not "exactly one".
+        stored.add(storedPeriod(5L, START, null, FREE.getId()));
+
+        assertThatThrownBy(() -> service.deleteById(5L))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("give that period an end date instead");
+    }
+
+    @Test
+    @DisplayName("a sold period is still deletable")
+    void soldPeriodDeletion_allowed() {
+        // The guard has to be about the floor plan specifically, not about deletion — a mis-entered Pro period
+        // is exactly what delete is for.
+        stored.add(storedPeriod(6L, START, START.plusMonths(6), "plan.pro"));
+
+        assertThatCode(() -> service.deleteById(6L)).doesNotThrowAnyException();
+    }
+
+    @Test
+    @DisplayName("a trial on a floor-level plan is accepted — the free period is exactly that")
+    void trialOnFloorLevelPlan_accepted() {
+        // Formerly rejected on the grounds that trialling something no better than the floor grants nothing.
+        // The free period is a floor-plan TRIAL by design: TRIAL because nobody paid, which is what keeps it
+        // out of revenue reads, and floor because that is the baseline every tenant gets.
         Plan legacy = plan("plan.legacy", null);   // no tier — treated as floor level
         catalog = List.of(FREE, PRO, legacy);
         lookedUpPlan = legacy;
@@ -172,9 +256,7 @@ class SubscriptionPeriodValidationTest {
         TenantSubscriptionPeriod period = period(SUB_ID, START, START.plusMonths(1), legacy.getId());
         period.setPeriodType(SubscriptionPeriodType.TRIAL);
 
-        assertThatThrownBy(() -> service.createOne(period))
-                .isInstanceOf(IllegalArgumentException.class)
-                .hasMessageContaining("above the floor can be trialled");
+        assertThatCode(() -> service.createOne(period)).doesNotThrowAnyException();
     }
 
     @Test
@@ -190,41 +272,43 @@ class SubscriptionPeriodValidationTest {
                 .doesNotThrowAnyException();
     }
 
-    // ─── overlap ───
+    // ─── overlap is accepted, not rejected ───
+    //
+    // These three used to assert the opposite. Overlap was rejected so that "the period covering today" had
+    // one answer — a rule that became impossible to keep the moment every tenant started owning an open-ended
+    // free period: every sale overlaps it, so rejecting overlap would reject every sale. Ambiguity is now
+    // resolved rather than prevented, by the projection picking the highest plan tier among the periods
+    // covering a date. Kept as accept-cases so the reversal is visible and cannot be undone by accident.
 
     @Test
-    @DisplayName("a period landing inside an existing one is rejected")
-    void containedOverlap_rejected() {
+    @DisplayName("a period landing inside an existing one is accepted")
+    void containedOverlap_accepted() {
         stored.add(storedPeriod(1L, START, START.plusMonths(12)));
 
-        assertThatThrownBy(() -> service.createOne(
+        assertThatCode(() -> service.createOne(
                 period(SUB_ID, START.plusMonths(3), START.plusMonths(6), "plan.pro")))
-                .isInstanceOf(IllegalArgumentException.class)
-                .hasMessageContaining("overlaps an existing one");
+                .doesNotThrowAnyException();
     }
 
     @Test
-    @DisplayName("a period straddling an existing one's end is rejected")
-    void tailOverlap_rejected() {
+    @DisplayName("a period straddling an existing one's end is accepted")
+    void tailOverlap_accepted() {
         stored.add(storedPeriod(1L, START, START.plusMonths(12)));
 
-        assertThatThrownBy(() -> service.createOne(
+        assertThatCode(() -> service.createOne(
                 period(SUB_ID, START.plusMonths(11), START.plusMonths(18), "plan.pro")))
-                .isInstanceOf(IllegalArgumentException.class)
-                .hasMessageContaining("overlaps an existing one");
+                .doesNotThrowAnyException();
     }
 
     @Test
-    @DisplayName("an open-ended existing period blocks everything after its start")
-    void openEndedIncumbent_blocksLater() {
-        // A null end date means "until further notice", so nothing can be scheduled after it — the incumbent
-        // has to be given an end date first. Getting this backwards is the subtle case: a null end read as
-        // "ends immediately" would let a second period silently shadow the live one.
+    @DisplayName("an open-ended existing period no longer blocks what comes after it")
+    void openEndedIncumbent_doesNotBlockLater() {
+        // The free period is exactly this shape — open-ended, starting at tenant creation. Under the old rule
+        // it blocked every later period, i.e. it blocked selling anything at all.
         stored.add(storedPeriod(1L, START, null));
 
-        assertThatThrownBy(() -> service.createOne(period(SUB_ID, START.plusYears(5), null, "plan.pro")))
-                .isInstanceOf(IllegalArgumentException.class)
-                .hasMessageContaining("overlaps an existing one");
+        assertThatCode(() -> service.createOne(period(SUB_ID, START.plusYears(5), null, "plan.pro")))
+                .doesNotThrowAnyException();
     }
 
     @Test
@@ -284,8 +368,17 @@ class SubscriptionPeriodValidationTest {
         ReflectionTestUtils.setField(impl, EntityServiceImpl.class, "modelService", modelService,
                 ModelService.class);
         ReflectionTestUtils.setField(impl, "projectionService", mock(SubscriptionProjectionService.class));
-        // The overlap scan reads the stored rows; the list is mutated per test, so the stub returns it live.
+        // The floor-cardinality scan reads the stored rows; the list is mutated per test, so the stub returns
+        // it live.
         doReturn(stored).when(impl).searchList(any(FlexQuery.class));
+        // By-id reads resolve against the same list. Both `ownerOf` and the delete guard look a period up this
+        // way, so without it a stored row is invisible to them and a guard keyed on the row's plan cannot fire.
+        doAnswer(invocation -> {
+            Long wanted = invocation.getArgument(0);
+            return stored.stream().filter(row -> wanted != null && wanted.equals(row.getId())).findFirst();
+        }).when(impl).getById(anyLong());
+        // Deletion itself is the framework's; these fixtures only exercise what guards it.
+        doReturn(true).when(impl).deleteByIds(anyList());
         return impl;
     }
 
@@ -301,7 +394,12 @@ class SubscriptionPeriodValidationTest {
     }
 
     private static TenantSubscriptionPeriod storedPeriod(Long id, LocalDate from, LocalDate to) {
-        TenantSubscriptionPeriod period = period(SUB_ID, from, to, "plan.pro");
+        return storedPeriod(id, from, to, "plan.pro");
+    }
+
+    /** Same, with the plan named — the floor-cardinality cases turn on which plan a stored row is on. */
+    private static TenantSubscriptionPeriod storedPeriod(Long id, LocalDate from, LocalDate to, String planId) {
+        TenantSubscriptionPeriod period = period(SUB_ID, from, to, planId);
         period.setId(id);
         return period;
     }

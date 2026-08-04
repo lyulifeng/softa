@@ -9,9 +9,11 @@ import io.softa.framework.orm.domain.FlexQuery;
 import io.softa.framework.orm.service.CacheService;
 import io.softa.framework.orm.service.ModelService;
 import io.softa.starter.tenant.entity.Plan;
+import io.softa.starter.tenant.service.PlanCatalog;
 import io.softa.starter.tenant.entity.PlanEntitlement;
 import io.softa.starter.tenant.entity.TenantInfo;
 import io.softa.starter.tenant.entity.TenantSubscription;
+import io.softa.starter.tenant.entity.TenantSubscriptionPeriod;
 import io.softa.starter.tenant.service.SubscriptionProjectionService;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
@@ -130,13 +132,52 @@ public class EntitlementResolver {
                 int tier = (plan != null && plan.getTier() != null) ? plan.getTier() : 0;
                 return new EntitlementInfo(sub.getPlanId(), tier, modules);
             }
-            // plan_entitlement missing / plan deleted → fail closed to the floor plan below, never a
-            // partial / 0-module set (which would look like site-wide loss of access).
+            // plan_entitlement missing / plan deleted → fall through, never a partial / 0-module set (which
+            // would look like site-wide loss of access).
         }
+        // No covering period. Two very different situations, and collapsing them was the old bug:
+        //
+        //   a) the tenant HAS its baseline free period and it has ended — an operator gave it an end date, on
+        //      purpose, to cut a free tenant off. Entitlement is nothing. Falling back to the floor plan here
+        //      would silently undo that decision and grant free access forever.
+        //
+        //   b) the tenant has NO floor period at all — a row written before provisioning started creating one,
+        //      or periods deleted directly in the database. Granting nothing would take access away from an
+        //      existing customer on the deploy that introduced this, so fall back and say so in the log: the
+        //      remedy is to give that subscription its free period.
+        if (hasFloorPeriod(tenant)) {
+            return new EntitlementInfo(null, 0, Set.of());
+        }
+        log.warn("Tenant {} has no baseline period on the floor plan; granting the floor plan's modules as a "
+                + "fallback. Give this subscription its free period — the fallback is not how free works.",
+                tenant == null ? null : tenant.getId());
         return fallbackInfo();
     }
 
-    /** The fallback (floor) entitlement — the lowest-tier plan's set; empty when the catalog is empty. */
+    /**
+     * Whether this tenant owns a period on the floor plan at all — regardless of whether it still covers
+     * today. Distinguishes "free was deliberately ended" from "free was never recorded", which are the two
+     * ways to arrive at no covering period and which demand opposite answers.
+     */
+    private boolean hasFloorPeriod(TenantInfo tenant) {
+        if (tenant == null || tenant.getSubscriptionId() == null) {
+            return false;
+        }
+        Plan floor = fallbackPlan();
+        if (floor == null) {
+            return false;
+        }
+        return modelService.searchList("TenantSubscriptionPeriod",
+                        new FlexQuery(Filters.of("subscriptionId", Operator.EQUAL, tenant.getSubscriptionId())),
+                        TenantSubscriptionPeriod.class)
+                .stream()
+                .anyMatch(period -> floor.getId().equals(period.getPlanId()));
+    }
+
+    /**
+     * The floor plan's entitlement. No longer "how a tenant without periods is served" — every tenant owns a
+     * free period now — but the repair path for one whose baseline row is missing. See {@link #compute}.
+     */
     private EntitlementInfo fallbackInfo() {
         Plan fb = fallbackPlan();
         if (fb == null) {
@@ -150,11 +191,7 @@ public class EntitlementResolver {
 
     /** The catalog's floor plan = the smallest {@code tier} (ties broken by id); null if no plans. */
     private Plan fallbackPlan() {
-        List<Plan> plans = modelService.searchList("Plan", new FlexQuery(new Filters()), Plan.class);
-        return plans.stream()
-                .filter(p -> p.getTier() != null)
-                .min(Comparator.comparingInt(Plan::getTier).thenComparing(Plan::getId))
-                .orElse(null);
+        return PlanCatalog.floorPlan(modelService);
     }
 
     private TenantInfo loadTenant(Long tenantId) {

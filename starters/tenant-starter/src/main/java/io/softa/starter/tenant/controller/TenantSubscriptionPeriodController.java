@@ -30,12 +30,13 @@ import io.softa.starter.tenant.service.TenantSubscriptionPeriodService;
  * Anything left unshadowed could:
  *
  * <ul>
- *   <li>insert an <b>overlapping period</b>, which makes "the period covering today" ambiguous and lets
- *       the projection pick one arbitrarily — a wrong plan, not a wrong label;</li>
  *   <li>skip the projection refresh, leaving the subscription row disagreeing with its periods and
  *       {@code currentPeriodId} pointing at a deleted row;</li>
- *   <li>sell the floor plan, or trial it, which the write guards otherwise reject.</li>
+ *   <li>record a <b>second floor period</b>, putting the tenant's baseline entitlement in two places.</li>
  * </ul>
+ *
+ * <p>Overlap is no longer among the reasons: it is accepted now, because every tenant owns an open-ended
+ * free period that every sale overlaps. The projection resolves the ambiguity by plan tier instead.</p>
  *
  * This codebase has already been bitten twice by the same shape: {@code TenantStatus} being editable
  * through the generic {@code updateOne} (so suspending a tenant did not evict its caches and did not take
@@ -44,8 +45,8 @@ import io.softa.starter.tenant.service.TenantSubscriptionPeriodService;
  * use it.
  *
  * <p>Endpoints that cannot be expressed through the guarded service are rejected rather than quietly
- * approximated. Bulk create / update / copy would each need their own overlap reasoning across the whole
- * batch; ops enters periods one at a time, so the capability is not worth the failure mode.
+ * approximated. Bulk create / update / copy each bypass the projection refresh and the floor-cardinality
+ * check; ops enters periods one at a time, so the capability is not worth the failure mode.
  *
  * <p>Reads are deliberately <b>not</b> shadowed — the generic {@code searchList} / {@code getById} are
  * exactly what the UI needs.
@@ -55,11 +56,11 @@ import io.softa.starter.tenant.service.TenantSubscriptionPeriodService;
 @RequestMapping("/TenantSubscriptionPeriod")
 public class TenantSubscriptionPeriodController {
 
-    /** Bulk paths would each need batch-wide overlap reasoning; ops records periods one at a time. */
+    /** Bulk paths bypass the projection refresh and the floor-cardinality check; ops records one at a time. */
     private static final String BULK_REJECTED =
-            "Subscription periods must be recorded one at a time so overlaps can be validated.";
+            "Subscription periods must be recorded one at a time so each is validated and the projection refreshed.";
     private static final String COPY_REJECTED =
-            "A subscription period cannot be copied — it would overlap the period it was copied from.";
+            "A subscription period cannot be copied — record the new period with its own dates instead.";
 
     private final TenantSubscriptionPeriodService periodService;
 

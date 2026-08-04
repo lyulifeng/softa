@@ -18,6 +18,8 @@ import io.softa.starter.tenant.constant.PlanConstant;
 import io.softa.starter.tenant.entity.Plan;
 import io.softa.starter.tenant.entity.PlanEntitlement;
 import io.softa.starter.tenant.entity.TenantInfo;
+import io.softa.starter.tenant.entity.TenantSubscriptionPeriod;
+import org.junit.jupiter.api.DisplayName;
 import io.softa.starter.tenant.entity.TenantSubscription;
 import io.softa.starter.tenant.service.SubscriptionProjectionService;
 
@@ -43,6 +45,7 @@ class EntitlementResolverTest {
     private ModelService<?> modelService;
     private EntitlementResolver resolver;
     private List<TenantSubscription> subs;
+    private List<TenantSubscriptionPeriod> periodRows;
     private List<Plan> plans;
     private Map<String, List<String>> planModules;
 
@@ -59,6 +62,7 @@ class EntitlementResolverTest {
         resolver = new EntitlementResolver(modelService, cacheService, projectionService);
 
         subs = new ArrayList<>();
+        periodRows = new ArrayList<>();
         // Default catalog: free(0) < pro(10) < enterprise(20). Lowest tier (free) is the fallback.
         plans = new ArrayList<>(List.of(
                 plan(PlanConstant.PLAN_FREE, 0),
@@ -79,6 +83,45 @@ class EntitlementResolverTest {
                 .thenAnswer(inv -> planEntitlements(filterValue(inv.getArgument(1))));
         when(modelService.searchList(eq("Plan"), any(FlexQuery.class), eq(Plan.class)))
                 .thenAnswer(inv -> plansMatching(inv.getArgument(1)));
+        // Period rows exist only to answer "does this tenant own a baseline period at all". Default empty,
+        // which is the pre-migration shape and the one the cases above rely on.
+        when(modelService.searchList(eq("TenantSubscriptionPeriod"), any(FlexQuery.class),
+                eq(TenantSubscriptionPeriod.class))).thenAnswer(inv -> periodRows);
+    }
+
+    // ─── no covering period: two situations, opposite answers ───
+
+    @Test
+    @DisplayName("a free period that an operator ended grants nothing — the fallback must not undo that")
+    void freePeriodEnded_grantsNothing() {
+        // Time-boxing the free period is the whole mechanism for cutting a free tenant off (a competitor
+        // evaluating the product, say). Falling back to the floor plan here would hand back exactly the access
+        // the operator removed, and hand it back forever.
+        // The subscription row exists — it always does — but its projection covers nothing: planId null means
+        // no period covers today. The free row is still THERE, which is what separates this from the case below.
+        subs.add(sub(null));
+        periodRows.add(floorPeriod());
+
+        assertThat(modules(TENANT)).isEmpty();
+        assertThat(resolver.resolve(TENANT).planId()).isNull();
+    }
+
+    @Test
+    @DisplayName("a tenant with no baseline period still gets the floor plan, so a missed migration is survivable")
+    void noFloorPeriod_fallsBack() {
+        // A subscription row written before provisioning began creating the free period. Granting nothing
+        // would take access away from an existing customer on the deploy that introduced this; the resolver
+        // logs a warning and serves the floor instead, and the remedy is to give it its free period.
+        periodRows.clear();
+
+        assertThat(modules(TENANT)).containsExactlyInAnyOrder(
+                ModuleConstant.CORE_HR, ModuleConstant.USERS, ModuleConstant.SYSTEM);
+    }
+
+    private static TenantSubscriptionPeriod floorPeriod() {
+        TenantSubscriptionPeriod period = new TenantSubscriptionPeriod();
+        period.setPlanId(PlanConstant.PLAN_FREE);
+        return period;
     }
 
     // ─── plan / lifecycle ───

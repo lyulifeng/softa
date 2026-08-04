@@ -3,6 +3,7 @@ package io.softa.starter.tenant.service.impl;
 import java.time.LocalDate;
 import java.util.Comparator;
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
 
 import lombok.extern.slf4j.Slf4j;
@@ -17,6 +18,8 @@ import io.softa.framework.orm.domain.FlexQuery;
 import io.softa.framework.orm.service.ModelService;
 import io.softa.framework.orm.service.impl.EntityServiceImpl;
 import io.softa.starter.tenant.entity.Plan;
+import io.softa.starter.tenant.service.PeriodSelection;
+import io.softa.starter.tenant.service.PlanCatalog;
 import io.softa.starter.tenant.entity.TenantInfo;
 import io.softa.starter.tenant.entity.TenantSubscriptionPeriod;
 import io.softa.starter.tenant.enums.SubscriptionPeriodType;
@@ -70,6 +73,7 @@ public class TenantSubscriptionPeriodServiceImpl
     @Override
     @Transactional(rollbackFor = Exception.class)
     public boolean deleteById(Long id) {
+        refuseFloorPeriodDeletion(id == null ? List.of() : List.of(id));
         Long owner = ownerOf(id);
         boolean ok = super.deleteById(id);
         refreshOwner(owner);
@@ -79,6 +83,7 @@ public class TenantSubscriptionPeriodServiceImpl
     @Override
     @Transactional(rollbackFor = Exception.class)
     public boolean deleteByIds(List<Long> ids) {
+        refuseFloorPeriodDeletion(ids == null ? List.of() : ids);
         List<Long> owners = ids == null ? List.of() : ids.stream().map(this::ownerOf)
                 .filter(Objects::nonNull).distinct().toList();
         boolean ok = super.deleteByIds(ids);
@@ -86,16 +91,65 @@ public class TenantSubscriptionPeriodServiceImpl
         return ok;
     }
 
+    /**
+     * The free period cannot be deleted. It is the tenant's baseline entitlement — the row that makes
+     * "what may this tenant reach" answerable from data — and provisioning creates it once, at tenant
+     * creation, so nothing puts it back.
+     *
+     * <p>Deleting it does the opposite of what the operator doing it intends. The entitlement resolver reads
+     * "no floor period at all" as "this row is MISSING" and falls back to granting the floor plan's modules,
+     * so a free tenant deleted out of its baseline quietly keeps free access. Cutting a tenant off is done by
+     * giving that period an end date, which is why the message says so.
+     *
+     * <p>Enforced here rather than in the frontend because there are four ways in: the delete endpoints, the
+     * relation patch's {@code delete} list, and a generic call. All of them land on these two methods.
+     */
+    private void refuseFloorPeriodDeletion(List<Long> ids) {
+        if (ids.isEmpty()) {
+            return;
+        }
+        Plan floor = floorPlan();
+        if (floor == null) {
+            return;
+        }
+        for (Long id : ids) {
+            TenantSubscriptionPeriod period = id == null ? null : getById(id).orElse(null);
+            Assert.notTrue(period != null && floor.getId().equals(period.getPlanId()),
+                    "The {0} period cannot be deleted — it is this tenant's baseline. To cut the tenant off, "
+                            + "give that period an end date instead.", floor.getId());
+        }
+    }
+
     @Override
     @Transactional(rollbackFor = Exception.class)
     public Long changePlanNow(Long subscriptionId, String planId, SubscriptionPeriodType periodType) {
         Assert.notNull(subscriptionId, "Subscription id is required.");
         LocalDate today = projectionService.tenantLocalToday(ownerTenant(subscriptionId));
-        TenantSubscriptionPeriod current = periodsOf(subscriptionId).stream()
-                .filter(p -> covers(p, today))
-                .findFirst()
-                .orElse(null);
+        // The period that actually applies today, by plan tier — NOT the first covering row.
+        //
+        // `findFirst()` was written when overlap was rejected, so at most one row could cover a date and
+        // whichever came back was the answer. Every tenant now owns an open-ended floor period, so a tenant on
+        // Pro has two covering rows and an arbitrary pick lands on the free one about as often as not. Changing
+        // plan would then close the tenant's baseline off instead of its purchase — and on a tenant created
+        // today it would take the same-day branch below and rewrite the floor period's own plan, leaving the
+        // subscription with no floor period at all, which the resolver reads as "predates the migration" and
+        // answers with a fallback nobody asked for.
+        Map<String, Integer> tierByPlan = PeriodSelection.tierByPlan(modelService);
+        TenantSubscriptionPeriod current =
+                PeriodSelection.winnerOn(periodsOf(subscriptionId), today, tierByPlan);
         Assert.notNull(current, "This tenant has no period in effect today; record a new period instead.");
+
+        // Refuse the floor period as the target even when it is what applies. "Change plan" means selling
+        // something on top of the baseline, never rewriting the baseline: closing it off or repointing it
+        // breaks the same invariant the deletion and immutable-start guards protect, and would do it through a
+        // third door. A tenant genuinely on nothing but free upgrades by recording a period, which is the path
+        // the error names.
+        Plan floor = PlanCatalog.floorPlan(modelService);
+        if (floor != null) {
+            Assert.notTrue(floor.getId().equals(current.getPlanId()),
+                    "This tenant is on the {0} plan; record a new period for the plan it is moving to "
+                            + "instead of changing the baseline.", floor.getId());
+        }
 
         // Inherit the paid-through date before closing the old period off, otherwise the customer loses
         // the remainder of what they already paid for.
@@ -223,50 +277,49 @@ public class TenantSubscriptionPeriodServiceImpl
                     period.getEffectiveEndDate(), period.getEffectiveStartDate());
         }
 
+        // The floor plan IS recorded now — provisioning writes one open-ended TRIAL period on it at tenant
+        // creation, and that row is the tenant's baseline entitlement. Two guards used to stand here and both
+        // rested on the opposite premise ("a floor period and no period express the same state", "only plans
+        // above the floor can be trialled"); keeping either would reject the very row provisioning writes.
+        //
+        // What replaces them is a cardinality rule rather than a prohibition: at most ONE floor period per
+        // subscription. That is what the old guards were really protecting — one baseline, unambiguous — and
+        // it still holds, while allowing the one row that has to exist.
         Plan floor = floorPlan();
-        if (floor != null) {
-            // A floor period and no period express the same state; allowing both would give one state two
-            // representations, and the projection could not tell them apart.
-            Assert.notEqual(period.getPlanId(), floor.getId(),
-                    "The floor plan cannot be sold as a period — every tenant already has it.");
-            if (period.getPeriodType() == SubscriptionPeriodType.TRIAL) {
-                Plan plan = planById(period.getPlanId());
-                int tier = plan != null && plan.getTier() != null ? plan.getTier() : 0;
-                int floorTier = floor.getTier() != null ? floor.getTier() : 0;
-                Assert.isTrue(tier > floorTier,
-                        "Only plans above the floor can be trialled.");
+        if (floor != null && floor.getId().equals(period.getPlanId())) {
+            boolean anotherFloorPeriod = periodsOf(period.getSubscriptionId()).stream()
+                    .filter(other -> selfId == null || !selfId.equals(other.getId()))
+                    .anyMatch(other -> floor.getId().equals(other.getPlanId()));
+            Assert.notTrue(anotherFloorPeriod,
+                    "This tenant already has its {0} period — there is exactly one, created with the tenant.",
+                    floor.getId());
+
+            // The free period's start date is fixed at the tenant's creation day. It is the anchor for "this
+            // tenant has had free access since it existed", so moving it forward opens a stretch that nothing
+            // covers — and with the floor-plan fallback gone, uncovered means zero modules. Moving it back
+            // would claim access before the tenant existed. Only the END date is the operator's to set; that
+            // is the whole mechanism for time-boxing free access.
+            if (selfId != null) {
+                TenantSubscriptionPeriod stored = getById(selfId).orElse(null);
+                if (stored != null && stored.getEffectiveStartDate() != null) {
+                    Assert.isTrue(stored.getEffectiveStartDate().equals(period.getEffectiveStartDate()),
+                            "The {0} period starts on the tenant's creation day and that cannot be changed. "
+                                    + "Set its end date instead to time-box free access.", floor.getId());
+                }
             }
         }
 
-        // No database constraint can express "no two periods of one subscription overlap", so it is
-        // enforced here — on updates as well, because widening an ended period's dates over a gap does
-        // the same damage as inserting an overlapping row.
-        for (TenantSubscriptionPeriod other : periodsOf(period.getSubscriptionId())) {
-            if (selfId != null && selfId.equals(other.getId())) {
-                continue;
-            }
-            Assert.notTrue(overlaps(period, other),
-                    "This period overlaps an existing one ({0} to {1}).",
-                    other.getEffectiveStartDate(),
-                    other.getEffectiveEndDate() == null ? "open-ended" : other.getEffectiveEndDate());
-        }
+        // Overlap is NOT rejected. It used to be, on the reasoning that "the period covering today" had to be
+        // unambiguous — but every tenant now owns an open-ended free period, so every sold period overlaps at
+        // least that one, and rejecting overlap would make selling anything impossible. Ambiguity is resolved
+        // instead of prevented: the projection picks the highest plan tier among the periods covering a date
+        // (SubscriptionProjectionServiceImpl), which is deterministic and is what makes the free period
+        // harmless underneath everything else.
+        //
+        // Gaps are likewise not rejected, and were not before — the frontend's period-gap notice surfaces them
+        // as a warning, because a stretch nobody bought is a legitimate outcome to see, not an error to block.
     }
 
-    /** Two periods overlap when neither ends strictly before the other starts. Null end = open-ended. */
-    private boolean overlaps(TenantSubscriptionPeriod a, TenantSubscriptionPeriod b) {
-        boolean aEndsBeforeB = a.getEffectiveEndDate() != null
-                && a.getEffectiveEndDate().isBefore(b.getEffectiveStartDate());
-        boolean bEndsBeforeA = b.getEffectiveEndDate() != null
-                && b.getEffectiveEndDate().isBefore(a.getEffectiveStartDate());
-        return !aEndsBeforeB && !bEndsBeforeA;
-    }
-
-    private boolean covers(TenantSubscriptionPeriod period, LocalDate date) {
-        if (period.getEffectiveStartDate() == null || period.getEffectiveStartDate().isAfter(date)) {
-            return false;
-        }
-        return period.getEffectiveEndDate() == null || !period.getEffectiveEndDate().isBefore(date);
-    }
 
     /**
      * An update payload may carry only the changed fields, so the guards need the stored row underneath —
@@ -326,11 +379,7 @@ public class TenantSubscriptionPeriodServiceImpl
     }
 
     private Plan floorPlan() {
-        List<Plan> plans = modelService.searchList("Plan", new FlexQuery(new Filters()), Plan.class);
-        return plans.stream()
-                .filter(p -> p.getTier() != null)
-                .min(Comparator.comparingInt(Plan::getTier).thenComparing(Plan::getId))
-                .orElse(null);
+        return PlanCatalog.floorPlan(modelService);
     }
 
     private Plan planById(String planId) {
