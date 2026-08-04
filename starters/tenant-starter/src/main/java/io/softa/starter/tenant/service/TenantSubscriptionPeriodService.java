@@ -13,20 +13,26 @@ import io.softa.starter.tenant.entity.TenantSubscriptionPeriod;
  *
  * <h3>Guards</h3>
  * <ol>
- *   <li><b>{@code planId} must not be the floor plan.</b> A floor period and no period say the same
- *       thing; allowing both would give the same state two representations.</li>
- *   <li><b>{@code TRIAL} only above the floor.</b> Trialling the free tier is meaningless.</li>
- *   <li><b>No two periods of one subscription may overlap.</b> An overlap makes "the period covering
- *       today" ambiguous, and the projection would then pick one arbitrarily — a wrong plan, not a wrong
- *       label. No database constraint can express this, so it is checked here.</li>
- *   <li><b>End date must not precede start date.</b></li>
+ *   <li><b>End date must not precede start date.</b> An empty end date means open-ended.</li>
+ *   <li><b>At most one period on the floor plan.</b> That row is the tenant's baseline free access, written
+ *       by provisioning; a second one would put the same entitlement in two places, and whichever was
+ *       edited the other would still be granting access.</li>
+ *   <li><b>The floor period's start date cannot be changed.</b> It is the tenant's creation day — the date
+ *       free access began, which is history rather than a setting. Its <i>end</i> date is settable, and that
+ *       is the whole mechanism for time-boxing free access.</li>
+ *   <li><b>The floor period cannot be deleted.</b> The entitlement resolver reads a missing floor row as
+ *       "this tenant predates the migration" and falls back to granting the floor plan's modules, so
+ *       deleting the row would silently restore the very access an operator had just revoked by ending it.</li>
  * </ol>
  *
- * <p>Guard 3 applies to updates as much as inserts. Moving an already-ended period's start date backwards
- * — or its end date forwards over a gap — damages exactly as much as inserting an overlapping row, so
- * both paths are validated identically. Back-filling a <i>non-overlapping</i> historical period stays
- * allowed: a purely past interval cannot change which period covers today, and ops needs it to record
- * contracts entered late.
+ * <p><b>Overlap is deliberately not guarded.</b> It used to be, on the reasoning that "the period covering
+ * today" had to be unambiguous. It no longer can be: provisioning gives every tenant an open-ended floor
+ * period, so every sale overlaps at least that one. Ambiguity is resolved by <b>plan tier</b> instead —
+ * highest tier covering the date wins — which is what makes "sell Pro on top of free" mean the tenant gets
+ * Pro. Back-filling historical periods and editing an ended period's dates are therefore both plain edits.
+ *
+ * <p>Guards 2–4 apply to updates as much as inserts, and the delete paths carry guard 4 as well, so there is
+ * no write route that can leave a subscription without exactly one floor period.
  */
 public interface TenantSubscriptionPeriodService extends EntityService<TenantSubscriptionPeriod, Long> {
 
