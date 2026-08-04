@@ -3,6 +3,7 @@ package io.softa.starter.tenant.service.impl;
 import java.time.LocalDate;
 import java.util.Comparator;
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
 
 import lombok.extern.slf4j.Slf4j;
@@ -17,6 +18,7 @@ import io.softa.framework.orm.domain.FlexQuery;
 import io.softa.framework.orm.service.ModelService;
 import io.softa.framework.orm.service.impl.EntityServiceImpl;
 import io.softa.starter.tenant.entity.Plan;
+import io.softa.starter.tenant.service.PeriodSelection;
 import io.softa.starter.tenant.service.PlanCatalog;
 import io.softa.starter.tenant.entity.TenantInfo;
 import io.softa.starter.tenant.entity.TenantSubscriptionPeriod;
@@ -123,11 +125,31 @@ public class TenantSubscriptionPeriodServiceImpl
     public Long changePlanNow(Long subscriptionId, String planId, SubscriptionPeriodType periodType) {
         Assert.notNull(subscriptionId, "Subscription id is required.");
         LocalDate today = projectionService.tenantLocalToday(ownerTenant(subscriptionId));
-        TenantSubscriptionPeriod current = periodsOf(subscriptionId).stream()
-                .filter(p -> covers(p, today))
-                .findFirst()
-                .orElse(null);
+        // The period that actually applies today, by plan tier — NOT the first covering row.
+        //
+        // `findFirst()` was written when overlap was rejected, so at most one row could cover a date and
+        // whichever came back was the answer. Every tenant now owns an open-ended floor period, so a tenant on
+        // Pro has two covering rows and an arbitrary pick lands on the free one about as often as not. Changing
+        // plan would then close the tenant's baseline off instead of its purchase — and on a tenant created
+        // today it would take the same-day branch below and rewrite the floor period's own plan, leaving the
+        // subscription with no floor period at all, which the resolver reads as "predates the migration" and
+        // answers with a fallback nobody asked for.
+        Map<String, Integer> tierByPlan = PeriodSelection.tierByPlan(modelService);
+        TenantSubscriptionPeriod current =
+                PeriodSelection.winnerOn(periodsOf(subscriptionId), today, tierByPlan);
         Assert.notNull(current, "This tenant has no period in effect today; record a new period instead.");
+
+        // Refuse the floor period as the target even when it is what applies. "Change plan" means selling
+        // something on top of the baseline, never rewriting the baseline: closing it off or repointing it
+        // breaks the same invariant the deletion and immutable-start guards protect, and would do it through a
+        // third door. A tenant genuinely on nothing but free upgrades by recording a period, which is the path
+        // the error names.
+        Plan floor = PlanCatalog.floorPlan(modelService);
+        if (floor != null) {
+            Assert.notTrue(floor.getId().equals(current.getPlanId()),
+                    "This tenant is on the {0} plan; record a new period for the plan it is moving to "
+                            + "instead of changing the baseline.", floor.getId());
+        }
 
         // Inherit the paid-through date before closing the old period off, otherwise the customer loses
         // the remainder of what they already paid for.
@@ -298,12 +320,6 @@ public class TenantSubscriptionPeriodServiceImpl
         // as a warning, because a stretch nobody bought is a legitimate outcome to see, not an error to block.
     }
 
-    private boolean covers(TenantSubscriptionPeriod period, LocalDate date) {
-        if (period.getEffectiveStartDate() == null || period.getEffectiveStartDate().isAfter(date)) {
-            return false;
-        }
-        return period.getEffectiveEndDate() == null || !period.getEffectiveEndDate().isBefore(date);
-    }
 
     /**
      * An update payload may carry only the changed fields, so the guards need the stored row underneath —
