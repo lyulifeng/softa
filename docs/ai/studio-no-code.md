@@ -45,6 +45,19 @@ annotation lane for structural changes. In development, a package in
 Studio-published drift for that key. In production (`scanner-scope` empty), publish
 is the runtime authority — but code-owned definitions still belong in Java.
 
+**What the boot scanner can and cannot take away from this lane** (it protects at the
+**root** level, not the attribute level):
+
+- A no-code **Model / OptionSet** — a root with no Java class — is never deleted by the
+  scanner, under any `scanner-scope`, `["*"]` included. Its fields / indexes / option
+  items are protected with it (attributes follow their root). Under `["*"]` the boot log
+  names it in a WARN with copy-paste `DELETE` SQL, as a "no Java class for this" notice —
+  that WARN is expected for this lane and is not a call to action.
+- A no-code **field / index / option item added onto a root that Java annotations own**
+  is a different story: there the annotations are the single source of truth for the
+  attribute set, so the next in-scope boot **deletes** that row. Attach no-code
+  attributes only to no-code roots.
+
 ## CAN / CANNOT
 
 ### ✅ CAN

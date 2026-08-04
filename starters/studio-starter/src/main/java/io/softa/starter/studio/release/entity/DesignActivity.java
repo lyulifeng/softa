@@ -9,6 +9,7 @@ import tools.jackson.databind.JsonNode;
 import io.softa.framework.orm.annotation.Field;
 import io.softa.framework.orm.annotation.Model;
 import io.softa.framework.orm.entity.AuditableModel;
+import io.softa.framework.orm.enums.FieldType;
 import io.softa.framework.orm.enums.IdStrategy;
 import io.softa.starter.studio.release.enums.DesignActivityKind;
 import io.softa.starter.studio.release.enums.DesignActivityStatus;
@@ -75,6 +76,6 @@ public class DesignActivity extends AuditableModel {
     @Field(description = "The post-operation DesignSnapshot this activity produced (restore source)")
     private Long snapshotId;
 
-    @Field(length = 20000)
+    @Field(fieldType = FieldType.TEXT)
     private String errorMessage;
 }

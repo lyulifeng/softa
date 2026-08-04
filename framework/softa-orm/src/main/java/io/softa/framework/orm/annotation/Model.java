@@ -48,11 +48,14 @@ public @interface Model {
     /** Default order entries, e.g. {@code "createdTime:desc"}. */
     String[] defaultOrder() default {};
 
-    /** Soft-delete enabled. */
+    /**
+     * Soft-delete enabled. The flag field is always {@code deleted}
+     * ({@code ModelConstant.SOFT_DELETED_FIELD}) — declare it on the entity as
+     * {@code @Field private Boolean deleted;}. Map it onto a differently-named legacy
+     * column with {@code @Field(columnName = "...")}; the logical field name is fixed,
+     * exactly like {@code active} under {@link #activeControl()}.
+     */
     boolean softDelete() default false;
-
-    /** Soft-delete flag column (effective only when {@link #softDelete()}=true). */
-    String softDeleteField() default "deleted";
 
     /** Active control enabled (adds 'active' column gating queries). */
     boolean activeControl() default false;

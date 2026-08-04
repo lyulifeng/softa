@@ -69,6 +69,16 @@ public class MessageProperties {
         private final Transport transport = new Transport();
 
         /**
+         * Maximum accepted length (in characters) for a single outbound mail
+         * body field ({@code htmlBody} or {@code textBody}) at acceptance
+         * time. A guard against runaway payloads (e.g. base64 images inlined
+         * into the HTML), not a storage bound — the columns are unbounded
+         * TEXT-class. Raise deliberately for deployments that legitimately
+         * send larger bodies.
+         */
+        private int maxBodyChars = 1_048_576;
+
+        /**
          * Enable Jakarta Mail's full SMTP/IMAP protocol debug log
          * ({@code mail.debug=true}) on every transport built by this app.
          * <p>

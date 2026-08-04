@@ -163,6 +163,50 @@ public ApiResponse<Long> activeCount() {
 }
 ```
 
+## Field linkage (onChange handlers)
+
+`POST /{modelName}/onChange/{fieldName}` powers the frontend's remote field
+linkage (`Field.onChange`). Don't write controller endpoints for it — implement
+the `FieldOnChangeHandler` SPI (`io.softa.framework.web.onchange`) as a Spring
+bean; the framework dispatches the request to the handler registered for the
+(model, field) pair, and two handlers claiming the same pair fail the boot.
+
+```java
+@Component
+public class OvertimeRequestOnChange implements FieldOnChangeHandler {
+
+    @Override
+    public String model() {
+        return "OvertimeRequest";
+    }
+
+    @Override
+    public Set<String> fields() {
+        return Set.of("employeeId", "overtimeDate");
+    }
+
+    @Override
+    public OnChangeResponse onChange(OnChangeContext context) {
+        // context: id (null when creating), value (new value of the changed
+        // field), values (companion fields the client declared to send along)
+        return OnChangeResponse.builder()
+                .values(Map.of("compensationType", "TIME_OFF"))
+                .readonly(List.of("compensationType"))
+                .build();
+    }
+}
+```
+
+Handler rules:
+
+- onChange is an advisory, read-only computation — never persist from a handler.
+- `values` patches only the returned keys; a null value clears the field.
+- `readonly` / `required` are complete field-name lists, not patches: name every
+  field in that state for the current trigger value, and return an empty list
+  (or leave it null) to lift the rules the handler set earlier.
+- Every field named in the response must exist on the model; unknown names are
+  rejected.
+
 ---
 
 ## Cross-app models (RPC)

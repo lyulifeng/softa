@@ -62,7 +62,7 @@ public class MailTemplate extends AuditableModel {
             description = "Email subject template, supports {{ variable }} placeholders")
     private String subject;
 
-    @Field(label = "Body HTML",
+    @Field(label = "Body HTML", fieldType = FieldType.TEXT,
             description = "HTML body template, supports {{ variable }} placeholders. "
                     + "Required for HTML / HTML_WITH_DERIVED_PLAIN / HTML_WITH_AUTHORED_PLAIN modes.")
     private String bodyHtml;
@@ -71,7 +71,8 @@ public class MailTemplate extends AuditableModel {
      * Front-end note: expose an "extract from HTML" button that populates this field
      * for HTML_WITH_AUTHORED_PLAIN; the operator may then edit the result.
      */
-    @Field(description = "Plain-text body template, supports {{ variable }} placeholders. "
+    @Field(fieldType = FieldType.TEXT,
+            description = "Plain-text body template, supports {{ variable }} placeholders. "
                     + "Required for PLAIN and HTML_WITH_AUTHORED_PLAIN modes. "
                     + "Ignored when bodyMode is HTML or HTML_WITH_DERIVED_PLAIN — there the plain "
                     + "part is absent or auto-derived from bodyHtml at send time.")

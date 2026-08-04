@@ -1,5 +1,6 @@
 package io.softa.starter.metadata.scanner;
 
+import java.time.LocalDateTime;
 import java.util.*;
 import java.util.stream.Collectors;
 import lombok.extern.slf4j.Slf4j;
@@ -10,9 +11,13 @@ import org.springframework.stereotype.Component;
 
 import io.softa.framework.base.config.SystemConfig;
 import io.softa.framework.orm.meta.MetadataInitializer;
+import io.softa.starter.metadata.checksum.CatalogFingerprint;
 import io.softa.starter.metadata.config.MetadataProperties;
 import io.softa.starter.metadata.ddl.DdlOrchestrator;
 import io.softa.starter.metadata.ddl.ReferenceColumnResolver;
+import io.softa.starter.metadata.ddl.introspect.PhysicalDriftAuditor;
+import io.softa.starter.metadata.ddl.introspect.PhysicalDriftReport;
+import io.softa.starter.metadata.ddl.introspect.PhysicalSchema;
 import io.softa.starter.metadata.ddl.spi.BuiltinDdlMetadataResolver;
 import io.softa.starter.metadata.entity.SysField;
 import io.softa.starter.metadata.entity.SysModel;
@@ -41,6 +46,13 @@ import io.softa.starter.metadata.scanner.diff.SchemaDiff;
  *       shared live {@code sys_*}, and physical-table collisions are not
  *       addressed.)</li>
  * </ul>
+ *
+ * <p><b>Aggregate roots are never auto-deleted, under any scope.</b> A {@code SysModel} /
+ * {@code SysOptionSet} row with no Java class — plus its fields, indexes and option items,
+ * which follow their root — is confined out of the diff rather than removed
+ * ({@link ScannerScope#confineFromDb}); {@code ["*"]} additionally names them in a WARN with
+ * copy-paste SQL. Attribute rows of a root that IS in code are reconciled normally, deletions
+ * included: there the annotations own the attribute set.
  *
  * <p>Flow:
  * <ol>
@@ -195,6 +207,22 @@ public class MetadataAnnotationScanner implements MetadataInitializer {
                         + "{} option set(s), {} option item(s)",
                 fromDb.models().size(), fromDb.fields().size(),
                 fromDb.optionSets().size(), fromDb.optionItems().size());
+        warnCodelessRoots(scope, current, inScopeModelNames, inScopeOptionCodes);
+
+        // One physical snapshot serves the whole-catalog drift audit AND the DDL recovery
+        // planning below (null when introspection failed — recovery then degrades to plain
+        // diff planning). The audit runs on every boot — an idempotent diff can still hide
+        // hand-made physical drift, and this consolidated report surfaces all of it at once.
+        PhysicalSchema facts = ddlOrchestrator.introspect(fromCode.models());
+        log.info("MetadataAnnotationScanner: physical snapshot = {}",
+                facts == null ? "unavailable (recovery planning disabled)"
+                        : facts.tables().size() + " managed table(s)");
+        PhysicalDriftReport physicalDrift = null;
+        if (facts != null) {
+            physicalDrift = PhysicalDriftAuditor.audit(
+                    fromCode.models(), fromCode.fields(), fromCode.modelIndexes(), facts);
+            PhysicalDriftAuditor.warn(physicalDrift, "MetadataAnnotationScanner");
+        }
 
         SchemaDiff diff = pipeline.diff(fromCode, fromDb);
         if (diff.isEmpty()) {
@@ -210,7 +238,7 @@ public class MetadataAnnotationScanner implements MetadataInitializer {
             // empty and the failed DDL is never re-attempted. Re-running DDL that
             // already succeeded is absorbed by DdlErrorClassifier's
             // already-applied degradation (1050/1060/1061/42P07 → WARN).
-            ddlOrchestrator.apply(diff, fromCode.models(), fromCode.fields());
+            ddlOrchestrator.apply(diff, fromCode.models(), fromCode.fields(), fromCode.modelIndexes(), facts);
             writer.apply(diff);
             log.info("MetadataAnnotationScanner: applied {} row change(s) to sys_*", diff.totalCount());
         }
@@ -230,5 +258,64 @@ public class MetadataAnnotationScanner implements MetadataInitializer {
         if (linked > 0) {
             log.info("MetadataAnnotationScanner: resolved surrogate FK(s) on {} sys_* row(s)", linked);
         }
+
+        // Boot health snapshot for GET /metadata/status. The in-scope catalog now equals the
+        // code by construction (either the diff was empty or it was just applied), so both
+        // fingerprints are the code-side one.
+        String fingerprint = CatalogFingerprint.of(fromCode.models(), fromCode.fields(),
+                fromCode.modelIndexes(), fromCode.optionSets(), fromCode.optionItems());
+        MetadataStatus.record(new MetadataStatus("scanner", fingerprint, fingerprint,
+                true, diff.totalCount(), physicalDrift, LocalDateTime.now()));
+    }
+
+    /**
+     * One consolidated WARN naming the catalog roots that have no {@code @Model} /
+     * {@code @OptionSet} class. {@link ScannerScope#confineFromDb} never deletes them, so the
+     * only path to cleanup is a human running the SQL — emit it ready to paste, children before
+     * parents, scoped to this app's rows.
+     *
+     * <p>Only under a full {@code ["*"]} scope. A partial scope deliberately shares the catalog
+     * with packages it does not manage, where a code-less row is somebody else's row rather than
+     * an orphan — naming those every boot would be pure noise.
+     */
+    private void warnCodelessRoots(ScannerScope scope, AnnotationScanResult current,
+                                   Set<String> inScopeModelNames,
+                                   Set<String> inScopeOptionCodes) {
+        if (!scope.matchesAll()) {
+            return;
+        }
+        List<String> models = current.models().stream()
+                .map(SysModel::getModelName)
+                .filter(name -> !inScopeModelNames.contains(name))
+                .distinct().sorted().toList();
+        List<String> optionSets = current.optionSets().stream()
+                .map(SysOptionSet::getOptionSetCode)
+                .filter(code -> !inScopeOptionCodes.contains(code))
+                .distinct().sorted().toList();
+        if (models.isEmpty() && optionSets.isEmpty()) {
+            return;
+        }
+        StringBuilder sql = new StringBuilder();
+        for (String modelName : models) {
+            sql.append("\n-- model ").append(modelName)
+                    .append(deleteBy("sys_field", "model_name", modelName))
+                    .append(deleteBy("sys_model_index", "model_name", modelName))
+                    .append(deleteBy("sys_model", "model_name", modelName));
+        }
+        for (String optionSetCode : optionSets) {
+            sql.append("\n-- option set ").append(optionSetCode)
+                    .append(deleteBy("sys_option_item", "option_set_code", optionSetCode))
+                    .append(deleteBy("sys_option_set", "option_set_code", optionSetCode));
+        }
+        log.warn("MetadataAnnotationScanner: {} model(s) and {} option set(s) in the catalog have no"
+                        + " Java class and were LEFT UNTOUCHED — an aggregate root is never"
+                        + " auto-deleted (it may be Studio- or seed-authored on purpose). Models: {};"
+                        + " option sets: {}. If they really are orphans, run:{}",
+                models.size(), optionSets.size(), models, optionSets, sql);
+    }
+
+    private String deleteBy(String table, String column, String value) {
+        return "\nDELETE FROM " + table + " WHERE " + column + " = '" + value
+                + "' AND app_code = '" + appCode + "';";
     }
 }

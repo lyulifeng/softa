@@ -9,10 +9,10 @@ import lombok.EqualsAndHashCode;
 import io.softa.framework.orm.annotation.Field;
 import io.softa.framework.orm.annotation.Index;
 import io.softa.framework.orm.annotation.Model;
-import io.softa.framework.orm.enums.FieldType;
-import io.softa.framework.orm.enums.IdStrategy;
 import io.softa.framework.orm.dto.FileInfo;
 import io.softa.framework.orm.entity.AuditableModel;
+import io.softa.framework.orm.enums.FieldType;
+import io.softa.framework.orm.enums.IdStrategy;
 import io.softa.starter.message.mail.enums.BodyMode;
 import io.softa.starter.message.mail.enums.MailPriority;
 import io.softa.starter.message.mail.enums.MailSendStatus;
@@ -68,10 +68,12 @@ public class MailSendRecord extends AuditableModel {
             + "DERIVED vs AUTHORED tells audit whether the plain text was human-reviewed.")
     private BodyMode bodyMode;
 
-    @Field(label = "Body HTML", description = "HTML body persisted verbatim for retry fidelity. Null for PLAIN mode.")
+    @Field(label = "Body HTML", fieldType = FieldType.TEXT,
+            description = "HTML body persisted verbatim for retry fidelity. Null for PLAIN mode.")
     private String bodyHtml;
 
-    @Field(description = "Plain-text body persisted verbatim for retry fidelity. "
+    @Field(fieldType = FieldType.TEXT,
+            description = "Plain-text body persisted verbatim for retry fidelity. "
             + "Null for HTML mode; populated for PLAIN / HTML_WITH_DERIVED_PLAIN / HTML_WITH_AUTHORED_PLAIN.")
     private String bodyText;
 
@@ -95,7 +97,7 @@ public class MailSendRecord extends AuditableModel {
     @Field(description = "Provider-specific error code on failure", length = 100)
     private String errorCode;
 
-    @Field(description = "Error message on failure")
+    @Field(length = 1000, description = "Error message on failure")
     private String errorMessage;
 
     @Field(description = "Timestamp when the email was accepted by the SMTP server")

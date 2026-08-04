@@ -25,7 +25,9 @@ import io.softa.framework.orm.enums.FieldType;
  *   <li><b>Default-with-constrained-override</b>: {@code String} → STRING; overriding to
  *       OPTION via {@code @Field(fieldType = OPTION)} <b>requires</b> the Java type
  *       to be an enum—{@code optionSetCode} is always derived from the enum class
- *       name, never hand-specified. {@code Long} → LONG; overriding to FILE /
+ *       name, never hand-specified. Overriding to TEXT (unbounded long text) is the
+ *       sanctioned way to get a TEXT-class column — TEXT is never inferred.
+ *       {@code Long} → LONG; overriding to FILE /
  *       MANY_TO_ONE / ONE_TO_ONE requires {@code @Field(fieldType=..., relatedModel=...)}.</li>
  *   <li><b>Must-specify</b>: cannot infer (raises). E.g. {@code byte[]},
  *       {@code Map&lt;?,?&gt;}, ambiguous {@code List&lt;Long&gt;}.</li>

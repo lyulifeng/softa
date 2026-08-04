@@ -7,6 +7,7 @@ import lombok.EqualsAndHashCode;
 import io.softa.framework.orm.annotation.Field;
 import io.softa.framework.orm.annotation.Model;
 import io.softa.framework.orm.entity.AuditableModel;
+import io.softa.framework.orm.enums.FieldType;
 import io.softa.framework.orm.enums.DatabaseType;
 import io.softa.framework.orm.enums.IdStrategy;
 
@@ -30,16 +31,16 @@ public class DesignSqlTemplate extends AuditableModel {
     @Field(required = true)
     private DatabaseType databaseType;
 
-    @Field(required = true, length = 20000)
+    @Field(required = true, fieldType = FieldType.TEXT)
     private String createTableTemplate;
 
-    @Field(required = true, length = 20000)
+    @Field(required = true, fieldType = FieldType.TEXT)
     private String alterIndexTemplate;
 
-    @Field(required = true, length = 20000)
+    @Field(required = true, fieldType = FieldType.TEXT)
     private String alterTableTemplate;
 
-    @Field(required = true, length = 20000)
+    @Field(required = true, fieldType = FieldType.TEXT)
     private String dropTableTemplate;
 
     @Field(length = 256)

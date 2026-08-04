@@ -28,7 +28,7 @@ class MetadataAnnotationCheckerTest {
         MetadataReadPipeline pipeline = mock(MetadataReadPipeline.class);
         RelationShapeLinter linter = mock(RelationShapeLinter.class);
         MetadataAnnotationChecker checker = new MetadataAnnotationChecker(
-                pipeline, linter, new MetadataProperties(List.of("io\\.acme\\..*"), null, null)); // active scope
+                pipeline, linter, new MetadataProperties(List.of("io\\.acme\\..*"), null, null), null); // active scope
 
         checker.check();
 
@@ -51,7 +51,7 @@ class MetadataAnnotationCheckerTest {
         when(pipeline.diff(any(), any())).thenReturn(noDrift);
 
         MetadataAnnotationChecker checker = new MetadataAnnotationChecker(
-                pipeline, linter, new MetadataProperties(List.of(), null, null)); // empty scope (prod default)
+                pipeline, linter, new MetadataProperties(List.of(), null, null), null); // empty scope (prod default)
 
         checker.check();
 
@@ -90,7 +90,7 @@ class MetadataAnnotationCheckerTest {
         when(pipeline.diff(any(), any())).thenReturn(noDrift);
 
         new MetadataAnnotationChecker(pipeline, linter,
-                new MetadataProperties(List.of(), null, null))
+                new MetadataProperties(List.of(), null, null), null)
                 .check();
 
         // The stamp mutates the parsed fields in place, before diff() sees them.

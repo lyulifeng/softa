@@ -6,11 +6,14 @@ import io.swagger.v3.oas.annotations.tags.Tag;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.web.bind.annotation.*;
 
+import io.softa.framework.base.config.SystemConfig;
 import io.softa.framework.base.utils.Assert;
 import io.softa.framework.web.response.ApiResponse;
 import io.softa.starter.metadata.controller.dto.MetaModelDTO;
+import io.softa.starter.metadata.controller.dto.MetadataStatusDTO;
 import io.softa.starter.metadata.controller.dto.ResolveCascadedPathsRequest;
 import io.softa.starter.metadata.controller.dto.ResolveCascadedPathsResponse;
+import io.softa.starter.metadata.scanner.MetadataStatus;
 import io.softa.starter.metadata.service.MetadataService;
 
 /**
@@ -23,6 +26,20 @@ public class MetadataController {
 
     @Autowired
     private MetadataService metadataService;
+
+    @Autowired
+    private SystemConfig systemConfig;
+
+    /**
+     * The boot-time metadata health snapshot: code vs catalog fingerprints (did my change
+     * reach this runtime?) plus the physical drift report. Point-in-time — reflects the last
+     * boot-time scan by the scanner (active scope) or the checker (empty scope).
+     */
+    @GetMapping("/status")
+    @Operation(summary = "status", description = "Boot-time metadata health: code/catalog fingerprints + physical drift")
+    public ApiResponse<MetadataStatusDTO> status() {
+        return ApiResponse.success(MetadataStatusDTO.of(systemConfig.getAppCode(), MetadataStatus.current()));
+    }
 
     /**
      * Get the MetaModel object by modelName

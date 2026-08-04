@@ -113,7 +113,7 @@ public final class AnnotationParser {
             guardUniqueSimpleName(byModelName, clazz, "modelName");
             SysModel sysModel = parseModel(clazz, model);
             models.add(sysModel);
-            List<SysField> classFields = parseFields(clazz);
+            List<SysField> classFields = parseFields(clazz, model);
             fields.addAll(classFields);
             modelIndexes.addAll(parseIndexes(clazz, sysModel.getTableName(), classFields));
             validateModelFieldRefs(clazz, model, classFields);
@@ -299,7 +299,6 @@ public final class AnnotationParser {
             m.setDefaultOrder(Orders.of(ordersString));
         }
         m.setSoftDelete(anno.softDelete());
-        m.setSoftDeleteField(blankToNull(anno.softDeleteField()));
         m.setActiveControl(anno.activeControl());
         m.setTimeline(anno.timeline());
         m.setIdStrategy(anno.idStrategy());
@@ -315,7 +314,7 @@ public final class AnnotationParser {
 
     // ---------------------------------------------------------------- @Field
 
-    private List<SysField> parseFields(Class<?> clazz) {
+    private List<SysField> parseFields(Class<?> clazz, Model model) {
         String modelName = clazz.getSimpleName();
         List<SysField> out = new ArrayList<>();
 
@@ -331,6 +330,18 @@ public final class AnnotationParser {
                 continue;
             }
             out.add(parseField(modelName, javaField, ormField(javaField)));
+        }
+        // Materialize the optimistic-lock starting value at the metadata layer, like the
+        // length/scale type-defaults in parseField: sys_field.default_value carries the real
+        // starting version, so the DDL layer renders `DEFAULT 0` and every consumer (insert
+        // autofill, studio export, hand-written SQL) sees the same value. An explicit
+        // @Field(defaultValue = ...) still wins; ModelManager.validateVersionField fail-fasts
+        // on rows that carry none.
+        if (model.versionLock()) {
+            out.stream()
+                    .filter(f -> ModelConstant.VERSION.equals(f.getFieldName()))
+                    .filter(f -> f.getDefaultValue() == null)
+                    .forEach(f -> f.setDefaultValue(String.valueOf(ModelConstant.DEFAULT_VERSION)));
         }
         return out;
     }

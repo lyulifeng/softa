@@ -59,6 +59,6 @@ class OnChangeContractTest {
         Assertions.assertEquals("periodStart", response.get("readonly").get(0).asText());
         Assertions.assertEquals("payDate", response.get("readonly").get(1).asText());
         Assertions.assertTrue(response.get("required").isNull());
-        Assertions.assertTrue(response.get("hidden").isNull());
+        Assertions.assertFalse(response.has("hidden"));
     }
 }

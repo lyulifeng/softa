@@ -374,7 +374,6 @@ public class JdbcServiceImpl<K extends Serializable> implements JdbcService<K> {
         int count;
         LocalDateTime deleteTime = LocalDateTime.now();
         if (ModelManager.isSoftDeleted(modelName)) {
-            String softDeleteField = ModelManager.getSoftDeleteField(modelName);
             // Soft delete: assemble one pk-keyed update row per deletable row (updateOne is the
             // pk-keyed primitive). Keying by pk — not by the logical ids — is what covers every
             // slice of a timeline entity (pk = sliceId), mirroring the physical branch below
@@ -384,7 +383,7 @@ public class JdbcServiceImpl<K extends Serializable> implements JdbcService<K> {
             List<Map<String, Object>> rows = deletableRows.stream().map(deletableRow -> {
                 Map<String, Object> row = new HashMap<>();
                 row.put(pk, deletableRow.get(pk));
-                row.put(softDeleteField, true);
+                row.put(ModelConstant.SOFT_DELETED_FIELD, true);
                 // If the model has an active control field, set it to false when soft deleting
                 if (ModelManager.isActiveControl(modelName)) {
                     row.put(ModelConstant.ACTIVE_CONTROL_FIELD, false);

@@ -7,6 +7,7 @@ import lombok.EqualsAndHashCode;
 import io.softa.framework.orm.annotation.Field;
 import io.softa.framework.orm.annotation.Model;
 import io.softa.framework.orm.entity.AuditableModel;
+import io.softa.framework.orm.enums.FieldType;
 import io.softa.framework.orm.enums.IdStrategy;
 import io.softa.starter.ai.enums.AiMessageRole;
 import io.softa.starter.ai.enums.AiMessageStatus;
@@ -39,7 +40,7 @@ public class AiMessage extends AuditableModel {
     @Field(required = true)
     private AiMessageRole role;
 
-    @Field(length = 20000)
+    @Field(fieldType = FieldType.TEXT)
     private String content;
 
     @Field(label = "Input Tokens",

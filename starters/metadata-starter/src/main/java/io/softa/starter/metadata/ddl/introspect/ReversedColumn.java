@@ -1,4 +1,4 @@
-package io.softa.starter.studio.release.connector;
+package io.softa.starter.metadata.ddl.introspect;
 
 import io.softa.framework.orm.enums.FieldType;
 

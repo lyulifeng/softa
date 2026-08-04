@@ -25,6 +25,9 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * declared on the model (`dynamic=true && cascadedField`).
  * The alias must be auto-expanded to its underlying `a.b` cascade path,
  * producing `tN.column` plus the matching LEFT JOIN.
+ * <p>Also verifies that DISTINCT queries never receive an implicit ORDER BY
+ * (model `defaultOrder` fallback, cursor-page id stabilizer) — MySQL error 3065 /
+ * PostgreSQL reject ORDER BY columns outside the DISTINCT select list.</p>
  */
 class OrderByBuilderTest {
 
@@ -142,12 +145,88 @@ class OrderByBuilderTest {
         }
     }
 
+    @Test
+    void distinctQuerySkipsModelDefaultOrderFallback() {
+        // getRelatedIds-style query: SELECT DISTINCT <fk> must not inherit the model's
+        // defaultOrder — its column is outside the select list (MySQL error 3065).
+        try (MockedStatic<ModelManager> mm = Mockito.mockStatic(ModelManager.class)) {
+            stubMainModel(mm, Orders.ofAsc("createdTime"));
+            stubStoredField(mm, MAIN_MODEL, "createdTime", "created_time");
+
+            SqlWrapper sqlWrapper = new SqlWrapper(MAIN_MODEL);
+            FlexQuery flexQuery = new FlexQuery();
+            flexQuery.setDistinct(true);
+
+            new OrderByBuilder(sqlWrapper, flexQuery).build();
+
+            assertEquals("", orderByClause(sqlWrapper));
+        }
+    }
+
+    @Test
+    void nonDistinctQueryStillFallsBackToModelDefaultOrder() {
+        try (MockedStatic<ModelManager> mm = Mockito.mockStatic(ModelManager.class)) {
+            stubMainModel(mm, Orders.ofAsc("createdTime"));
+            stubStoredField(mm, MAIN_MODEL, "createdTime", "created_time");
+
+            SqlWrapper sqlWrapper = new SqlWrapper(MAIN_MODEL);
+            FlexQuery flexQuery = new FlexQuery();
+
+            new OrderByBuilder(sqlWrapper, flexQuery).build();
+
+            assertEquals("t.created_time ASC,", orderByClause(sqlWrapper));
+        }
+    }
+
+    @Test
+    void distinctQueryKeepsExplicitOrders() {
+        // Explicit orders on a DISTINCT query are the caller's responsibility — pass through.
+        try (MockedStatic<ModelManager> mm = Mockito.mockStatic(ModelManager.class)) {
+            stubMainModel(mm, Orders.ofAsc("createdTime"));
+            stubStoredField(mm, MAIN_MODEL, "createdAt", "created_at");
+
+            SqlWrapper sqlWrapper = new SqlWrapper(MAIN_MODEL);
+            FlexQuery flexQuery = new FlexQuery();
+            flexQuery.setDistinct(true);
+            flexQuery.setOrders(Orders.ofAsc("createdAt"));
+
+            new OrderByBuilder(sqlWrapper, flexQuery).build();
+
+            assertEquals("t.created_at ASC,", orderByClause(sqlWrapper));
+        }
+    }
+
+    @Test
+    void distinctCursorPageDoesNotAppendStableIdOrder() {
+        try (MockedStatic<ModelManager> mm = Mockito.mockStatic(ModelManager.class)) {
+            stubMainModel(mm);
+            stubStoredField(mm, MAIN_MODEL, "createdAt", "created_at");
+
+            SqlWrapper sqlWrapper = new SqlWrapper(MAIN_MODEL);
+            FlexQuery flexQuery = new FlexQuery();
+            flexQuery.setDistinct(true);
+            flexQuery.setOrders(Orders.ofAsc("createdAt"));
+            Page<Object> page = new Page<>(1, 50, true, true);
+
+            new OrderByBuilder(sqlWrapper, flexQuery, page).build();
+
+            assertEquals("t.created_at ASC,", orderByClause(sqlWrapper));
+        }
+    }
+
     // -- helpers --
 
     private static void stubMainModel(MockedStatic<ModelManager> mm) {
+        stubMainModel(mm, null);
+    }
+
+    private static void stubMainModel(MockedStatic<ModelManager> mm, Orders defaultOrder) {
         MetaModel mainModel = new MetaModel();
         ReflectionTestUtils.setField(mainModel, "modelName", MAIN_MODEL);
         ReflectionTestUtils.setField(mainModel, "tableName", MAIN_TABLE);
+        if (defaultOrder != null) {
+            ReflectionTestUtils.setField(mainModel, "defaultOrder", defaultOrder);
+        }
         mm.when(() -> ModelManager.getModel(MAIN_MODEL)).thenReturn(mainModel);
 
         MetaModel relatedModel = new MetaModel();

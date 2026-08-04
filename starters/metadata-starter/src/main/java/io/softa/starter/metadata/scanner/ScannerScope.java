@@ -127,39 +127,35 @@ public final class ScannerScope {
     // ---- scope-confined view of from-db rows ---------------------------
 
     /**
-     * Confine a from-db {@link AnnotationScanResult} to what this scope manages,
-     * so the diff only ever compares like with like.
+     * Confine a from-db {@link AnnotationScanResult} to the models / option sets that exist in
+     * code, so the diff only ever compares like with like. Rows are kept only when their model
+     * name / option-set code is in the supplied in-scope key set (both derived from the parsed
+     * annotations); everything else is dropped here and can never enter the diff's
+     * {@code removed} bucket.
      *
-     * <p>When {@link #matchesAll()} the scope owns the entire catalog, so the
-     * rows are returned <b>unchanged</b> — a whole model / option-set removed
-     * from the annotations is still seen by the diff and its catalog rows are
-     * deleted (identical to managing everything; the physical {@code DROP} stays
-     * warn-only).
+     * <p><b>An aggregate root is never auto-deleted.</b> A {@code SysModel} / {@code SysOptionSet}
+     * row whose class is absent — deleted from the source, or authored by the Studio no-code lane
+     * / a metadata seed and never having had one — is confined out together with ITS fields,
+     * indexes and option items: the attributes follow their root, so the definition is left whole
+     * rather than reduced to a headless or field-less husk. This holds under <b>every</b> scope,
+     * {@code ["*"]} included: nothing in the catalog records row ownership, so "orphan" and
+     * "deliberately code-less" are indistinguishable, and guessing wrong silently destroys
+     * hand-authored definitions. Same asymmetry as the physical schema — additive changes
+     * auto-apply, destroying a whole definition is reported for a human to decide
+     * ({@code MetadataAnnotationScanner} logs the names plus copy-paste SQL under {@code ["*"]}).
      *
-     * <p>Otherwise rows are kept only when their model name / option-set code is
-     * in the supplied in-scope key set. Out-of-scope rows are dropped here and so
-     * can never enter the diff's {@code removed} bucket (never get deleted).
-     * <b>Consequence under a partial scope:</b> a whole model / option-set
-     * deleted from the annotations is <i>not</i> auto-removed from the catalog —
-     * once the class is gone its package is unknown, so it cannot be safely
-     * attributed to this scope. It is left orphaned (surfaced by the drift
-     * checker; cleaned up by a full {@code ["*"]} run or manually). Field /
-     * option-item / index removals on a still-present in-scope model <i>are</i>
-     * deleted.
+     * <p>Field / option-item / index removals on a model whose class <i>is</i> present are still
+     * applied: there the annotations are the single source of truth for the root's attributes.
      *
      * @param fromDb             all rows loaded from sys_*
-     * @param inScopeModelNames  model names the scanner manages
-     * @param inScopeOptionCodes option-set codes the scanner manages
-     * @return the in-scope subset (or {@code fromDb} unchanged when matchesAll)
+     * @param inScopeModelNames  model names present in the in-scope annotations
+     * @param inScopeOptionCodes option-set codes present in the in-scope annotations
+     * @return the subset whose aggregate root exists in code
      */
     public AnnotationScanResult confineFromDb(
             AnnotationScanResult fromDb,
             Set<String> inScopeModelNames,
             Set<String> inScopeOptionCodes) {
-
-        if (matchAll) {
-            return fromDb;
-        }
 
         List<SysModel> models = new ArrayList<>();
         for (SysModel m : fromDb.models()) {

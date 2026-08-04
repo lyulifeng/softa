@@ -14,7 +14,6 @@ import org.springframework.web.bind.annotation.*;
 
 import io.softa.framework.base.constant.BaseConstant;
 import io.softa.framework.base.context.ContextHolder;
-import io.softa.framework.base.exception.BusinessException;
 import io.softa.framework.base.utils.Assert;
 import io.softa.framework.orm.annotation.DataMask;
 import io.softa.framework.orm.domain.*;
@@ -24,6 +23,8 @@ import io.softa.framework.orm.meta.ModelManager;
 import io.softa.framework.orm.service.ModelService;
 import io.softa.framework.orm.utils.IdUtils;
 import io.softa.framework.web.dto.*;
+import io.softa.framework.web.onchange.FieldOnChangeHandler;
+import io.softa.framework.web.onchange.FieldOnChangeRegistry;
 import io.softa.framework.web.response.ApiResponse;
 
 /**
@@ -42,6 +43,9 @@ public class ModelController<K extends Serializable> {
 
     @Autowired
     private ModelService<K> modelService;
+
+    @Autowired
+    private FieldOnChangeRegistry fieldOnChangeRegistry;
 
     /**
      * The size of operation data in a single API call cannot exceed the MAX_BATCH_SIZE.
@@ -595,11 +599,24 @@ public class ModelController<K extends Serializable> {
     }
 
 
+    /**
+     * Compute the server-side linkage of a field change. The request carries the new value of
+     * the changed field plus the current values of the companion fields the client declared;
+     * the response carries a value patch and the complete readonly / required field-name lists
+     * to apply. Dispatched to the {@link FieldOnChangeHandler} registered for the
+     * (model, field) pair.
+     *
+     * @param modelName model name
+     * @param fieldName changed field name
+     * @param onChangeParams OnChangeParams
+     * @return OnChangeResponse
+     */
     @PostMapping(value = "/onChange/{fieldName}")
+    @Operation(description = "Computes the linkage of a field change: a value patch plus the complete readonly / required field-name lists.")
     @DataMask
     public ApiResponse<OnChangeResponse> onChange(@PathVariable String modelName,
                                                   @PathVariable String fieldName,
-                                                 @RequestBody(required = false) OnChangeParams onChangeParams) {
-        throw new BusinessException("OnChange method of {0}.{1} not implemented yet", modelName, fieldName);
+                                                  @RequestBody OnChangeParams onChangeParams) {
+        return ApiResponse.success(fieldOnChangeRegistry.dispatch(modelName, fieldName, onChangeParams));
     }
 }

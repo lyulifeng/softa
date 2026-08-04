@@ -76,7 +76,6 @@ class SysJdbcRoundtripTest {
                   default_order VARCHAR(256),
                   table_name VARCHAR(64),
                   soft_delete TINYINT,
-                  soft_delete_field VARCHAR(64),
                   active_control TINYINT,
                   timeline TINYINT,
                   id_strategy VARCHAR(64),

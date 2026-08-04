@@ -25,9 +25,11 @@ public abstract class MySqlDataType {
         FIELD_TYPE_MAP.put(FieldType.TIME, "TIME");
         FIELD_TYPE_MAP.put(FieldType.ONE_TO_ONE, "BIGINT");
         FIELD_TYPE_MAP.put(FieldType.MANY_TO_ONE, "BIGINT");
-        // For database readability and portability, use TEXT storage
+        // Unbounded types all render 16MB MEDIUMTEXT: 64KB TEXT is too small for
+        // real JSON snapshots / DTO payloads / long text such as mail bodies.
         FIELD_TYPE_MAP.put(FieldType.JSON, "MEDIUMTEXT");
-        FIELD_TYPE_MAP.put(FieldType.DTO, "TEXT");
+        FIELD_TYPE_MAP.put(FieldType.DTO, "MEDIUMTEXT");
+        FIELD_TYPE_MAP.put(FieldType.TEXT, "MEDIUMTEXT");
         FIELD_TYPE_MAP.put(FieldType.MULTI_STRING, "VARCHAR");
         FIELD_TYPE_MAP.put(FieldType.MULTI_OPTION, "VARCHAR");
         FIELD_TYPE_MAP.put(FieldType.FILTERS, "VARCHAR");
