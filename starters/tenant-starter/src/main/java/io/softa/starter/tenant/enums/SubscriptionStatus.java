@@ -20,13 +20,17 @@ import io.softa.framework.base.enums.OptionItemTone;
  *   <li><b>{@code PAID}, not {@code ACTIVE}</b> — {@code TenantStatus.ACTIVE} already means "may log in"
  *       (the operational axis). The two axes are orthogonal and can contradict: a tenant can be suspended
  *       by ops while still inside a paid period.</li>
- *   <li><b>No blanket {@code FREE} / {@code AT_FLOOR}</b> — split into {@link #EXPIRED} and
- *       {@link #NEVER_SUBSCRIBED} instead. Both fall back to the floor plan and are therefore identical
- *       in permission terms, but they demand opposite follow-up: one is a lapsed customer to win back,
- *       the other is a sales lead. Merging them hides churn inside the lead pile. Avoiding the word
- *       "free" also keeps the enum honest on a deployment whose floor tier is paid (there the floor is a
- *       zero-module placeholder, so "free" would read backwards).</li>
+ *   <li><b>No blanket {@code FREE} / {@code AT_FLOOR}</b> — the free plan is a period like any other now,
+ *       so its standing follows from its dates: {@link #TRIAL} while the row is open, {@link #EXPIRED} once
+ *       an operator gives it an end date that passes. Avoiding the word "free" also keeps the enum honest on
+ *       a deployment whose lowest tier is paid.</li>
  * </ul>
+ *
+ * <h3>Four states, not five</h3>
+ * {@code NEVER_SUBSCRIBED} meant "no period rows at all", which every tenant passed through at birth.
+ * Provisioning now writes a free period at creation, so that state became unreachable — a tenant always has
+ * at least one row and its standing is always derivable from dates. Keeping an unreachable value would leave
+ * the UI with a branch nothing produces and the next reader hunting for what triggers it.
  */
 @Getter
 /*
@@ -49,27 +53,22 @@ public enum SubscriptionStatus {
     TRIAL("Trial"),
 
     /**
-     * No period covers the projection date, but a later one exists. The tenant runs on the floor plan
-     * until it starts — scheduling is not early activation, and the UI must say so.
+     * No period covers the projection date, but a later one exists — bought, not yet started. Recording a
+     * future period is not early activation, and the UI must say so.
+     *
+     * <p>Labelled "Pending": the word the requirement uses (待生效), and it reads as "waiting to begin" where
+     * "Scheduled" reads as an arrangement already in force. The code stays {@code Scheduled} — it is
+     * persisted and switched on by the frontend, so moving it costs a migration and buys nothing.
      */
-    @OptionItem(itemTone = OptionItemTone.NEUTRAL, sequence = 3)
+    @OptionItem(label = "Pending", itemTone = OptionItemTone.NEUTRAL, sequence = 3)
     SCHEDULED("Scheduled"),
 
     /**
-     * Periods exist but none covers the projection date and none is upcoming — the tenant bought before
-     * and lapsed. Distinguished from {@link #NEVER_SUBSCRIBED} purely by "are there any period rows",
-     * which costs nothing extra to determine.
+     * Periods exist but none covers the projection date and none is upcoming — the tenant lapsed. Reachable
+     * even for a tenant that bought nothing: its free period lapses too if an operator gave it an end date.
      */
     @OptionItem(itemTone = OptionItemTone.NEUTRAL, sequence = 4)
-    EXPIRED("Expired"),
-
-    /**
-     * No period rows at all. Note that deleting a tenant's only period puts it back here rather than in
-     * {@link #EXPIRED} — deleting a period means "this record should not exist" (mis-entry), not "the
-     * customer lapsed". Expiry happens by letting a period end, not by deleting it.
-     */
-    @OptionItem(label = "Not subscribed", itemTone = OptionItemTone.NEUTRAL, sequence = 5)
-    NEVER_SUBSCRIBED("NeverSubscribed");
+    EXPIRED("Expired");
 
     @JsonValue
     private final String code;

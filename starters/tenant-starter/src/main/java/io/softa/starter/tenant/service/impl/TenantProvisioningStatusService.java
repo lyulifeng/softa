@@ -16,11 +16,11 @@ import io.softa.starter.tenant.config.TenantProvisioningProperties;
 import io.softa.starter.tenant.entity.TenantInfo;
 import io.softa.starter.tenant.entity.TenantSeedProgress;
 import io.softa.starter.tenant.enums.SeederStatus;
-import io.softa.starter.tenant.enums.TenantProvisioningStatus;
+import io.softa.starter.tenant.enums.TenantStatus;
 
 /**
  * Provisioning-status coordinator — the per-tenant "completion latch". Owns the {@link TenantSeedProgress}
- * ledger and folds per-seeder completions into the tenant's {@link TenantProvisioningStatus}. Framework-side
+ * ledger and folds per-seeder completions into the tenant's {@link TenantStatus}. Framework-side
  * and business-agnostic: it only ever sees opaque {@code seederKey} strings + the app's expected-seeders set;
  * it never imports or switches on a business module.
  *
@@ -50,27 +50,27 @@ public class TenantProvisioningStatusService extends EntityServiceImpl<TenantSee
 
     /**
      * Called at the end of {@code provision()}. No expected seeders (empty config — single-tenant / no-MQ,
-     * or rollout Step 1) → straight to READY; otherwise INITIALIZING until the expected set reports done.
+     * or rollout Step 1) → straight to ACTIVE; otherwise INITIALIZING until the expected set reports done.
      */
     public void beginProvisioning(Long tenantId) {
-        TenantProvisioningStatus initial = props.getExpectedSeeders().isEmpty()
-                ? TenantProvisioningStatus.READY
-                : TenantProvisioningStatus.INITIALIZING;
+        TenantStatus initial = props.getExpectedSeeders().isEmpty()
+                ? TenantStatus.ACTIVE
+                : TenantStatus.INITIALIZING;
         inSystemContext(() -> {
-            tenantInfoService.markProvisioningStatus(tenantId, initial);
+            tenantInfoService.markStatus(tenantId, initial);
             return null;
         });
     }
 
-    /** A seeder finished for this tenant: record DONE (idempotent), flip to READY once all expected are done. */
+    /** A seeder finished for this tenant: record DONE (idempotent), flip to ACTIVE once all expected are done. */
     @Transactional
     public void markSeederReady(Long tenantId, String seederKey) {
         inSystemContext(() -> {
             upsertProgress(tenantId, seederKey, SeederStatus.DONE);
             Set<String> done = doneKeys(tenantId);
             if (done.containsAll(props.getExpectedSeeders())) {
-                tenantInfoService.markProvisioningStatus(tenantId, TenantProvisioningStatus.READY);
-                log.info("Tenant {} provisioning READY (done seeders {})", tenantId, done);
+                tenantInfoService.markStatus(tenantId, TenantStatus.ACTIVE);
+                log.info("Tenant {} setup complete, now ACTIVE (done seeders {})", tenantId, done);
             }
             return null;
         });
@@ -96,7 +96,7 @@ public class TenantProvisioningStatusService extends EntityServiceImpl<TenantSee
     public void markSeederFailed(Long tenantId, String seederKey) {
         inSystemContext(() -> {
             upsertProgress(tenantId, seederKey, SeederStatus.FAILED);
-            tenantInfoService.markProvisioningStatus(tenantId, TenantProvisioningStatus.FAILED);
+            tenantInfoService.markStatus(tenantId, TenantStatus.DRAFT);
             log.error("Tenant {} provisioning FAILED at seeder {}", tenantId, seederKey);
             return null;
         });
@@ -108,7 +108,7 @@ public class TenantProvisioningStatusService extends EntityServiceImpl<TenantSee
      * MQ stalled) surfaces instead of hanging forever. Driven by tenant-starter's own cron consumer, so it is
      * <b>softa-self-sufficient</b> — it does NOT require the app to opt into a DLQ.
      *
-     * <p>Idempotent: {@code markProvisioningStatus} is a no-op at target. Not terminal either — if the seed
+     * <p>Idempotent: {@code markStatus} is a no-op at target. Not terminal either — if the seed
      * later completes, {@code markSeederReady} flips the tenant back from FAILED to READY. {@code TenantInfo}
      * is a shared table, swept in system context.
      *
@@ -127,14 +127,14 @@ public class TenantProvisioningStatusService extends EntityServiceImpl<TenantSee
         return inSystemContext(() -> {
             LocalDateTime cutoff = LocalDateTime.now().minusSeconds(props.getReadyTimeoutSeconds());
             List<TenantInfo> initializing = tenantInfoService.searchList(new Filters()
-                    .eq(TenantInfo::getProvisioningStatus, TenantProvisioningStatus.INITIALIZING));
+                    .eq(TenantInfo::getStatus, TenantStatus.INITIALIZING));
             int failed = 0;
             for (TenantInfo tenant : initializing) {
                 LocalDateTime lastProgress = lastProgressAt(tenant);
                 if (lastProgress != null && lastProgress.isAfter(cutoff)) {
                     continue;   // still moving — slow is not stalled
                 }
-                tenantInfoService.markProvisioningStatus(tenant.getId(), TenantProvisioningStatus.FAILED);
+                tenantInfoService.markStatus(tenant.getId(), TenantStatus.DRAFT);
                 log.warn("Tenant {} made no provisioning progress since {} (past {}s) → FAILED",
                         tenant.getId(), lastProgress, props.getReadyTimeoutSeconds());
                 failed++;

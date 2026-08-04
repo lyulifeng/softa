@@ -64,15 +64,22 @@ public class LoginServiceImpl implements LoginService {
         }
         UserInfo userInfo = profileService.getUserInfo(userId);
         Long tenantId = userInfo == null ? null : userInfo.getTenantId();
-        if (tenantInfoService == null || !tenantInfoService.isTenantActive(tenantId)) {
+        if (tenantInfoService == null) {
             throw new BusinessException("Login denied: tenant is not active.");
         }
-        // Second axis, distinct message: the tenant is allowed to operate but is not built yet. Letting a user
-        // in mid-seed shows them a workspace whose roles and org masters are still arriving over MQ, and lets
-        // them create records pointing at masters that do not exist. It is also what makes discarding a failed
-        // setup safe — if nobody can get in before READY, every row in the tenant came from a seeder.
+        // Not-yet-built is checked FIRST, for its message. Both states now live on one field, so a tenant mid
+        // setup is also not ACTIVE — asking "is it active" first would answer every in-flight tenant with the
+        // generic "not active" and lose the one thing the user can act on ("it is still being set up, wait").
+        //
+        // The check earns its place beyond the wording: letting someone in mid-seed shows a workspace whose
+        // roles and org masters are still arriving over MQ, and lets them create records pointing at masters
+        // that do not exist yet. It is also what makes discarding a failed setup safe — if nobody can get in
+        // before it goes ACTIVE, every row in the tenant came from a seeder.
         if (!tenantInfoService.isTenantProvisioned(tenantId)) {
             throw new BusinessException("Login denied: this workspace is still being set up.");
+        }
+        if (!tenantInfoService.isTenantActive(tenantId)) {
+            throw new BusinessException("Login denied: tenant is not active.");
         }
     }
 

@@ -9,10 +9,21 @@ import org.springframework.transaction.annotation.Transactional;
 import org.springframework.util.Assert;
 
 import static io.softa.framework.base.context.ContextUtils.inSystemContext;
+import java.time.LocalDate;
+import java.util.List;
+
+import io.softa.framework.base.enums.Operator;
+import io.softa.framework.base.enums.Timezone;
+import io.softa.framework.orm.domain.FlexQuery;
+import io.softa.framework.orm.domain.Filters;
+import io.softa.framework.orm.service.ModelService;
+import io.softa.starter.tenant.entity.Plan;
 import io.softa.starter.tenant.entity.TenantInfo;
 import io.softa.starter.tenant.entity.TenantSubscription;
-import io.softa.starter.tenant.enums.SubscriptionStatus;
 import io.softa.starter.tenant.enums.TenantStatus;
+import io.softa.starter.tenant.enums.SubscriptionPeriodType;
+import io.softa.starter.tenant.service.PlanCatalog;
+import io.softa.starter.tenant.service.SubscriptionPeriodPatch;
 import io.softa.starter.tenant.service.TenantSubscriptionPeriodService;
 import io.softa.starter.tenant.service.TenantSubscriptionService;
 import io.softa.starter.tenant.service.impl.TenantInfoServiceImpl;
@@ -39,17 +50,21 @@ public class TenantProvisioningService {
     private final TenantSubscriptionPeriodService periodService;
     private final ApplicationEventPublisher eventPublisher;
     private final TenantProvisioningStatusService provisioningStatusService;
+    /** Only for the plan-catalog reads behind {@link PlanCatalog} — this service owns no models of its own. */
+    private final ModelService<?> modelService;
 
     public TenantProvisioningService(TenantInfoServiceImpl tenantInfoService,
                                      TenantSubscriptionService subscriptionService,
                                      TenantSubscriptionPeriodService periodService,
                                      ApplicationEventPublisher eventPublisher,
-                                     TenantProvisioningStatusService provisioningStatusService) {
+                                     TenantProvisioningStatusService provisioningStatusService,
+                                     ModelService<?> modelService) {
         this.tenantInfoService = tenantInfoService;
         this.subscriptionService = subscriptionService;
         this.periodService = periodService;
         this.eventPublisher = eventPublisher;
         this.provisioningStatusService = provisioningStatusService;
+        this.modelService = modelService;
     }
 
     @Transactional(rollbackFor = Exception.class)
@@ -61,17 +76,25 @@ public class TenantProvisioningService {
         // System context — persist the subscription row + the registry row that links it.
         Long tenantId = inSystemContext(() -> {
             // Every tenant gets a subscription row at birth: it is the projection carrier the tenant list
-            // and authorization read. It starts empty (NEVER_SUBSCRIBED, no plan) because a tenant is on
-            // the floor plan by birth — "Free is not recorded" constrains the period table, not this row.
+            // and authorization read. Its projected columns are left unset — ensureFreePeriod writes the
+            // free period below and the projection refresh fills them in from the period rows, which is the
+            // only writer of this row's projected state. Seeding a status here would be a guess that the
+            // refresh immediately overwrites, and a wrong one for the window in between.
             TenantSubscription subscription = new TenantSubscription();
-            subscription.setSubscriptionStatus(SubscriptionStatus.NEVER_SUBSCRIBED);
             Long subscriptionId = subscriptionService.createOne(subscription);
 
             TenantInfo tenant = new TenantInfo();
             tenant.setName(request.getName().trim());
             tenant.setCode(code);
-            tenant.setStatus(TenantStatus.ACTIVE);
-            tenant.setActivatedTime(LocalDateTime.now());
+            // DRAFT, not ACTIVE. Setup and operation share one field now, so "created" must not read as
+            // "built and usable" — beginProvisioning below moves it on (INITIALIZING while seeders run, or
+            // straight to ACTIVE when none are expected). Creating it ACTIVE left a window, and a failure
+            // before beginProvisioning, in which an unbuilt tenant advertised itself as ready.
+            //
+            // No activatedTime either: the stamp belongs to the moment the tenant actually becomes ACTIVE,
+            // which markStatus now writes. Stamping it here would date every tenant's activation to its
+            // creation, including ones whose setup never finished.
+            tenant.setStatus(TenantStatus.DRAFT);
             tenant.setDefaultLanguage(request.getDefaultLanguage());
             tenant.setDefaultTimezone(request.getDefaultTimezone());
             tenant.setDefaultCurrency(request.getDefaultCurrency());
@@ -96,6 +119,9 @@ public class TenantProvisioningService {
         // Initial periods are optional: a tenant sold nothing yet simply has none and runs on the floor
         // plan. Recorded after the tenant row exists so the projection refresh can read its timezone.
         recordInitialPeriods(tenantId, request.getSubscriptionId());
+        // After the operator's periods, not before: the create form pre-populates the free row, so if one
+        // arrived in the patch this finds it and adds nothing. Running first would create a second one.
+        ensureFreePeriod(tenantId);
 
         // Mark the initialization axis before broadcasting: no expected seeders (single-tenant / no-MQ)
         // → READY immediately; otherwise INITIALIZING until the expected seeders report done.
@@ -131,6 +157,61 @@ public class TenantProvisioningService {
         }
         inSystemContext(() -> {
             periodService.applyPatch(tenant.getSubscriptionId(), input.getPeriods());
+            return null;
+        });
+    }
+
+    /**
+     * Guarantee the tenant has its free period — the row that makes "what is this tenant entitled to" a
+     * question about data rather than about a fallback rule.
+     *
+     * <p>Every tenant gets exactly one, and it is the reason the entitlement resolver no longer needs a
+     * floor-plan fallback: a tenant always has at least one period, so its standing is always derivable
+     * from dates. That also makes {@code NEVER_SUBSCRIBED} unreachable.
+     *
+     * <p><b>Idempotent by search, not by flag.</b> The create form pre-populates the free row so the
+     * operator can set an expiry at creation time, so the row may already have arrived through
+     * {@link #recordInitialPeriods}. Checking for it is what keeps the UI path and the API / seed paths
+     * from producing two.
+     *
+     * <p><b>Fails when the catalog has no plan.</b> Refusing to create the tenant is the lesser evil: the
+     * alternative is a tenant with no period and no fallback, which resolves to zero modules — it would
+     * look created, admit its admin, and show an empty product with nothing to point at. A deployment that
+     * sells versions has a catalog; one that does not should not have tenant-starter's period machinery
+     * writing rows at all.
+     */
+    private void ensureFreePeriod(Long tenantId) {
+        TenantInfo tenant = tenantInfoService.getById(tenantId).orElse(null);
+        if (tenant == null || tenant.getSubscriptionId() == null) {
+            return;
+        }
+        Plan floor = PlanCatalog.floorPlan(modelService);
+        Assert.notNull(floor, "Cannot provision a tenant: the plan catalog has no plan with a tier, so there "
+                + "is no baseline plan to start it on.");
+        inSystemContext(() -> {
+            boolean alreadyThere = periodService.searchList(new FlexQuery(
+                            Filters.of("subscriptionId", Operator.EQUAL, tenant.getSubscriptionId())))
+                    .stream()
+                    .anyMatch(period -> floor.getId().equals(period.getPlanId()));
+            if (alreadyThere) {
+                return null;
+            }
+            SubscriptionPeriodPatch.PeriodInput free = new SubscriptionPeriodPatch.PeriodInput();
+            free.setPlanId(floor.getId());
+            // TRIAL, not PAID: nobody paid for it. The projection turns this into "on trial" while the row
+            // is open, and into "expired" if an operator later sets an end date — which is how a free tenant
+            // can be cut off without deleting anything.
+            free.setPeriodType(SubscriptionPeriodType.TRIAL);
+            // The tenant's own today, not the server's: a tenant whose day has not started yet would
+            // otherwise get a period beginning "tomorrow" and spend its first hours uncovered.
+            free.setEffectiveStartDate(LocalDate.now(Timezone.zoneIdOrUtc(tenant.getDefaultTimezone())));
+            // Open-ended = permanent. An operator may set an end date afterwards; that is the whole
+            // mechanism for time-boxing a free tenant (a competitor evaluating the product, say).
+            free.setEffectiveEndDate(null);
+
+            SubscriptionPeriodPatch patch = new SubscriptionPeriodPatch();
+            patch.setCreate(List.of(free));
+            periodService.applyPatch(tenant.getSubscriptionId(), patch);
             return null;
         });
     }

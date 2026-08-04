@@ -15,7 +15,6 @@ import io.softa.framework.orm.service.CacheService;
 import io.softa.framework.orm.service.TenantInfoService;
 import io.softa.framework.orm.service.impl.EntityServiceImpl;
 import io.softa.starter.tenant.entity.TenantInfo;
-import io.softa.starter.tenant.enums.TenantProvisioningStatus;
 import io.softa.starter.tenant.enums.TenantStatus;
 
 /**
@@ -70,9 +69,12 @@ public class TenantInfoServiceImpl extends EntityServiceImpl<TenantInfo, Long> i
      * Reads through the same per-tenant cache as {@link #isTenantActive}, so it costs nothing extra on the
      * login path.
      *
-     * <p>Null is READY, not "not ready". Every tenant that predates the provisioning axis has a null column,
-     * and treating those as unprovisioned would lock out every existing customer on the deploy that
-     * introduced it. Only the two in-flight states deny.
+     * <p>Distinct from {@link #isTenantActive}: a SUSPENDED or CLOSED tenant IS built — it just may not be
+     * used. Callers that need "has this workspace been set up" (creating its first admin, say) must not
+     * also refuse a suspended one, so the two questions stay separate even though one field answers both.
+     *
+     * <p>Null counts as built. A tenant row written before this axis existed has no status, and reading
+     * that as "not built" would refuse every pre-existing customer on the deploy that introduced it.
      */
     @Override
     public boolean isTenantProvisioned(Long tenantId) {
@@ -83,9 +85,8 @@ public class TenantInfoServiceImpl extends EntityServiceImpl<TenantInfo, Long> i
         if (tenantInfo == null) {
             return false;
         }
-        TenantProvisioningStatus status = tenantInfo.getProvisioningStatus();
-        return status != TenantProvisioningStatus.INITIALIZING
-                && status != TenantProvisioningStatus.FAILED;
+        TenantStatus status = tenantInfo.getStatus();
+        return status != TenantStatus.DRAFT && status != TenantStatus.INITIALIZING;
     }
 
     @Override
@@ -93,9 +94,15 @@ public class TenantInfoServiceImpl extends EntityServiceImpl<TenantInfo, Long> i
         transitionTo(tenantId, TenantStatus.SUSPENDED, TenantStatus.ACTIVE);
     }
 
+    /**
+     * Reinstate a suspended OR closed tenant. Closing is deliberately non-destructive — it changes the
+     * status and leaves every row in place — so it is reversible, and refusing to reverse it would strand a
+     * recoverable workspace behind "create a new tenant". A close that must also erase data is a separate
+     * operation still to be defined; until it exists, nothing here is irreversible.
+     */
     @Override
     public void activate(Long tenantId) {
-        transitionTo(tenantId, TenantStatus.ACTIVE, TenantStatus.SUSPENDED);
+        transitionTo(tenantId, TenantStatus.ACTIVE, TenantStatus.SUSPENDED, TenantStatus.CLOSED);
     }
 
     @Override
@@ -129,11 +136,7 @@ public class TenantInfoServiceImpl extends EntityServiceImpl<TenantInfo, Long> i
                 "Tenant {0} cannot move from {1} to {2}.", tenantId, tenant.getStatus(), target);
 
         TenantStatus previous = tenant.getStatus();
-        LocalDateTime now = LocalDateTime.now();
-        tenant.setActivatedTime(target == TenantStatus.ACTIVE ? now : null);
-        tenant.setSuspendedTime(target == TenantStatus.SUSPENDED ? now : null);
-        tenant.setClosedTime(target == TenantStatus.CLOSED ? now : null);
-        tenant.setStatus(target);
+        stampAndSet(tenant, target);
         this.updateOne(tenant);
 
         cacheService.clear(RedisConstant.TENANT_INFO + tenantId);
@@ -142,20 +145,61 @@ public class TenantInfoServiceImpl extends EntityServiceImpl<TenantInfo, Long> i
     }
 
     /**
-     * Write the tenant's {@link TenantProvisioningStatus} (seed-progress axis; separate from operational
-     * status). Idempotent — a no-op when already at the target, so it is safe under MQ redelivery and
-     * concurrent seeders. Evicts the cached TenantInfo so readers see it; login is unaffected (it keys off
-     * {@code status == ACTIVE}, not this axis).
+     * Write the tenant's setup-driven status — the states the seeders move it through
+     * (DRAFT / INITIALIZING / ACTIVE). Idempotent: a no-op when already at the target, so it is safe under
+     * MQ redelivery and concurrent seeders reporting at once.
+     *
+     * <p>Separate from {@link #transitionTo}, which guards operator-driven transitions against an expected
+     * current state. Setup has no such expectation to assert — a redelivered completion legitimately arrives
+     * at a tenant already ACTIVE — so this writes unconditionally and relies on the no-op instead.
+     *
+     * <p>Evicts the cached TenantInfo AND the active-id list: with one axis, reaching ACTIVE is what puts
+     * the tenant into per-tenant cron fan-out, and a stale list would leave a freshly built tenant out of it
+     * until the entry expired.
      */
-    public void markProvisioningStatus(Long tenantId, TenantProvisioningStatus status) {
+    public void markStatus(Long tenantId, TenantStatus status) {
+        // Same guard as transitionTo, for the same reason: the platform tenant has no way back if it is
+        // moved out of ACTIVE, because the admins who would move it back log in through it.
+        Assert.notTrue(PLATFORM_TENANT_ID.equals(tenantId),
+                "The platform tenant's status cannot be changed.");
         TenantInfo tenant = this.getById(tenantId).orElse(null);
         Assert.notNull(tenant, "Tenant not found for tenantId: {0}", tenantId);
-        if (status.equals(tenant.getProvisioningStatus())) {
+        if (status.equals(tenant.getStatus())) {
             return;
         }
-        tenant.setProvisioningStatus(status);
+        // Setup never overrules an operator. Both concerns share one field now, so a completion arriving at a
+        // suspended or closed tenant would otherwise reopen it — and completions DO arrive late: the seed
+        // messages are at-least-once, so a redelivery after someone closed the tenant is ordinary, not
+        // exotic. It would let users back into a workspace an operator had shut, silently.
+        //
+        // Ignored rather than rejected: the caller is an MQ consumer whose message is legitimately a
+        // duplicate. Throwing would nack it and burn the redelivery budget on work that is already done.
+        if (tenant.getStatus() == TenantStatus.SUSPENDED || tenant.getStatus() == TenantStatus.CLOSED) {
+            log.info("Tenant {} is {}; leaving it there rather than moving it to {} — an operator's decision "
+                    + "outranks setup progress", tenantId, tenant.getStatus(), status);
+            return;
+        }
+        stampAndSet(tenant, status);
         this.updateOne(tenant);
         cacheService.clear(RedisConstant.TENANT_INFO + tenantId);
+        cacheService.clear(RedisConstant.TENANT_IDS);
+    }
+
+    /**
+     * Set the status and rewrite the timestamp trio so exactly one of them is populated — the one matching
+     * the new status.
+     *
+     * <p>Shared by both write paths on purpose. The trio is meant to be a function of the status: an ACTIVE
+     * tenant still showing a suspended time reads as suspended to anyone scanning the list. When only
+     * {@code transitionTo} did this, a tenant that reached ACTIVE by finishing its setup got no
+     * {@code activatedTime} while one an operator activated got one — the same state in two shapes.
+     */
+    private void stampAndSet(TenantInfo tenant, TenantStatus target) {
+        LocalDateTime now = LocalDateTime.now();
+        tenant.setActivatedTime(target == TenantStatus.ACTIVE ? now : null);
+        tenant.setSuspendedTime(target == TenantStatus.SUSPENDED ? now : null);
+        tenant.setClosedTime(target == TenantStatus.CLOSED ? now : null);
+        tenant.setStatus(target);
     }
 
     /** Cached single-tenant lookup — internal to tenant-starter (not part of the framework SPI). */

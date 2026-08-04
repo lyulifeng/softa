@@ -22,6 +22,7 @@ import io.softa.framework.orm.domain.FlexQuery;
 import io.softa.framework.orm.service.ModelService;
 import io.softa.starter.tenant.entitlement.TenantEntitlementChangedEvent;
 import io.softa.starter.tenant.entity.TenantInfo;
+import io.softa.starter.tenant.entity.Plan;
 import io.softa.starter.tenant.entity.TenantSubscription;
 import io.softa.starter.tenant.entity.TenantSubscriptionPeriod;
 import io.softa.starter.tenant.enums.SubscriptionStatus;
@@ -138,23 +139,24 @@ public class SubscriptionProjectionServiceImpl implements SubscriptionProjection
         List<TenantSubscriptionPeriod> periods =
                 periodsBySubscription.getOrDefault(sub.getId(), List.of());
 
-        // Overlaps are rejected on write, so normally at most one period covers a date. Should one slip in
-        // anyway (a direct database write, an import, legacy rows), picking arbitrarily would make the
-        // granted plan non-deterministic — and it could flip between refreshes, because authorization reads
-        // this projection. So order the candidates and say so loudly: latest start wins, i.e. the most
-        // recently sold period, with the id as a final tie-break.
+        // More than one period may cover today — overlaps are allowed, and every tenant owns an open-ended
+        // free period that overlaps everything sold on top of it. So this is the normal case, not corruption.
+        //
+        // The winner is the HIGHEST PLAN TIER, which is what makes the free period harmless: a tenant on Pro
+        // is on Pro, even though its free period covers the same day. Sorting by "latest start" instead — the
+        // old rule, written when overlaps were rejected — would hand today to whichever row happened to begin
+        // most recently, so back-dating a free period would silently demote a paying customer.
+        //
+        // Ties broken by latest start then id, purely for determinism: authorization reads this projection, so
+        // an arbitrary pick could flip the granted plan between refreshes with nothing having changed.
+        Map<String, Integer> tierByPlan = tierByPlan();
         List<TenantSubscriptionPeriod> covering = periods.stream()
                 .filter(p -> covers(p, today))
-                .sorted(Comparator.comparing(TenantSubscriptionPeriod::getEffectiveStartDate).reversed()
+                .sorted(Comparator
+                        .<TenantSubscriptionPeriod>comparingInt(p -> tierOf(tierByPlan, p.getPlanId())).reversed()
+                        .thenComparing(Comparator.comparing(TenantSubscriptionPeriod::getEffectiveStartDate).reversed())
                         .thenComparing(Comparator.comparing(TenantSubscriptionPeriod::getId).reversed()))
                 .toList();
-        if (covering.size() > 1) {
-            log.error("Subscription projection — subscription {} has {} periods covering {}; this is "
-                            + "corrupt data (overlaps are rejected on write). Using period {} (latest "
-                            + "start). Overlapping ids: {}",
-                    sub.getId(), covering.size(), today, covering.getFirst().getId(),
-                    covering.stream().map(TenantSubscriptionPeriod::getId).toList());
-        }
         TenantSubscriptionPeriod current = covering.isEmpty() ? null : covering.getFirst();
         TenantSubscriptionPeriod next = periods.stream()
                 .filter(p -> p.getEffectiveStartDate() != null
@@ -177,13 +179,13 @@ public class SubscriptionProjectionServiceImpl implements SubscriptionProjection
             sub.setPeriodType(null);
             sub.setCurrentStartDate(null);
             sub.setCurrentEndDate(null);
-            // No covering period: distinguishing "scheduled" / "lapsed" / "never bought" costs nothing
-            // extra here, and the three demand opposite follow-up from ops — see SubscriptionStatus.
-            sub.setSubscriptionStatus(next != null
-                    ? SubscriptionStatus.SCHEDULED
-                    : periods.isEmpty()
-                            ? SubscriptionStatus.NEVER_SUBSCRIBED
-                            : SubscriptionStatus.EXPIRED);
+            // No covering period: either one is coming (SCHEDULED) or none is (EXPIRED).
+            //
+            // There is no longer a third case for "never bought anything": provisioning writes a free period
+            // at tenant creation, so `periods` is never empty and the standing is always derivable from
+            // dates. A tenant showing EXPIRED here has therefore let its free period lapse too — which only
+            // happens if an operator gave that period an end date, i.e. deliberately time-boxed it.
+            sub.setSubscriptionStatus(next != null ? SubscriptionStatus.SCHEDULED : SubscriptionStatus.EXPIRED);
         }
         sub.setNextStartDate(next == null ? null : next.getEffectiveStartDate());
         sub.setProjectedForDate(today);
@@ -201,6 +203,26 @@ public class SubscriptionProjectionServiceImpl implements SubscriptionProjection
             eventPublisher.publishEvent(new TenantEntitlementChangedEvent(tenant.getId()));
         }
         return written;
+    }
+
+    /**
+     * planId → tier for the whole catalog, read once per refresh. Per-period lookups would issue one query
+     * per row, and a tenant with a long history has many.
+     */
+    private Map<String, Integer> tierByPlan() {
+        return modelService.searchList("Plan", new FlexQuery(new Filters()), Plan.class).stream()
+                .filter(plan -> plan.getId() != null && plan.getTier() != null)
+                .collect(Collectors.toMap(Plan::getId, Plan::getTier, (a, b) -> a));
+    }
+
+    /**
+     * A period's plan tier. An unknown or absent plan sorts LOWEST rather than throwing: a dangling planId is
+     * bad data, and letting it win would hand the tenant an unresolvable plan; letting it lose means the
+     * tenant keeps whatever else covers today, which for every tenant includes at least its free period.
+     */
+    private static int tierOf(Map<String, Integer> tierByPlan, String planId) {
+        Integer tier = planId == null ? null : tierByPlan.get(planId);
+        return tier == null ? Integer.MIN_VALUE : tier;
     }
 
     /** A period covers a date when it has started and has not ended; null end = open-ended. */

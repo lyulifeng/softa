@@ -13,7 +13,7 @@ import io.softa.starter.tenant.config.TenantProvisioningProperties;
 import io.softa.starter.tenant.entity.TenantInfo;
 import io.softa.starter.tenant.entity.TenantSeedProgress;
 import io.softa.starter.tenant.enums.SeederStatus;
-import io.softa.starter.tenant.enums.TenantProvisioningStatus;
+import io.softa.starter.tenant.enums.TenantStatus;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
@@ -25,8 +25,8 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 /**
- * The provisioning timeout guard — the only thing that turns "this tenant never finished setting up" into a
- * state anyone can see.
+ * The provisioning timeout guard — the only thing that turns "this tenant never finished setting up" back into DRAFT —
+ * the state the rebuild action starts from, so a stalled tenant becomes actionable rather than stuck.
  *
  * <p>What it measures is the whole point. Elapsed-since-creation answers the wrong question: a large tenant on
  * a busy cluster can legitimately run past the timeout while completing one seeder after another, and marking
@@ -69,7 +69,7 @@ class ProvisioningTimeoutGuardTest {
         initializing.add(tenant(1L, LONG_AGO));
 
         assertThat(service.failTimedOut()).isEqualTo(1);
-        verify(tenantInfoService).markProvisioningStatus(1L, TenantProvisioningStatus.FAILED);
+        verify(tenantInfoService).markStatus(1L, TenantStatus.DRAFT);
     }
 
     @Test
@@ -81,7 +81,7 @@ class ProvisioningTimeoutGuardTest {
         progress.add(progressRow(1L, "pre-data", JUST_NOW));
 
         assertThat(service.failTimedOut()).isZero();
-        verify(tenantInfoService, never()).markProvisioningStatus(any(), any());
+        verify(tenantInfoService, never()).markStatus(any(), any());
     }
 
     @Test
@@ -93,7 +93,7 @@ class ProvisioningTimeoutGuardTest {
         progress.add(progressRow(1L, "pre-data", LONG_AGO));
 
         assertThat(service.failTimedOut()).isEqualTo(1);
-        verify(tenantInfoService).markProvisioningStatus(1L, TenantProvisioningStatus.FAILED);
+        verify(tenantInfoService).markStatus(1L, TenantStatus.DRAFT);
     }
 
     @Test
@@ -123,21 +123,21 @@ class ProvisioningTimeoutGuardTest {
 
         assertThat(service.failTimedOut()).isEqualTo(1);
 
-        verify(tenantInfoService, never()).markProvisioningStatus(1L, TenantProvisioningStatus.FAILED);
-        verify(tenantInfoService).markProvisioningStatus(2L, TenantProvisioningStatus.FAILED);
+        verify(tenantInfoService, never()).markStatus(1L, TenantStatus.DRAFT);
+        verify(tenantInfoService).markStatus(2L, TenantStatus.DRAFT);
     }
 
     @Test
     @DisplayName("no INITIALIZING tenants — nothing swept, nothing written")
     void nothingInitializing_noOp() {
         assertThat(service.failTimedOut()).isZero();
-        verify(tenantInfoService, never()).markProvisioningStatus(any(), any());
+        verify(tenantInfoService, never()).markStatus(any(), any());
     }
 
     private static TenantInfo tenant(Long id, LocalDateTime createdTime) {
         TenantInfo tenant = new TenantInfo();
         tenant.setId(id);
-        tenant.setProvisioningStatus(TenantProvisioningStatus.INITIALIZING);
+        tenant.setStatus(TenantStatus.INITIALIZING);
         tenant.setCreatedTime(createdTime);
         return tenant;
     }
