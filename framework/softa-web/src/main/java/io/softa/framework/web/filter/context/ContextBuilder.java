@@ -103,7 +103,7 @@ public class ContextBuilder implements SmartInitializingSingleton {
         // The company the UI header is switched to. Read before the enrichers run: one of them
         // resolves this id to its country, which the per-country narrowing of multi-country models
         // depends on. Only the id comes from the client — never the country.
-        this.setSelectedCompanyFromRequest(request, context);
+        this.setCompanyFromRequest(request, context);
         // HTTP requests for users are never allowed to use cross-tenant mode
         context.setCrossTenant(false);
         this.setDebugModeFromRequest(request, context);
@@ -222,7 +222,7 @@ public class ContextBuilder implements SmartInitializingSingleton {
      * Whether the id is one the caller may actually select is a permission question, checked where
      * the scope rules are — not here.
      */
-    private void setSelectedCompanyFromRequest(HttpServletRequest request, Context context) {
+    private void setCompanyFromRequest(HttpServletRequest request, Context context) {
         String raw = request.getHeader(BaseConstant.COMPANY_ID_HEADER);
         if (StringUtils.isBlank(raw)) {
             return;
