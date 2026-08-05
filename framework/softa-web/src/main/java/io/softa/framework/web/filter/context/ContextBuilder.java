@@ -100,6 +100,10 @@ public class ContextBuilder implements SmartInitializingSingleton {
         if (SystemConfig.env.isEnableMultiTenancy()) {
             this.setMultiTenancyEnv(context, userInfo, sessionId);
         }
+        // The company the UI header is switched to. Read before the enrichers run: one of them
+        // resolves this id to its country, which the per-country narrowing of multi-country models
+        // depends on. Only the id comes from the client — never the country.
+        this.setCompanyFromRequest(request, context);
         // HTTP requests for users are never allowed to use cross-tenant mode
         context.setCrossTenant(false);
         this.setDebugModeFromRequest(request, context);
@@ -209,6 +213,25 @@ public class ContextBuilder implements SmartInitializingSingleton {
 
     private boolean isDebugEnabled(String debug) {
         return Boolean.parseBoolean(debug) || "1".equals(debug);
+    }
+
+    /**
+     * Read the company the UI header is switched to. A blank or non-numeric header leaves the
+     * context unset rather than failing the request: the switcher is a view preference, and every
+     * request that predates it (or comes from a client that does not send it) must keep working.
+     * Whether the id is one the caller may actually select is a permission question, checked where
+     * the scope rules are — not here.
+     */
+    private void setCompanyFromRequest(HttpServletRequest request, Context context) {
+        String raw = request.getHeader(BaseConstant.COMPANY_ID_HEADER);
+        if (StringUtils.isBlank(raw)) {
+            return;
+        }
+        try {
+            context.setCompanyId(Long.valueOf(raw.trim()));
+        } catch (NumberFormatException e) {
+            log.warn("Ignoring malformed {} header: {}", BaseConstant.COMPANY_ID_HEADER, raw);
+        }
     }
 
     /**

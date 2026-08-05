@@ -143,10 +143,14 @@ public class FilterUnitParser {
 
     /**
      * Convert the env parameter to the corresponding value.
+     *
+     * <p>Package-private rather than private so the substitution can be asserted directly: it decides
+     * what a stored scope rule matches, and reaching it through the SQL builder would test the builder.
+     *
      * @param value env parameter
      * @return the corresponding value
      */
-    private static Object convertEnvParameter(String value) {
+    static Object convertEnvParameter(String value) {
         Context context = ContextHolder.getContext();
         if (EnvConstant.USER_ID.equals(value)) {
             return context.getUserId();
@@ -157,6 +161,24 @@ public class FilterUnitParser {
                 case EnvConstant.USER_POSITION_ID -> empInfo.getPositionId();
                 case EnvConstant.USER_DEPT_ID -> empInfo.getDeptId();
                 case EnvConstant.USER_COMP_ID -> empInfo.getCompanyId();
+                default -> throw new IllegalArgumentException("Not support the env parameter {0}! ", value);
+            };
+        } else if (EnvConstant.COMPANY_PARAMS.contains(value)) {
+            // Deliberately NOT folded into the EMP_INFO branch above: that branch is gated on an
+            // EmpInfo being bound, and the selected company has nothing to do with the
+            // caller's own employment — a pure user (an administrator who is not an employee)
+            // would otherwise fall through to the switch below and get an exception.
+            return switch (value) {
+                case EnvConstant.COMPANY_ID -> context.getCompanyId();
+                // Only ever the *selected* company's country, hence the guard: the context may carry a
+                // country with nothing selected, because a caller with no company at all falls back to
+                // its own (CompanyCountryEnricher). That fallback exists to narrow multi-country
+                // value domains, and must not leak into a scope rule — a rule written
+                // ["country","=","SELECTED_COMP_COUNTRY"] matches nothing today when nothing is
+                // selected, and would silently start matching the caller's own country instead,
+                // widening a data scope that was configured against the header.
+                case EnvConstant.COMPANY_COUNTRY ->
+                        context.getCompanyId() == null ? null : context.getCompanyCountry();
                 default -> throw new IllegalArgumentException("Not support the env parameter {0}! ", value);
             };
         } else {

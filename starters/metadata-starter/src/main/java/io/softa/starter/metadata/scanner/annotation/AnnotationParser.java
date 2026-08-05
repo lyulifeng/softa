@@ -305,6 +305,8 @@ public final class AnnotationParser {
         m.setStorageType(anno.storageType());
         m.setVersionLock(anno.versionLock());
         m.setMultiTenant(anno.multiTenant());
+        m.setMultiCountry(anno.multiCountry());
+        m.setMultiCompany(anno.multiCompany());
         m.setCopyable(anno.copyable());
         m.setDataSource(blankToNull(anno.dataSource()));
         m.setBusinessKey(toList(anno.businessKey()));

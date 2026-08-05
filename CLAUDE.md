@@ -113,6 +113,8 @@ rows by business key. Per-tenant metadata customization is **not supported**.
     businessKey = {"code"},
     idStrategy = IdStrategy.DB_AUTO_ID,         // default DB_AUTO_ID
     multiTenant = false,                        // default false
+    multiCountry = false,                       // default false; rows partitioned by country
+    multiCompany = false,                       // default false; rows belong to one company
     storageType = StorageType.RDBMS,
     softDelete = false, activeControl = false, timeline = false,
     versionLock = false,
@@ -200,6 +202,63 @@ public enum CustomerTier {
   id); slice-level `deleteBySliceId` keeps the entity alive and does not trigger it. Runtime guard:
   a `CASCADE`/`SET_NULL` affecting more than `MAX_BATCH_SIZE` referrers per level is rejected (accidental
   high-fanout), and large deletes are chunked to `DEFAULT_BATCH_SIZE` to bound statement size.
+
+- `multiCountry` / `multiCompany` (**request-scoped narrowing**): mark a model whose rows are
+  partitioned by country / belong to one employing company, and the ORM narrows every read to the
+  country / company selected for the current request. One input drives both — the client sends only a
+  company id (`X-Company-Id`), the country is resolved server-side from it and is **never** taken from
+  the client. The anchor field is **fixed by name, never declared**: `country` (a to-one onto
+  `CountryRegion`) / `legalEntityId` (a to-one onto `LegalEntity`), asserted at boot. Fixing the name is
+  what separates the axis from an attribute — a model may reference a country or a company for other
+  reasons (`PayGroup.payingEntityId` names who pays a group, it does not make the group belong to them),
+  and only the reserved name says "these rows belong to it". A model with no company column of its own —
+  a per-department statistic — declares the anchor as a **`dynamic` cascaded field**
+  (`@Field(cascadedField = "deptId.legalEntityId", dynamic = true, fieldType = MANY_TO_ONE,
+  relatedModel = LegalEntity.class)`), which takes no column and is joined at query time; `WhereBuilder`
+  rewrites a condition on it back to the cascade path, so the narrowing compiles to a LEFT JOIN and the
+  anchor stays a plain field name that can also be filtered, sorted and displayed. Boot-rejected: the
+  anchor field missing, a field of that name that is not a to-one onto the target model, and the company
+  model itself being `multiCompany`.
+
+  **Selection, grant, affiliation — three different things, never merged.** The narrowing above applies
+  the *selection* (`Context.companyId`, from `X-Company-Id`): which of my companies am I looking at. What
+  bounds the set it picks from is the role's *grant* (`PermissionInfo.grantedCompanyIds`, applied by
+  `PermissionServiceImpl.appendCompanyGrant`), and they compose as `selected ∧ granted`, so a header
+  switch can never reach outside the grant. The grant has **no store of its own**: it is the role's data
+  scope on the company model (`role_data_scope` where `model = 'LegalEntity'`), resolved into ids by
+  `DefaultPermissionSnapshotProvider.readGrantedCompanyIds` — one row bounds both the company switcher
+  and every model belonging to a company, because two stores for one boundary can disagree (that was
+  `RoleCompany`, now deleted). `ALL` resolves to `null`, never to the materialised list of every id. There
+  is deliberately **no company scope type**: `ScopeType.LEGAL_ENTITY` compiled to
+  `legalEntityId = USER_COMP_ID` — the caller's own company — so one role behaved differently per holder;
+  it is retired (migration `V40`, which must run *before* the patched binary: the snapshot silently drops
+  a scope type it cannot parse, so a stored rule would widen to unrestricted). `RoleController` refuses
+  the one ambiguous configuration — `ALL` rows on a `multiCompany` model with no company scope — because
+  "I meant all companies" and "I forgot" are otherwise the same payload. The grant is **tri-state**:
+  `null` = unrestricted (what an
+  unconfigured role resolves to, so shipping the axis blanks nobody's screens), **empty** = reaches no
+  company at all (only ever an explicit configuration — a self-service role whose own `SELF` row scope is
+  what lets it see itself), non-empty = exactly those. Collapsing the first two, as it used to, makes
+  "configured to reach nothing" inexpressible. The *affiliation* — `EmpInfo.companyId` /
+  `USER_COMP_ID`, "the company I belong to" — anchors permission rules and must stay out of both: a rule
+  anchored on the selection widens with every switch, and a grant derived from the affiliation makes one
+  role behave differently per user (an HR in company A seeing all of A's salaries, the same role in B
+  seeing B's). Narrowing is skipped — silently, because an over-eager condition empties a list the
+  user needs — when nothing is selected, when the caller filters by `id` (display expansion / by-id
+  read / cascade), or when the caller already constrains the anchor field. **One exception, on the
+  country axis only**: a role granted no company selects none, so skipping would show a self-service
+  employee every country's value domains — the enricher falls back to the country of
+  `EmpInfo.companyId`, so `Context.companyCountry` may be set with `Context.companyId` null. The
+  `SELECTED_COMP_COUNTRY` placeholder does **not** follow it (guarded on `companyId` in
+  `FilterUnitParser`; `MultiCountryScope` emits the resolved value instead): partitioning is data
+  correctness, but a scope rule written against the header is authorization and must keep matching what
+  it matched when it was written. No such fallback on the company axis — that would be a grant invented
+  from an affiliation. Applied in
+  `ModelServiceImpl.scopedAccess` as the **input** to
+  `PermissionService.appendScopeAccessFilters`, never around its result: fed as the input the selection
+  narrows *within* a role's grant, whereas wrapping the output would make a multi-company grant look
+  like a caller that already chose one and the selection would skip. Full reference:
+  [`framework/softa-orm/README.md`](framework/softa-orm/README.md) §Request-scoped narrowing.
 
 **Omit redundant attributes** (an explicit value that equals what the parser
 would derive is noise — a present attribute should signal a real override): omit

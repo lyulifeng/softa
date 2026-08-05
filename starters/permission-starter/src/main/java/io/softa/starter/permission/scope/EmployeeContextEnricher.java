@@ -13,6 +13,7 @@ import io.softa.framework.orm.service.ModelService;
 import io.softa.framework.web.filter.context.ContextEnricher;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.core.annotation.Order;
 import org.springframework.stereotype.Component;
 
 import java.util.HashSet;
@@ -36,7 +37,7 @@ import java.util.Set;
  * TTL, key {@code empinfo:{userId}}); the HR app's {@code EmployeeChangedEvent}
  * adapter evicts it on transfers. Serves both framework macro substitution
  * ({@code {{USER_DEPT_ID}}}) and the HR scope contributors (SELF / DIRECT_REPORTS
- * / DEPT_SUBTREE / MANAGED_DEPARTMENTS / LEGAL_ENTITY) which read it via
+ * / DEPT_SUBTREE / MANAGED_DEPARTMENTS) which read it via
  * {@code ContextHolder.getContext().getEmpInfo()}.
  *
  * <p>{@code @SkipPermissionCheck} on the DB reads keeps the per-request enrich
@@ -44,6 +45,7 @@ import java.util.Set;
  */
 @Slf4j
 @Component
+@Order(ContextEnricher.ORDER_IDENTITY)
 @RequiredArgsConstructor
 public class EmployeeContextEnricher implements ContextEnricher {
 

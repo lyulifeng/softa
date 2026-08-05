@@ -8,6 +8,7 @@ import org.springframework.boot.autoconfigure.AutoConfiguration;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.ComponentScan;
+import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.context.annotation.Lazy;
 
 import io.softa.framework.orm.service.CacheService;
@@ -87,13 +88,20 @@ public class PermissionStarterAutoConfiguration {
             CacheService cacheService,
             @Lazy ModelService<?> modelService,
             @Lazy SensitiveFieldSetCache sensitiveFieldSetCache,
+            ObjectProvider<ScopeRuleCompiler> scopeRuleCompiler,
             @Value("${permission.platform-nav-prefixes:}") String platformNavPrefixes) {
         // Default: build the per-user snapshot from the standard RBAC config models
         // (约定读 into view DTOs). A pure-enforce deployment without those models
         // gets fail-closed nulls and should register its own provider (e.g. a
         // RedisPermissionSnapshotProvider keep-warm reader, or an RPC re-sourcer).
+        //
+        // The compiler is passed as a supplier, not @Lazy like the two above: it reaches ModelService
+        // through ScopeApplicabilityResolver — the same cycle — but @Lazy proxies its target and
+        // ScopeRuleCompiler is final, so the proxy cannot be built. getIfAvailable defers resolution to
+        // first use without one, and lets a pure-enforce context that registers no compiler start
+        // instead of failing at wiring.
         return new DefaultPermissionSnapshotProvider(cacheService, modelService, sensitiveFieldSetCache,
-                splitCsv(platformNavPrefixes));
+                scopeRuleCompiler::getIfAvailable, splitCsv(platformNavPrefixes));
     }
 
     /** Split a comma-separated config value into a trimmed, non-empty list. */
