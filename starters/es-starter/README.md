@@ -51,10 +51,9 @@ business mutation ──▶ change-log event ──▶ Pulsar topic ──▶ Ch
 Admin-scoped endpoints require the system admin role; results are permission-
 checked per user and field references are resolved for display.
 
-`ChangeLogService extends ESService<ChangeLog>` adds `searchByCorrelationIds(...)`
-(aggregate versions by correlation id). `ESService<T>` /`ESServiceImpl<T>` provide
-`searchPage(Filters, Orders, Page)` with criteria mapping (EQUAL, NOT_EQUAL,
-GREATER_THAN, CONTAINS, IN, BETWEEN, PARENT_OF, CHILD_OF, …).
+`ESService<T>` / `ESServiceImpl<T>` provide `searchPage(Filters, Orders, Page)`
+with criteria mapping (EQUAL, NOT_EQUAL, GREATER_THAN, CONTAINS, IN, BETWEEN,
+PARENT_OF, CHILD_OF, …).
 
 ## Configuration
 

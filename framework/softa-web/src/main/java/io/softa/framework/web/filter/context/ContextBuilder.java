@@ -100,7 +100,6 @@ public class ContextBuilder implements SmartInitializingSingleton {
         if (SystemConfig.env.isEnableMultiTenancy()) {
             this.setMultiTenancyEnv(context, userInfo, sessionId);
         }
-        context.setCorrelationId(request.getHeader(BaseConstant.X_CORRELATION_ID));
         // The company the UI header is switched to. Read before the enrichers run: one of them
         // resolves this id to its country, which the per-country narrowing of multi-country models
         // depends on. Only the id comes from the client — never the country.
@@ -134,8 +133,8 @@ public class ContextBuilder implements SmartInitializingSingleton {
      * signing rather than a logged-in user (e.g. studio → runtime metadata upgrade).
      * No user identity is bound; tenant filtering is bypassed via {@code crossTenant}
      * because the calling service may target tenants the request itself didn't name.
-     * TraceId/correlationId/language/debug are still propagated so the downstream
-     * handler keeps the same observability surface as a normal request.
+     * TraceId/language/debug are still propagated so the downstream handler keeps
+     * the same observability surface as a normal request.
      */
     public Context buildServiceContext(HttpServletRequest request) {
         String traceId = request.getHeader(BaseConstant.X_B3_TRACEID);
@@ -146,7 +145,6 @@ public class ContextBuilder implements SmartInitializingSingleton {
         if (StringUtils.isNotBlank(timezone)) {
             context.setTimezone(Timezone.of(timezone));
         }
-        context.setCorrelationId(request.getHeader(BaseConstant.X_CORRELATION_ID));
         context.setCrossTenant(true);
         context.setSkipPermissionCheck(true);
         this.setDebugModeFromRequest(request, context);
