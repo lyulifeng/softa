@@ -17,9 +17,6 @@ public class ChangeLog {
     // Trace ID for distributed tracing
     private String traceId;
 
-    // Correlation ID for business context
-    private String correlationId;
-
     private String model;
     private String rowId;
     private AccessType accessType;

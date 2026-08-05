@@ -51,6 +51,4 @@ public interface BaseConstant {
     // TraceId in the request header
     String X_B3_TRACEID = "X-B3-TraceId";
 
-    String X_CORRELATION_ID = "X-Correlation-Id";
-
 }

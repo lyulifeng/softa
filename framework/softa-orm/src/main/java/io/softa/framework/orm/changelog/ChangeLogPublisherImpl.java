@@ -142,7 +142,6 @@ public class ChangeLogPublisherImpl implements ChangeLogPublisher {
         Context context = ContextHolder.getContext();
         ChangeLog changeLog = new ChangeLog();
         changeLog.setTraceId(context.getTraceId());
-        changeLog.setCorrelationId(context.getCorrelationId());
         changeLog.setModel(model);
         changeLog.setRowId(String.valueOf(id));
         changeLog.setAccessType(accessType);

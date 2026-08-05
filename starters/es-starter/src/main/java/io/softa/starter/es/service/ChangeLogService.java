@@ -1,7 +1,6 @@
 package io.softa.starter.es.service;
 
 import java.io.Serializable;
-import java.util.List;
 
 import io.softa.framework.orm.changelog.message.dto.ChangeLog;
 import io.softa.framework.orm.domain.FlexQuery;
@@ -44,27 +43,5 @@ public interface ChangeLogService extends ESService<ChangeLog> {
      * @return a page of list
      */
     Page<ChangeLog> searchPageByModel(String model, FlexQuery flexQuery, Page<ChangeLog> page);
-
-    /**
-     * Query all ChangeLogs for the specified model whose correlationId is in the given list,
-     * ordered by changedTime ascending.
-     * Used for WorkItem-centric version change aggregation.
-     *
-     * @param model          model name
-     * @param correlationIds list of correlationId values (workItemId as string)
-     * @return all matching ChangeLogs ordered by changedTime ASC
-     */
-    List<ChangeLog> searchByCorrelationIds(String model, List<String> correlationIds);
-
-    /**
-     * Query all ChangeLogs for the specified models whose correlationId is in the given list,
-     * ordered by changedTime ascending.
-     * Used to aggregate changes for multiple version-controlled models in one ES query.
-     *
-     * @param models         model names
-     * @param correlationIds list of correlationId values (workItemId as string)
-     * @return all matching ChangeLogs ordered by changedTime ASC
-     */
-    List<ChangeLog> searchByCorrelationIds(List<String> models, List<String> correlationIds);
 
 }
