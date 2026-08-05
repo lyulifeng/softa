@@ -10,6 +10,7 @@ import org.springframework.transaction.annotation.Transactional;
 
 import static io.softa.framework.base.context.ContextUtils.inSystemContext;
 import io.softa.framework.base.utils.Assert;
+import io.softa.starter.tenant.enums.TenantStatus;
 import io.softa.starter.tenant.entity.TenantInfo;
 import io.softa.starter.tenant.entity.TenantSeedProgress;
 import io.softa.starter.tenant.service.impl.TenantInfoServiceImpl;
@@ -48,8 +49,22 @@ import io.softa.starter.tenant.service.impl.TenantProvisioningStatusService;
  *
  * <h3>Why deleting anything is safe here</h3>
  * Nobody can get into a tenant before it is READY — login and admin creation both refuse one — so a
- * not-yet-READY tenant holds only what provisioning put there. {@link #rebuild} refuses a READY tenant
- * outright rather than trusting its caller, because that invariant is the whole basis for deleting at all.
+ * not-yet-READY tenant holds only what provisioning put there. {@link #rebuild} enforces that itself rather
+ * than trusting its caller, because the invariant is the whole basis for deleting at all.
+ *
+ * <p><b>Draft only, not "anything that is not READY".</b> {@code INITIALIZING} fails the check too, and that
+ * is the point: it means seeders are running, and re-announcing provisioning next to them runs two rounds at
+ * once. Each seeder discards and re-creates its own rows on a rebuild, so the two rounds do not merge — the
+ * org masters end up carrying one round's ids while a chain that already read the other round's still points
+ * at rows that have since been deleted. That is not a hypothetical: it is how a tenant ended up with an
+ * {@code Employee} referencing a {@code LegalEntity} and a {@code Department} that no longer existed, visible
+ * only once per-company narrowing shipped and its lists came back empty.
+ *
+ * <p>The way out of {@code INITIALIZING} is therefore not this method but
+ * {@code TenantProvisioningStatusService.failTimedOut()}, which flips a tenant that has stopped making
+ * progress to {@code DRAFT}. <b>That guard is load-bearing now</b>: with this check in place a stalled tenant
+ * has no other exit, so a cron that never fires — or a clock skew that makes "last progress" look like the
+ * future and every tenant look busy — leaves it stuck for good.
  *
  * <p>{@code TenantInfo} and its {@code TenantSubscription} survive: the tenant keeps its id, code and the
  * periods ops recorded. Neither is produced by provisioning, so re-running it would not bring them back.
@@ -104,10 +119,11 @@ public class TenantSeedPurgeService {
         Assert.notNull(tenantId, "Tenant id is required to rebuild its setup.");
         TenantInfo tenant = tenantInfoService.getById(tenantId)
                 .orElseThrow(() -> new IllegalArgumentException("Tenant " + tenantId + " not found."));
-        Assert.notTrue(tenantInfoService.isTenantProvisioned(tenantId),
-                "Tenant {0} has finished provisioning — its data is no longer only setup output and cannot be "
-                        + "discarded. Only a tenant still initializing, or whose initialization failed, can be "
-                        + "rebuilt.", tenantId);
+        Assert.isTrue(TenantStatus.DRAFT.equals(tenant.getStatus()),
+                "Tenant {0} is {1}, and a rebuild starts from Draft only. A tenant that finished setup holds "
+                        + "more than setup output, so discarding it is not on offer; one still Initializing has "
+                        + "seeders running, and a stalled one reaches Draft through the provisioning-timeout "
+                        + "guard, which is the way out.", tenantId, tenant.getStatus());
 
         Map<String, Integer> cleared = inSystemContext(
                 () -> seedCleaner.clearModels(tenantId, PROVISIONING_STATE));

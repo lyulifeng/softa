@@ -7,11 +7,14 @@ import java.util.Optional;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.EnumSource;
 import org.mockito.ArgumentCaptor;
 import org.mockito.InOrder;
 import org.springframework.context.ApplicationEventPublisher;
 
 import io.softa.starter.tenant.entity.TenantInfo;
+import io.softa.starter.tenant.enums.TenantStatus;
 import io.softa.starter.tenant.service.impl.TenantInfoServiceImpl;
 import io.softa.starter.tenant.service.impl.TenantProvisioningStatusService;
 
@@ -53,9 +56,8 @@ class TenantSeedPurgeServiceTest {
         seedCleaner = mock(TenantSeedCleaner.class);
         eventPublisher = mock(ApplicationEventPublisher.class);
 
+        // DRAFT — the only status a rebuild is allowed in.
         when(tenantInfoService.getById(TENANT)).thenReturn(Optional.of(tenant()));
-        // Not provisioned — the only state a rebuild is allowed in.
-        when(tenantInfoService.isTenantProvisioned(TENANT)).thenReturn(false);
         when(seedCleaner.clearModels(anyLong(), anyList())).thenReturn(Map.of("UserAccount", 1));
 
         service = new TenantSeedPurgeService(tenantInfoService, statusService, seedCleaner, eventPublisher);
@@ -107,14 +109,32 @@ class TenantSeedPurgeServiceTest {
 
     // ─── the guard ───
 
-    @Test
-    @DisplayName("a tenant that finished provisioning is refused, and nothing happens")
-    void refusesAProvisionedTenant() {
-        // The safety argument for deleting at all is that nobody could have been inside the tenant yet; once it
-        // is READY that no longer holds. The refusal lives here rather than in whatever calls it.
-        when(tenantInfoService.isTenantProvisioned(TENANT)).thenReturn(true);
+    @ParameterizedTest
+    @EnumSource(value = TenantStatus.class, names = "DRAFT", mode = EnumSource.Mode.EXCLUDE)
+    @DisplayName("every status but Draft is refused, and nothing happens")
+    void refusesAnythingButDraft(TenantStatus status) {
+        // Two different reasons, one rule. ACTIVE / SUSPENDED / CLOSED have been lived in, so their data is no
+        // longer only setup output and the safety argument for deleting collapses. INITIALIZING has seeders
+        // running: re-announcing provisioning next to them runs two rounds, and because each seeder discards
+        // and re-creates its own rows, the org masters end up under one round's ids while a chain that read the
+        // other round's is left pointing at deleted rows. Enumerated rather than asserting the one allowed case,
+        // so a status added later has to be classified instead of quietly becoming rebuildable.
+        when(tenantInfoService.getById(TENANT)).thenReturn(Optional.of(tenant(status)));
 
-        assertThatThrownBy(() -> service.rebuild(TENANT)).hasMessageContaining("finished provisioning");
+        assertThatThrownBy(() -> service.rebuild(TENANT)).hasMessageContaining("Draft only");
+
+        verify(seedCleaner, never()).clearModels(anyLong(), anyList());
+        verify(eventPublisher, never()).publishEvent(any());
+    }
+
+    @Test
+    @DisplayName("a tenant with no status at all is refused rather than treated as Draft")
+    void refusesAStatuslessTenant() {
+        // A row written before the status axis existed. Reading null as Draft would make the oldest tenants —
+        // the ones most likely to hold real data — the easiest ones to wipe.
+        when(tenantInfoService.getById(TENANT)).thenReturn(Optional.of(tenant(null)));
+
+        assertThatThrownBy(() -> service.rebuild(TENANT)).hasMessageContaining("Draft only");
 
         verify(seedCleaner, never()).clearModels(anyLong(), anyList());
         verify(eventPublisher, never()).publishEvent(any());
@@ -179,10 +199,16 @@ class TenantSeedPurgeServiceTest {
     }
 
     private static TenantInfo tenant() {
+        return tenant(TenantStatus.DRAFT);
+    }
+
+    /** Draft is the only status a rebuild is allowed in — see the service's own comment for why. */
+    private static TenantInfo tenant(TenantStatus status) {
         TenantInfo tenant = new TenantInfo();
         tenant.setId(TENANT);
         tenant.setCode("acme");
         tenant.setName("Acme Corp");
+        tenant.setStatus(status);
         return tenant;
     }
 }
