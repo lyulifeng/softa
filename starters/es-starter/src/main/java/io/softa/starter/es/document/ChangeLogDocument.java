@@ -21,7 +21,6 @@ public class ChangeLogDocument {
 
     private String uuid;
     private String traceId;
-    private String correlationId;
     private String model;
     private String rowId;
     private AccessType accessType;
@@ -36,7 +35,6 @@ public class ChangeLogDocument {
         ChangeLogDocument doc = new ChangeLogDocument();
         doc.uuid = source.getUuid();
         doc.traceId = source.getTraceId();
-        doc.correlationId = source.getCorrelationId();
         doc.model = source.getModel();
         doc.rowId = source.getRowId();
         doc.accessType = source.getAccessType();
@@ -53,7 +51,6 @@ public class ChangeLogDocument {
         ChangeLog cl = new ChangeLog();
         cl.setUuid(doc.uuid);
         cl.setTraceId(doc.traceId);
-        cl.setCorrelationId(doc.correlationId);
         cl.setModel(doc.model);
         cl.setRowId(doc.rowId);
         cl.setAccessType(doc.accessType);

@@ -1,17 +1,17 @@
 package io.softa.framework.orm.aspect;
 
 import java.util.Set;
+import lombok.extern.slf4j.Slf4j;
+import org.aspectj.lang.ProceedingJoinPoint;
+import org.aspectj.lang.annotation.Around;
+import org.aspectj.lang.annotation.Aspect;
+import org.springframework.stereotype.Component;
 
 import io.softa.framework.base.context.Context;
 import io.softa.framework.base.context.ContextHolder;
 import io.softa.framework.base.exception.PermissionException;
 import io.softa.framework.orm.annotation.RequireRole;
 import io.softa.framework.orm.annotation.SwitchUser;
-import lombok.extern.slf4j.Slf4j;
-import org.aspectj.lang.ProceedingJoinPoint;
-import org.aspectj.lang.annotation.Around;
-import org.aspectj.lang.annotation.Aspect;
-import org.springframework.stereotype.Component;
 
 /**
  * Aspect for permission check.
@@ -51,7 +51,7 @@ public class PermissionAspect {
     @Around("@annotation(io.softa.framework.orm.annotation.SkipPermissionCheck)")
     public Object skipPermissionCheck(ProceedingJoinPoint joinPoint) throws Throwable {
         if (!ContextHolder.existContext()) {
-            log.warn("@SkipPermissionCheck on {} runs outside a bound ContextHolder "
+            log.debug("@SkipPermissionCheck on {} runs outside a bound ContextHolder "
                     + "ScopedValue — mutation is discarded and the annotation is a no-op. "
                     + "Wrap the caller in ContextHolder.runWith(bootstrapCtx, ...) or "
                     + "ContextHolder.callWith(...).",
