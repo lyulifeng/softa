@@ -37,9 +37,9 @@ public class SeederCompletedCoordinator {
         if (message.success()) {
             statusService.markSeederReady(message.tenantId(), message.seederKey());
         } else {
-            // Unreachable today: seeders publish only success=true (a seed failure is retried via redelivery,
-            // never reported as false). Retained for a future DLQ handler that reports success=false; the
-            // authoritative FAILED source meanwhile is the timeout guard (failTimedOut). See markSeederFailed.
+            // Not reached today: seeders publish only success=true (a failure is an exception, answered by
+            // redelivery; an exhausted message goes to a dead-letter topic nobody reads). Retained because it
+            // is the branch a dead-letter listener would activate — see markSeederFailed.
             statusService.markSeederFailed(message.tenantId(), message.seederKey());
         }
     }

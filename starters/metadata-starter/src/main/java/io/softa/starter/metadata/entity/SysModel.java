@@ -66,9 +66,6 @@ public class SysModel extends AuditableModel {
     @Field(label = "Enable Soft Delete")
     private Boolean softDelete;
 
-    @Field(label = "Soft Delete Field Name")
-    private String softDeleteField;
-
     @Field(label = "Enable Active Control")
     private Boolean activeControl;
 

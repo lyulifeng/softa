@@ -19,9 +19,9 @@ import io.softa.framework.orm.enums.IdStrategy;
  * Validator ⑩ rejects GROUP and pure-container MENU (nav.model = null).
  *
  * <p><b>Metadata note:</b> {@code io.softa.starter.user.entity} is NOT in scanner-scope; annotations
- * mirror the studio-managed live {@code sys_field} (not reconciled at runtime). {@code dataScopes} and
- * {@code sensitiveFieldSetIds} are NOT present in the live {@code sys_field} — they were normalised out
- * into {@link RoleDataScope} / {@link RoleSensitiveFieldSet}; kept as Java fields for compatibility.
+ * mirror the studio-managed live {@code sys_field} (not reconciled at runtime). The former inline
+ * {@code dataScopes} / {@code sensitiveFieldSetIds} fields have been removed — a role's data scopes and
+ * sensitive-field grants are now normalised into {@link RoleDataScope} / {@link RoleSensitiveFieldSet}.
  */
 @Data
 @EqualsAndHashCode(callSuper = true)

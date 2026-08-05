@@ -129,7 +129,7 @@ public class DesignField extends AuditableModel {
     @Field(label = "Is Computed")
     private Boolean computed;
 
-    @Field(length = 20000)
+    @Field(fieldType = FieldType.TEXT)
     private String expression;
 
     @Field(label = "Dynamic Field")

@@ -39,7 +39,35 @@ reconcile the same rows by business key.
 **Boot ordering / recovery:** the scanner executes DDL **before** committing the
 `sys_*` rows — a failed DDL leaves the rows unwritten, so the next boot
 recomputes the same diff and retries (re-applied DDL degrades to WARN on
-"already exists").
+"already exists"). DDL planning also snapshots the managed tables via
+`DatabaseMetaData` and prepends **additive-only** `[physical-recovery]` units
+where `sys_*` and the physical schema drifted apart (hand-dropped column behind
+a MODIFY → recreated; hand-dropped table behind ALTERs → full CREATE from code;
+pre-existing table behind a CREATE → adopted column-by-column). Every boot also
+logs a consolidated physical drift audit, and `GET /metadata/status` serves the
+boot snapshot (code vs catalog fingerprints + the drift report) — details in the
+[metadata-starter README](../../../starters/metadata-starter/README.md).
+
+## Catalog row policy (`sys_*` rows)
+
+The catalog is an aggregate: `sys_model` / `sys_option_set` are the **roots**,
+`sys_field` / `sys_model_index` / `sys_option_item` their attributes.
+
+| Change | Applied |
+|---|---|
+| Root added / modified | ✅ |
+| Attribute added / modified / **removed**, on a root whose class is present | ✅ — the annotations own the root's attribute set |
+| **Root removed** (a row with no `@Model` / `@OptionSet` class) | ❌ under **every** scope, `["*"]` included — the root and its attribute rows are confined out of the diff, untouched; `["*"]` logs a WARN naming them with copy-paste `DELETE` SQL |
+
+So deleting a `@Model` class does **not** clean its catalog rows: expect the WARN
+and run the SQL yourself. The reason is that a code-less root is a first-class
+state here — Studio no-code and seed-authored models never have a Java class,
+nothing records row ownership (`Ownership` is retained but unused), so "orphan"
+and "deliberately code-less" are indistinguishable and auto-deleting would wipe
+hand-authored definitions on every dev boot. Attributes follow their root so a
+definition is never left as a headless or field-less husk. Implementation:
+`ScannerScope#confineFromDb` (no match-all short-circuit) +
+`MetadataAnnotationScanner#warnCodelessRoots`.
 
 ## DDL auto-execute policy
 
@@ -50,15 +78,18 @@ When the model's package is in `system.metadata.scanner-scope` (e.g.
 |---|---|---|
 | New `@Model` class | `CREATE TABLE …` (with inline indexes) | ✅ |
 | New `@Field` | `ALTER TABLE … ADD COLUMN …` | ✅ |
-| Changed `@Field` attribute (length / required / type / default) | `ALTER TABLE … MODIFY COLUMN …` | ✅ |
+| Changed `@Field` attribute (length / required / type / default) | `ALTER TABLE … MODIFY COLUMN …` | ✅ when the physical comparison says EQUAL / WIDEN (or no physical facts are available) |
+| Changed `@Field` attribute where the physical column would **narrow** (or the type families are incomparable) | `MODIFY COLUMN` | ❌ **WARN only** — a MODIFY re-states the full column definition and could truncate data |
 | New `@Index` | `ALTER TABLE … ADD INDEX …` | ✅ |
 | Removed `@Field` | `DROP COLUMN` | ❌ **WARN only** — log prints copy-paste SQL |
 | Removed `@Model` | `DROP TABLE` | ❌ **WARN only** |
 | Removed `@Index` | `DROP INDEX` | ❌ **WARN only** |
 | Changed `tableName` | `RENAME TABLE` | ❌ **WARN only** (hint logged) |
 
-If the log shows `WARN: … DROP … not auto-executed`, run the printed SQL by hand
-after confirming intent.
+If the log shows `WARN: … not auto-executed` (DROP / RENAME / narrowing
+MODIFY), run the printed SQL by hand after confirming intent. A deferred
+narrowing also re-surfaces in the physical drift audit's TYPE MISMATCH section
+on every boot until resolved.
 
 ## Verification recipe (in-repo)
 
@@ -81,14 +112,13 @@ git diff main...HEAD -- '**/*.java'      # full PR scope
 #   MetadataAnnotationScanner: applied N row change(s)
 #   DdlOrchestrator: CREATE TABLE ... OK        (auto)
 #   DdlOrchestrator: ... DROP COLUMN ... not auto-executed   (WARN)
+#   MetadataAnnotationScanner: physical schema drift — N finding(s) ...   (audit; absent = consistent)
+# 6. GET /metadata/status — code vs catalog fingerprints ("did my change land?")
+#    + the physical drift report from this boot.
 ```
 
-**Known pre-existing failures to ignore** (unrelated to annotation work):
-- 3 in `MetadataServiceImplTest`
-- 4 in `PebbleSqlTemplateWhitespaceTest`
-- 4 in `DesignAppEnvServiceImplTest`
-
-New failures elsewhere are real regressions.
+The full suite is green — any test failure is a real regression, not
+pre-existing noise.
 
 ## Manual migrations (renames `renamedFrom` can't express)
 

@@ -265,4 +265,80 @@ class PermissionInterceptorTest {
             return null;
         });
     }
+
+    // ─── tenant admin: bypasses the gate, EXCEPT for a module its plan dropped ───
+    //
+    // A tenant admin holds no static nav grants, so a downgrade has no rows to strip for it and the
+    // downgrade cleanup skips it entirely. Its snapshot — already narrowed to the plan by
+    // tenantAdminSnapshot — is the only record of what its plan allows, and this branch is the only
+    // place that reads it. Without these cases the branch could regress to a blanket `return true`
+    // and every test above would still pass.
+
+    /** A tenant admin whose plan dropped payroll: the snapshot carries the surviving permissions only. */
+    private static PermissionInfo tenantAdminOnFreePlan() {
+        return PermissionInfo.builder()
+                .roleCodes(Set.of(PermissionInfo.CODE_TENANT_ADMIN))
+                .permissions(Set.of("employee.view", "department.view"))   // no payroll.*
+                .build();
+    }
+
+    @Test
+    void tenantAdmin_deniedOnAModuleThePlanDropped() {
+        when(snapshotProvider.get(anyLong(), anyLong())).thenReturn(tenantAdminOnFreePlan());
+        when(endpointIndex.lookup(eq("/PayItem/searchList"), eq("POST")))
+                .thenReturn(Set.of("payroll.pay-item.view"));
+
+        MockHttpServletRequest r = req("POST", "/PayItem/searchList");
+        inCtx(10L, 42L, () -> {
+            assertThatThrownBy(() ->
+                    interceptor.preHandle(r, new MockHttpServletResponse(), null))
+                    .isInstanceOf(PermissionException.class)
+                    .hasMessageContaining("Missing permission");
+            return null;
+        });
+    }
+
+    @Test
+    void tenantAdmin_allowedOnAnEntitledModule() {
+        when(snapshotProvider.get(anyLong(), anyLong())).thenReturn(tenantAdminOnFreePlan());
+        when(endpointIndex.lookup(eq("/Employee/searchList"), eq("POST")))
+                .thenReturn(Set.of("employee.view"));
+
+        MockHttpServletRequest r = req("POST", "/Employee/searchList");
+        boolean allowed = inCtx(10L, 42L,
+                () -> interceptor.preHandle(r, new MockHttpServletResponse(), null));
+        assertThat(allowed).isTrue();
+    }
+
+    @Test
+    void tenantAdmin_stillBypassesAnUnregisteredEndpoint() {
+        // The bypass's original job, and the reason the new check is conditional rather than the same
+        // code path as a normal user's. Plenty of endpoints carry no permission mapping; a tenant admin
+        // is expected to reach them. Denying here would turn a billing gate into a broad outage —
+        // note the normal-user path throws "Endpoint not registered" on exactly this input.
+        when(snapshotProvider.get(anyLong(), anyLong())).thenReturn(tenantAdminOnFreePlan());
+        when(endpointIndex.lookup(anyString(), anyString())).thenReturn(Set.of());
+
+        MockHttpServletRequest r = req("POST", "/SomeUnmappedThing/doIt");
+        boolean allowed = inCtx(10L, 42L,
+                () -> interceptor.preHandle(r, new MockHttpServletResponse(), null));
+        assertThat(allowed).isTrue();
+    }
+
+    @Test
+    void tenantAdmin_platformOnlyStillDeniedBeforeTheModuleCheck() {
+        // Ordering matters: a platform-only endpoint must report itself as platform-only, not as a
+        // missing permission — the two send ops to different places.
+        props.setPlatformOnlyPatterns(List.of("/TenantInfo/**"));
+        when(snapshotProvider.get(anyLong(), anyLong())).thenReturn(tenantAdminOnFreePlan());
+
+        MockHttpServletRequest r = req("POST", "/TenantInfo/createOne");
+        inCtx(10L, 42L, () -> {
+            assertThatThrownBy(() ->
+                    interceptor.preHandle(r, new MockHttpServletResponse(), null))
+                    .isInstanceOf(PermissionException.class)
+                    .hasMessageContaining("Platform-admin only");
+            return null;
+        });
+    }
 }

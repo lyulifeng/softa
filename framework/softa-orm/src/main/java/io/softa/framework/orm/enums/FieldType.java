@@ -38,8 +38,13 @@ import io.softa.framework.orm.dto.DTOFieldObject;
 @AllArgsConstructor
 @OptionSet
 public enum FieldType {
-    // String, including long text
+    // String (bounded VARCHAR column)
     STRING("String", String.class, Types.VARCHAR),
+    // Unbounded long text (MySQL MEDIUMTEXT / PostgreSQL TEXT). Never inferred —
+    // a String field defaults to STRING; declare @Field(fieldType = FieldType.TEXT)
+    // explicitly. `length` is optional and only an app-level guard (the column
+    // itself is unbounded).
+    TEXT("Text", String.class, Types.LONGVARCHAR),
 
     // Numeric
     INTEGER("Integer", Integer.class, Types.INTEGER),

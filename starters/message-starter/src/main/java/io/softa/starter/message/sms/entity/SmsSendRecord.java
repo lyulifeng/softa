@@ -54,7 +54,7 @@ public class SmsSendRecord extends AuditableModel {
     @Field(description = "Template code if sent via template", length = 100)
     private String templateCode;
 
-    @Field(description = "Rendered SMS content")
+    @Field(length = 2000, description = "Rendered SMS content")
     private String content;
 
     @Field(description = "SMS signature (sign name) actually used at send time. "
@@ -79,7 +79,7 @@ public class SmsSendRecord extends AuditableModel {
     @Field(description = "Earliest time at which the next retry should be attempted")
     private LocalDateTime nextRetryAt;
 
-    @Field(description = "Error message on failure")
+    @Field(length = 1000, description = "Error message on failure")
     private String errorMessage;
 
     @Field(length = 100, description = "Provider-specific error code on failure (e.g. Twilio 21211, Aliyun isv.BUSINESS_LIMIT_CONTROL)")

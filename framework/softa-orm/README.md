@@ -66,7 +66,7 @@ public enum CustomerTier {
 | `itemCode` | `@JsonValue` field value (fallback `enum.name()`) | — (no override) |
 | `tableName` | `snake_case(modelName)` | `@Model.tableName` |
 | `columnName` | `snake_case(fieldName)` | `@Field.columnName` |
-| `fieldType` | Java type via `TypeInference` (e.g. `String`→`STRING`, enum→`OPTION`, `List<enum>`→`MULTI_OPTION`, `@Model` POJO→`MANY_TO_ONE`) | `@Field.fieldType = FieldType.X` (single value, no braces); **`OPTION` / `MULTI_OPTION` cannot be written explicitly** |
+| `fieldType` | Java type via `TypeInference` (e.g. `String`→`STRING`, enum→`OPTION`, `List<enum>`→`MULTI_OPTION`, `@Model` POJO→`MANY_TO_ONE`, `DTOFieldObject` POJO→`DTO`) | `@Field.fieldType = FieldType.X` (single value, no braces); **`OPTION` / `MULTI_OPTION` cannot be written explicitly**; `TEXT` (unbounded long text) is **never inferred** — declare it explicitly on a `String` field |
 | index `indexName` | `idx_<table>_<col>...` / `uk_<table>_<col>...` for unique; **globally unique** (boot-enforced), ≤60 chars | `@Index.indexName` |
 
 ### `@Model` ↔ `SysModel`
@@ -81,12 +81,11 @@ public enum CustomerTier {
 | `searchName` | String[] | `{}` | `searchName` | search-field defaults |
 | `defaultOrder` | String[] | `{}` | `defaultOrder` | e.g. `"createdTime:desc"` |
 | `softDelete` | boolean | `false` | `softDelete` | |
-| `softDeleteField` | String | `"deleted"` | `softDeleteField` | effective only when `softDelete = true` |
 | `activeControl` | boolean | `false` | `activeControl` | adds `active` gate column |
 | `timeline` | boolean | `false` | `timeline` | effective-dated rows (see Timeline Model) |
 | `idStrategy` | `IdStrategy` | `DB_AUTO_ID` | `idStrategy` | |
 | `storageType` | `StorageType` | `RDBMS` | `storageType` | |
-| `versionLock` | boolean | `false` | `versionLock` | optimistic-lock column |
+| `versionLock` | boolean | `false` | `versionLock` | requires a `version` field on the class; the field is readonly (framework-managed), stamped onto every insert, and its starting value is materialized into `sys_field.default_value` (`0` unless the field declares `defaultValue`) so the column DDL carries `DEFAULT 0` |
 | `multiTenant` | boolean | `false` | `multiTenant` | requires a `tenantId` field on the class |
 | `multiCountry` | boolean | `false` | `multiCountry` | rows are partitioned by country; reads narrow to the request's selected country (see [Request-scoped narrowing](#request-scoped-narrowing)) |
 | `multiCompany` | boolean | `false` | `multiCompany` | rows belong to one company; reads narrow to the request's selected company (see [Request-scoped narrowing](#request-scoped-narrowing)) |
@@ -112,7 +111,7 @@ extends `AuditableModel`.
 | `description` | String | `""` | `description` | **≤512 chars**, parse-time enforced (catalog column width); concise user-facing summary — design notes go in Javadoc |
 | `fieldType` | `FieldType[]` | `{}` | `fieldType` | single value, no braces (e.g. `fieldType = FieldType.MULTI_FILE`); `OPTION`/`MULTI_OPTION` **cannot** be written explicitly |
 | `columnName` | String | `""` | `columnName` | empty → `snake_case(fieldName)` |
-| `length` | int | `0` | `length` | `0` → type default: STRING/OPTION 64, MULTI_STRING/ORDERS 256, DOUBLE 24 (measurements), BIG_DECIMAL 32 (money); declare explicitly for anything else. MySQL renders `length > 16383` as TEXT |
+| `length` | int | `0` | `length` | `0` → type default: STRING/OPTION 64, MULTI_STRING/ORDERS 256, DOUBLE 24 (measurements), BIG_DECIMAL 32 (money); declare explicitly for anything else. On `TEXT` fields length is optional — purely an app-level guard (the column is unbounded). Legacy: MySQL renders STRING `length > 16383` as TEXT (64KB bytes; prefer `fieldType = TEXT`) |
 | `scale` | int | `0` | `scale` | `0` → type default: DOUBLE 2, BIG_DECIMAL 8 (DECIMAL scale) |
 | `required` | boolean | `false` | `required` | NOT NULL constraint |
 | `readonly` | boolean | `false` | `readonly` | UI hint |
@@ -636,6 +635,10 @@ A timeline model records historical slices of data over time. It is useful for b
   `DISTRIBUTED_STRING` / `EXTERNAL_ID`). `DB_AUTO_ID` is rejected at boot: the auto-increment lands on the
   physical `sliceId`, so nothing would fill the shared logical `id` column of a first slice (split/correct
   rows arrive carrying the entity's existing id and keep it).
+- A timeline model must **not** declare `activeControl` (rejected at boot): `active` is an entity-level
+  switch, while timeline storage makes every field per-slice — the combination would silently mutate the
+  feature's semantics and blind the interval algorithm's neighbor probes. Express period state as a
+  versioned business field; terminate the timeline via `setEndDate` (§2.6).
 
 #### 1.2 Primary Keys and Fields
 - `sliceId`: physical primary key of a timeline model, used to update a slice.
@@ -711,13 +714,14 @@ Example timeline slices (same logical department `id`):
 #### 2.3 create APIs
 - For `createOne/createList`, if `effectiveStartDate` is empty, it uses the current `effectiveDate`; if `effectiveEndDate` is empty, it is set to `9999-12-31`.
 - If an existing `id` is provided, the system automatically splits or adjusts adjacent slices based on the new `effectiveStartDate`.
-- **The three write intents, made explicit:**
+- **The write intents, made explicit:**
 
   | Intent | API | Key |
   |---|---|---|
   | Create a NEW entity | `create*` **without** `id` | fresh logical `id` + genesis slice |
   | Add a version to an EXISTING entity | `addVersion` (or `create*` with the existing `id`) | returns the new `sliceId` |
   | Correct one existing version | `update*` | keyed by `sliceId` (any supplied `id` is overwritten from the DB) |
+  | Terminate / reopen the timeline | `setEndDate` (§2.6) | keyed by logical `id`; writes the LAST slice's end date |
 
 - `addVersion(modelName, row)` is the explicit add-version entry (REST: `POST /{model}/addVersion`,
   counterpart of `deleteBySliceId`): the row must carry the existing entity's `id`, and it returns the new
@@ -731,7 +735,9 @@ Example timeline slices (same logical department `id`):
 
 #### 2.4 update APIs
 - The current implementation uses `sliceId` as the update primary key. Updating `effectiveStartDate` automatically corrects adjacent slices' `effectiveEndDate`.
-- Manual updates to `effectiveEndDate` are not recommended. To create a new slice, use `create` with an existing `id` and a new `effectiveStartDate`.
+- `effectiveEndDate` is system-computed and **stripped from every generic update write**; the single
+  sanctioned write path is `setEndDate` (§2.6). To create a new slice, use `create` with an existing `id`
+  and a new `effectiveStartDate`.
 - If an upper layer provides a "correct"-style API (update data without creating a new slice), it should locate by `sliceId` (the ORM currently does not provide a dedicated correct API).
 
 #### 2.5 delete / copy APIs
@@ -746,7 +752,40 @@ Example timeline slices (same logical department `id`):
   not add a slice to the source entity. (`businessKey` fields are `copyable = false`, so set a new code on
   the copy.)
 
-#### 2.6 Versioning seam (engine internals)
+#### 2.6 Termination & gaps (`setEndDate`)
+- `setEndDate(modelName, id, endDate)` (REST: `POST /{model}/setEndDate`) writes the `effectiveEndDate`
+  of the entity's **LAST** slice — the single sanctioned write to the system-computed end date. An
+  `endDate` before `9999-12-31` **terminates** the timeline: as-of reads after it return nothing.
+  Passing `9999-12-31` **reopens** it. The tail slice is resolved server-side from the logical `id`, so
+  callers never race a stale `sliceId`.
+- `endDate` must not precede the tail slice's own `effectiveStartDate` — delete the trailing version(s)
+  first (`deleteBySliceId`) to terminate earlier; nothing is ever implicitly discarded.
+- **Revive**: a later `addVersion` whose start is after a terminated end date inserts a fresh open
+  segment, deliberately leaving a **gap**. Routing falls out of the existing algorithm — no special
+  cases:
+
+  | `addVersion` start lands... | Behavior |
+  |---|---|
+  | inside existing coverage | normal split / same-start correct; a terminated end date survives the split |
+  | inside a gap, before a later segment | fills forward: new slice ends one day before the next segment's start |
+  | after everything (terminated tail) | revives: fresh segment open to `9999-12-31`; the gap stays |
+
+- **Gaps are safe, silent, and deliberate.** A gap is "no coverage": as-of reads inside it return no
+  row — exactly the state a not-yet-effective entity (future-dated genesis) already produces, so
+  consumers carry no new obligation. Overlaps — the actual corruption class (two rows for one date) —
+  remain constructively impossible: only `setEndDate` writes an end date, and only on the tail, which
+  has no right neighbor. Gaps have no first-class row, so "why is it dark" lives only in the changelog;
+  a domain that needs a queryable reason (suspended vs terminated, reporting rows) should model a
+  **versioned status field** on top — the two compose.
+- Termination is **not** deletion: the entity `id` stays valid, inbound FKs keep resolving (as-of joins
+  simply return nothing past the end date), and the `onDelete` strategy does not fire.
+- Sharp edges (the generic interval rules applied at a termination boundary — visible in the version
+  list, one `setEndDate` away from repair): a revived segment created with no neighbor copies nothing
+  (genesis-like — provide required fields); moving a revived segment's start left onto the terminated
+  segment re-derives that end date (the gap is bridged); deleting the slice that carries the terminated
+  end date transfers it to the predecessor (the heal rule), rather than reopening.
+
+#### 2.7 Versioning seam (engine internals)
 - All timeline handling in `ModelServiceImpl` routes through one `VersioningStrategy` seam
   (`service/versioning/`): `IdentityStrategy` is a no-op for regular models, `TimelineStrategy` adapts the
   interval-maintenance algorithm in `TimelineService`. New read paths must route Filters/FlexQuery through
@@ -765,7 +804,7 @@ Example timeline slices (same logical department `id`):
   threads must propagate the context (ScopedValue) to workers — e.g. a payroll run pricing by `payDate` —
   or that branch silently prices "as of today".
 
-#### 2.7 search Join Rules for Timeline Associations
+#### 2.8 search Join Rules for Timeline Associations
 - When the related object is a timeline model, Many2One/One2One queries automatically append to the `LEFT JOIN ON` clause:
   `effectiveStartDate <= effectiveDate AND effectiveEndDate >= effectiveDate`.
 - One2Many/Many2Many cascades also filter slices based on `effectiveDate`.

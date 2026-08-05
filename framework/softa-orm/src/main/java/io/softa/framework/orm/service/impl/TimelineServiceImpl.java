@@ -124,6 +124,50 @@ public class TimelineServiceImpl<K extends Serializable> implements TimelineServ
     }
 
     /**
+     * Set the `effectiveEndDate` of the LAST slice of a timeline entity — the single
+     * sanctioned write to the system-computed end date. The tail is resolved server-side
+     * by the logical id, so callers never race a stale sliceId. A later `addVersion`
+     * whose start is after a terminated end date revives the entity as a new segment,
+     * leaving a deliberate gap (as-of reads inside it return nothing).
+     *
+     * @param modelName model name
+     * @param id the logical id of the timeline entity
+     * @param endDate the new end date of the LAST slice (`MAX_EFFECTIVE_END_DATE` reopens)
+     * @return true when the tail row was written; false when it already carried `endDate`
+     */
+    @Override
+    public boolean setEndDate(String modelName, Serializable id, LocalDate endDate) {
+        Assert.notNull(id, "Timeline model {0}: `id` is required to set the end date.", modelName);
+        Assert.notNull(endDate, "Timeline model {0}: `endDate` is required.", modelName);
+        TimelineSlice lastSlice = this.getLastSlice(modelName, id);
+        Assert.notTrue(endDate.isBefore(lastSlice.getEffectiveStartDate()),
+                "Timeline model {0}: endDate {1} precedes the last slice''s start date {2}. "
+                        + "Delete the trailing version(s) first (deleteBySliceId) to terminate earlier.",
+                modelName, endDate, lastSlice.getEffectiveStartDate());
+        if (endDate.equals(lastSlice.getEffectiveEndDate())) {
+            return false;
+        }
+        return this.correctSliceEndDate(modelName, lastSlice.getSliceId(), endDate) > 0;
+    }
+
+    /**
+     * Get the LAST slice (max `effectiveStartDate`) of a timeline entity by its logical id.
+     *
+     * @param modelName model name
+     * @param id the logical id of the timeline entity
+     * @return the last slice
+     */
+    private TimelineSlice getLastSlice(String modelName, Serializable id) {
+        Set<String> fields = new HashSet<>(ModelConstant.TIMELINE_FIELDS);
+        FlexQuery flexQuery = new FlexQuery(fields, new Filters().eq(ModelConstant.ID, id)).acrossTimelineData();
+        flexQuery.setOrders(Orders.ofDesc(ModelConstant.EFFECTIVE_START_DATE));
+        flexQuery.setLimitSize(1);
+        List<Map<String, Object>> rows = jdbcService.selectByFilter(modelName, flexQuery);
+        Assert.notEmpty(rows, "Timeline model {0} does not exist data for id={1}.", modelName, id);
+        return BeanTool.mapToObject(rows.getFirst(), TimelineSlice.class);
+    }
+
+    /**
      * Create multiple slices of a timeline model, and return the data list with `sliceId`.
      *
      * @param modelName model name
@@ -262,7 +306,8 @@ public class TimelineServiceImpl<K extends Serializable> implements TimelineServ
      */
     @Override
     public Integer updateSlices(String modelName, List<Map<String, Object>> rows) {
-        rows.forEach(sliceRow -> {
+        int updatedCount = 0;
+        for (Map<String, Object> sliceRow : rows) {
             Serializable sliceId = (Serializable) sliceRow.get(ModelConstant.SLICE_ID);
             // When sliceId is of Integer type, convert it to Long type.
             sliceId = IdUtils.formatId(modelName, ModelConstant.SLICE_ID, sliceId);
@@ -275,12 +320,15 @@ public class TimelineServiceImpl<K extends Serializable> implements TimelineServ
                 Assert.notTrue(effectiveStartDate == null || effectiveStartDate.equals(""),
                         "`effectiveStartDate` field of timeline model {0} cannot be set to empty! {1}", modelName, sliceRow);
                 sliceRow.put(ModelConstant.EFFECTIVE_START_DATE, DateUtils.dateToLocalDate(effectiveStartDate));
-                this.updateSliceAndCorrectDate(modelName, sliceRow);
+                updatedCount += this.updateSliceAndCorrectDate(modelName, sliceRow);
             } else {
-                this.updateCurrentSlice(modelName, sliceRow, false);
+                updatedCount += this.updateCurrentSlice(modelName, sliceRow, false);
             }
-        });
-        return rows.size();
+        }
+        // The REAL number of physically updated main rows (the diff layer may find nothing
+        // to write) — not the attempted row count. Neighbor corrections are not counted,
+        // matching the non-timeline convention of counting the primary rows only.
+        return updatedCount;
     }
 
     /**
@@ -289,17 +337,17 @@ public class TimelineServiceImpl<K extends Serializable> implements TimelineServ
      * @param modelName the name of the model
      * @param sliceRow the slice data to be updated
      */
-    private void updateSliceAndCorrectDate(String modelName, Map<String, Object> sliceRow) {
+    private Integer updateSliceAndCorrectDate(String modelName, Map<String, Object> sliceRow) {
         TimelineSlice currentSlice = BeanTool.mapToObject(sliceRow, TimelineSlice.class);
         TimelineSlice originalSlice = this.getTimelineSlice(modelName, currentSlice.getSliceId());
         Map<String, Object> overlappedRow = this.getOverlappedSlice(modelName, currentSlice, ModelConstant.TIMELINE_FIELDS);
         if (!overlappedRow.isEmpty()) {
             // Update the `effectiveEndDate` of the current slice based on the overlapped slice.
             TimelineSlice overlappedSlice = BeanTool.mapToObject(overlappedRow, TimelineSlice.class);
-            this.updateSliceByOverlapped(modelName, sliceRow, currentSlice, originalSlice, overlappedSlice);
+            return this.updateSliceByOverlapped(modelName, sliceRow, currentSlice, originalSlice, overlappedSlice);
         } else {
             // Update the `effectiveEndDate` of the current slice based on the next slice.
-            this.updateSliceByNext(modelName, sliceRow, currentSlice, originalSlice);
+            return this.updateSliceByNext(modelName, sliceRow, currentSlice, originalSlice);
         }
     }
 
@@ -316,8 +364,8 @@ public class TimelineServiceImpl<K extends Serializable> implements TimelineServ
      * @param originalSlice the original slice object
      * @param overlappedSlice the overlapped slice object
      */
-    private void updateSliceByOverlapped(String modelName, Map<String, Object> sliceRow,
-                                         TimelineSlice currentSlice, TimelineSlice originalSlice, TimelineSlice overlappedSlice) {
+    private Integer updateSliceByOverlapped(String modelName, Map<String, Object> sliceRow,
+                                            TimelineSlice currentSlice, TimelineSlice originalSlice, TimelineSlice overlappedSlice) {
         boolean updateEndDate = false;
         if (currentSlice.getSliceId().equals(overlappedSlice.getSliceId())) {
             // The current slice overlaps with itself
@@ -347,7 +395,7 @@ public class TimelineServiceImpl<K extends Serializable> implements TimelineServ
                 sliceRow.put(ModelConstant.EFFECTIVE_END_DATE, overlappedSlice.getEffectiveEndDate());
             }
         }
-        this.updateCurrentSlice(modelName, sliceRow, updateEndDate);
+        return this.updateCurrentSlice(modelName, sliceRow, updateEndDate);
     }
 
     /**
@@ -359,7 +407,7 @@ public class TimelineServiceImpl<K extends Serializable> implements TimelineServ
      * @param currentSlice the current slice object
      * @param originalSlice the original slice object
      */
-    private void updateSliceByNext(String modelName, Map<String, Object> sliceRow, TimelineSlice currentSlice, TimelineSlice originalSlice) {
+    private Integer updateSliceByNext(String modelName, Map<String, Object> sliceRow, TimelineSlice currentSlice, TimelineSlice originalSlice) {
         boolean updateEndDate = false;
         Map<String, Object> nextRow = this.getNextSlice(modelName, currentSlice, ModelConstant.TIMELINE_FIELDS);
         if (!nextRow.isEmpty()) {
@@ -375,7 +423,7 @@ public class TimelineServiceImpl<K extends Serializable> implements TimelineServ
                 sliceRow.put(ModelConstant.EFFECTIVE_END_DATE, nextStartDate.minusDays(1));
             }
         }
-        this.updateCurrentSlice(modelName, sliceRow, updateEndDate);
+        return this.updateCurrentSlice(modelName, sliceRow, updateEndDate);
     }
 
     /**
@@ -384,14 +432,15 @@ public class TimelineServiceImpl<K extends Serializable> implements TimelineServ
      * @param modelName model name
      * @param sliceRow the slice data to be updated
      */
-    private void updateCurrentSlice(String modelName, Map<String, Object> sliceRow, boolean updateEndDate) {
+    private Integer updateCurrentSlice(String modelName, Map<String, Object> sliceRow, boolean updateEndDate) {
         Set<String> toUpdateFields = new HashSet<>(ModelManager.getModelUpdatableFields(modelName));
         toUpdateFields.retainAll(sliceRow.keySet());
         if (!updateEndDate) {
             // `effectiveEndDate` is automatically computed and cannot be assigned externally.
             toUpdateFields.remove(ModelConstant.EFFECTIVE_END_DATE);
         }
-        jdbcService.updateList(modelName, Collections.singletonList(sliceRow), toUpdateFields);
+        // The diff layer inside updateList may find nothing to write — report the REAL count.
+        return jdbcService.updateList(modelName, Collections.singletonList(sliceRow), toUpdateFields);
     }
 
     /**
@@ -448,12 +497,12 @@ public class TimelineServiceImpl<K extends Serializable> implements TimelineServ
      * @param pKey sliceId of the timeline data
      * @param effectiveEndDate the new `effectiveEndDate` date
      */
-    private void correctSliceEndDate(String modelName, Serializable pKey, LocalDate effectiveEndDate) {
+    private Integer correctSliceEndDate(String modelName, Serializable pKey, LocalDate effectiveEndDate) {
         Map<String, Object> value = MapUtils.<String, Object>builder()
                 .put(ModelConstant.EFFECTIVE_END_DATE, effectiveEndDate)
                 .put(ModelConstant.SLICE_ID, pKey)
                 .build();
-        jdbcService.updateOne(modelName, value);
+        return jdbcService.updateOne(modelName, value);
     }
 
     /**

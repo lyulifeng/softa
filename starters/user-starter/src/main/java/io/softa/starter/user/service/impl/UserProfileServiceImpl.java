@@ -99,6 +99,14 @@ public class UserProfileServiceImpl extends EntityServiceImpl<UserProfile, Long>
         return userInfo;
     }
 
+    @Override
+    public void evictUserInfo(Long userId) {
+        if (userId == null) {
+            return;
+        }
+        cacheService.clear(RedisConstant.USER_INFO + userId);
+    }
+
     /**
      * Refresh UserInfo cache
      *

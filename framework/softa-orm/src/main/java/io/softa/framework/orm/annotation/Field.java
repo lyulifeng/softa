@@ -53,7 +53,11 @@ public @interface Field {
     /** DB column name; empty = derived from {@code snake_case(fieldName)}. */
     String columnName() default "";
 
-    /** Length (STRING / DECIMAL precision); 0 = scanner picks type-specific default. */
+    /**
+     * Length (STRING / DECIMAL precision); 0 = scanner picks type-specific default.
+     * On TEXT fields length is optional and purely an app-level guard — the column
+     * itself is unbounded (MySQL MEDIUMTEXT / PostgreSQL TEXT).
+     */
     int length() default 0;
 
     /** Scale (DOUBLE / BIG_DECIMAL); 0 = scanner picks type-specific default. */
@@ -178,7 +182,7 @@ public @interface Field {
      * UI widget type override. Empty array = no override; the framework picks
      * the default presentation for the field's {@code fieldType} at runtime
      * (no compile-time auto-inference). Single element = explicit override,
-     * e.g. {@code widgetType = WidgetType.TEXT}. AI / human writes the
+     * e.g. {@code widgetType = WidgetType.PLAIN_TEXT}. AI / human writes the
      * single value directly — Java auto-wraps it into a single-element array.
      */
     WidgetType[] widgetType() default {};

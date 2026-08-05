@@ -16,6 +16,9 @@ import io.softa.framework.orm.meta.ModelManager;
  *      When 'defaultOrder' is not configured, using the global default order `DEFAULT_PAGED_ORDER`.
  * For non-paged queries:
  *      Order according to the `orders` in flexQuery, or do not specify the sort when it is empty.
+ * For DISTINCT queries:
+ *      Only explicit `orders` are applied, never an implicit one — MySQL (error 3065) and
+ *      PostgreSQL reject ORDER BY columns outside the DISTINCT select list.
  */
 public class OrderByBuilder extends BaseBuilder implements SqlClauseBuilder {
 
@@ -40,7 +43,11 @@ public class OrderByBuilder extends BaseBuilder implements SqlClauseBuilder {
      */
     public void handleOrderBy() {
         Orders orders = flexQuery.getOrders();
-        if (orders == null && !flexQuery.isAggregate()) {
+        // A DISTINCT projection deduplicates rows, so a column outside its select list has no
+        // defined value to sort by — MySQL (error 3065) and PostgreSQL both reject it. Never
+        // inject an implicit order into a DISTINCT query; explicit `orders` pass through as-is.
+        boolean distinct = flexQuery.isDistinct();
+        if (orders == null && !flexQuery.isAggregate() && !distinct) {
             // When `orders` in flexQuery is empty, using the `defaultOrder` configuration of model.
             Orders defaultOrder = ModelManager.getModel(mainModelName).getDefaultOrder();
             if (defaultOrder != null && !defaultOrder.isEmpty()) {
@@ -60,7 +67,8 @@ public class OrderByBuilder extends BaseBuilder implements SqlClauseBuilder {
             // For stable order paging queries, if there is no `id` in the orders parameter,
             // automatically add `t.id ASC` at the end of the order condition,
             // to ensure that different page data is as non-repetitive as possible.
-            if (page != null && page.isCursorPage() && !orders.getFields().contains(ModelConstant.ID)) {
+            // Skipped for DISTINCT: `id` is outside the select list (same 3065 failure).
+            if (page != null && page.isCursorPage() && !distinct && !orders.getFields().contains(ModelConstant.ID)) {
                 sqlWrapper.orderBy(SqlWrapper.MAIN_TABLE_ALIAS + "." + ModelConstant.ID, Orders.ASC);
             }
         }

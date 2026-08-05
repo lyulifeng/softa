@@ -51,6 +51,12 @@ public record RenderedDdl(Kind kind, String label, List<String> statements) {
     public enum Kind {
         CREATE_TABLE(true),
         ALTER_TABLE(true),
+        /**
+         * A MODIFY whose physical comparison says the column would shrink (or the type
+         * families are incomparable): executing it could truncate data, so it joins the
+         * warn-only tier with copy-paste SQL — the same risk class as DROP.
+         */
+        ALTER_NARROWING(false),
         ALTER_INDEX(true),
         DROP_TABLE(false),
         DROP_COLUMN(false),

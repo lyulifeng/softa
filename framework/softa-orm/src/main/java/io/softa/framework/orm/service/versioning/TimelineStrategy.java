@@ -1,6 +1,7 @@
 package io.softa.framework.orm.service.versioning;
 
 import java.io.Serializable;
+import java.time.LocalDate;
 import java.util.Arrays;
 import java.util.Collection;
 import java.util.List;
@@ -119,5 +120,10 @@ public class TimelineStrategy<K extends Serializable> implements VersioningStrat
     @Override
     public boolean deleteVersion(String modelName, TimelineSlice slice) {
         return timelineService.deleteSlice(modelName, slice);
+    }
+
+    @Override
+    public boolean setEndDate(String modelName, Serializable id, LocalDate endDate) {
+        return timelineService.setEndDate(modelName, id, endDate);
     }
 }

@@ -10,7 +10,7 @@ import org.springframework.stereotype.Component;
 import io.softa.framework.base.context.Context;
 import io.softa.framework.base.context.ContextHolder;
 import io.softa.starter.cron.message.dto.CronTaskMessage;
-import io.softa.starter.tenant.entitlement.SubscriptionExpiryJob;
+import io.softa.starter.tenant.entitlement.SubscriptionProjectionJob;
 import io.softa.starter.tenant.service.impl.TenantProvisioningStatusService;
 
 /**
@@ -20,7 +20,7 @@ import io.softa.starter.tenant.service.impl.TenantProvisioningStatusService;
  * module's cron consumer) and handles only these; any other cron name is ignored.
  *
  * <p>Both are tenant / billing-domain crons whose job logic already lives in tenant-starter
- * ({@link TenantProvisioningStatusService#failTimedOut()} and {@link SubscriptionExpiryJob}). Keeping their
+ * ({@link TenantProvisioningStatusService#failTimedOut()} and {@link SubscriptionProjectionJob}). Keeping their
  * trigger here — rather than as a corehr {@code CronTaskHandler} bridge — means softa's own tenant/billing
  * crons don't live in the HR business module. Both jobs are idempotent, so the Shared subscription
  * redelivering / multiple app instances receiving are harmless. Gated by {@code mq.topics.cron-task.topic}.
@@ -30,23 +30,30 @@ import io.softa.starter.tenant.service.impl.TenantProvisioningStatusService;
 // Optional cron-starter integration: only wires up when cron-starter is on the classpath (CronTaskMessage
 // present) AND the cron-task topic is configured. A deployment using a different scheduler (Quartz,
 // @Scheduled, XXL-Job, …) simply omits cron-starter — this consumer stays dormant and the app drives
-// TenantProvisioningStatusService.failTimedOut() / SubscriptionExpiryJob.syncDueTransitions() itself.
+// TenantProvisioningStatusService.failTimedOut() / SubscriptionProjectionJob.syncDueTransitions() itself.
 @ConditionalOnClass(name = "io.softa.starter.cron.message.dto.CronTaskMessage")
 @ConditionalOnProperty(name = "mq.topics.cron-task.topic")
 public class TenantMaintenanceCronConsumer {
 
-    /** Provisioning-timeout guard — {@code sys_cron.name} in tenant-starter's SysCron.TenantMaintenance.json. */
+    // Both match `sys_cron.name` — that is what CronScheduler puts on the message, not the seed file's `id`
+    // (which is the pre-data key).
+    //
+    // ⚠️ Renaming either is not a code-only change. The running `SubscriptionExpiry` row was inserted by
+    // business SQL and has no `sys_pre_data` binding, so the seed cannot reconcile it: a rename leaves that
+    // row behind — still active, still firing — while its messages stop matching anything here, and the seed
+    // adds a second row alongside it. Delete the orphan in the same deployment, or don't rename.
+    /** Provisioning-timeout guard — seeded in tenant-starter's SysCron.TenantMaintenance.json. */
     static final String PROVISIONING_TIMEOUT = "ProvisioningTimeout";
-    /** Subscription-lifecycle expiry — {@code sys_cron.name} seeded by the app (hcm 4.cron-data.sql). */
+    /** Subscription projection + expiry reminders — same seed file. */
     static final String SUBSCRIPTION_EXPIRY = "SubscriptionExpiry";
 
     private final TenantProvisioningStatusService statusService;
-    private final SubscriptionExpiryJob subscriptionExpiryJob;
+    private final SubscriptionProjectionJob subscriptionProjectionJob;
 
     public TenantMaintenanceCronConsumer(TenantProvisioningStatusService statusService,
-                                         SubscriptionExpiryJob subscriptionExpiryJob) {
+                                         SubscriptionProjectionJob subscriptionProjectionJob) {
         this.statusService = statusService;
-        this.subscriptionExpiryJob = subscriptionExpiryJob;
+        this.subscriptionProjectionJob = subscriptionProjectionJob;
     }
 
     @PulsarListener(topics = "${mq.topics.cron-task.topic}",
@@ -78,7 +85,7 @@ public class TenantMaintenanceCronConsumer {
                     }
                 }
                 case SUBSCRIPTION_EXPIRY -> {
-                    int changed = subscriptionExpiryJob.syncDueTransitions();
+                    int changed = subscriptionProjectionJob.syncDueTransitions();
                     log.info("[CRON] {} — {} subscription(s) transitioned (activate / expire)",
                             SUBSCRIPTION_EXPIRY, changed);
                 }

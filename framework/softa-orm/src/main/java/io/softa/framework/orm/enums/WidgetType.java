@@ -5,11 +5,12 @@ import java.util.function.Function;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
 import com.fasterxml.jackson.annotation.JsonValue;
-import io.softa.framework.base.annotation.OptionItem;
-import io.softa.framework.base.annotation.OptionSet;
 import lombok.AllArgsConstructor;
 import lombok.Getter;
 import org.apache.commons.lang3.StringUtils;
+
+import io.softa.framework.base.annotation.OptionItem;
+import io.softa.framework.base.annotation.OptionSet;
 
 /**
  * Widget type Enum.
@@ -24,7 +25,10 @@ public enum WidgetType {
     URL("URL"),
     PHONE("Phone"),
     EMAIL("Email"),
-    TEXT("Text"),
+    // Multiline plain-text editor. Named by content format (PlainText / RichText /
+    // Markdown / Code); distinct from FieldType.TEXT (a storage type) — a bounded
+    // String field may also use this widget for multiline editing.
+    PLAIN_TEXT("PlainText"),
     RICH_TEXT("RichText"),
     TEMPLATE_EDITOR("TemplateEditor"),
     MARKDOWN("Markdown"),

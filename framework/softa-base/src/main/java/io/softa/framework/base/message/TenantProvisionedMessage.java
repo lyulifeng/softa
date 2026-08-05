@@ -9,6 +9,8 @@ package io.softa.framework.base.message;
  * @param tenantId the newly provisioned tenant's id
  * @param code     the tenant code (as supplied, or slug-generated)
  * @param name     the tenant display name (business modules name their seeded masters after it)
+ * @param rebuild  true only when a tenant's setup is being deliberately restarted; seeders discard
+ *                 their own previous output first when it is set, and never otherwise
  */
-public record TenantProvisionedMessage(Long tenantId, String code, String name) {
+public record TenantProvisionedMessage(Long tenantId, String code, String name, boolean rebuild) {
 }

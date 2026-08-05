@@ -18,8 +18,10 @@ import io.softa.starter.tenant.constant.PlanConstant;
 import io.softa.starter.tenant.entity.Plan;
 import io.softa.starter.tenant.entity.PlanEntitlement;
 import io.softa.starter.tenant.entity.TenantInfo;
+import io.softa.starter.tenant.entity.TenantSubscriptionPeriod;
+import org.junit.jupiter.api.DisplayName;
 import io.softa.starter.tenant.entity.TenantSubscription;
-import io.softa.starter.tenant.enums.TenantLifecycle;
+import io.softa.starter.tenant.service.SubscriptionProjectionService;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
@@ -30,9 +32,9 @@ import static org.mockito.Mockito.when;
 
 /**
  * Resolution logic for {@link EntitlementResolver}. Feeds a mocked {@link ModelService} (cache always
- * misses) and asserts the effective module set: plan = the 1:1 subscription's planId (degraded to the
- * FALLBACK plan when no sub / lifecycle EXPIRED), modules = plan_entitlement, fail-closed to the
- * fallback set. The fallback is the lowest-{@code tier} plan — <b>no plan id is hardcoded</b>; see
+ * misses) and asserts the effective module set: plan = the subscription row's projected planId (null
+ * there means no period covers today, so the floor plan applies), modules = plan_entitlement,
+ * fail-closed to the floor set. The fallback is the lowest-{@code tier} plan — <b>no plan id is hardcoded</b>; see
  * {@link #fallbackIsLowestTierPlan_notByHardcodedId()} and {@link #noPlansConfigured_emptyEntitlement()}.
  */
 class EntitlementResolverTest {
@@ -43,6 +45,7 @@ class EntitlementResolverTest {
     private ModelService<?> modelService;
     private EntitlementResolver resolver;
     private List<TenantSubscription> subs;
+    private List<TenantSubscriptionPeriod> periodRows;
     private List<Plan> plans;
     private Map<String, List<String>> planModules;
 
@@ -51,9 +54,15 @@ class EntitlementResolverTest {
         modelService = mock(ModelService.class);
         CacheService cacheService = mock(CacheService.class);
         when(cacheService.get(anyString(), eq(EntitlementInfo.class))).thenReturn(null);  // always miss → compute
-        resolver = new EntitlementResolver(modelService, cacheService);
+        // The projection refresh is exercised by SubscriptionProjectionServiceImplTest; here it is a
+        // no-op so these cases isolate the plan → modules resolution.
+        SubscriptionProjectionService projectionService = mock(SubscriptionProjectionService.class);
+        when(projectionService.refresh(any(TenantInfo.class)))
+                .thenAnswer(inv -> subs.isEmpty() ? null : subs.getFirst());
+        resolver = new EntitlementResolver(modelService, cacheService, projectionService);
 
         subs = new ArrayList<>();
+        periodRows = new ArrayList<>();
         // Default catalog: free(0) < pro(10) < enterprise(20). Lowest tier (free) is the fallback.
         plans = new ArrayList<>(List.of(
                 plan(PlanConstant.PLAN_FREE, 0),
@@ -74,6 +83,45 @@ class EntitlementResolverTest {
                 .thenAnswer(inv -> planEntitlements(filterValue(inv.getArgument(1))));
         when(modelService.searchList(eq("Plan"), any(FlexQuery.class), eq(Plan.class)))
                 .thenAnswer(inv -> plansMatching(inv.getArgument(1)));
+        // Period rows exist only to answer "does this tenant own a baseline period at all". Default empty,
+        // which is the pre-migration shape and the one the cases above rely on.
+        when(modelService.searchList(eq("TenantSubscriptionPeriod"), any(FlexQuery.class),
+                eq(TenantSubscriptionPeriod.class))).thenAnswer(inv -> periodRows);
+    }
+
+    // ─── no covering period: two situations, opposite answers ───
+
+    @Test
+    @DisplayName("a free period that an operator ended grants nothing — the fallback must not undo that")
+    void freePeriodEnded_grantsNothing() {
+        // Time-boxing the free period is the whole mechanism for cutting a free tenant off (a competitor
+        // evaluating the product, say). Falling back to the floor plan here would hand back exactly the access
+        // the operator removed, and hand it back forever.
+        // The subscription row exists — it always does — but its projection covers nothing: planId null means
+        // no period covers today. The free row is still THERE, which is what separates this from the case below.
+        subs.add(sub(null));
+        periodRows.add(floorPeriod());
+
+        assertThat(modules(TENANT)).isEmpty();
+        assertThat(resolver.resolve(TENANT).planId()).isNull();
+    }
+
+    @Test
+    @DisplayName("a tenant with no baseline period still gets the floor plan, so a missed migration is survivable")
+    void noFloorPeriod_fallsBack() {
+        // A subscription row written before provisioning began creating the free period. Granting nothing
+        // would take access away from an existing customer on the deploy that introduced this; the resolver
+        // logs a warning and serves the floor instead, and the remedy is to give it its free period.
+        periodRows.clear();
+
+        assertThat(modules(TENANT)).containsExactlyInAnyOrder(
+                ModuleConstant.CORE_HR, ModuleConstant.USERS, ModuleConstant.SYSTEM);
+    }
+
+    private static TenantSubscriptionPeriod floorPeriod() {
+        TenantSubscriptionPeriod period = new TenantSubscriptionPeriod();
+        period.setPlanId(PlanConstant.PLAN_FREE);
+        return period;
     }
 
     // ─── plan / lifecycle ───
@@ -86,41 +134,33 @@ class EntitlementResolverTest {
 
     @Test
     void proPlan_yieldsProModules() {
-        subs.add(sub(PlanConstant.PLAN_PRO, TenantLifecycle.SUBSCRIBED));
+        subs.add(sub(PlanConstant.PLAN_PRO));
         assertThat(modules(TENANT)).containsExactlyInAnyOrder(
                 ModuleConstant.CORE_HR, ModuleConstant.USERS, ModuleConstant.SYSTEM,
                 ModuleConstant.ATTENDANCE, ModuleConstant.ADMIN);
     }
 
     @Test
-    void trialEnterprise_yieldsEnterpriseModules() {
-        subs.add(sub(PlanConstant.PLAN_ENTERPRISE, TenantLifecycle.TRIAL));  // trial is active
+    void enterprisePlan_yieldsEnterpriseModules() {
+        subs.add(sub(PlanConstant.PLAN_ENTERPRISE));  // trial and paid grant the same modules
         assertThat(modules(TENANT)).contains(ModuleConstant.AI);
     }
 
     @Test
-    void expiredLifecycle_degradesToFallback() {
-        subs.add(sub(PlanConstant.PLAN_ENTERPRISE, TenantLifecycle.EXPIRED));
+    void noPeriodCoversToday_degradesToFloor() {
+        // Lapsed, scheduled-but-not-started and never-bought all project to a null plan — one branch
+        // here, because all three grant the same thing. Telling them apart is a display concern.
+        subs.add(noCurrentPeriod());
         assertThat(modules(TENANT)).containsExactlyInAnyOrder(
                 ModuleConstant.CORE_HR, ModuleConstant.USERS, ModuleConstant.SYSTEM);
-        assertThat(resolver.resolve(TENANT).planId()).isEqualTo(PlanConstant.PLAN_FREE);  // = the lowest tier
-    }
-
-    @Test
-    void scheduledLifecycle_notYetActive_degradesToFallback() {
-        // A SCHEDULED sub (start date not yet reached) is NOT active → resolver serves the fallback,
-        // not the plan, until the lifecycle job flips it to SUBSCRIBED.
-        subs.add(sub(PlanConstant.PLAN_ENTERPRISE, TenantLifecycle.SCHEDULED));
-        assertThat(modules(TENANT)).containsExactlyInAnyOrder(
-                ModuleConstant.CORE_HR, ModuleConstant.USERS, ModuleConstant.SYSTEM);
-        assertThat(resolver.resolve(TENANT).planId()).isEqualTo(PlanConstant.PLAN_FREE);
+        assertThat(resolver.resolve(TENANT).planId()).isEqualTo(PlanConstant.PLAN_FREE);  // = lowest tier
     }
 
     // ─── fail-closed ───
 
     @Test
     void unconfiguredPlan_failsClosedToFallbackBase() {
-        subs.add(sub(PlanConstant.PLAN_PRO, TenantLifecycle.SUBSCRIBED));
+        subs.add(sub(PlanConstant.PLAN_PRO));
         planModules.remove(PlanConstant.PLAN_PRO);   // pro's modules missing
         assertThat(modules(TENANT)).containsExactlyInAnyOrder(
                 ModuleConstant.CORE_HR, ModuleConstant.USERS, ModuleConstant.SYSTEM);
@@ -184,11 +224,19 @@ class EntitlementResolverTest {
         return String.valueOf(q.getFilters().getFilterUnit().getValue());
     }
 
-    private static TenantSubscription sub(String planId, TenantLifecycle lifecycle) {
+    /** A subscription row whose projection says "this plan covers today". */
+    private static TenantSubscription sub(String planId) {
         TenantSubscription s = new TenantSubscription();
         s.setId(SUB_ID);
         s.setPlanId(planId);
-        s.setLifecycle(lifecycle);
+        return s;
+    }
+
+    /** A subscription row whose projection says "no period covers today" — the floor applies. */
+    private static TenantSubscription noCurrentPeriod() {
+        TenantSubscription s = new TenantSubscription();
+        s.setId(SUB_ID);
+        s.setPlanId(null);
         return s;
     }
 

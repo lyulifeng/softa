@@ -143,7 +143,8 @@ public enum CustomerTier {
 
 **Key inference rules**:
 - `fieldType` inferred from Java type (`String→STRING`, `Integer→INTEGER`,
-  `enum→OPTION`, `List<enum>→MULTI_OPTION`, `@Model POJO→MANY_TO_ONE`, etc.)
+  `enum→OPTION`, `List<enum>→MULTI_OPTION`, `@Model POJO→MANY_TO_ONE`,
+  `DTOFieldObject POJO→DTO`, etc.)
 - `OPTION` / `MULTI_OPTION` **cannot be written explicitly** — only inferred
   from `enum` / `List<enum>` Java types
 - **Code-as-id for rich reference masters**: a TO_ONE
@@ -170,8 +171,12 @@ public enum CustomerTier {
   → 64, `MULTI_STRING` / `ORDERS` → 256, `MULTI_OPTION` → 255, `MULTI_FILE` → 1024,
   `FILTERS` → 512, `BIG_DECIMAL` → (32, 8), `DOUBLE` → (24, 2); a `String` PK →
   24. Other types take no length. Declare `length` / `scale` **only to override**
-  the type-default (e.g. `length = 100`, `length = 20000` → TEXT on MySQL above
-  16383). This is sound for the annotation lane: it always renders DDL via the
+  the type-default (e.g. `length = 100`). For unbounded long text declare
+  `@Field(fieldType = FieldType.TEXT)` — MySQL MEDIUMTEXT / PG TEXT, never
+  inferred, no length needed (a declared length is only an app-level guard).
+  The legacy `STRING length > 16383` → MySQL TEXT route still works but caps at
+  64KB **bytes** while validation counts characters — new code uses `TEXT`.
+  This is sound for the annotation lane: it always renders DDL via the
   builtin resolver; the studio (no-code) lane keeps per-flavor defaults.
 - `id` is always emitted to `sys_field` as the PK; its type is inferred from the
   declared Java field (`Long` / `String`). **Convention: write an explicit
@@ -262,7 +267,9 @@ its annotation default (`required = false`, `copyable = true`, `multiTenant =
 false`, `idStrategy = DB_AUTO_ID`, `@Index(unique = false)`, …); omit
 `tableName` / `columnName` equal to `snake_case(name)`; omit `length` / `scale`
 equal to the **type-default** above (so a bare `@Field private String x;` is a
-VARCHAR(64) column). Omit `@OptionItem` entirely when its only effect would be
+VARCHAR(64) column); omit `defaultValue` on a versionLock model's `version`
+field (the metadata layer materializes `0` into `sys_field.default_value`, and
+`ModelManager` fail-fasts when it is missing). Omit `@OptionItem` entirely when its only effect would be
 `label == humanize(constant)`. The rule is safe precisely because the parser
 regenerates the identical `sys_*` value on omission. Keep the attribute only
 when the value genuinely differs from the default (acronym labels like `ID` /
@@ -301,13 +308,39 @@ Discovery is separate from management: `system.metadata.scan-base-packages`
 Boot ordering and recovery: the scanner executes DDL **before** committing the
 `sys_*` rows — a failed DDL leaves the rows unwritten, so the next boot
 recomputes the same diff and retries (re-applied DDL degrades to WARN on
-"already exists").
+"already exists"). **Physical recovery**: DDL planning also snapshots the
+managed tables via `DatabaseMetaData` (no switch — posture follows
+`scanner-scope`; introspection failure degrades to plain diff planning) and
+prepends *additive-only* recovery DDL where `sys_*` and
+the physical schema drifted apart (hand-dropped column behind a MODIFY →
+recreate it; hand-dropped table behind ALTERs → full CREATE from code;
+pre-existing table behind a CREATE → adopt by adding missing columns/indexes).
+Originally planned statements always still run, so stale facts only add WARN
+noise, never lose a change. A MODIFY whose physical comparison says the column
+would **narrow** (or types are incomparable) is deferred to the warn-only SQL
+block instead of auto-executing — widen freely, never narrow silently. Every
+boot also logs a consolidated physical drift audit (missing/undeclared
+tables/columns/indexes + type mismatches), and `GET /metadata/status` serves
+the boot snapshot (code vs catalog fingerprints + the drift report). Details:
+[metadata-starter README](starters/metadata-starter/README.md).
 
 A **narrow scope on a shared dev database** lets each developer reconcile only
 their own packages without clobbering others' rows —
 out-of-scope rows are never read, written, or deleted. Caveats (not solved by
 scoping): scope is per-package not per-class, the baseline is the shared live
 `sys_*`, and physical-table collisions remain.
+
+**Catalog aggregate roots are never auto-deleted** — under *every* scope, `["*"]`
+included. `sys_model` / `sys_option_set` are the roots; `sys_field` /
+`sys_model_index` / `sys_option_item` are their attributes. A root with no
+`@Model` / `@OptionSet` class is confined out of the diff together with its
+attribute rows (they follow their root), because a code-less root is a
+first-class state here — Studio no-code and seed-authored models never have a
+Java class, and nothing records row ownership (`Ownership` is retained but
+unused), so "orphan" and "deliberately code-less" are indistinguishable.
+`["*"]` names them in a WARN with copy-paste `DELETE` SQL; cleanup is a human
+decision. Attribute removals on a root that IS in code still auto-apply — there
+the annotations own the attribute set.
 
 **Renames: declare the `renamedFrom` attribute** (the earlier
 standalone `@RenamedFrom` annotation is retired). The scanner's set-based diff is

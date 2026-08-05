@@ -415,6 +415,24 @@ class AnnotationParserTest {
         @Override public Serializable getId() { return null; }
     }
 
+    @Model
+    @SuppressWarnings("unused")
+    static class ExplicitTextOnString extends AuditableModel {
+        @Field(fieldType = FieldType.TEXT)
+        private String bodyHtml;
+        @Override public Serializable getId() { return null; }
+    }
+
+    @Test
+    void explicitTextFieldType_onString_isAccepted_withoutMaterializedLength() {
+        AnnotationScanResult result = parser.parse(List.of(ExplicitTextOnString.class), List.of());
+        SysField body = byFieldName(result.fields(), "bodyHtml");
+        assertEquals(FieldType.TEXT, body.getFieldType());
+        // TEXT is unbounded (MEDIUMTEXT / TEXT column): no type-default length is
+        // materialized — a declared length would be only an app-level guard.
+        assertNull(body.getLength());
+    }
+
     @Test
     void explicitMultiOptionFieldType_isAlwaysRejected() {
         IllegalStateException ex = assertThrows(IllegalStateException.class,
@@ -961,5 +979,53 @@ class AnnotationParserTest {
                 .filter(i -> name.equals(i.getIndexName()))
                 .findFirst()
                 .orElseThrow(() -> new AssertionError("no index " + name));
+    }
+
+    // ------- versionLock starting-value materialization -------------------
+
+    @Test
+    void versionLockModel_materializesVersionStartingDefault() {
+        @Model(versionLock = true)
+        @SuppressWarnings("unused")
+        class VersionedTicket extends AuditableModel {
+            @Field private Long id;
+            @Field(required = true) private Long version;
+            @Override public Serializable getId() { return id; }
+        }
+        // Materialized like the length/scale type-defaults: sys_field.default_value
+        // carries the real starting version, so the DDL layer renders DEFAULT 0 and
+        // the insert autofill stamps it — the NOT NULL `version` column can no longer
+        // be omitted from an INSERT (MySQL error 1364).
+        SysField version = byFieldName(
+                parser.parse(List.of(VersionedTicket.class), List.of()).fields(), "version");
+        assertEquals("0", version.getDefaultValue());
+    }
+
+    @Test
+    void versionLockModel_explicitVersionDefaultWins() {
+        @Model(versionLock = true)
+        @SuppressWarnings("unused")
+        class CustomStartTicket extends AuditableModel {
+            @Field private Long id;
+            @Field(required = true, defaultValue = "100") private Long version;
+            @Override public Serializable getId() { return id; }
+        }
+        SysField version = byFieldName(
+                parser.parse(List.of(CustomStartTicket.class), List.of()).fields(), "version");
+        assertEquals("100", version.getDefaultValue());
+    }
+
+    @Test
+    void versionFieldWithoutVersionLock_keepsNoDefault() {
+        @Model
+        @SuppressWarnings("unused")
+        class PlainDoc extends AuditableModel {
+            @Field private Long id;
+            @Field private Long version;
+            @Override public Serializable getId() { return id; }
+        }
+        SysField version = byFieldName(
+                parser.parse(List.of(PlainDoc.class), List.of()).fields(), "version");
+        assertNull(version.getDefaultValue());
     }
 }

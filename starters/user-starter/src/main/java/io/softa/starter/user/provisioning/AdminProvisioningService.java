@@ -1,25 +1,26 @@
 package io.softa.starter.user.provisioning;
 
-import lombok.extern.slf4j.Slf4j;
-import org.springframework.context.ApplicationEventPublisher;
-import org.springframework.stereotype.Service;
-import org.springframework.transaction.annotation.Transactional;
-import org.springframework.util.Assert;
-
-import static io.softa.framework.base.context.ContextUtils.inTenantContext;
 import io.softa.framework.base.context.ContextHolder;
 import io.softa.framework.base.context.UserInfo;
 import io.softa.framework.base.exception.BusinessException;
 import io.softa.framework.orm.domain.Filters;
+import io.softa.framework.orm.service.TenantInfoService;
 import io.softa.starter.user.constant.RoleConstant;
 import io.softa.starter.user.entity.Role;
-import io.softa.starter.user.entity.UserAccount;
 import io.softa.starter.user.entity.UserRoleRel;
 import io.softa.starter.user.enums.UserRoleSource;
 import io.softa.starter.user.service.RoleService;
 import io.softa.starter.user.service.UserAccountService;
 import io.softa.starter.user.service.UserInvitationService;
 import io.softa.starter.user.service.UserRoleRelService;
+import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.context.ApplicationEventPublisher;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+import org.springframework.util.Assert;
+
+import static io.softa.framework.base.context.ContextUtils.inTenantContext;
 
 /**
  * Creates a tenant's first admin — a reusable user-starter feature. Runs entirely inside the target
@@ -46,6 +47,13 @@ public class AdminProvisioningService {
     private final UserInvitationService invitationService;
     private final ApplicationEventPublisher eventPublisher;
 
+    /**
+     * Optional (same as {@code LoginServiceImpl}): absent in a single-tenant deployment or one without
+     * tenant-starter, where there is no provisioning axis and the gate below does not apply.
+     */
+    @Autowired(required = false)
+    private TenantInfoService tenantInfoService;
+
     public AdminProvisioningService(UserAccountService accountService,
                                     RoleService roleService,
                                     UserRoleRelService userRoleRelService,
@@ -67,6 +75,22 @@ public class AdminProvisioningService {
         // a personnel record off the admin — e.g. corehr — need a phone, and the profile field is required).
         Assert.hasText(request.getMobile(), "mobile must not be blank");
 
+        // Readiness gate, and it runs BEFORE any write.
+        //
+        // An admin may only be created for a tenant that finished provisioning. This is stricter than the
+        // TENANT_ADMIN-role check below, which is the precise prerequisite for *this* method — and that
+        // precision was the earlier rationale for gating on the role alone. What changed is the remedy for a
+        // failed seed: discarding the seed output and setting the tenant up again. That is only safe while the
+        // tenant contains nothing but seeder output, and an account created mid-seed breaks exactly that — the
+        // rebuild would either destroy a real person's credentials or have to preserve the account while its
+        // role grants point at roles that no longer exist.
+        //
+        // Waiting costs little (seeding is seconds), and ops already had to wait for the role seed.
+        if (tenantInfoService != null && !tenantInfoService.isTenantProvisioned(request.getTenantId())) {
+            throw new BusinessException("Tenant " + request.getTenantId()
+                    + " is still being set up (or its setup failed) — create the admin once it is ready.");
+        }
+
         // The inviter is the current (Ops) user — captured before switching into the tenant context.
         Long inviter = ContextHolder.getContext() == null ? null : ContextHolder.getContext().getUserId();
 
@@ -82,12 +106,11 @@ public class AdminProvisioningService {
             // No display name captured at admin-provisioning time → null falls back to the email.
             UserInfo user = accountService.registerInvitedUser(request.getEmail(), request.getMobile(), null);
 
-            // Readiness gate for createAdmin. TENANT_ADMIN is seeded as part of the tenant's per-tenant
-            // pre-data, which (since mode-2 Step 3) loads asynchronously. Its presence is the *precise*
-            // prerequisite here — createAdmin needs the role, not the whole tenant READY (org masters are
-            // the async AdminEmployeeSeeder's concern, and it self-retries on its own dependency). If the
-            // role isn't seeded yet the tenant is still initializing: fail clearly so the caller retries,
-            // rather than granting an admin with no role.
+            // Belt and braces behind the READY gate above, which already implies this: READY means every
+            // expected seeder is done, and TENANT_ADMIN is seeded by pre-data. Kept because the implication
+            // holds only as long as `expected-seeders` actually lists the seeder that creates roles — drop
+            // pre-data from that config and READY would stop meaning "roles exist". Granting an admin with no
+            // role is worse than a clear error, so this stays as the precise last check.
             Role adminRole = roleService.searchOne(new Filters().eq(Role::getCode, RoleConstant.CODE_TENANT_ADMIN))
                     .orElseThrow(() -> new BusinessException(
                             "TENANT_ADMIN role not yet seeded for tenant " + request.getTenantId()

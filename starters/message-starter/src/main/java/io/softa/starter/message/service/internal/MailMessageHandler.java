@@ -11,6 +11,7 @@ import org.springframework.util.StringUtils;
 import io.softa.framework.base.exception.BusinessException;
 import io.softa.framework.base.utils.HtmlUtils;
 import io.softa.framework.orm.dto.FileInfo;
+import io.softa.starter.message.config.MessageProperties;
 import io.softa.starter.message.mail.dto.SendMailDTO;
 import io.softa.starter.message.mail.entity.MailSendRecord;
 import io.softa.starter.message.mail.entity.MailSendServerConfig;
@@ -64,6 +65,8 @@ final class MailMessageHandler {
     private final MailTemplateService templateService;
 
     private final OutboxRecordWriter outboxRecordWriter;
+
+    private final MessageProperties messageProperties;
 
     Long send(SendMailDTO dto) {
         ResolvedMail message = resolve(dto);
@@ -123,14 +126,31 @@ final class MailMessageHandler {
                 immutableCopy(dto.getTo()), immutableCopy(dto.getCc()), immutableCopy(dto.getBcc()),
                 subject, textBody, htmlBody, bodyMode, immutableCopy(attachments), serverConfigId,
                 replyTo, dto.getReadReceiptRequested(), priority);
-        requireRecipients(resolved.to(), "SendMailDTO.to");
+        requireRecipients(resolved.to());
         requireBody(resolved);
+        requireBodyWithinLimit(resolved);
         return resolved;
     }
 
-    private static void requireRecipients(List<String> to, String field) {
+    /**
+     * Application-level guard on body size — the columns themselves are
+     * unbounded TEXT-class, so this configurable cap is what stops runaway
+     * payloads (base64-inlined images, template loops) at acceptance time.
+     */
+    private void requireBodyWithinLimit(ResolvedMail message) {
+        int limit = messageProperties.getMail().getMaxBodyChars();
+        int longest = Math.max(
+                message.htmlBody() == null ? 0 : message.htmlBody().length(),
+                message.textBody() == null ? 0 : message.textBody().length());
+        if (longest > limit) {
+            throw new BusinessException(
+                    "Mail send rejected: the body exceeds the maximum length of {0} characters", limit);
+        }
+    }
+
+    private static void requireRecipients(List<String> to) {
         if (CollectionUtils.isEmpty(to)) {
-            throw new BusinessException("Mail send rejected: {0} must contain at least one recipient", field);
+            throw new BusinessException("Mail send rejected: at least one recipient is required");
         }
     }
 

@@ -66,10 +66,10 @@ public class FlowBundle extends AuditableModel {
     @Field(label = "Design ID", description = "FK to FlowDesign.id; null for bundles published before this field was added")
     private Long designId;
 
-    @Field(length = 100000, description = "Compiled flow definition (JSON)")
+    @Field(fieldType = FieldType.TEXT, description = "Compiled flow definition (JSON)")
     private String compiledJson;
 
-    @Field(fieldType = FieldType.DTO, description = "Design flow definition at publish time (auto-converted by ORM)")
+    @Field(description = "Design flow definition at publish time (auto-converted by ORM)")
     private DesignFlowDefinition designJson;
 
     @Field(description = "Compile timestamp")

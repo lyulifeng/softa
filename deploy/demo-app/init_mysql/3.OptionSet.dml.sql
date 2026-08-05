@@ -4,9 +4,12 @@
 -- MetadataAnnotationScanner at boot (dev) or platform Plan/Apply (prod) and is
 -- NOT seeded here. Per P0-6 the engine-fixed vocabularies
 -- ActionGetDataType + BooleanValue became @OptionSet enums and were removed.
--- These rows ship ownership='STUDIO_MANAGED': platform no-code
--- definitions, evolved henceforth via the Studio design workspace + signed
--- envelope. (PLATFORM_DEFAULT is retired on sys_* — V7.)
+-- These are platform no-code definitions, evolved henceforth via the Studio design
+-- workspace + signed envelope. The scanner leaves them alone under EVERY
+-- scanner-scope, ["*"] included: sys_option_set is a catalog aggregate root, and a
+-- root with no Java class is never auto-deleted — its option items follow it.
+-- There is no `ownership` column to tag them with (that tier was retired);
+-- survival comes from the aggregate-root rule, not from a marker.
 
 -- Option-set headers
 INSERT INTO sys_option_set(option_set_code,label,description) VALUES('FlowNotifyType','Flow Notify Type','');
@@ -67,5 +70,3 @@ INSERT INTO sys_option_item(option_set_code,item_code,label,sequence,parent_item
 -- Stamp the residual no-code vocabularies STUDIO_MANAGED. The column
 -- default is already STUDIO_MANAGED; this is explicit + self-documenting and
 -- keeps the seed correct even if the default changes.
-UPDATE sys_option_set SET ownership='STUDIO_MANAGED' WHERE option_set_code IN ('ActionExceptionSignal', 'ActionExceptionType', 'ActionMessageType', 'DataType', 'FlowLayoutType', 'FlowNotifyType', 'FlowStatus', 'FlowType', 'TriggerEventType');
-UPDATE sys_option_item SET ownership='STUDIO_MANAGED' WHERE option_set_code IN ('ActionExceptionSignal', 'ActionExceptionType', 'ActionMessageType', 'DataType', 'FlowLayoutType', 'FlowNotifyType', 'FlowStatus', 'FlowType', 'TriggerEventType');

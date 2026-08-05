@@ -11,6 +11,7 @@ import tools.jackson.databind.JsonNode;
 import io.softa.framework.orm.annotation.Model;
 import io.softa.framework.orm.domain.Filters;
 import io.softa.framework.orm.domain.Orders;
+import io.softa.framework.orm.dto.DTOFieldObject;
 import io.softa.framework.orm.enums.FieldType;
 
 /**
@@ -19,11 +20,14 @@ import io.softa.framework.orm.enums.FieldType;
  * <p>Three tiers:
  * <ol>
  *   <li><b>Exact</b>: {@code Integer} → INTEGER, {@code BigDecimal} → BIG_DECIMAL,
- *       {@code LocalDate} → DATE, etc.</li>
+ *       {@code LocalDate} → DATE, a POJO annotated {@code @Model} → MANY_TO_ONE, a POJO
+ *       implementing {@code DTOFieldObject} → DTO, etc.</li>
  *   <li><b>Default-with-constrained-override</b>: {@code String} → STRING; overriding to
  *       OPTION via {@code @Field(fieldType = OPTION)} <b>requires</b> the Java type
  *       to be an enum—{@code optionSetCode} is always derived from the enum class
- *       name, never hand-specified. {@code Long} → LONG; overriding to FILE /
+ *       name, never hand-specified. Overriding to TEXT (unbounded long text) is the
+ *       sanctioned way to get a TEXT-class column — TEXT is never inferred.
+ *       {@code Long} → LONG; overriding to FILE /
  *       MANY_TO_ONE / ONE_TO_ONE requires {@code @Field(fieldType=..., relatedModel=...)}.</li>
  *   <li><b>Must-specify</b>: cannot infer (raises). E.g. {@code byte[]},
  *       {@code Map&lt;?,?&gt;}, ambiguous {@code List&lt;Long&gt;}.</li>
@@ -95,6 +99,13 @@ public final class TypeInference {
         // Tier 1 cont: POJO with @Model → MANY_TO_ONE + derive relatedModel
         if (rawType.isAnnotationPresent(Model.class)) {
             return FieldTypeResolution.related(FieldType.MANY_TO_ONE, rawType.getSimpleName());
+        }
+
+        // Tier 1 cont: POJO implementing DTOFieldObject → DTO (JSON-serialized value
+        // object; the target class for deserialization is the declared Java field type
+        // itself, not a stored metadata reference, so no relatedModel is needed).
+        if (DTOFieldObject.class.isAssignableFrom(rawType)) {
+            return FieldTypeResolution.of(FieldType.DTO);
         }
 
         // Tier 1 cont: List<X> with X inferable

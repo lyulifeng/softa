@@ -45,7 +45,7 @@ system:
 
 | Your `scanner-scope` | What happens |
 |---|---|
-| `["io\\.acme\\.myapp.*"]` (dev) | The framework reads your annotations and auto-runs `CREATE TABLE` / `ADD COLUMN` / `MODIFY COLUMN` / `ADD INDEX`. It **never auto-drops** — a removed field/model/index is logged as a WARN with copy-paste SQL for you to run by hand. |
+| `["io\\.acme\\.myapp.*"]` (dev) | The framework reads your annotations and auto-runs `CREATE TABLE` / `ADD COLUMN` / `MODIFY COLUMN` / `ADD INDEX`. It **never auto-drops** — a removed field/model/index is logged as a WARN with copy-paste SQL for you to run by hand. Deleting a whole `@Model` / `@OptionSet` class also leaves its **metadata rows** in place (they may belong to a no-code definition instead of being orphaned); the WARN names them with the `DELETE` SQL. |
 | empty / unset (production default) | No DDL runs. After boot it checks code-vs-DB and logs a WARN if they drift. Ship schema changes through your normal release process. |
 
 Normal dev loop: **edit annotations → restart your dev app → tables update → watch the log.**
@@ -105,6 +105,7 @@ Common attributes — omit any that equals the default:
 | `multiTenant` | `false` | adds a `tenant_id` scope to the table |
 | `idStrategy` | `DB_AUTO_ID` | use `DISTRIBUTED_LONG` for CosID distributed IDs; `EXTERNAL_ID` for code-as-id masters |
 | `copyable` | `true` | `false` = row can't be duplicated (log / runtime models) |
+| `versionLock` | `false` | optimistic locking: declare a `@Field(required = true) private Long version;` on the class. The starting value is materialized to `0` for you (don't set `defaultValue`); the framework stamps it on insert and CAS-increments it on update — a stale update throws `VersionException` |
 | `renamedFrom` | `""` | previous class name, for a safe rename — see §5 |
 
 `modelName` is always the class simple name; there is no attribute for it.
@@ -199,6 +200,8 @@ when the type is ambiguous.
 | `List<String>` | MULTI_STRING | 256 | |
 | a `@Model` POJO | MANY_TO_ONE | — | related model inferred from the type |
 | `List<`a `@Model` POJO`>` | ONE_TO_MANY | — | set `relatedField` = the child's FK column |
+| a POJO implementing `DTOFieldObject` | DTO | — | typed value object stored as a JSON string; reads come back as the declared class |
+| `String` + explicit `fieldType = TEXT` | TEXT | — | unbounded long text (MySQL MEDIUMTEXT / PG TEXT) for bodies and templates; `length` optional, app-level guard only |
 | `Long` + explicit `fieldType = FILE` | FILE | — | single attachment stored as a file id |
 | `List<Long>` + explicit `fieldType = MULTI_FILE` | MULTI_FILE | 1024 | multiple attachments stored as file ids |
 | `List<Long>`, `byte[]`, `Map`, raw `List` | **ambiguous** | — | you must specify `fieldType` (or the parser rejects it) |
@@ -225,7 +228,9 @@ signal a real override; one that restates the default is noise. Concretely, omit
 - booleans/enums at their default (`required = false`, `copyable = true`,
   `multiTenant = false`, `idStrategy = DB_AUTO_ID`, `unique = false`, …);
 - `tableName` / `columnName` equal to `snake_case(...)`;
-- `length` equal to the type default (a bare `String` is already `VARCHAR(64)`).
+- `length` equal to the type default (a bare `String` is already `VARCHAR(64)`);
+- `defaultValue` on a versionLock model's `version` field (the metadata layer
+  materializes `0`).
 
 So the idiomatic field is `@Field private String email;`, not
 `@Field(label = "Email", required = false, length = 64) private String email;`.

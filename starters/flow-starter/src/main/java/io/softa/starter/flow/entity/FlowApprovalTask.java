@@ -9,6 +9,7 @@ import lombok.EqualsAndHashCode;
 import io.softa.framework.orm.annotation.Field;
 import io.softa.framework.orm.annotation.Index;
 import io.softa.framework.orm.annotation.Model;
+import io.softa.framework.orm.enums.FieldType;
 import io.softa.framework.orm.enums.IdStrategy;
 import io.softa.framework.orm.entity.AuditableModel;
 import io.softa.starter.flow.enums.FlowApprovalTaskStatus;
@@ -118,7 +119,7 @@ public class FlowApprovalTask extends AuditableModel {
     @Field(label = "Batch ID", description = "Batch ID for batch approval operations")
     private Long batchId;
 
-    @Field(length = 100000, description = "Form data snapshot at the time the task was created (JSON)")
+    @Field(fieldType = FieldType.TEXT, description = "Form data snapshot at the time the task was created (JSON)")
     private String formSnapshot;
 
     @Field(label = "Closed By Actor ID", description = "Actor who closed this task when available")

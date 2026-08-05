@@ -142,6 +142,38 @@ class ModelManagerCopyableTest {
         }
     }
 
+    @Test
+    void timelineModelWithActiveControlIsRejectedAtInit() throws Exception {
+        Object goodSnapshot = snapshotField().get(null);
+        try {
+            // activeControl is an entity-level switch; timeline storage would silently mutate
+            // it into a per-period one (and blind the interval algorithm's neighbor probes),
+            // so the combination is boot-rejected. Period state = versioned business field;
+            // timeline termination = setEndDate.
+            MetaModel badTimeline = model("BadTimeline", "bad_timeline", true, true);
+            badTimeline.setIdStrategy(IdStrategy.DISTRIBUTED_LONG);
+            badTimeline.setActiveControl(true);
+            JdbcService<?> jdbcService = Mockito.mock(JdbcService.class);
+            Mockito.when(jdbcService.selectMetaEntityList("SysModel", MetaModel.class, null))
+                    .thenReturn(new ArrayList<>(List.of(badTimeline)));
+            Mockito.when(jdbcService.selectMetaEntityList("SysField", MetaField.class, null))
+                    .thenReturn(new ArrayList<>(List.of(
+                            field("BadTimeline", "id", "id", FieldType.LONG),
+                            field("BadTimeline", "sliceId", "slice_id", FieldType.LONG),
+                            field("BadTimeline", "effectiveStartDate", "effective_start_date", FieldType.DATE),
+                            field("BadTimeline", "effectiveEndDate", "effective_end_date", FieldType.DATE),
+                            field("BadTimeline", "active", "active", FieldType.BOOLEAN))));
+            ModelManager modelManager = new ModelManager();
+            Field jdbc = ModelManager.class.getDeclaredField("jdbcService");
+            jdbc.setAccessible(true);
+            jdbc.set(modelManager, jdbcService);
+            RuntimeException e = assertThrows(RuntimeException.class, modelManager::init);
+            assertTrue(e.getMessage().contains("must not declare activeControl"));
+        } finally {
+            snapshotField().set(null, goodSnapshot);
+        }
+    }
+
     private static MetaField field(String modelName, String fieldName, String columnName, FieldType type) {
         MetaField metaField = new MetaField();
         metaField.setModelName(modelName);

@@ -34,7 +34,6 @@ public class OutboxServiceImpl extends EntityServiceImpl<OutboxEntry, Long>
         entry.setPayload(payload);
         entry.setStatus(OutboxStatus.NEW);
         entry.setAttempts(0);
-        entry.setVersion(0L);
         if (fireAt != null && fireAt.isAfter(LocalDateTime.now())) {
             entry.setNextAttemptAt(fireAt);
         }

@@ -1,14 +1,12 @@
 package io.softa.starter.tenant.provisioning;
 
-import java.time.LocalDate;
-
 import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
 import lombok.Data;
 
 import io.softa.framework.base.enums.Language;
 import io.softa.framework.base.enums.Timezone;
 import io.softa.starter.tenant.enums.DataRegion;
-import io.softa.starter.tenant.enums.TenantLifecycle;
+import io.softa.starter.tenant.service.SubscriptionPeriodPatch;
 
 /**
  * Request to provision a new tenant — the payload the standard TenantInfo create form posts to the
@@ -37,13 +35,15 @@ public class ProvisionTenantRequest {
     @Data
     @JsonIgnoreProperties(ignoreUnknown = true)
     public static class SubscriptionInput {
-        /** Plan code (= plan.id); Free when blank. */
-        private String planId;
-        /** Lifecycle; SUBSCRIBED when null. */
-        private TenantLifecycle lifecycle;
-        /** Effective start date; today when null. */
-        private LocalDate effectiveFrom;
-        /** Expiry date; null = open-ended (lapses to Free at the tenant's local midnight after this date). */
-        private LocalDate effectiveTo;
+        /**
+         * Periods to sell along with the tenant, so a customer who is buying Pro on day one is recorded in
+         * one submit instead of being created on the floor plan and upgraded afterwards. Absent / empty =
+         * sell nothing, which is the normal case: the tenant then has no period and runs on the floor plan.
+         *
+         * <p>Same relation-patch shape the detail form posts, so one DTO and one write path serve both
+         * modes. A create form can only ever carry {@code Create} — an update or delete needs a period that
+         * already exists.
+         */
+        private SubscriptionPeriodPatch periods;
     }
 }

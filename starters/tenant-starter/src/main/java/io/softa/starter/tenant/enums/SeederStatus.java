@@ -15,10 +15,10 @@ import io.softa.framework.base.annotation.OptionSet;
 @OptionSet
 public enum SeederStatus {
     DONE("Done"),
-    // Currently unwritten by design: seeders report only success (a failure is retried via redelivery), and
-    // the tenant-level FAILED comes from TenantProvisioningStatusService.failTimedOut() (the timeout guard).
-    // Retained as the symmetric hook for a future DLQ handler that would publish success=false — see
-    // TenantProvisioningStatusService.markSeederFailed.
+    // Not written today: a seeder failure is an exception, answered by redelivery, and an exhausted message
+    // goes to a dead-letter topic nobody reads. The tenant-level FAILED comes from failTimedOut(); "which
+    // seeder" comes from the [SEED_FAILURE] log line. Retained as the receiving half of the success=false
+    // hook — see TenantProvisioningStatusService.markSeederFailed.
     FAILED("Failed"),
     ;
 

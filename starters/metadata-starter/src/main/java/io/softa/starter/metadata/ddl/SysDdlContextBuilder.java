@@ -177,18 +177,29 @@ public final class SysDdlContextBuilder {
         return ctx;
     }
 
-    private static String resolveTableName(SysModel model) {
+    /** Blank tableName means derived: snake_case(modelName). The single source of this rule. */
+    public static String resolveTableName(SysModel model) {
         if (model.getTableName() != null && !model.getTableName().isBlank()) {
             return model.getTableName();
         }
         return StringTools.toUnderscoreCase(model.getModelName());
     }
 
-    private static String resolveColumnName(SysField field) {
+    /** Blank columnName means derived: snake_case(fieldName). The single source of this rule. */
+    public static String resolveColumnName(SysField field) {
         if (field.getColumnName() != null && !field.getColumnName().isBlank()) {
             return field.getColumnName();
         }
         return StringTools.toUnderscoreCase(field.getFieldName());
+    }
+
+    /**
+     * The type the column physically renders as — the system-resolved TO_ONE FK mirror
+     * ({@code relatedFieldType}) when present, else the declared {@code fieldType}. The single
+     * source of this rule ({@link DdlPolicy} and the physical type comparison both use it).
+     */
+    public static FieldType resolvePhysicalFieldType(SysField field) {
+        return field.getRelatedFieldType() != null ? field.getRelatedFieldType() : field.getFieldType();
     }
 
     private static String resolvePkColumn(boolean timeline) {
@@ -201,10 +212,11 @@ public final class SysDdlContextBuilder {
 
     /**
      * Stored = actually persisted as a column (not a transient relation type
-     * nor a dynamic computed field). Package-visible: {@link DdlPolicy} uses the
-     * same rule to route stored↔non-stored transitions to ADD / DROP.
+     * nor a dynamic computed field). Public: {@link DdlPolicy} routes
+     * stored↔non-stored transitions to ADD / DROP with the same rule, and the
+     * physical-drift auditor uses it to expect columns only for stored fields.
      */
-    static boolean isStored(SysField field) {
+    public static boolean isStored(SysField field) {
         if (field == null || field.getFieldType() == null) {
             return false;
         }

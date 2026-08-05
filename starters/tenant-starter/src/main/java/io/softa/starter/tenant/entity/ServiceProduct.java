@@ -8,6 +8,7 @@ import lombok.EqualsAndHashCode;
 import io.softa.framework.orm.annotation.Field;
 import io.softa.framework.orm.annotation.Model;
 import io.softa.framework.orm.entity.AuditableModel;
+import io.softa.framework.orm.enums.FieldType;
 import io.softa.framework.orm.enums.IdStrategy;
 import io.softa.starter.tenant.enums.ServiceCategory;
 
@@ -32,7 +33,7 @@ public class ServiceProduct extends AuditableModel {
     @Field(label = "Service Name", length = 32)
     private String name;
 
-    @Field(label = "Service Description", length = 20000)
+    @Field(label = "Service Description", fieldType = FieldType.TEXT)
     private String description;
 
     @Field(label = "Service Category")

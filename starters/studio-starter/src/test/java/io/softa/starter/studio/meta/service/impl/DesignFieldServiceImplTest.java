@@ -44,7 +44,7 @@ class DesignFieldServiceImplTest {
         domain.setLength(18);
         domain.setScale(2);
         domain.setDefaultValue("0");
-        domain.setWidgetType(WidgetType.TEXT);
+        domain.setWidgetType(WidgetType.PLAIN_TEXT);
         when(domainService.getById(50L)).thenReturn(Optional.of(domain));
 
         DesignField result = service.applyDomain(1L, 50L);
@@ -53,7 +53,7 @@ class DesignFieldServiceImplTest {
         assertEquals(18, result.getLength());
         assertEquals(2, result.getScale());
         assertEquals("0", result.getDefaultValue());
-        assertEquals(WidgetType.TEXT, result.getWidgetType());
+        assertEquals(WidgetType.PLAIN_TEXT, result.getWidgetType());
         assertEquals(50L, result.getDomainId(), "domainId recorded as design-time provenance");
         verify(service).updateOne(field);
     }

@@ -7,6 +7,7 @@ import org.junit.jupiter.api.Assertions;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
 
+import io.softa.starter.message.config.MessageProperties;
 import io.softa.starter.message.mail.dto.SendMailDTO;
 import io.softa.starter.message.mail.entity.MailSendRecord;
 import io.softa.starter.message.mail.entity.MailSendServerConfig;
@@ -188,7 +189,8 @@ class MailMessageBodyModeTest {
         when(recordService.createOne(any(MailSendRecord.class))).thenReturn(1L);
 
         MailMessageHandler handler = new MailMessageHandler(
-                dispatcher, recordService, templateService, outboxRecordWriter);
+                dispatcher, recordService, templateService, outboxRecordWriter,
+                new MessageProperties());
         handler.send(dto);
 
         ArgumentCaptor<MailSendRecord> captor = ArgumentCaptor.forClass(MailSendRecord.class);

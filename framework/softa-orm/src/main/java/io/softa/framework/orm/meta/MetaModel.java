@@ -48,10 +48,9 @@ public class MetaModel implements Serializable {
 
     private boolean timeline;
 
+    // The flag field is always ModelConstant.SOFT_DELETED_FIELD ("deleted"); a legacy column
+    // name is mapped with @Field(columnName = ...), not by renaming the logical field.
     private boolean softDelete;
-
-    // Compatible with different soft delete field names of historical systems, such as "is_deleted"
-    private String softDeleteField;
 
     private boolean activeControl;
 

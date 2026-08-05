@@ -1,6 +1,7 @@
 package io.softa.framework.orm.service;
 
 import java.io.Serializable;
+import java.time.LocalDate;
 import java.util.Collection;
 import java.util.List;
 import java.util.Map;
@@ -362,6 +363,20 @@ public interface ModelService<K extends Serializable> {
      * @return the created/corrected version row, including sliceId and effective dates
      */
     Map<String, Object> addVersionAndFetch(String modelName, Map<String, Object> row, ConvertType convertType);
+
+    /**
+     * Sets the end date of a timeline entity's LAST slice — the only write path for the
+     * system-computed {@code effectiveEndDate}. An {@code endDate} before
+     * {@code MAX_EFFECTIVE_END_DATE} terminates the timeline (as-of reads after it return
+     * nothing); passing {@code MAX_EFFECTIVE_END_DATE} reopens it. Must not precede the
+     * last slice's start date — delete trailing versions first to terminate earlier.
+     *
+     * @param modelName the name of the model
+     * @param id the logical id of the timeline entity
+     * @param endDate the new end date of the LAST slice
+     * @return {@code true} when the tail row was written; {@code false} when unchanged
+     */
+    boolean setEndDate(String modelName, Serializable id, LocalDate endDate);
 
     /**
      * Deletes multiple rows by their IDs.

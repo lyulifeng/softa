@@ -108,4 +108,20 @@ public class AutofillFields {
         }
     }
 
+    /**
+     * Fill in the optimistic-lock version's starting value when inserting data for a
+     * versionLock model. {@code version} is readonly (framework-managed, like {@code tenantId}
+     * above) so callers are never trusted to supply it — every row gets the model's resolved
+     * starting value (ModelManager#validateVersionField guarantees it is non-null).
+     *
+     * @param modelName model name
+     * @param rows List data
+     */
+    public static void fillVersionFieldForInsert(String modelName, List<Map<String, Object>> rows) {
+        if (ModelManager.isVersionControl(modelName)) {
+            Object initialVersion = ModelManager.getModelField(modelName, ModelConstant.VERSION).getDefaultValueObject();
+            rows.forEach(row -> row.put(ModelConstant.VERSION, initialVersion));
+        }
+    }
+
 }

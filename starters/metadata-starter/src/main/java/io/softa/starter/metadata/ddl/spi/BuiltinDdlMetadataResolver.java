@@ -53,7 +53,8 @@ public class BuiltinDdlMetadataResolver implements DdlMetadataResolver {
 
         // Types that DON'T need explicit defaults (their column type doesn't
         // take length/scale): INTEGER, LONG, BOOLEAN, DATE, DATE_TIME, TIME,
-        // JSON, MANY_TO_ONE, ONE_TO_ONE, DTO, FILE (BIGINT FileRecord id).
+        // JSON, MANY_TO_ONE, ONE_TO_ONE, DTO, TEXT (unbounded — a declared
+        // length is only an app-level guard), FILE (BIGINT FileRecord id).
         // Omitted from map → resolver
         // returns null defaults → dialect renders without (N) suffix.
     }

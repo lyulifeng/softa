@@ -54,8 +54,10 @@ public class OutboxEntry extends AuditableModel {
     @Field(description = "Logical delivery route name (MAIL_SEND / SMS_SEND)")
     private TopicRoute route;
 
-    @Field(required = true,
-        description = "Message body serialized as JSON")
+    @Field(required = true, length = 512,
+        description = "Thin claim-check envelope (recordId / tenantId / traceId as JSON), NOT the "
+            + "message body — bodies live on the aggregate record. The cap is a deliberate guard: "
+            + "a payload that outgrows it should be redesigned as a reference, not widened.")
     private String payload;
 
     @Field(description = "Lifecycle status")

@@ -68,9 +68,10 @@ public class MeController {
      */
     private void appendEntitlement(UiContext info, Long tenantId) {
         // Platform SUPER_ADMIN is NOT entitlement-scoped: it operates above any single tenant, so
-        // entitledModules(tenantId) resolves to the Free floor (no paid tenant in context) and the
-        // frontend would wrongly narrow the role wizard / sidebar to Free's modules. Leave entitledModules
-        // unset so the frontend applies NO version filtering (every module visible) — same as the
+        // entitledModules(tenantId) resolves to the floor plan (no subscribed tenant in context) and the
+        // frontend would wrongly narrow the role wizard / sidebar to the floor's modules — down to nothing
+        // at all on a deployment whose floor is a zero-module plan. Leave entitledModules unset so the
+        // frontend applies NO version filtering (every module visible) — same as the
         // no-EntitlementService case.
         if (info.getRoleCodes() != null && info.getRoleCodes().contains(RoleConstant.CODE_SUPER_ADMIN)) {
             return;

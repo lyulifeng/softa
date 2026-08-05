@@ -1,6 +1,7 @@
 package io.softa.framework.orm.service.impl;
 
 import java.io.Serializable;
+import java.time.LocalDate;
 import java.util.*;
 import com.google.common.collect.Sets;
 import jakarta.validation.constraints.NotNull;
@@ -943,6 +944,24 @@ public class ModelServiceImpl<K extends Serializable> implements ModelService<K>
     }
 
     /**
+     * Sets the end date of a timeline entity's LAST slice — terminate or reopen the
+     * timeline. The tail slice is resolved server-side from the logical id, so callers
+     * never race a stale sliceId.
+     *
+     * @param modelName the name of the model
+     * @param id the logical id of the timeline entity
+     * @param endDate the new end date of the LAST slice (MAX_EFFECTIVE_END_DATE reopens)
+     * @return {@code true} when the tail row was written; {@code false} when unchanged
+     */
+    @Override
+    @Transactional(rollbackFor = Exception.class)
+    public boolean setEndDate(String modelName, Serializable id, LocalDate endDate) {
+        permissionService.checkIdsAccess(modelName, Collections.singletonList(id), AccessType.UPDATE);
+        // Rejects non-timeline models; validates tail-ness and the endDate lower bound.
+        return versioning.of(modelName).setEndDate(modelName, id, endDate);
+    }
+
+    /**
      * Deletes multiple rows by their IDs.
      *
      * @param modelName the name of the model
@@ -969,8 +988,7 @@ public class ModelServiceImpl<K extends Serializable> implements ModelService<K>
         List<Map<String, Object>> originalRows = jdbcService.selectByIds(modelName, ids, Collections.emptyList(), ConvertType.ORIGINAL);
         List<Map<String, Object>> deletableRows = originalRows.stream().filter(row -> {
             if (ModelManager.isSoftDeleted(modelName)) {
-                String softDeleteField = ModelManager.getSoftDeleteField(modelName);
-                if (Boolean.TRUE.equals(row.get(softDeleteField))) {
+                if (Boolean.TRUE.equals(row.get(ModelConstant.SOFT_DELETED_FIELD))) {
                     log.warn("Data with model {}, id={} has been soft deleted, do not duplicate it.", modelName, row.get(ModelConstant.ID));
                     return false;
                 }

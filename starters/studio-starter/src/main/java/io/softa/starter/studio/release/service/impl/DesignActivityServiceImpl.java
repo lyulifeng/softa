@@ -24,7 +24,11 @@ import io.softa.starter.studio.release.service.DesignSnapshotService;
 @Service
 public class DesignActivityServiceImpl extends EntityServiceImpl<DesignActivity, Long> implements DesignActivityService {
 
-    /** Matches the {@code errorMessage} column width (DesignActivity.errorMessage, length = 20000). */
+    /**
+     * Defensive cap on persisted {@code errorMessage} text. The column itself is
+     * unbounded ({@code FieldType.TEXT}); this bound keeps runaway stack traces
+     * from bloating activity rows.
+     */
     private static final int ERROR_MESSAGE_MAX_LENGTH = 20000;
 
     /** The persisted {@code changeSet} shape — uniform across PUBLISH / IMPORT / REVERSE / MERGE. */

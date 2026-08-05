@@ -108,12 +108,28 @@ public class PermissionInterceptor implements HandlerInterceptor {
         if (PermissionInfo.isSuperAdmin(pi)) return true;
         // Tenant super-admin — bypasses the permission gate WITHIN its own tenant (tenant-isolated,
         // crossTenant stays false), but is denied platform-only Ops endpoints (billing / plan /
-        // provisioning) which only SUPER_ADMIN may reach.
+        // provisioning) which only SUPER_ADMIN may reach, and endpoints belonging to a module its
+        // plan does not entitle.
         if (PermissionInfo.isTenantAdmin(pi)) {
             if (matchAny(properties.getPlatformOnlyPatterns(), uri)) {
                 log.warn("Platform-only endpoint denied to tenant-admin — userId={}, uri={} {}",
                         ctx.getUserId(), method, uri);
                 throw new PermissionException("Platform-admin only: " + method + " " + uri);
+            }
+            // The admin's snapshot is already narrowed to its plan (tenantAdminSnapshot), so matching
+            // against it is what enforces 版本计费 for an admin. This cannot be left to the frontend or
+            // to the downgrade cleanup: an admin holds no static nav grants, so a downgrade has nothing
+            // to strip for it, and a direct call would otherwise reach a dropped module's endpoints.
+            //
+            // An UNREGISTERED endpoint still bypasses. That is what this branch has always been for —
+            // plenty of endpoints carry no permission mapping, and a tenant admin is expected to reach
+            // them. Denying those here would turn a billing gate into a broad outage.
+            Set<String> adminCandidates = endpointIndex.lookup(uri, method);
+            if (adminCandidates != null && !adminCandidates.isEmpty()
+                    && Collections.disjoint(pi.getPermissions(), adminCandidates)) {
+                log.warn("Module not entitled for tenant-admin — userId={}, uri={} {}, required any of: {}",
+                        ctx.getUserId(), method, uri, adminCandidates);
+                throw new PermissionException("Missing permission for " + method + " " + uri);
             }
             return true;
         }

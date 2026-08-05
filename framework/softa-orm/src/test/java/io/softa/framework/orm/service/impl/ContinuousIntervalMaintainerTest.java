@@ -37,6 +37,7 @@ import io.softa.framework.orm.meta.MetaModel;
 import io.softa.framework.orm.meta.ModelManager;
 import io.softa.framework.orm.service.PermissionService;
 import io.softa.framework.orm.service.relation.RelationDeleteHandler;
+import io.softa.framework.orm.service.versioning.IdentityStrategy;
 import io.softa.framework.orm.service.versioning.TimelineStrategy;
 import io.softa.framework.orm.service.versioning.VersioningStrategyResolver;
 
@@ -112,6 +113,9 @@ class ContinuousIntervalMaintainerTest {
             }
             return copyRows(sliceLookupResult);
         });
+
+        // updateSlices now returns the REAL jdbc count — the mock must not return null.
+        when(jdbc.updateList(eq(MODEL), anyList(), any())).thenReturn(1);
 
         timeline = new TimelineServiceImpl<>();
         ReflectionTestUtils.setField(timeline, "jdbcService", jdbc);
@@ -342,6 +346,19 @@ class ContinuousIntervalMaintainerTest {
     }
 
     @Test
+    void updateReturnsTheRealJdbcCountNotTheAttemptCount() {
+        // The diff layer inside jdbc updateList may find nothing to write: the API-level
+        // result must then be "0 updated", aligning timeline with non-timeline semantics
+        // (the old `return rows.size()` reported the ATTEMPT count — a false positive).
+        when(jdbc.updateList(eq(MODEL), anyList(), any())).thenReturn(0);
+        Map<String, Object> row = mutableRow(Map.of(ModelConstant.SLICE_ID, 11L, "name", "unchanged"));
+
+        Integer count = withCtx(() -> timeline.updateSlices(MODEL, listOf(row)));
+
+        Assertions.assertEquals(0, count);
+    }
+
+    @Test
     void updateWithEmptyStartDateIsRejected() {
         Map<String, Object> row = mutableRow(Map.of(
                 ModelConstant.SLICE_ID, 11L, ModelConstant.EFFECTIVE_START_DATE, ""));
@@ -478,6 +495,114 @@ class ContinuousIntervalMaintainerTest {
         verify(jdbc).deleteBySliceId(MODEL, 12L);
     }
 
+    // ---------------------------------------------------------------- setEndDate (timeline termination)
+
+    @Test
+    void setEndDateTerminatesTheLastSliceInPlace() {
+        sliceLookupResult.add(mutableRow(Map.of(
+                ModelConstant.ID, 1L, ModelConstant.SLICE_ID, 12L,
+                ModelConstant.EFFECTIVE_START_DATE, LocalDate.of(2025, 6, 1),
+                ModelConstant.EFFECTIVE_END_DATE, MAX_END)));
+        when(jdbc.updateOne(eq(MODEL), any())).thenReturn(1);
+
+        boolean written = withCtx(() -> timeline.setEndDate(MODEL, 1L, LocalDate.of(2025, 9, 30)));
+
+        Assertions.assertTrue(written);
+        Map<String, Object> corrected = captureSingleUpdateOne();
+        Assertions.assertEquals(12L, corrected.get(ModelConstant.SLICE_ID));
+        Assertions.assertEquals(LocalDate.of(2025, 9, 30), corrected.get(ModelConstant.EFFECTIVE_END_DATE));
+        // The tail probe is a physical-view read: across the timeline, newest start first, one row.
+        FlexQuery probe = recordedSelects.getFirst();
+        Assertions.assertTrue(probe.isAcrossTimeline());
+        Assertions.assertEquals(1, probe.getLimitSize());
+        Assertions.assertTrue(String.valueOf(probe.getOrders()).contains(ModelConstant.EFFECTIVE_START_DATE));
+    }
+
+    @Test
+    void setEndDateWithMaxReopensTheTerminatedTail() {
+        sliceLookupResult.add(mutableRow(Map.of(
+                ModelConstant.ID, 1L, ModelConstant.SLICE_ID, 12L,
+                ModelConstant.EFFECTIVE_START_DATE, LocalDate.of(2025, 6, 1),
+                ModelConstant.EFFECTIVE_END_DATE, LocalDate.of(2025, 9, 30))));
+        when(jdbc.updateOne(eq(MODEL), any())).thenReturn(1);
+
+        boolean written = withCtx(() -> timeline.setEndDate(MODEL, 1L, MAX_END));
+
+        Assertions.assertTrue(written);
+        Map<String, Object> corrected = captureSingleUpdateOne();
+        Assertions.assertEquals(MAX_END, corrected.get(ModelConstant.EFFECTIVE_END_DATE));
+    }
+
+    @Test
+    void setEndDateIsANoOpWhenTheTailAlreadyCarriesIt() {
+        sliceLookupResult.add(mutableRow(Map.of(
+                ModelConstant.ID, 1L, ModelConstant.SLICE_ID, 12L,
+                ModelConstant.EFFECTIVE_START_DATE, LocalDate.of(2025, 6, 1),
+                ModelConstant.EFFECTIVE_END_DATE, LocalDate.of(2025, 9, 30))));
+
+        boolean written = withCtx(() -> timeline.setEndDate(MODEL, 1L, LocalDate.of(2025, 9, 30)));
+
+        Assertions.assertFalse(written);
+        verify(jdbc, never()).updateOne(any(), any());
+    }
+
+    @Test
+    void setEndDatePrecedingTheLastSliceStartIsRejected() {
+        // Terminating before the tail's own start would leave an invalid row; the caller
+        // must delete the trailing version(s) first — explicit, never implicit data loss.
+        sliceLookupResult.add(mutableRow(Map.of(
+                ModelConstant.ID, 1L, ModelConstant.SLICE_ID, 12L,
+                ModelConstant.EFFECTIVE_START_DATE, LocalDate.of(2025, 6, 1),
+                ModelConstant.EFFECTIVE_END_DATE, MAX_END)));
+
+        RuntimeException e = Assertions.assertThrows(RuntimeException.class,
+                () -> withCtx(() -> timeline.setEndDate(MODEL, 1L, LocalDate.of(2025, 5, 31))));
+        Assertions.assertTrue(e.getMessage().contains("Delete the trailing version"));
+        verify(jdbc, never()).updateOne(any(), any());
+    }
+
+    @Test
+    void setEndDateOnUnknownEntityIsRejected() {
+        RuntimeException e = Assertions.assertThrows(RuntimeException.class,
+                () -> withCtx(() -> timeline.setEndDate(MODEL, 99L, LocalDate.of(2025, 9, 30))));
+        Assertions.assertTrue(e.getMessage().contains("does not exist data for id"));
+    }
+
+    @Test
+    void addVersionAfterATerminatedEndDateRevivesWithoutHealingTheGap() {
+        // Terminated tail [.., D]; a version starting after D finds no overlap and no next
+        // slice -> inserted as a fresh open segment. The terminated end date is NOT
+        // stretched: the gap in between is deliberate (as-of reads inside it return nothing).
+        when(jdbc.exist(MODEL, 1L)).thenReturn(true);
+        Map<String, Object> row = mutableRow(Map.of(
+                ModelConstant.ID, 1L,
+                ModelConstant.EFFECTIVE_START_DATE, LocalDate.of(2025, 6, 1),
+                "name", "revived"));
+
+        withCtx(() -> timeline.createSlices(MODEL, listOf(row)));
+
+        Map<String, Object> inserted = captureSingleInsert();
+        Assertions.assertEquals(LocalDate.of(2025, 6, 1), inserted.get(ModelConstant.EFFECTIVE_START_DATE));
+        Assertions.assertEquals(MAX_END, inserted.get(ModelConstant.EFFECTIVE_END_DATE));
+        verify(jdbc, never()).updateOne(any(), any());
+    }
+
+    @Test
+    void setEndDateSeamDelegatesForTimelineAndRejectsIdentityModels() {
+        sliceLookupResult.add(mutableRow(Map.of(
+                ModelConstant.ID, 1L, ModelConstant.SLICE_ID, 12L,
+                ModelConstant.EFFECTIVE_START_DATE, LocalDate.of(2025, 6, 1),
+                ModelConstant.EFFECTIVE_END_DATE, MAX_END)));
+        when(jdbc.updateOne(eq(MODEL), any())).thenReturn(1);
+        TimelineStrategy<Serializable> strategy = new TimelineStrategy<>(jdbc, timeline);
+
+        Assertions.assertTrue(withCtx(() -> strategy.setEndDate(MODEL, 1L, LocalDate.of(2025, 9, 30))));
+
+        RuntimeException e = Assertions.assertThrows(RuntimeException.class,
+                () -> new IdentityStrategy<>(jdbc).setEndDate("Plain", 1L, LocalDate.of(2025, 9, 30)));
+        Assertions.assertTrue(e.getMessage().contains("cannot set an end date"));
+    }
+
     // ---------------------------------------------------------------- appendTimelineFilters
 
     @Test
@@ -580,7 +705,6 @@ class ContinuousIntervalMaintainerTest {
         // physical branch's `WHERE id IN` does. Keying off the logical ids would probe
         // `WHERE slice_id = NULL` and silently delete nothing.
         modelManager.when(() -> ModelManager.isSoftDeleted(MODEL)).thenReturn(true);
-        modelManager.when(() -> ModelManager.getSoftDeleteField(MODEL)).thenReturn("deleted");
         modelManager.when(() -> ModelManager.isActiveControl(MODEL)).thenReturn(false);
         modelManager.when(() -> ModelManager.getModelPrimaryKey(MODEL)).thenReturn(ModelConstant.SLICE_ID);
         modelManager.when(() -> ModelManager.getModel(MODEL)).thenReturn(new MetaModel());

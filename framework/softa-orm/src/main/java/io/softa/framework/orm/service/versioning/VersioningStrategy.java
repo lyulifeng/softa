@@ -1,6 +1,7 @@
 package io.softa.framework.orm.service.versioning;
 
 import java.io.Serializable;
+import java.time.LocalDate;
 import java.util.Collection;
 import java.util.List;
 import java.util.Map;
@@ -132,5 +133,21 @@ public interface VersioningStrategy {
     default boolean deleteVersion(String modelName, TimelineSlice slice) {
         throw new IllegalArgumentException(
                 "Model {0} is not a timeline model, and cannot delete slice.", modelName);
+    }
+
+    /**
+     * Set the end date of the entity's LAST slice — terminate the timeline at
+     * {@code endDate}, or reopen it with {@code MAX_EFFECTIVE_END_DATE}. The single
+     * sanctioned write to the system-computed {@code effectiveEndDate}; generic update
+     * paths keep stripping it unconditionally. Identity models have no timeline: rejected.
+     *
+     * @param modelName model name
+     * @param id the logical id of the timeline entity
+     * @param endDate the new end date of the LAST slice
+     * @return true when the tail row was written; false when it already carried {@code endDate}
+     */
+    default boolean setEndDate(String modelName, Serializable id, LocalDate endDate) {
+        throw new IllegalArgumentException(
+                "Model {0} is not a timeline model, and cannot set an end date.", modelName);
     }
 }

@@ -70,14 +70,14 @@ public class MailReceiveRecord extends AuditableModel {
      * HTML-only emails are converted once at ingest via {@code HtmlUtils.toText} —
      * one-shot CPU on write, not on every read.
      */
-    @Field(length = 16777215,
+    @Field(fieldType = FieldType.TEXT,
             description = "Plain-text body for list preview, search, and any consumer that "
                     + "wants a single guaranteed string. Stored verbatim when the email had a real "
                     + "text/plain part; derived from bodyHtml at write time when the email is "
                     + "HTML-only. Use bodyMode to tell the two apart for audit/forensics.")
     private String bodyText;
 
-    @Field(length = 16777215,
+    @Field(fieldType = FieldType.TEXT,
             description = "Sender's HTML body, taken verbatim from the text/html MIME part. "
                     + "Null for plain-text-only emails.")
     private String bodyHtml;
