@@ -25,25 +25,27 @@ public class PermissionAspect {
      * Around aspect with SkipPermissionCheck annotation.
      * Do not check permission from the annotated method, but the context user still keeps the current user.
      *
-     * <h3>ScopedValue-binding requirement (Known-Issues Lat2)</h3>
-     * {@code ContextHolder.getContext()} returns a fresh default Context
-     * when no {@link ScopedValue} binding exists on the current thread
-     * ({@link ContextHolder#existContext()} returns {@code false}). Our
-     * {@code setSkipPermissionCheck(true)} then mutates that transient
-     * instance — the mutation is discarded the moment this aspect returns,
-     * because the outer caller sees a new default Context on its next
-     * {@code getContext()} call. Net effect: {@code @SkipPermissionCheck}
-     * is a silent no-op, downstream {@code PermissionServiceImpl} still
-     * enforces scope / SFS / write guards. This is a legit failure mode
-     * for callers who forgot to wrap in
-     * {@code ContextHolder.runWith(...) / callWith(...)}, and used to be
-     * silent.
+     * <h3>Unbound-context short-circuit</h3>
+     * {@code ContextHolder.getContext()} returns a fresh default Context when no
+     * {@link ScopedValue} binding exists on the current thread
+     * ({@link ContextHolder#existContext()} returns {@code false}), so mutating it
+     * here would be discarded — the next {@code getContext()} downstream hands back
+     * another new instance.
      *
-     * <p>Log a WARN so ops can trace it — but do not throw. Legit code
-     * paths at framework boot / lifecycle events may hit this before the
-     * request-scoped context is bound; a throw would break them, whereas
-     * the intended semantics (skip check) simply falls back to "check as
-     * usual" which is safe.
+     * <p>That costs nothing, because the outcome does not depend on the flag in that
+     * case: {@code PermissionServiceImpl.shouldBypass()} already returns {@code true}
+     * on {@code !existContext()}, so checks are skipped either way. The annotation is
+     * simply redundant on such threads, not defeated — we return early rather than
+     * mutate a throwaway.
+     *
+     * <p>This used to log a WARN. It was removed: an unbound context is the norm on
+     * scheduler / bootstrap / MQ threads, and the annotation sits on the
+     * {@code JdbcServiceImpl} read-write methods every ORM call funnels through, so
+     * the warning fired continuously (message-starter's outbox polls every 500ms) and
+     * reported something with no consequence. The failure it was written for — a
+     * caller who expected a bound context and lost it — is not observable from here:
+     * where the flag actually decides the outcome, the context IS bound and this
+     * branch is not taken.
      * @param joinPoint Around join point object
      * @return Original method return value
      * @throws Throwable Exception
@@ -51,11 +53,12 @@ public class PermissionAspect {
     @Around("@annotation(io.softa.framework.orm.annotation.SkipPermissionCheck)")
     public Object skipPermissionCheck(ProceedingJoinPoint joinPoint) throws Throwable {
         if (!ContextHolder.existContext()) {
-            log.warn("@SkipPermissionCheck on {} runs outside a bound ContextHolder "
-                    + "ScopedValue — mutation is discarded and the annotation is a no-op. "
-                    + "Wrap the caller in ContextHolder.runWith(bootstrapCtx, ...) or "
-                    + "ContextHolder.callWith(...).",
-                    joinPoint.getSignature().toShortString());
+            // Nothing to do, and nothing worth reporting. The flag would land on the throwaway
+            // Context getContext() hands back when unbound, so it never reaches
+            // PermissionServiceImpl.shouldBypass() — which already returns true on
+            // !existContext(). The outcome is identical either way, so the annotation is merely
+            // redundant here, not defeated.
+            return joinPoint.proceed();
         }
         Context context = ContextHolder.getContext();
         boolean previousValue = context.isSkipPermissionCheck();
