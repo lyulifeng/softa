@@ -171,6 +171,41 @@ Scope **types are data**; their compilation is **code only where it must be**.
 fail-closed. Fail-closed for an inapplicable / empty rule is `WHERE 1=0`
 (`ScopeRuleCompiler.matchNone()`), never "no filter".
 
+### No grant: what happens then
+
+A model the caller holds no rule for does **not** simply open. `appendScopeAccessFilters` runs down a
+fixed order, and each step is there because the one before it would answer the wrong question:
+
+1. **An explicit rule wins.** Whatever an administrator configured — including a deliberate narrowing —
+   is compiled and applied. Nothing below can override it.
+2. **Real business data fails closed.** `hasForwardAnchor` asks the registry whether any non-universal
+   scope type applies (an employee / department / company field a rule could restrict on). If one does,
+   the model is data someone was supposed to grant, and no grant means no rows.
+3. **A country value domain is readable.** `multiCountry` + not multi-tenant: a table whose rows are one
+   country's allowed values for some field. Row-scoping one is meaningless — the rows are the domain of a
+   dropdown, so anyone who can open the form needs all of them — and the country axis already narrows
+   them, which is data correctness rather than authorization. **Writes are untouched**; maintaining a
+   value domain is gated by the endpoint permission on its page. Seven models qualify today
+   (`IdType`, `PassType`, `ResidenceStatus`, `EmploymentType`, `HighestEducationLevel`,
+   `HighestEducationTrack`, `WorkPattern`); list them with
+   `SELECT model_name FROM sys_model WHERE multi_country = 1 AND multi_tenant = 0` — note the column is
+   `tinyint(1)`, so comparing it to `'true'` silently matches the complement.
+4. **An anchorless child follows its owner.** `findReferencer` looks through the models the caller *was*
+   granted for one pointing at this one, and re-enters scope for that parent.
+5. **Otherwise, closed.**
+
+Step 3 exists because steps 2 and 4 between them left a hole. `IdType` is referenced only from
+`EmployeeProfile`, which a role reaches *through* `Employee` rather than being granted in its own right
+(the wizard does not offer OneToOne children as separately grantable), so step 4 finds no granted
+referrer and the read returns nothing — an ID Type dropdown reading "No options available" with the rows
+present and the country filter correct. Full write-up, including the three predicates that were measured
+and rejected: wiki `Permission-Architecture-v2` 附录 B.
+
+Deliberately **not** covered: `CountryRegion`, `Currency`, `CountrySubdivision`, `Bank`. The first three
+are not `multiCountry` and must not be marked so — they *are* the country and currency masters, not data
+partitioned by country. `Bank` should be (its rows are per-country) and is pending that change. Until
+then they need an explicit grant, as they always have.
+
 **There is no company scope type, and the company axis is not a scope rule.** A `LEGAL_ENTITY`
 identity type existed — `["legalEntityId","=","USER_COMP_ID"]` — and was retired, because an identity
 template resolves from *the caller*: one role scoped that way granted each holder their own company, so
