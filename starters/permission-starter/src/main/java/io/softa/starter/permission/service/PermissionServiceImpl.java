@@ -110,10 +110,31 @@ public class PermissionServiceImpl implements PermissionService {
             if (scope == null) return originalFilters; // ALL rule → no restriction
             return combineAnd(originalFilters, scope);
         }
-        // No explicit grant. Real business data (has a forward scope anchor)
-        // stays fail-closed; only a truly anchorless config/extension model gets
-        // the metadata-derived follow-parent / shared treatment below. (Cross-
-        // model display expansion still bypasses everything via skipPermissionCheck.)
+        return scopeWithoutGrant(model, pi, originalFilters);
+    }
+
+    /**
+     * What a model resolves to when the caller holds no rule for it.
+     *
+     * <p>Separate from {@link #appendScopeAccessFilters} because the two answer different questions.
+     * Above, the subject is the caller — may this principal bypass, which companies is it bounded to,
+     * what did an administrator configure. Here the subject is the model — is it business data, a value
+     * domain, or a child of something the caller can already see. Read as one method they hid that
+     * boundary; the caller-side checks are now the whole of the public one and read as a policy.
+     *
+     * <p>Fail-closed is the default, and every branch below is an argument against it:
+     * <ol>
+     *   <li><b>Has a forward anchor</b> → real business data, which someone was supposed to grant. Closed.</li>
+     *   <li><b>A country value domain</b> → the rows are a dropdown's own domain; see
+     *       {@link #isCountryValueDomain}. Readable.</li>
+     *   <li><b>Reachable from a granted model</b> → follow that owner; see {@link #findReferencer}.</li>
+     *   <li><b>Otherwise</b> → nothing connects the caller to it. Closed.</li>
+     * </ol>
+     *
+     * <p>Cross-model display expansion never arrives here — it bypasses everything upstream via
+     * {@code skipPermissionCheck}.
+     */
+    private Filters scopeWithoutGrant(String model, PermissionInfo pi, Filters originalFilters) {
         if (hasForwardAnchor(model)) {
             return combineAnd(originalFilters, ScopeRuleCompiler.matchNone());
         }
