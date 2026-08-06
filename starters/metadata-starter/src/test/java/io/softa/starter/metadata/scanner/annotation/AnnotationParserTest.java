@@ -103,6 +103,54 @@ class AnnotationParserTest {
         assertEquals(Boolean.FALSE, m.getCopyable());
     }
 
+    // ------- request-scoped narrowing attributes -------------------------
+    //
+    // multiCompany / multiCountry are what MultiCompanyScope and MultiCountryScope read at runtime to
+    // decide whether a read is narrowed at all. A parser that dropped either would not fail anything —
+    // it would write a sys_model row saying "not scoped", and every company's rows would show up in
+    // every other company's screens with nothing to indicate it. Pin both, including the defaults,
+    // since "false by default" is the half that silences the mechanism. The anchor field itself is not
+    // parsed: ModelManager resolves it from the model's own reference at boot.
+
+    @Test
+    void modelScopingAttributes_defaultToOff() {
+        SysModel m = parser.parse(List.of(Customer.class), List.of()).models().get(0);
+
+        assertEquals(Boolean.FALSE, m.getMultiCompany());
+        assertEquals(Boolean.FALSE, m.getMultiCountry());
+    }
+
+    @Test
+    void multiCompany_isParsed() {
+        // The anchor is derived at boot from the model's own fields — the parser only carries the flag.
+        @Model(multiCompany = true)
+        @SuppressWarnings("unused")
+        class Document extends AuditableModel {
+            @Override
+            public Serializable getId() {
+                return null;
+            }
+        }
+        SysModel m = parser.parse(List.of(Document.class), List.of()).models().get(0);
+
+        assertEquals(Boolean.TRUE, m.getMultiCompany());
+    }
+
+    @Test
+    void multiCountry_isParsed() {
+        @Model(multiCountry = true)
+        @SuppressWarnings("unused")
+        class EmploymentTypeLike extends AuditableModel {
+            @Override
+            public Serializable getId() {
+                return null;
+            }
+        }
+        SysModel m = parser.parse(List.of(EmploymentTypeLike.class), List.of()).models().get(0);
+
+        assertEquals(Boolean.TRUE, m.getMultiCountry());
+    }
+
     @Test
     void fieldCopyable_defaultsTrue_andParsesExplicitFalse() {
         AnnotationScanResult result = parser.parse(List.of(Customer.class), List.of());

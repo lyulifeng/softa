@@ -154,18 +154,16 @@ class ScopeApplicabilityResolverTest {
     void applicableFor_multipleRows_union() {
         ScopeApplicabilityResolver resolver = resolverWith(
                 self(),
-                filterRow("LEGAL_ENTITY", List.of("legalEntityId", "=", "USER_COMP_ID"), null, null),
                 codeRow("DEPT_SUBTREE", List.of("departmentId")),
                 allRow("CUSTOM"));
         try (MockedStatic<ModelManager> mm = Mockito.mockStatic(ModelManager.class)) {
             mm.when(() -> ModelManager.existModel("Employee")).thenReturn(true);
             mm.when(() -> ModelManager.getModelFields("Employee")).thenReturn(List.of(
                     field("id"), field("legalEntityId"), field("departmentId")));
-            // SELF matches Employee via identityFilter (id); LEGAL_ENTITY + DEPT_SUBTREE
-            // anchors present; CUSTOM is universal.
+            // SELF matches Employee via identityFilter (id); DEPT_SUBTREE's anchor is present;
+            // CUSTOM is universal.
             assertThat(resolver.applicableFor("Employee")).containsExactlyInAnyOrder(
-                    ScopeType.ALL, ScopeType.SELF, ScopeType.LEGAL_ENTITY,
-                    ScopeType.DEPT_SUBTREE, ScopeType.CUSTOM);
+                    ScopeType.ALL, ScopeType.SELF, ScopeType.DEPT_SUBTREE, ScopeType.CUSTOM);
         }
     }
 

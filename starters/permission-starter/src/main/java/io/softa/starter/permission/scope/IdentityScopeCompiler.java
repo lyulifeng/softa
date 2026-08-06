@@ -19,7 +19,7 @@ import io.softa.starter.permission.spi.ScopeType;
 /**
  * Data-driven compiler for the "identity" scope types — the ones whose row filter
  * is a fixed template of the shape {@code <field> = <an env value from the caller's
- * identity context>} (SELF / DIRECT_REPORTS / CREATED_BY_SELF / LEGAL_ENTITY).
+ * identity context>} (SELF / DIRECT_REPORTS / CREATED_BY_SELF).
  *
  * <h3>Everything comes from the DataScopeType row (2026-07-17 filter-merge)</h3>
  * A {@code DataScopeType} row is an identity type iff it declares a {@code filter}

@@ -27,8 +27,42 @@ public class Context implements Serializable {
     private Language language = BaseConstant.DEFAULT_LANGUAGE;
     private Timezone timezone;
 
-    private Long companyId;
     private Long tenantId;
+
+    /**
+     * The company this request is being made under — "which company am I looking at", chosen in the
+     * header switcher and carried on {@code X-Company-Id}. What the per-company and per-country
+     * narrowing read.
+     *
+     * <p>Not the company the caller belongs to. That one lives on {@code EmpInfo.companyId} and
+     * anchors permission rules ({@code USER_COMP_ID}); it answers "whose records are these", while
+     * this answers "which company's books am I in right now". A role may reach several companies and
+     * switch between them, so a rule anchored on this field would widen with every switch — which is
+     * why the two are kept apart rather than merged. The nesting is the reminder:
+     * {@code context.getCompanyId()} is the selection, {@code context.getEmpInfo().getCompanyId()}
+     * is the affiliation.
+     *
+     * <p>The HR app calls this a legal entity; the framework says company throughout, the same
+     * translation {@code USER_COMP_ID} already makes.
+     *
+     * <p>Never cached in the session: a cached value defeats switching, and multiple browser tabs
+     * would overwrite each other.
+     */
+    private Long companyId;
+
+    /**
+     * ISO 3166-1 alpha-2 country of {@link #companyId}, resolved server-side by a
+     * ContextEnricher (the app supplies it, since only the app knows what a company row is).
+     * Never read from the client — a forged value would bypass per-country narrowing.
+     *
+     * <p>May be set while {@link #companyId} is null: a caller with no company to select — a role
+     * granted no company, which is what a self-service employee is — falls back to the country of the
+     * company it belongs to, so that per-country value domains still narrow. The reverse asymmetry
+     * also exists and predates it (a selected company whose row carries no country). So this field
+     * answers "which country's data applies to this request", not "the selected company's country";
+     * the {@code SELECTED_COMP_COUNTRY} placeholder answers the latter and is guarded accordingly.
+     */
+    private String companyCountry;
 
     private String token;
     private String traceId;
@@ -121,8 +155,9 @@ public class Context implements Serializable {
         newContext.setName(this.name);
         newContext.setLanguage(this.language);
         newContext.setTimezone(this.timezone);
-        newContext.setCompanyId(this.companyId);
         newContext.setTenantId(this.tenantId);
+        newContext.setCompanyId(this.companyId);
+        newContext.setCompanyCountry(this.companyCountry);
         newContext.setUserInfo(this.userInfo);
         newContext.setEmpInfo(this.empInfo);
         newContext.setSkipAutoAudit(this.skipAutoAudit);

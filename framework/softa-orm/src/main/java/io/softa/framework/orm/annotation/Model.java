@@ -76,6 +76,44 @@ public @interface Model {
     boolean multiTenant() default false;
 
     /**
+     * This model's rows are partitioned by country — one independent set per country,
+     * so a value domain that differs between countries is stored as separate rows
+     * rather than shared ones. Queries are then narrowed to the country of the
+     * company selected in the request context, automatically and for every
+     * read path (list / page / count / reference lookup).
+     *
+     * <p>Boot-enforced: the model must carry a {@code MANY_TO_ONE} field onto
+     * {@code CountryRegion} (see {@link io.softa.framework.orm.meta.ModelManager}).
+     *
+     * <p>Declare it <b>only</b> when the rows really are replicated per country.
+     * A field merely recording <i>which country a record belongs to</i> — a legal
+     * entity's country, an address's country — is not this: marking such a model
+     * silently hides rows from every other country.
+     */
+    boolean multiCountry() default false;
+
+    /**
+     * Rows belong to one company, and reads are narrowed to the company selected
+     * in the request context — automatically, on every read path.
+     *
+     * <p>Boot-enforced: the model must carry a {@code MANY_TO_ONE} / {@code ONE_TO_ONE} onto
+     * {@code LegalEntity}. A model with no company column of its own — a per-department statistic —
+     * declares one as a {@code dynamic} cascaded field ({@code cascadedField =
+     * "deptId.legalEntityId"}), which takes no column and is joined at query time. When several
+     * references lead to a company, the one named {@code legalEntityId} is the owning one.
+     *
+     * <p>Named for the symmetry with {@link #multiCountry()} — the two are the same
+     * mechanism on different axes, and one input drives both. Read it as "this model
+     * spans companies", not as "a row is replicated per company": unlike the country
+     * axis, where the same catalog genuinely exists once per country, these rows each
+     * belong to exactly one company. Do not declare it on data shared across
+     * companies — a tenant-wide code table, a model whose company field merely
+     * records a preference — or every other company's rows become invisible.
+     */
+    boolean multiCompany() default false;
+
+
+    /**
      * Whether rows of this model may be duplicated via {@code copyById} /
      * {@code copyByIds} / {@code getCopyableFields}. Set {@code false} on
      * runtime / log models (execution traces, send records, histories) that

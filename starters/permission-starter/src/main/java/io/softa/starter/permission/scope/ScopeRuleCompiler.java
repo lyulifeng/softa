@@ -33,7 +33,7 @@ import io.softa.starter.permission.spi.ScopeType;
  * <h3>Why this design</h3>
  * The framework's three generic scope types (ALL, CUSTOM,
  * CREATED_BY_SELF) ship with user-starter. Domain-specific types
- * (SELF, DIRECT_REPORTS, DEPT_SUBTREE, MANAGED_DEPARTMENTS, LEGAL_ENTITY)
+ * (SELF, DIRECT_REPORTS, DEPT_SUBTREE, MANAGED_DEPARTMENTS)
  * live in the consuming business module as their own
  * {@link ScopeContributor} beans. The compiler doesn't import business
  * concepts; it just dispatches by ScopeType.
@@ -65,7 +65,7 @@ public final class ScopeRuleCompiler {
      *
      * <p>Dispatch precedence per type: ALL (inline) → a registered
      * {@link ScopeContributor} → the {@link IdentityScopeCompiler} data path
-     * (SELF / DIRECT_REPORTS / CREATED_BY_SELF / LEGAL_ENTITY, whose
+     * (SELF / DIRECT_REPORTS / CREATED_BY_SELF, whose
      * {@code DataScopeType} rows declare a {@code filter} template) → fail-closed.
      * A type with none of these degrades to empty at runtime (logged at debug in
      * {@link #compileOne}); we don't warn at boot because identity handling is
@@ -129,7 +129,7 @@ public final class ScopeRuleCompiler {
                 return contributor.compile(rule, modelName);
             }
             // No code contributor — try the data-driven identity path
-            // (SELF / DIRECT_REPORTS / CREATED_BY_SELF / LEGAL_ENTITY compile
+            // (SELF / DIRECT_REPORTS / CREATED_BY_SELF compile
             // from their DataScopeType rows). Returns null when the type isn't a
             // data-driven identity type, i.e. genuinely unhandled.
             Filters identity = identityCompiler.compile(type, rule, modelName);

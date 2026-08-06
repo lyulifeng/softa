@@ -62,6 +62,32 @@ public class PermissionInfo implements Serializable {
     private Map<String, Set<String>> modelSensitiveFieldSetsMap;
 
     /**
+     * Legal entities this user's roles may reach, unioned across roles. Bounds every multi-company
+     * model, independently of {@link #modelScopeMap} — which companies a role may reach is a property
+     * of the role, not of any one model.
+     *
+     * <p><b>Three states, and the difference between two of them is the point:</b>
+     * <ul>
+     *   <li>{@code null} — <b>unrestricted</b>. No company axis applies. This is what a role nobody
+     *       has configured resolves to, so the grant stays opt-in and shipping it empties nobody's
+     *       screen.</li>
+     *   <li><b>empty</b> — <b>no company at all</b>: every multi-company read matches nothing. Only an
+     *       explicit configuration produces this, never the absence of one.</li>
+     *   <li>non-empty — exactly those companies.</li>
+     * </ul>
+     *
+     * <p>"Not configured" and "configured to nothing" used to collapse into the same empty set, which
+     * made the second inexpressible: a role meant to reach no company at all — a self-service employee
+     * role, say — could only be written as the absence of a grant, and absence means unrestricted.
+     * Splitting them is what lets a company axis be mandatory for the roles that need one without
+     * forcing every existing role to be reconfigured first.
+     *
+     * <p>Cached with the rest of the snapshot, so a read pays no query for it. Roles change → the
+     * snapshot is evicted → this is rebuilt with them.
+     */
+    private Set<Long> grantedCompanyIds;
+
+    /**
      * Single source of truth for the SUPER_ADMIN short-circuit consulted by every
      * layer (route-admission + data-plane + enricher). True iff the user holds the
      * {@link #CODE_SUPER_ADMIN} role.

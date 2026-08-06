@@ -1,7 +1,9 @@
 package io.softa.starter.user.controller;
 
 import io.softa.framework.base.exception.BusinessException;
+import io.softa.framework.orm.constant.ModelConstant;
 import io.softa.framework.orm.domain.Filters;
+import io.softa.framework.orm.meta.ModelManager;
 import io.softa.framework.orm.service.ModelService;
 import io.softa.framework.web.response.ApiResponse;
 import io.softa.starter.user.constant.RoleConstant;
@@ -57,6 +59,13 @@ import java.util.Map;
 @RequestMapping("/Role")
 @RequiredArgsConstructor
 public class RoleController {
+
+    /**
+     * {@code ScopeType.ALL}'s wire form. The name, not the {@code @JsonValue} code: the snapshot reads
+     * these rows back with {@code ScopeType.valueOf}, so the name is what is stored. permission-starter
+     * is not on this module's classpath, so this cannot be the enum constant.
+     */
+    static final String SCOPE_TYPE_ALL = "ALL";
 
     private final RoleService roleService;
     private final RoleNavigationService roleNavigationService;
@@ -303,6 +312,7 @@ public class RoleController {
      *  Incoming id/roleId ignored — id auto-assigned, roleId bound by caller. */
     private void writeRoleDataScopes(Long roleId, JsonNode rowsJson) {
         if (rowsJson == null || !rowsJson.isArray() || rowsJson.isEmpty()) return;
+        rejectUnboundedCompanyScope(rowsJson);
         List<RoleDataScope> rows = new ArrayList<>(rowsJson.size());
         for (JsonNode row : rowsJson) {
             JsonNode modelNode = row.get("model");
@@ -314,6 +324,87 @@ public class RoleController {
             rows.add(rds);
         }
         if (!rows.isEmpty()) roleDataScopeService.createList(rows);
+    }
+
+    /**
+     * Reject a role that may read <b>every</b> row of a model belonging to one company without saying
+     * which companies it may reach.
+     *
+     * <h3>What this catches</h3>
+     * Absence of a company scope means unrestricted, and it has to — a role nobody configured must keep
+     * working, or shipping the axis would blank every existing screen. The consequence is that "I forgot
+     * to restrict the companies" and "I meant all companies" are the same payload, and the first one
+     * hands a regional HR every region's departments and headcount reports with nothing on screen saying
+     * so. Nothing downstream can tell them apart, so the distinction has to be demanded here, once, from
+     * the person who knows the answer.
+     *
+     * <h3>Why {@code ALL} specifically, and not "touches a multi-company model"</h3>
+     * A self-service employee role reaches multi-company models too, and must stay configurable with no
+     * company scope at all: its row scope is {@code SELF}, which resolves to the caller's own record, and
+     * the two compose as AND — so an unrestricted company axis widens nothing. Demanding a company scope
+     * from every role that merely touches such a model would block exactly the role that needs no
+     * company at all, which is the common case. It is the broad row scope that makes the missing company
+     * scope dangerous, so that is the pair this looks for.
+     *
+     * <p>Deliberately server-side even though the wizard can warn: the wizard is one client of this
+     * endpoint, and a payload assembled anywhere else must not be able to grant a wider role than the UI
+     * permits.
+     */
+    private void rejectUnboundedCompanyScope(JsonNode rowsJson) {
+        if (hasCompanyScope(rowsJson)) {
+            return;
+        }
+        for (JsonNode row : rowsJson) {
+            JsonNode modelNode = row.get("model");
+            if (modelNode == null || !modelNode.isString()) {
+                continue;
+            }
+            String model = modelNode.asString();
+            if (!ModelManager.existModel(model) || !ModelManager.getModel(model).isMultiCompany()) {
+                continue;
+            }
+            if (grantsEveryRow(row.get("dataScopes"))) {
+                throw new BusinessException("This role may read every record of {0}, and records of {0} "
+                        + "belong to one company. Select the legal entities the role may reach, or narrow "
+                        + "its record scope.", ModelManager.getModel(model).getLabel());
+            }
+        }
+    }
+
+    /** True when the payload configures the company dimension at all — see {@code COMPANY_MODEL}. */
+    private static boolean hasCompanyScope(JsonNode rowsJson) {
+        for (JsonNode row : rowsJson) {
+            JsonNode modelNode = row.get("model");
+            if (modelNode != null && modelNode.isString()
+                    && ModelConstant.COMPANY_MODEL.equals(modelNode.asString())) {
+                JsonNode scopes = row.get("dataScopes");
+                return scopes != null && scopes.isArray() && !scopes.isEmpty();
+            }
+        }
+        return false;
+    }
+
+    /**
+     * True when any rule grants every row. Matches the enum <b>name</b> because that is the wire form
+     * the snapshot reads back ({@code ScopeType.valueOf}); permission-starter is not on this module's
+     * classpath, so the constant cannot be shared and the spelling is asserted by a test instead.
+     */
+    private static boolean grantsEveryRow(JsonNode dataScopes) {
+        if (dataScopes == null || !dataScopes.isArray()) {
+            // No rule for a model the role can reach is the same statement as ALL: the snapshot finds
+            // nothing to narrow with and the read goes unbounded.
+            return true;
+        }
+        if (dataScopes.isEmpty()) {
+            return true;
+        }
+        for (JsonNode rule : dataScopes) {
+            JsonNode type = rule.get("scopeType");
+            if (type != null && type.isString() && SCOPE_TYPE_ALL.equals(type.asString())) {
+                return true;
+            }
+        }
+        return false;
     }
 
     /** Writes one role_sensitive_field_set row per granted setId (de-duped).

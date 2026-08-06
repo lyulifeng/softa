@@ -148,7 +148,7 @@ Scope **types are data**; their compilation is **code only where it must be**.
   applicability and compilation share one source. The role wizard in user-starter
   derives the same answer by reading `DataScopeType` by name, with no engine dependency.
 - **Identity scopes → data-driven filter template** — `SELF` / `DIRECT_REPORTS` /
-  `CREATED_BY_SELF` / `LEGAL_ENTITY` are all `<field> = <a value from the caller's
+  `CREATED_BY_SELF` are all `<field> = <a value from the caller's
   identity context>`, expressed as a `filter` template whose leaf value is an
   `EnvConstant` placeholder (e.g. `["employeeId","=","USER_EMP_ID"]`).
   `IdentityScopeCompiler` emits that template as a `Filters`; **the placeholder is
@@ -170,6 +170,24 @@ Scope **types are data**; their compilation is **code only where it must be**.
 `ScopeContributor` → its `compile` → the `IdentityScopeCompiler` data path →
 fail-closed. Fail-closed for an inapplicable / empty rule is `WHERE 1=0`
 (`ScopeRuleCompiler.matchNone()`), never "no filter".
+
+**There is no company scope type, and the company axis is not a scope rule.** A `LEGAL_ENTITY`
+identity type existed — `["legalEntityId","=","USER_COMP_ID"]` — and was retired, because an identity
+template resolves from *the caller*: one role scoped that way granted each holder their own company, so
+an HR in company A saw all of A's records and the same role in B saw B's. Which companies a role may
+reach is a property of the role. It is configured as the role's ordinary data scope **on the company
+model itself** (`role_data_scope` where `model = ModelConstant.COMPANY_MODEL`), which
+`DefaultPermissionSnapshotProvider.readGrantedCompanyIds` compiles through this same engine and
+materialises into `PermissionInfo.grantedCompanyIds`; `appendCompanyGrant` then bounds every
+`@Model(multiCompany)` read by it, and `MultiCompanyScope` narrows within it to the company the header
+selected. One row therefore bounds both the company switcher's own list and everything behind it —
+before, a separate `RoleCompany` table held the grant and the two could disagree, so narrowing the
+company scope while leaving the grant alone still showed every company's departments and reports.
+A rule that genuinely wants "the caller's own company" is still expressible as a `CUSTOM` rule naming
+`USER_COMP_ID`, where the per-user behaviour is visible in the configuration rather than implied by a
+type name. Retiring the type needs its stored rows migrated (`deploy/migrations/mysql/V40`) **before**
+the new binary: `ScopeType.valueOf` skips an unknown name silently, and a model left with no rule is not
+narrowed at all.
 
 ### Adding a scope type
 
