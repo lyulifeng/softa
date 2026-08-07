@@ -92,7 +92,7 @@ public class PermissionServiceImpl implements PermissionService {
 
     @Override
     public Filters appendScopeAccessFilters(String model, Filters originalFilters) {
-        if (shouldBypass()) return originalFilters;
+        if (shouldBypassDataScope()) return originalFilters;
         PermissionInfo pi = currentPi();
         if (PermissionInfo.isAdmin(pi)) return originalFilters;
         if (hasExplicitRules(pi, model)) {
@@ -259,7 +259,7 @@ public class PermissionServiceImpl implements PermissionService {
     public void checkIdsAccess(String model,
                                Collection<? extends Serializable> ids,
                                AccessType accessType) {
-        if (ids == null || ids.isEmpty() || shouldBypass()) return;
+        if (ids == null || ids.isEmpty() || shouldBypassDataScope()) return;
         PermissionInfo pi = currentPi();
         if (PermissionInfo.isAdmin(pi)) return;
         List<Serializable> idList = new ArrayList<>(ids);
@@ -316,6 +316,19 @@ public class PermissionServiceImpl implements PermissionService {
         if (!ContextHolder.existContext()) return true;
         Context ctx = ContextHolder.getContext();
         return ctx.isSkipPermissionCheck() || ctx.getUserId() == null;
+    }
+
+    /**
+     * Row-scope bypass = the full bypass PLUS the narrow {@code skipDataScope}
+     * flag. Consulted ONLY by the two row-scope entry points
+     * ({@code appendScopeAccessFilters} / {@code checkIdsAccess}) — the
+     * field-level guards (masking, write payload) keep using
+     * {@link #shouldBypass()} so a main-model-scope bypass never turns off
+     * sensitive-field protection.
+     */
+    private static boolean shouldBypassDataScope() {
+        if (shouldBypass()) return true;
+        return ContextHolder.getContext().isSkipDataScope();
     }
 
     private PermissionInfo currentPi() {
