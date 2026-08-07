@@ -14,6 +14,8 @@ import org.aspectj.lang.ProceedingJoinPoint;
 import org.aspectj.lang.annotation.Around;
 import org.aspectj.lang.annotation.Aspect;
 import org.aspectj.lang.reflect.MethodSignature;
+import org.springframework.beans.BeanUtils;
+import org.springframework.core.ResolvableType;
 import org.springframework.core.annotation.AnnotatedElementUtils;
 import org.springframework.stereotype.Component;
 import org.springframework.web.bind.annotation.RequestMapping;
@@ -63,8 +65,11 @@ public class MainModelScopeAspect {
 
     private final Map<Method, List<ResolvedScope>> cache = new ConcurrentHashMap<>();
 
-    /** One declared scope, resolved against the concrete method. */
-    record ResolvedScope(String model, int idIndex, int filterIndex) {
+    /** One declared scope, resolved against the concrete method. {@code idPathAccessors}
+     *  is the startup-compiled getter chain for {@code idPath} (null = idParam holds
+     *  the ids directly), so request time is pure {@code invoke}, no lookups. */
+    record ResolvedScope(String model, int idIndex, int filterIndex,
+                         List<java.lang.reflect.Method> idPathAccessors, String idPath) {
     }
 
     @Around("@annotation(io.softa.starter.permission.annotation.MainModelScope)"
@@ -77,7 +82,13 @@ public class MainModelScopeAspect {
         // ── ① verify / rewrite — flag still closed, real scope applies
         for (ResolvedScope scope : scopes) {
             if (scope.idIndex() >= 0) {
-                Collection<? extends Serializable> ids = idsOf(args[scope.idIndex()]);
+                Collection<? extends Serializable> ids = scope.idPathAccessors() != null
+                        ? extractByPath(args[scope.idIndex()], scope.idPathAccessors(), scope.idPath())
+                        : idsOf(args[scope.idIndex()]);
+                // De-duplicate before the check: checkIdsAccess compares the scoped
+                // count against the RAW list size, so two documents naming the same
+                // employee ([7, 7] vs count 1) would false-reject a legitimate call.
+                ids = ids.stream().distinct().toList();
                 // Fail closed on a null/empty id argument. checkIdsAccess returns
                 // silently for an empty collection, so letting it through would
                 // open the bypass with NOTHING verified — and an endpoint that can
@@ -143,16 +154,25 @@ public class MainModelScopeAspect {
         List<ResolvedScope> out = new ArrayList<>(declared.length);
         for (var scope : declared) {
             String model = scope.model().isEmpty() ? inferModel(method) : scope.model();
+            boolean hasPath = !scope.idPath().isEmpty();
+            if (hasPath && scope.idParam().isEmpty()) {
+                throw new IllegalStateException("@MainModelScope on " + method
+                        + " declares idPath without idParam — idPath navigates INSIDE the"
+                        + " parameter idParam names. Declare both.");
+            }
             int idIndex = scope.idParam().isEmpty() ? -1
-                    : paramIndex(method, scope.idParam(), null);
+                    : paramIndex(method, scope.idParam(), null, /* holdsIdsDirectly = */ !hasPath);
             int filterIndex = scope.filterParam().isEmpty() ? -1
-                    : paramIndex(method, scope.filterParam(), Filters.class);
+                    : paramIndex(method, scope.filterParam(), Filters.class, true);
             if (idIndex < 0 && filterIndex < 0) {
                 throw new IllegalStateException("@MainModelScope on " + method
                         + " declares neither idParam nor filterParam — nothing to check."
                         + " Declare at least one, or drop the annotation.");
             }
-            out.add(new ResolvedScope(model, idIndex, filterIndex));
+            List<java.lang.reflect.Method> accessors = hasPath
+                    ? compilePath(method.getParameters()[idIndex].getType(), scope.idPath(), method)
+                    : null;
+            out.add(new ResolvedScope(model, idIndex, filterIndex, accessors, scope.idPath()));
         }
         return out;
     }
@@ -180,12 +200,14 @@ public class MainModelScopeAspect {
                 + " path to infer it from. Declare model=\"...\" explicitly.");
     }
 
-    private static int paramIndex(Method method, String name, Class<?> requiredType) {
+    private static int paramIndex(Method method, String name, Class<?> requiredType,
+                                  boolean holdsIdsDirectly) {
         Parameter[] parameters = method.getParameters();
         for (int i = 0; i < parameters.length; i++) {
             if (parameters[i].getName().equals(name)) {
                 Class<?> type = parameters[i].getType();
-                if (requiredType == null && type.isArray() && type.componentType().isPrimitive()) {
+                if (requiredType == null && holdsIdsDirectly
+                        && type.isArray() && type.componentType().isPrimitive()) {
                     throw new IllegalStateException("@MainModelScope on " + method
                             + ": idParam '" + name + "' is a primitive array (" + type.getSimpleName()
                             + ") — its elements cannot be read as ids. Use Long[] / List<Long>.");
@@ -203,6 +225,107 @@ public class MainModelScopeAspect {
                 + ": no parameter named '" + name + "'. Available: "
                 + Arrays.stream(parameters).map(Parameter::getName).toList()
                 + " (parameter names require the -parameters compiler flag).");
+    }
+
+    // ─────────────────────── idPath ───────────────────────
+
+    /**
+     * Compile an idPath ({@code .} steps into a property, {@code []} expands a
+     * Collection) against the parameter's TYPES. Every failure mode is a boot
+     * failure with the concrete fix — the point of the restricted grammar over
+     * SpEL is exactly that it validates without a live argument.
+     */
+    static List<java.lang.reflect.Method> compilePath(Class<?> root, String path, Method where) {
+        Class<?> current = root;
+        List<java.lang.reflect.Method> accessors = new ArrayList<>();
+        for (String segment : path.split("\\.", -1)) {
+            boolean many = segment.endsWith("[]");
+            String prop = many ? segment.substring(0, segment.length() - 2) : segment;
+            if (prop.isEmpty()) {
+                throw new IllegalStateException("@MainModelScope on " + where
+                        + ": idPath '" + path + "' has an empty segment.");
+            }
+            java.beans.PropertyDescriptor pd = BeanUtils.getPropertyDescriptor(current, prop);
+            if (pd == null || pd.getReadMethod() == null) {
+                throw new IllegalStateException("@MainModelScope on " + where
+                        + ": idPath segment '" + prop + "' does not exist on "
+                        + current.getSimpleName() + ". Available: "
+                        + Arrays.stream(BeanUtils.getPropertyDescriptors(current))
+                                .map(java.beans.PropertyDescriptor::getName)
+                                .filter(n -> !"class".equals(n)).toList());
+            }
+            java.lang.reflect.Method getter = pd.getReadMethod();
+            accessors.add(getter);
+            if (many) {
+                if (!Collection.class.isAssignableFrom(getter.getReturnType())) {
+                    throw new IllegalStateException("@MainModelScope on " + where
+                            + ": idPath segment '" + prop + "[]' expands elements, but "
+                            + prop + " is " + getter.getReturnType().getSimpleName()
+                            + ", not a Collection.");
+                }
+                Class<?> element = ResolvableType.forMethodReturnType(getter)
+                        .asCollection().getGeneric(0).resolve();
+                if (element == null) {
+                    throw new IllegalStateException("@MainModelScope on " + where
+                            + ": idPath segment '" + prop + "[]' is a raw Collection —"
+                            + " its element type cannot be resolved. Add the generic.");
+                }
+                current = element;
+            } else {
+                current = getter.getReturnType();
+            }
+        }
+        if (!Serializable.class.isAssignableFrom(current) || Collection.class.isAssignableFrom(current)) {
+            throw new IllegalStateException("@MainModelScope on " + where
+                    + ": idPath '" + path + "' leaf is " + current.getSimpleName()
+                    + ", not a Serializable id. Point the path at the id property itself.");
+        }
+        return List.copyOf(accessors);
+    }
+
+    /**
+     * Walk the compiled getter chain. Fail-closed on any {@code null} along the
+     * way: a row whose id is missing cannot be scope-verified, and skipping it
+     * would reopen the omit-the-id unchecked-bypass hole.
+     */
+    static List<Serializable> extractByPath(Object rootArg, List<java.lang.reflect.Method> accessors,
+                                            String path) {
+        if (rootArg == null) {
+            throw new PermissionException("idPath '" + path + "': the request body is null —"
+                    + " the main-model scope check has nothing to verify.");
+        }
+        List<Object> current = List.of(rootArg);
+        for (java.lang.reflect.Method accessor : accessors) {
+            List<Object> next = new ArrayList<>();
+            for (Object node : current) {
+                Object value;
+                try {
+                    value = accessor.invoke(node);
+                } catch (ReflectiveOperationException e) {
+                    throw new IllegalStateException("idPath '" + path + "': "
+                            + accessor.getName() + " failed on " + node.getClass().getSimpleName(), e);
+                }
+                if (value == null) {
+                    throw new PermissionException("idPath '" + path + "' hit null at '"
+                            + accessor.getName() + "' — a row without its id cannot be"
+                            + " scope-verified; refusing instead of skipping it.");
+                }
+                if (value instanceof Collection<?> c) {
+                    next.addAll(c);
+                } else {
+                    next.add(value);
+                }
+            }
+            current = next;
+        }
+        List<Serializable> ids = new ArrayList<>(current.size());
+        for (Object leaf : current) {
+            if (leaf == null) {
+                throw new PermissionException("idPath '" + path + "' yielded a null id.");
+            }
+            ids.add((Serializable) leaf);
+        }
+        return ids;
     }
 
     /** Accepts a single id, a collection of ids, or an array of ids. */

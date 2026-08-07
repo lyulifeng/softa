@@ -54,11 +54,38 @@ public @interface MainModelScope {
 
     /**
      * Name of the method parameter carrying the main-model id(s) — a single
-     * {@code Serializable}, a {@code Collection} of them, or an array.
+     * {@code Serializable}, a {@code Collection} of them, or an array; or,
+     * when {@link #idPath()} is set, the request-body DTO to navigate into.
      * Command semantics: every id must be inside the caller's scope, one
      * out-of-scope id rejects the whole call. Empty = no id check.
      */
     String idParam() default "";
+
+    /**
+     * Property path from the {@link #idParam()} parameter to the id(s), for
+     * endpoints whose ids ride inside a request-body DTO:
+     *
+     * <pre>{@code
+     * @MainModelScope(model = "Employee", idParam = "request",
+     *                 idPath = "documents[].employeeId")
+     * public ... initiate(@RequestBody InitiateDocumentSigningRequest request)
+     * }</pre>
+     *
+     * <p>Grammar is deliberately tiny: {@code .} steps into a property,
+     * a {@code []} suffix expands a {@code Collection} element-wise. No
+     * conditions, no indexes, no method calls — a shape this can't express
+     * is a controller signature that should change. Not SpEL: the path is
+     * compiled against the DTO's TYPES at startup, so a typo'd segment, a
+     * {@code []} on a non-collection, a raw collection, or a non-id leaf
+     * fails the boot, never the first request.
+     *
+     * <p>Extraction is fail-closed: a {@code null} anywhere along the path
+     * rejects (a row whose id is missing cannot be scope-verified — skipping
+     * it would reopen the omit-the-id bypass). Extracted ids are de-duplicated
+     * before the check ({@code checkIdsAccess} compares against the raw list
+     * size, so duplicates would false-reject legitimate calls).
+     */
+    String idPath() default "";
 
     /**
      * Name of the method parameter carrying a {@link io.softa.framework.orm.domain.Filters}

@@ -88,6 +88,49 @@ class MainModelScopeAspectTest {
         }
     }
 
+    // ── idPath fixtures — shaped like the real initiate request ─────────
+
+    public static class SigningDoc {
+        private final Long employeeId;
+        SigningDoc(Long employeeId) { this.employeeId = employeeId; }
+        public Long getEmployeeId() { return employeeId; }
+    }
+
+    public static class InitiateReq {
+        private final List<SigningDoc> documents;
+        InitiateReq(List<SigningDoc> documents) { this.documents = documents; }
+        public List<SigningDoc> getDocuments() { return documents; }
+    }
+
+    @SuppressWarnings("rawtypes")
+    public static class RawReq {
+        public List getDocuments() { return List.of(); }
+    }
+
+    @RequestMapping("/EmpDocument")
+    static class SigningController {
+
+        @MainModelScope(model = "Employee", idParam = "request", idPath = "documents[].employeeId")
+        public void initiate(InitiateReq request) {
+        }
+
+        @MainModelScope(model = "Employee", idParam = "request", idPath = "documents[].employeId")
+        public void typoSegment(InitiateReq request) {
+        }
+
+        @MainModelScope(model = "Employee", idParam = "request", idPath = "documents[]")
+        public void dtoLeaf(InitiateReq request) {
+        }
+
+        @MainModelScope(model = "Employee", idParam = "request", idPath = "documents[].employeeId")
+        public void rawCollection(RawReq request) {
+        }
+
+        @MainModelScope(model = "Employee", idPath = "documents[].employeeId")
+        public void pathWithoutParam(InitiateReq request) {
+        }
+    }
+
     // ── helpers ──────────────────────────────────────────────────────────
 
     private static Method method(Class<?> owner, String name, Class<?>... params) {
@@ -272,6 +315,103 @@ class MainModelScopeAspectTest {
 
         assertThatThrownBy(() -> ContextHolder.callWith(userContext(), () -> aspect.enforce(jp)))
                 .hasMessageContaining("required");
+    }
+
+    // ── idPath:DTO 内取 id ───────────────────────────────────────────────
+
+    @Test
+    void idPath_extractsNestedIds_dedupes_thenChecks() throws Throwable {
+        PermissionService permissionService = mock(PermissionService.class);
+        MainModelScopeAspect aspect = new MainModelScopeAspect(permissionService);
+        Method m = method(SigningController.class, "initiate", InitiateReq.class);
+        // two documents for employee 7 + one for 9 — dedupe is correctness, not
+        // cosmetics: checkIdsAccess compares count against the RAW list size,
+        // so [7,7,9] would count 2 visible vs size 3 and false-reject.
+        InitiateReq req = new InitiateReq(List.of(
+                new SigningDoc(7L), new SigningDoc(7L), new SigningDoc(9L)));
+        ProceedingJoinPoint jp = joinPoint(m, new Object[]{req}, args -> null);
+
+        ContextHolder.callWith(userContext(), () -> aspect.enforce(jp));
+
+        verify(permissionService).checkIdsAccess(eq("Employee"), eq(List.of(7L, 9L)), eq(AccessType.READ));
+    }
+
+    @Test
+    void idPath_nullLeaf_failsClosed_bodyNeverRuns() throws Throwable {
+        PermissionService permissionService = mock(PermissionService.class);
+        MainModelScopeAspect aspect = new MainModelScopeAspect(permissionService);
+        Method m = method(SigningController.class, "initiate", InitiateReq.class);
+        InitiateReq req = new InitiateReq(List.of(new SigningDoc(7L), new SigningDoc(null)));
+        AtomicBoolean bodyRan = new AtomicBoolean(false);
+        ProceedingJoinPoint jp = joinPoint(m, new Object[]{req}, args -> {
+            bodyRan.set(true);
+            return null;
+        });
+
+        Context ctx = userContext();
+        assertThatThrownBy(() -> ContextHolder.callWith(ctx, () -> aspect.enforce(jp)))
+                .hasMessageContaining("hit null");
+        assertThat(bodyRan).isFalse();
+        assertThat(ctx.isSkipDataScope()).isFalse();
+        verify(permissionService, never()).checkIdsAccess(anyString(), anyCollection(), any());
+    }
+
+    @Test
+    void idPath_emptyList_rejectsLikeMissingId() throws Throwable {
+        PermissionService permissionService = mock(PermissionService.class);
+        MainModelScopeAspect aspect = new MainModelScopeAspect(permissionService);
+        Method m = method(SigningController.class, "initiate", InitiateReq.class);
+        ProceedingJoinPoint jp = joinPoint(m, new Object[]{new InitiateReq(List.of())}, args -> null);
+
+        assertThatThrownBy(() -> ContextHolder.callWith(userContext(), () -> aspect.enforce(jp)))
+                .hasMessageContaining("required");
+    }
+
+    @Test
+    void plainIdParam_duplicates_alsoDeduped() throws Throwable {
+        PermissionService permissionService = mock(PermissionService.class);
+        MainModelScopeAspect aspect = new MainModelScopeAspect(permissionService);
+        Method m = method(LeaveRequestController.class, "transfer", List.class, Long.class);
+        ProceedingJoinPoint jp = joinPoint(m, new Object[]{List.of(1L, 1L, 2L), 42L}, args -> null);
+
+        ContextHolder.callWith(userContext(), () -> aspect.enforce(jp));
+
+        verify(permissionService).checkIdsAccess(eq("Employee"), eq(List.of(1L, 2L)), eq(AccessType.READ));
+    }
+
+    // ── idPath:启动期四类错误 ────────────────────────────────────────────
+
+    @Test
+    void idPath_typoSegment_failsAtBoot_listingAvailable() {
+        Method m = method(SigningController.class, "typoSegment", InitiateReq.class);
+        assertThatThrownBy(() -> MainModelScopeAspect.resolve(m))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("employeId")
+                .hasMessageContaining("Available");
+    }
+
+    @Test
+    void idPath_dtoLeaf_failsAtBoot() {
+        Method m = method(SigningController.class, "dtoLeaf", InitiateReq.class);
+        assertThatThrownBy(() -> MainModelScopeAspect.resolve(m))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("not a Serializable id");
+    }
+
+    @Test
+    void idPath_rawCollection_failsAtBoot() {
+        Method m = method(SigningController.class, "rawCollection", RawReq.class);
+        assertThatThrownBy(() -> MainModelScopeAspect.resolve(m))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("raw Collection");
+    }
+
+    @Test
+    void idPath_withoutIdParam_failsAtBoot() {
+        Method m = method(SigningController.class, "pathWithoutParam", InitiateReq.class);
+        assertThatThrownBy(() -> MainModelScopeAspect.resolve(m))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("idPath without idParam");
     }
 
     // ── ④ resolution failures name the fix ───────────────────────────────
