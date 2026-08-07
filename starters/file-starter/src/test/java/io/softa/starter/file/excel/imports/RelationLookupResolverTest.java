@@ -18,6 +18,7 @@ import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.ArgumentMatchers.anyCollection;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 class RelationLookupResolverTest {
@@ -53,7 +54,7 @@ class RelationLookupResolverTest {
     void resolveRowsToOneWritesBackFkId() {
         RelationLookupResolver resolver = createResolver();
         var group = new RelationLookupResolver.LookupGroup(
-                "deptId", "Department", List.of("code"), List.of("deptId.code"), true, false);
+                "deptId", "Department", List.of("code"), List.of("deptId.code"), true, false, false);
         Map<String, Object> row = new LinkedHashMap<>(Map.of("deptId.code", "D001"));
 
         ModelService<Long> typedService = (ModelService<Long>) getModelService(resolver);
@@ -67,10 +68,50 @@ class RelationLookupResolverTest {
     }
 
     @Test
+    @SuppressWarnings("unchecked")
+    void resolveRowsOneToOneFoldsIntoNestedValueObject() {
+        // A OneToOne root owns its sub-record, so the dotted columns are its content, not a business
+        // key: they are folded into a nested map the ORM cascade writes inline. Blank cells are left
+        // out so "blank means keep the existing value" holds on update.
+        RelationLookupResolver resolver = createResolver();
+        var group = new RelationLookupResolver.LookupGroup(
+                "profileId", "Profile", List.of("nickname", "gender"),
+                List.of("profileId.nickname", "profileId.gender"), true, false, true);
+        Map<String, Object> row = new LinkedHashMap<>();
+        row.put("profileId.nickname", "Amy");
+        row.put("profileId.gender", "  ");
+
+        resolver.resolveRows(new ArrayList<>(List.of(row)), List.of(group), true);
+
+        assertEquals(Map.of("nickname", "Amy"), row.get("profileId"));
+        assertFalse(row.containsKey("profileId.nickname"));
+        assertFalse(row.containsKey("profileId.gender"));
+        // No lookup is issued for a OneToOne group — nothing to search for.
+        verifyNoInteractions(getModelService(resolver));
+    }
+
+    @Test
+    void resolveRowsOneToOneAllBlankStillYieldsEmptyObject() {
+        // The sub-record belongs to the main row: a create must still produce one (the owning FK is
+        // typically required), and an update relinks the existing sub-row without touching a field.
+        RelationLookupResolver resolver = createResolver();
+        var group = new RelationLookupResolver.LookupGroup(
+                "profileId", "Profile", List.of("nickname"), List.of("profileId.nickname"),
+                true, false, true);
+        Map<String, Object> row = new LinkedHashMap<>();
+        row.put("profileId.nickname", "");
+
+        resolver.resolveRows(new ArrayList<>(List.of(row)), List.of(group), true);
+
+        assertEquals(Map.of(), row.get("profileId"));
+        assertFalse(row.containsKey("profileId.nickname"));
+    }
+
+    @Test
     void resolveRowsToOneIgnoreEmptyFalseWritesNull() {
         RelationLookupResolver resolver = createResolver();
         var group = new RelationLookupResolver.LookupGroup(
-                "deptId", "Department", List.of("code"), List.of("deptId.code"), false, false);
+                "deptId", "Department", List.of("code"), List.of("deptId.code"), false, false, false);
         Map<String, Object> row = new LinkedHashMap<>();
         row.put("deptId.code", "");
 
@@ -85,7 +126,7 @@ class RelationLookupResolverTest {
     void resolveRowsToManyWritesBackIdList() {
         RelationLookupResolver resolver = createResolver();
         var group = new RelationLookupResolver.LookupGroup(
-                "roleIds", "Role", List.of("code"), List.of("roleIds.code"), true, true);
+                "roleIds", "Role", List.of("code"), List.of("roleIds.code"), true, true, false);
         Map<String, Object> row = new LinkedHashMap<>(Map.of("roleIds.code", "ADMIN,USER"));
 
         ModelService<Long> typedService = (ModelService<Long>) getModelService(resolver);
@@ -103,7 +144,7 @@ class RelationLookupResolverTest {
     void resolveRowsToManyByNameWritesBackIdList() {
         RelationLookupResolver resolver = createResolver();
         var group = new RelationLookupResolver.LookupGroup(
-                "roleIds", "Role", List.of("name"), List.of("roleIds.name"), true, true);
+                "roleIds", "Role", List.of("name"), List.of("roleIds.name"), true, true, false);
         Map<String, Object> row = new LinkedHashMap<>(Map.of("roleIds.name", "Admin,User"));
 
         ModelService<Long> typedService = (ModelService<Long>) getModelService(resolver);
@@ -121,7 +162,7 @@ class RelationLookupResolverTest {
     void resolveRowsToManyByCompositeBusinessKeysWritesBackIdList() {
         RelationLookupResolver resolver = createResolver();
         var group = new RelationLookupResolver.LookupGroup(
-                "roleIds", "Role", List.of("code", "name"), List.of("roleIds.code", "roleIds.name"), true, true);
+                "roleIds", "Role", List.of("code", "name"), List.of("roleIds.code", "roleIds.name"), true, true, false);
         Map<String, Object> row = new LinkedHashMap<>();
         row.put("roleIds.code", "ADMIN,USER");
         row.put("roleIds.name", "Admin,User");
@@ -142,7 +183,7 @@ class RelationLookupResolverTest {
     void resolveRowsToManyMarksFailedWhenCodeNotFound() {
         RelationLookupResolver resolver = createResolver();
         var group = new RelationLookupResolver.LookupGroup(
-                "roleIds", "Role", List.of("code"), List.of("roleIds.code"), true, true);
+                "roleIds", "Role", List.of("code"), List.of("roleIds.code"), true, true, false);
         Map<String, Object> row = new LinkedHashMap<>(Map.of("roleIds.code", "ADMIN,UNKNOWN"));
 
         ModelService<Long> typedService = (ModelService<Long>) getModelService(resolver);
@@ -160,7 +201,7 @@ class RelationLookupResolverTest {
     void resolveRowsToManyIgnoreEmptyFalseWritesEmptyList() {
         RelationLookupResolver resolver = createResolver();
         var group = new RelationLookupResolver.LookupGroup(
-                "roleIds", "Role", List.of("code"), List.of("roleIds.code"), false, true);
+                "roleIds", "Role", List.of("code"), List.of("roleIds.code"), false, true, false);
         Map<String, Object> row = new LinkedHashMap<>();
         row.put("roleIds.code", "");
 
@@ -174,7 +215,7 @@ class RelationLookupResolverTest {
     void resolveRowsToManyIgnoreEmptyFalseWithNameWritesEmptyList() {
         RelationLookupResolver resolver = createResolver();
         var group = new RelationLookupResolver.LookupGroup(
-                "roleIds", "Role", List.of("name"), List.of("roleIds.name"), false, true);
+                "roleIds", "Role", List.of("name"), List.of("roleIds.name"), false, true, false);
         Map<String, Object> row = new LinkedHashMap<>();
         row.put("roleIds.name", "");
 

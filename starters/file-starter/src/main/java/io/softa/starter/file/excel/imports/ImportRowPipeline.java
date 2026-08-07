@@ -1,5 +1,6 @@
 package io.softa.starter.file.excel.imports;
 
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
@@ -10,6 +11,7 @@ import org.springframework.stereotype.Component;
 
 import io.softa.framework.base.exception.IllegalArgumentException;
 import io.softa.framework.base.utils.SpringContextUtils;
+import io.softa.framework.orm.constant.FileConstant;
 import io.softa.framework.base.utils.StringTools;
 import io.softa.starter.file.dto.ImportDataDTO;
 import io.softa.starter.file.dto.ImportTemplateDTO;
@@ -62,9 +64,18 @@ public class ImportRowPipeline {
         Boolean originalSkipException = importTemplateDTO.getSkipException();
         try {
             importTemplateDTO.setSkipException(true);
+            // Flag validation mode for the custom handler: it still runs (its checks are part of the
+            // validation feedback), but must skip anything that writes.
+            if (importDataDTO.getEnv() == null) {
+                importDataDTO.setEnv(new HashMap<>());
+            }
+            importDataDTO.getEnv().put(FileConstant.VALIDATE_ONLY_ENV, Boolean.TRUE);
             processRows(importTemplateDTO, importDataDTO);
         } finally {
             importTemplateDTO.setSkipException(originalSkipException);
+            if (importDataDTO.getEnv() != null) {
+                importDataDTO.getEnv().remove(FileConstant.VALIDATE_ONLY_ENV);
+            }
         }
     }
 

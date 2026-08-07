@@ -120,8 +120,16 @@ The `fieldName` in ImportTemplateField (or `importFieldDTOList` in dynamic impor
 
 **Syntax:** `{fkField}.{businessKey}` — e.g. `deptId.code`, `deptId.name`
 
-**How it works:**
-1. The system detects dotted-path fields whose root is a ManyToOne/OneToOne field.
+> ⚠️ **A dotted path means two different things, decided by the root field's type.** A **ManyToOne /
+> to-many** root points at a row that already exists and is shared, so the dotted columns are a
+> *business key to look it up by* — described below. A **OneToOne** root is the main row's *own* 1:1
+> sub-record, so its dotted columns are that sub-record's *content*, written inline — see
+> [1.1.1 Nested OneToOne Import](#111-nested-onetoone-import-cascade-write). Looking a OneToOne group
+> up would be meaningless (no row matches "every attribute equal") and fails on the first blank cell,
+> since a business key may not contain nulls.
+
+**How it works (ManyToOne / to-many roots):**
+1. The system detects dotted-path fields whose root is a ManyToOne or to-many field.
 2. Groups them by root FK field (e.g. `deptId.code` and `deptId.name` form one group).
 3. Batch-queries the related model by the business key values to resolve FK ids.
 4. Writes back the resolved FK id to the root field (`deptId`) and removes the dotted-path columns.
@@ -136,6 +144,24 @@ The `fieldName` in ImportTemplateField (or `importFieldDTOList` in dynamic impor
 - When a lookup fails (no matching record found):
   - If `skipException = true`: the row is marked as failed with a reason message.
   - If `skipException = false`: a `ValidationException` is thrown immediately.
+
+#### 1.1.1 Nested OneToOne Import (Cascade Write)
+
+When the root field is **OneToOne**, the related row belongs to the row being imported — `Employee.employeeProfileId` is *this* employee's profile, not a shared one to be found. The dotted columns are therefore folded into a **nested value object** on the root field, which the ORM write pipeline (`XToOneGroupProcessor#processNestedOneToOneRows`) creates or updates inline, in the same transaction.
+
+**Syntax:** identical — `{oneToOneField}.{subField}`, e.g. `employeeProfileId.gender`
+
+**How it works:**
+1. Standard field handlers run first, keyed by the dotted path, so sub-values get the same type conversion / option mapping as flat columns (dates parsed, options mapped).
+2. Non-blank cells are collected into a nested map under the root field; the dotted columns are removed.
+3. On **create**, the sub-record is created and its new id linked back into the FK.
+4. On **update** via `createOrUpdate`, the sub-record the main row already points at is reused (its id is read back and carried into the nested object), so the existing row is updated in place rather than replaced and orphaned.
+
+**Rules:**
+- **Blank means "keep the existing value"** — blank cells are left out of the nested object, so an update never blanks a field the file did not fill in.
+- An **all-blank** group still produces an *empty* object rather than nothing: the sub-record belongs to the main row, so a create must still produce one (the owning FK is typically `required`) and an update simply relinks the existing sub-row.
+- `ignoreEmpty` does not apply — it describes whether to null a *reference*, which a sub-record is not.
+- No lookup is issued, so there is no "not found" failure mode. Validation errors from the sub-record surface per row like any other write error.
 
 **Example — Template-based import:**
 

@@ -20,12 +20,34 @@ public abstract class BaseImportHandler {
     protected final String label;
     protected final ImportFieldDTO importFieldDTO;
 
+    /**
+     * The row map key this handler reads and writes. Defaults to the field name, which is also the
+     * imported column key for a direct field. A nested OneToOne sub-field is keyed by its dotted
+     * path instead (e.g. {@code employeeProfileId.gender}), because at this stage the row still
+     * carries the flat imported columns — they are folded into the nested value object later, by
+     * {@code RelationLookupResolver}.
+     */
+    protected String rowKey;
+
     public BaseImportHandler(MetaField metaField, ImportFieldDTO importFieldDTO) {
         this.metaField = metaField;
         this.modelName = metaField.getModelName();
         this.fieldName = metaField.getFieldName();
         this.label = metaField.getLabel();
         this.importFieldDTO = importFieldDTO;
+        this.rowKey = metaField.getFieldName();
+    }
+
+    /**
+     * Point this handler at a different row key — used for nested OneToOne sub-fields, whose
+     * metadata lives on the related model while the imported column is keyed by the dotted path.
+     *
+     * @param rowKey the row map key to read and write
+     * @return this handler
+     */
+    public BaseImportHandler rowKey(String rowKey) {
+        this.rowKey = rowKey;
+        return this;
     }
 
     /**
@@ -65,17 +87,17 @@ public abstract class BaseImportHandler {
      * @param row The row
      */
     public void handleRow(Map<String, Object> row) {
-        Object value = row.get(fieldName);
+        Object value = row.get(rowKey);
         boolean isEmpty = valueIsEmpty(value);
         if (isEmpty) {
             checkRequired();
             if (importFieldDTO.getDefaultValue() != null) {
-                row.put(fieldName, importFieldDTO.getDefaultValue());
+                row.put(rowKey, importFieldDTO.getDefaultValue());
             } else if (Boolean.TRUE.equals(importFieldDTO.getIgnoreEmpty())) {
-                row.remove(fieldName);
+                row.remove(rowKey);
             }
         } else {
-            row.put(fieldName, handleValue(value));
+            row.put(rowKey, handleValue(value));
         }
     }
 
