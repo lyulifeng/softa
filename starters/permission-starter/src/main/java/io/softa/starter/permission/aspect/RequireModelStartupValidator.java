@@ -9,12 +9,12 @@ import org.springframework.core.annotation.AnnotatedElementUtils;
 import org.springframework.stereotype.Component;
 import org.springframework.stereotype.Controller;
 
-import io.softa.starter.permission.annotation.MainModelScope;
-import io.softa.starter.permission.annotation.MainModelScopes;
+import io.softa.starter.permission.annotation.RequireModel;
+import io.softa.starter.permission.annotation.RequireModels;
 import lombok.RequiredArgsConstructor;
 
 /**
- * Fail-loud at startup: resolve every {@code @MainModelScope} declaration in
+ * Fail-loud at startup: resolve every {@code @RequireModel} declaration in
  * the application's controllers so a typo'd parameter name, a non-inferable
  * model, or a non-{@code Filters} filter parameter aborts the boot instead of
  * surfacing as a request-time 500 — the same posture {@code EndpointIndex}
@@ -26,7 +26,7 @@ import lombok.RequiredArgsConstructor;
  */
 @Component
 @RequiredArgsConstructor
-public class MainModelScopeStartupValidator implements SmartInitializingSingleton {
+public class RequireModelStartupValidator implements SmartInitializingSingleton {
 
     private final ApplicationContext applicationContext;
 
@@ -35,10 +35,10 @@ public class MainModelScopeStartupValidator implements SmartInitializingSingleto
         for (Object bean : applicationContext.getBeansWithAnnotation(Controller.class).values()) {
             Class<?> target = AopUtils.getTargetClass(bean);
             for (Method method : target.getMethods()) {
-                if (AnnotatedElementUtils.hasAnnotation(method, MainModelScope.class)
-                        || AnnotatedElementUtils.hasAnnotation(method, MainModelScopes.class)) {
+                if (AnnotatedElementUtils.hasAnnotation(method, RequireModel.class)
+                        || AnnotatedElementUtils.hasAnnotation(method, RequireModels.class)) {
                     // Throws IllegalStateException with the concrete fix on any mismatch.
-                    MainModelScopeAspect.resolve(method);
+                    RequireModelAspect.resolve(method);
                 }
             }
         }

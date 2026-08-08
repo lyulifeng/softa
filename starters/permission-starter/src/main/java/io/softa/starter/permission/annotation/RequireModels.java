@@ -6,12 +6,12 @@ import java.lang.annotation.RetentionPolicy;
 import java.lang.annotation.Target;
 
 /**
- * Container for the repeatable {@link MainModelScope}. Never used directly —
- * stack multiple {@code @MainModelScope} annotations instead.
+ * Container for the repeatable {@link RequireModel}. Never used directly —
+ * stack multiple {@code @RequireModel} annotations instead.
  */
 @Retention(RetentionPolicy.RUNTIME)
 @Target(ElementType.METHOD)
-public @interface MainModelScopes {
+public @interface RequireModels {
 
-    MainModelScope[] value();
+    RequireModel[] value();
 }
