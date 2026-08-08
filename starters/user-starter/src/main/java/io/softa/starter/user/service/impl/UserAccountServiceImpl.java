@@ -167,6 +167,17 @@ public class UserAccountServiceImpl extends EntityServiceImpl<UserAccount, Long>
     @Override
     @Transactional
     public UserInfo registerInvitedUser(String email, String mobile, String fullName) {
+        // Both identifiers are login credentials, so both are checked ACROSS tenants (the lookups
+        // are @CrossTenant — same reasoning as AdminProvisioningService's email check). Email is
+        // also backed by uk_user_account_email, but a mobile-only account has no unique index
+        // behind it: without this check, importing two employees with the same phone and no email
+        // silently minted two accounts for one credential.
+        if (StringUtils.isNotBlank(email) && this.getUserByEmail(email).isPresent()) {
+            throw new BusinessException("Email already exists: " + email);
+        }
+        if (StringUtils.isNotBlank(mobile) && this.getUserByMobile(mobile).isPresent()) {
+            throw new BusinessException("Mobile already exists: " + mobile);
+        }
         UserAccountDTO accountInfo = new UserAccountDTO();
         UserProfileDTO profileInfo = new UserProfileDTO();
         accountInfo.setEmail(email);

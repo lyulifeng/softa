@@ -36,6 +36,8 @@ import io.softa.starter.tenant.enums.TenantStatus;
         softDelete = true
 )
 @Index(indexName = "uk_tenant_info_subscription", fields = {"subscriptionId"}, unique = true)
+@Index(indexName = "uk_tenant_info_code", fields = {"code"}, unique = true,
+        message = "A tenant with this code already exists.")
 public class TenantInfo extends AuditableModel {
 
     @Serial
