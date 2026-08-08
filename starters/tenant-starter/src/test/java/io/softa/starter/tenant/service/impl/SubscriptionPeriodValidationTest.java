@@ -132,10 +132,14 @@ class SubscriptionPeriodValidationTest {
     }
 
     @Test
-    @DisplayName("an open-ended period needs no end date")
-    void openEndedPeriod_allowed() {
-        assertThatCode(() -> service.createOne(period(SUB_ID, START, null, "plan.pro")))
-                .doesNotThrowAnyException();
+    @DisplayName("a sold period must be time-boxed — an open end date is rejected")
+    void openEndedSoldPeriod_rejected() {
+        // Expiry sweeps, auto-downgrade and billing all key off the end date; an open-ended paid
+        // period would keep the tenant on the paid tier forever. Only the floor period is
+        // legitimately open-ended.
+        assertThatThrownBy(() -> service.createOne(period(SUB_ID, START, null, "plan.pro")))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("must have an end date");
     }
 
     // ─── the floor plan is recorded, exactly once ───
@@ -307,7 +311,8 @@ class SubscriptionPeriodValidationTest {
         // it blocked every later period, i.e. it blocked selling anything at all.
         stored.add(storedPeriod(1L, START, null));
 
-        assertThatCode(() -> service.createOne(period(SUB_ID, START.plusYears(5), null, "plan.pro")))
+        assertThatCode(() -> service.createOne(
+                period(SUB_ID, START.plusYears(5), START.plusYears(6), "plan.pro")))
                 .doesNotThrowAnyException();
     }
 
