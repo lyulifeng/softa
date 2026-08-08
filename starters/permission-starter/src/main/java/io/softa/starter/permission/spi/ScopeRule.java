@@ -13,7 +13,6 @@ import tools.jackson.databind.JsonNode;
  * scopeExpr semantics depend on scopeType:
  *   - ALL / SELF / DIRECT_REPORTS:   null
  *   - DEPT_SUBTREE:                  required, {"deptId": "..."}
- *   - LEGAL_ENTITY:                  optional, {"legalEntityId": "..."} (null = dynamic from ec)
  *   - MANAGED_DEPARTMENTS:           optional, {"deptIds": ["..."]} (null = dynamic from empInfo.managedDeptIds)
  *   - CUSTOM:                        required FilterCondition; values may reference $principal.xxx
  *

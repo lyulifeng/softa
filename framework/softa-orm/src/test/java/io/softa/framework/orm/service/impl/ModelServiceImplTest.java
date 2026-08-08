@@ -214,6 +214,42 @@ class ModelServiceImplTest {
         verify(fixture.jdbc()).selectByPage(SCOPED_MODEL, flexQuery, page);
     }
 
+    // ---- filter-shaped writes borrow the read path's narrowing ----------------------------------
+    //
+    // updateByFilter / deleteByFilters never touch rows directly: they resolve ids through getIds and
+    // then write by id. That indirection is the only thing that bounds them — getIds runs the request's
+    // company / country selection and the caller's permission scope, so a filter that would otherwise
+    // match another company's rows cannot reach the write. It reads like an implementation detail and
+    // is load-bearing, so pin it: someone adding a "fast path" that writes straight from the filter
+    // would silently unbound both operations, and the permission layer's own write gate
+    // (checkIdsAccess) documents this indirection as the reason it only guards the by-id paths.
+
+    @Test
+    void updateByFilterResolvesIdsThroughTheScopedReadPath() {
+        ReadFixture fixture = readFixture();
+        when(fixture.jdbc().getIds(eq(SCOPED_MODEL), eq(ModelConstant.ID), any(FlexQuery.class)))
+                .thenReturn(List.of());
+        Filters original = new Filters().eq("name", "x");
+
+        fixture.service().updateByFilter(SCOPED_MODEL, original, new HashMap<>(Map.of("name", "y")));
+
+        verify(fixture.strategy()).scopeRead(SCOPED_MODEL, original);
+        Assertions.assertSame(fixture.scoped(), capturedIdQuery(fixture, ModelConstant.ID).getFilters());
+    }
+
+    @Test
+    void deleteByFiltersResolvesIdsThroughTheScopedReadPath() {
+        ReadFixture fixture = readFixture();
+        when(fixture.jdbc().getIds(eq(SCOPED_MODEL), eq(ModelConstant.ID), any(FlexQuery.class)))
+                .thenReturn(List.of());
+        Filters original = new Filters().eq("name", "x");
+
+        fixture.service().deleteByFilters(SCOPED_MODEL, original);
+
+        verify(fixture.strategy()).scopeRead(SCOPED_MODEL, original);
+        Assertions.assertSame(fixture.scoped(), capturedIdQuery(fixture, ModelConstant.ID).getFilters());
+    }
+
     @Test
     void deleteBySliceIdDeletesOneVersionWithoutTriggeringEntityDeleteHooks() {
         ReadFixture fixture = readFixture();

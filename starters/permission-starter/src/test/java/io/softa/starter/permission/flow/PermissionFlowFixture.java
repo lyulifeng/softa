@@ -280,7 +280,14 @@ public final class PermissionFlowFixture {
         });
         ReflectionTestUtils.invokeMethod(endpointIndex, "init");
 
-        provider = new DefaultPermissionSnapshotProvider(cacheService, modelService, sfsCache, java.util.List.of());
+        // No compiler: these flows exercise nav/permission derivation, and none of their fixture roles
+        // scope the company model — so the company axis short-circuits to "unrestricted" before the
+        // supplier is ever asked. A supplier yielding null is the same degradation a pure-enforce
+        // deployment gets, so adding such a role to a fixture surfaces as an unrestricted grant rather
+        // than an NPE in an unrelated test.
+        provider = new DefaultPermissionSnapshotProvider(cacheService, modelService, sfsCache,
+                () -> null,
+                java.util.List.of());
     }
 
     // ─── FlexQuery filter extraction helpers (framework types only) ───

@@ -9,6 +9,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
+import java.util.function.Supplier;
 import java.util.stream.Collectors;
 
 import org.springframework.web.context.request.RequestAttributes;
@@ -21,10 +22,13 @@ import io.softa.framework.base.constant.RedisConstant;
 import io.softa.framework.base.utils.JsonUtils;
 import io.softa.framework.orm.annotation.SkipPermissionCheck;
 import io.softa.framework.orm.domain.Filters;
+import io.softa.framework.orm.constant.ModelConstant;
+import io.softa.framework.orm.meta.ModelManager;
 import io.softa.framework.orm.domain.FlexQuery;
 import io.softa.framework.orm.service.CacheService;
 import io.softa.framework.orm.service.ModelService;
 import io.softa.framework.base.utils.NavIds;
+import io.softa.starter.permission.scope.ScopeRuleCompiler;
 import io.softa.starter.permission.sensitive.SensitiveFieldSetCache;
 import io.softa.starter.permission.spi.PermissionInfo;
 import io.softa.starter.permission.spi.PermissionSnapshotProvider;
@@ -82,6 +86,18 @@ public class DefaultPermissionSnapshotProvider implements PermissionSnapshotProv
     private final CacheService cacheService;
     private final ModelService<?> modelService;
     private final SensitiveFieldSetCache sensitiveFieldSetCache;
+    /**
+     * Compiles the company model's own scope rules into the filter this materialises the axis from.
+     *
+     * <p>A {@link Supplier} rather than the bean, for two reasons that happen to want the same thing.
+     * The compiler reaches {@code ModelService} through {@code ScopeApplicabilityResolver}, which is the
+     * wiring cycle the autoconfiguration breaks with {@code @Lazy} on its other collaborators — and
+     * {@code @Lazy} cannot be used here, because it works by proxying and {@code ScopeRuleCompiler} is
+     * final. Asking for it at first use needs no proxy. It also lets a pure-enforce deployment that
+     * registers no compiler start rather than fail at wiring: the supplier yields null and the company
+     * axis degrades to unrestricted, the same shape as the other absent-model degradations here.
+     */
+    private final Supplier<ScopeRuleCompiler> scopeRuleCompiler;
     /** Nav-id prefixes that are platform-only (never in a tenant admin's grant), e.g.
      *  {@code navigation.system.} / {@code navigation.studio.}. From {@code permission.platform-nav-prefixes}. */
     private final List<String> platformNavPrefixes;
@@ -99,10 +115,12 @@ public class DefaultPermissionSnapshotProvider implements PermissionSnapshotProv
     public DefaultPermissionSnapshotProvider(CacheService cacheService,
                                              ModelService<?> modelService,
                                              SensitiveFieldSetCache sensitiveFieldSetCache,
+                                             Supplier<ScopeRuleCompiler> scopeRuleCompiler,
                                              List<String> platformNavPrefixes) {
         this.cacheService = cacheService;
         this.modelService = modelService;
         this.sensitiveFieldSetCache = sensitiveFieldSetCache;
+        this.scopeRuleCompiler = scopeRuleCompiler;
         this.platformNavPrefixes = platformNavPrefixes == null ? List.of() : platformNavPrefixes;
     }
 
@@ -151,6 +169,88 @@ public class DefaultPermissionSnapshotProvider implements PermissionSnapshotProv
     }
 
     // ─────────────────────── DB build (约定读) ───────────────────────
+
+    /**
+     * The companies these roles may reach — resolved from the role's data scope <b>on the company
+     * model itself</b>, not from a grant table of its own.
+     *
+     * <h3>Why this and not a second store</h3>
+     * The company axis and a data scope on {@code LegalEntity} bound the same thing, so configuring
+     * them separately means configuring one thing twice: an administrator who narrowed the company
+     * scope and left the grant alone would still see every company's departments and reports. Reading
+     * the scope makes the row that bounds the company list also bound every model that belongs to a
+     * company — one configuration, both effects. It also drops a bespoke table that duplicated what
+     * the scope registry already does generically (ALL / CUSTOM, applicability, fail-closed).
+     *
+     * <p>That table ({@code RoleCompany}) was rejected on the grounds that a scope row is keyed per
+     * model, so the company list would be stored once per multi-company model — eighteen copies kept in
+     * lockstep. It is not: the list lives on the <b>company model's own</b> row, which is where "the
+     * companies this role may reach" belongs literally rather than as a per-model duplicate, and the
+     * eighteen are bounded from that one row. What the table did buy and this gives up is the reverse
+     * question — "which roles can reach this company" — which is a plain query against a row per grant
+     * and a JSON search against this. Nothing asks it today; when something does, it is a
+     * {@code JSON_CONTAINS} over one row per role, not a schema change.
+     *
+     * <h3>The three states</h3>
+     * <ul>
+     *   <li><b>no rule at all</b> → {@code null}, unrestricted. Absence of configuration may never
+     *       produce an empty set, or shipping the axis would blank every unconfigured role's screens.</li>
+     *   <li><b>an {@code ALL} rule</b> → {@code null} as well, and deliberately not the materialised
+     *       list of every id: a company created after this snapshot was cached would be missing from
+     *       it for the rest of the hour, and "unrestricted" must not decay into "these ones".</li>
+     *   <li><b>anything else</b> → the ids it resolves to, which may be <b>empty</b> — a role
+     *       configured to reach no company, which is what a self-service employee is. Fail-closed is
+     *       correct here precisely because it was configured.</li>
+     * </ul>
+     *
+     * <h3>Staleness</h3>
+     * A rule listing ids explicitly (what the wizard writes) resolves to exactly those and cannot go
+     * stale. A predicate — {@code country = 'SG'} in a CUSTOM rule — is materialised here, so a legal
+     * entity created afterwards is not included until the snapshot expires (1h) or a role write evicts
+     * it. That is the cost of answering with ids rather than a filter, and it is bounded; the
+     * alternative, carrying the filter into every multi-company read, would mean a correlated subquery
+     * on every list in the application.
+     *
+     * <p>Absent model = an application without a company dimension (the framework's own demo apps),
+     * which must cost neither a query nor an exception — same degradation as
+     * {@code CompanyCountryEnricher}.
+     *
+     * @param modelScopeMap the scope rules already read for this user, keyed by model
+     */
+    Set<Long> readGrantedCompanyIds(Map<String, List<ScopeRule>> modelScopeMap) {
+        if (!ModelManager.existModel(ModelConstant.COMPANY_MODEL)) {
+            return null;
+        }
+        List<ScopeRule> rules = modelScopeMap.get(ModelConstant.COMPANY_MODEL);
+        if (rules == null || rules.isEmpty()) {
+            // Not configured. Checked before compiling on purpose: the compiler answers an empty rule
+            // list with match-none, which is the right answer for "every rule degraded" and the wrong
+            // one for "nobody configured this".
+            return null;
+        }
+        ScopeRuleCompiler compiler = scopeRuleCompiler == null ? null : scopeRuleCompiler.get();
+        if (compiler == null) {
+            // A deployment that enforces without the scope engine — nothing can resolve the rules, so
+            // the axis stays off rather than fail-closing every multi-company read.
+            log.debug("No ScopeRuleCompiler available; the company axis is not applied");
+            return null;
+        }
+        Filters scoped = compiler.compile(rules, ModelConstant.COMPANY_MODEL);
+        if (scoped == null) {
+            return null;
+        }
+        // Runs under the @SkipPermissionCheck that get() set for the whole build, so this read does not
+        // re-enter the scope chain that is asking for the snapshot.
+        List<Map<String, Object>> rows = modelService.searchList(ModelConstant.COMPANY_MODEL,
+                new FlexQuery(List.of(ModelConstant.ID), scoped));
+        Set<Long> grantedCompanyIds = new HashSet<>();
+        for (Map<String, Object> row : rows) {
+            if (row.get(ModelConstant.ID) instanceof Number n) {
+                grantedCompanyIds.add(n.longValue());
+            }
+        }
+        return grantedCompanyIds;
+    }
 
     private PermissionInfo loadFromDb(Long tenantId, Long userId) {
         try {
@@ -218,6 +318,8 @@ public class DefaultPermissionSnapshotProvider implements PermissionSnapshotProv
             }
         }
 
+        // 3b-2. The company axis, derived from the scope just read for the company model.
+        Set<Long> grantedCompanyIds = readGrantedCompanyIds(modelScopeMap);
         // 3c. Sensitive-field-set grants, keyed by the SFS's canonical model.
         Map<String, Set<String>> modelSensitiveFieldSetsMap = new HashMap<>();
         List<RoleSfsView> sfsGrants = modelService.searchList(M_ROLE_SFS,
@@ -243,6 +345,7 @@ public class DefaultPermissionSnapshotProvider implements PermissionSnapshotProv
         info.setPermissions(permissions);
         info.setModelScopeMap(modelScopeMap);
         info.setModelSensitiveFieldSetsMap(modelSensitiveFieldSetsMap);
+        info.setGrantedCompanyIds(grantedCompanyIds);
         return info;
     }
 

@@ -18,6 +18,15 @@ public interface RedisConstant {
     String SESSION =  "session:";
     String USER_INFO =  "user-info:";
     String EMP_INFO = "emp-info:";
+    /**
+     * Company → its country. Caches the stable mapping, never the per-request selection:
+     * caching which company is selected would defeat the header switcher, and two browser
+     * tabs would overwrite each other.
+     *
+     * <p>"Company" is the framework's word for what the HR app calls a legal entity — the same
+     * translation {@code EmpInfo.companyId} and {@code USER_COMP_ID} already make.
+     */
+    String COMPANY_COUNTRY = "company-country:";
     String PERMISSION_INFO =  "permission-info:";
     String VERIFICATION_CODE =  "verification-code:";
     String TENANT_IDS =  "tenant:id-list";

@@ -94,6 +94,15 @@ public class SysPreDataServiceImpl extends EntityServiceImpl<SysPreData, Long> i
         String dataDir = BaseConstant.PREDEFINED_DATA_TENANT_DIR;
         Context tenantContext = ContextHolder.cloneContext();
         tenantContext.setTenantId(tenantId);
+        // Set here as well, even though this path currently works. It works only because the caller is
+        // usually an admin *of the tenant being loaded*, so the snapshot resolves. Load another tenant's
+        // data — which is exactly what provisioning does — and the caller is not in that tenant's
+        // user_role_rel, the snapshot comes back empty, and it fails the same way the system path does.
+        // A latent version of the same bug rather than a different one.
+        //
+        // ContextUtils.inTenantContext expresses the same three settings, but on a `new Context()` — the
+        // seeded rows would lose their createdId / createdBy. See runAsSystemScope for the full reason.
+        tenantContext.setSkipPermissionCheck(true);
         ContextHolder.runWith(tenantContext, () -> {
             for (String fileName : fileNames) {
                 FileObject fileObject = FileUtils.getFileObjectByPath(dataDir, fileName);
@@ -124,6 +133,29 @@ public class SysPreDataServiceImpl extends EntityServiceImpl<SysPreData, Long> i
     private void runAsSystemScope(Runnable task) {
         Context systemContext = ContextHolder.cloneContext();
         systemContext.setTenantId(null);
+        // Row-scope must be skipped too, or a system-scope load cannot read its own bindings.
+        //
+        // The proof is the asymmetry with loadPreTenantData: the two differ in this one assignment, and
+        // tenant loads work while system loads fail. The permission snapshot is keyed by
+        // (tenantId, userId), so a real tenant id resolves it, the caller comes back an admin, and
+        // appendScopeAccessFilters short-circuits. A null tenant id queries the multi-tenant role tables
+        // for a tenant that does not exist, so the snapshot is empty, empty is not an admin,
+        // `SysPreData` has a forward scope anchor (`createdId`, so CREATED_BY_SELF applies), and a model
+        // with an anchor and no explicit grant is fail-closed to matchNone(). The binding lookup then
+        // returns nothing and the load dies on its first referenced row with "the preIDs … do not
+        // exist" — naming data that is in fact present, which is why this reads as a data problem.
+        //
+        // Loading predefined data is an internal operation running under the caller's already-verified
+        // authority. That is what skipPermissionCheck is for.
+        //
+        // Same intent as ContextUtils.inSystemContext, deliberately not that method. Two reasons, both
+        // load-bearing: it builds a `new Context()` where this clones, so the caller's userId would be
+        // gone and every seeded row plus every binding would carry null createdId / createdBy — the
+        // record of who loaded it; and it expresses "system" as crossTenant = true, which waives the
+        // tenant predicate on every read in the window, where `tenantId = null` says exactly the one
+        // thing needed (write tenant_id = null, read IS NULL). Its own javadoc scopes it to background
+        // orchestration rather than request-scoped work, and this is a REST call.
+        systemContext.setSkipPermissionCheck(true);
         ContextHolder.runWith(systemContext, task);
     }
 

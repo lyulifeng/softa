@@ -87,6 +87,8 @@ public enum CustomerTier {
 | `storageType` | `StorageType` | `RDBMS` | `storageType` | |
 | `versionLock` | boolean | `false` | `versionLock` | requires a `version` field on the class; the field is readonly (framework-managed), stamped onto every insert, and its starting value is materialized into `sys_field.default_value` (`0` unless the field declares `defaultValue`) so the column DDL carries `DEFAULT 0` |
 | `multiTenant` | boolean | `false` | `multiTenant` | requires a `tenantId` field on the class |
+| `multiCountry` | boolean | `false` | `multiCountry` | rows are partitioned by country; reads narrow to the request's selected country (see [Request-scoped narrowing](#request-scoped-narrowing)) |
+| `multiCompany` | boolean | `false` | `multiCompany` | rows belong to one company; reads narrow to the request's selected company (see [Request-scoped narrowing](#request-scoped-narrowing)) |
 | `copyable` | boolean | `true` | `copyable` | `false` ⇒ copy APIs reject the model; UI hides Duplicate |
 | `dataSource` | String | `""` | `dataSource` | empty → primary datasource |
 | `businessKey` | String[] | `{}` | `businessKey` | composite supported |
@@ -445,6 +447,110 @@ Use cases:
 Important rule:
 - Do not combine `@PerTenant` with upstream fan-out that already split work per tenant
   (for example, `cron-starter` with `SysCron.tenantJobMode=PerTenant`), otherwise the job is expanded twice.
+
+## Request-scoped narrowing
+
+Tenant isolation is not the only read narrowing the ORM applies on its own. Two more are driven by **which company the caller selected for this request**, declared per model with `@Model(multiCountry = true)` and `@Model(multiCompany = true)`.
+
+One input, two axes. The client sends only a company id (`X-Company-Id`); the country is resolved server-side from that company and is never taken from the client. A company therefore decides both *whose records* these are (itself) and *which statutory rules* apply (its country) — and the two cannot be collapsed into one mechanism, because two companies in the same country share their value domains but not their records.
+
+```
+X-Company-Id: 8712
+   └─ Context.companyId ─────────────────────────────────→ MultiCompanyScope  → legalEntityId = {{SELECTED_COMP_ID}}
+        └─ CompanyCountryEnricher (getById + cache)
+             └─ Context.companyCountry ────────────────→ MultiCountryScope  → country = {{SELECTED_COMP_COUNTRY}}
+
+no header, EmpInfo.companyId = 4242            ← a role granted no company: nothing to select
+   └─ (no Context.companyId) ────────────────────────────→ MultiCompanyScope  → skipped
+        └─ CompanyCountryEnricher (fallback)
+             └─ Context.companyCountry ────────────────→ MultiCountryScope  → country = 'SG'  ← the value, not the placeholder
+```
+
+`ModelServiceImpl` applies both on every read, then the role data scope on top:
+
+```java
+permissionService.appendScopeAccessFilters(model,
+        MultiCompanyScope.append(model,
+                MultiCountryScope.append(model, callerFilters)));
+```
+
+**The selections feed the permission call; they do not wrap its result.** That is not interchangeable. Both skip when the caller already constrains their field — which is what lets a form scope its dropdowns by the entity picked *in the form* rather than the one in the header. Applied to the permission call's output, that check would also see the conditions a role grant just added, so a role granting several companies would look like a caller that already chose one: the selection would skip and the user would get every granted company at once with the switch doing nothing. Fed as the input, the selection narrows *within* the grant (`selected ∧ granted`) — a subset, so never empty for a company the user was allowed to pick.
+
+### Resolving the anchor
+
+The anchor is **fixed by name**, not resolved per model, and `ModelManager` fails the boot rather than letting a marked model quietly go unnarrowed:
+
+| declaration | required anchor field |
+|---|---|
+| `multiCountry = true` | `country` — a `MANY_TO_ONE` / `ONE_TO_ONE` onto `CountryRegion` |
+| `multiCompany = true` | `legalEntityId` — a `MANY_TO_ONE` / `ONE_TO_ONE` onto `LegalEntity` |
+
+Fixing the name is what separates the axis from an attribute. A model may reference a country or a company for other reasons — the country that issued a document, the countries a bank serves, the entity that pays a pay group (`PayGroup.payingEntityId`) — and only the field carrying the reserved name says "these rows belong to it". Resolving by relation target alone could not tell the two apart, and guessing would narrow every read on the wrong axis: a plausible-looking wrong answer, which is worse than a visible break. Because the name is fixed, nothing has to be stored, looked up or disambiguated at runtime — the narrowing knows the field before it sees the model.
+
+A model with no company column of its own — a per-department statistic — declares the reference as a **`dynamic` cascaded field**, which takes no column and is joined at query time:
+
+```java
+@Field(label = "Company", cascadedField = "deptId.legalEntityId", dynamic = true,
+        fieldType = FieldType.MANY_TO_ONE, relatedModel = LegalEntity.class)
+private Long legalEntityId;
+```
+
+`WhereBuilder` rewrites a condition on that field back to the cascade path, so the narrowing compiles to a LEFT JOIN and the anchor stays a plain field name that can also be filtered, sorted and displayed. There used to be a `companyField` attribute naming the path directly; the cascaded field replaced it because the anchor then lives in the field list rather than the model annotation — visible in the API and in the UI — instead of being a second place to look for "what does this narrow by". A real `legal_entity_id` column is the other alternative and the worse one: it needs backfilling every time a department is re-parented, and a stale copy shows up as a report quietly missing rows.
+
+Rejected at boot: the anchor field missing entirely; a field of that name that is not a to-one onto the target model (this one would otherwise *run*, comparing ids across two models and matching nothing — indistinguishable from missing data); and the company model itself being `multiCompany` (which would reduce the company switcher to the company already selected).
+
+A to-many reference is never an anchor. A bank serving many countries is not partitioned by them — that field is an attribute, and the model is simply not `multiCountry`.
+
+### Selection vs grant — and the third state
+
+The narrowing above is a **selection**: which of the companies I may reach am I looking at now. What bounds the set it picks from is a separate thing, the role's **grant** (`PermissionInfo.grantedCompanyIds`, applied by `appendCompanyGrant`), and the two compose — `selected ∧ granted` — so switching the header can never reach outside the grant.
+
+The grant is **not a store of its own**: it is the role's ordinary data scope on the company model (`role_data_scope` where `model = 'LegalEntity'`), which `DefaultPermissionSnapshotProvider.readGrantedCompanyIds` resolves into a set of ids. One row, two effects — it bounds which companies the switcher offers *and*, through the grant, every model that belongs to one. A dedicated `RoleCompany` table used to hold it, and the reason it went is that two stores bounding the same thing can disagree: an administrator who narrowed the company scope and left the grant alone kept seeing every company's departments and reports, through a switcher showing one. `ALL` resolves to `null` rather than to the materialised list of every id, so "unrestricted" cannot decay into "these ones" when a company is created after the snapshot was cached; an explicit id list resolves to exactly those ids, and a predicate (`country = 'SG'` in a CUSTOM rule) is materialised, so a company created afterwards joins it only when the snapshot expires or a role write evicts it.
+
+There is deliberately **no company scope type**. A `LEGAL_ENTITY` one existed and compiled to `legalEntityId = USER_COMP_ID` — the company the *caller* belongs to — so one role behaved differently for each holder: an HR in company A saw all of A's records, the same role in B saw B's. That is the affiliation leaking into the grant, which is the thing the paragraph below exists to prevent. A rule that genuinely wants the caller's own company can still say so as a CUSTOM rule naming `USER_COMP_ID`, where it is visible.
+
+**"I meant all companies" and "I forgot to say" are the same payload.** Absence has to mean unrestricted, so nothing downstream can tell them apart — by snapshot time they are the same data. `RoleController` therefore refuses the one combination where the difference is dangerous: a role granted `ALL` rows on a `multiCompany` model with no company scope configured. Not "touches a multi-company model", which would block the commonest role in the system: a self-service employee's row scope is `SELF`, which ANDs down to its own record, so an unrestricted company axis widens nothing.
+
+The grant has three states, and keeping two of them apart is what makes the axis usable:
+
+| state | meaning | produced by |
+|---|---|---|
+| `null` | **unrestricted** — no company axis applies | a role with no grant configured |
+| empty set | **no company at all** — every multi-company read matches nothing | an explicit configuration only |
+| non-empty | exactly those companies | an explicit configuration |
+
+"Not configured" and "configured to reach nothing" used to be the same empty set, which made the second one inexpressible: a role that must reach no company — a self-service employee role, whose own row scope (`SELF`) is what lets it see itself — could only be written as the *absence* of a grant, and absence has to keep meaning unrestricted or shipping the axis would blank every pre-existing role's screens at once. Splitting them lets the axis be made mandatory for the roles that need one, one role at a time, with no flag day.
+
+The affiliation is a fourth thing and deliberately not part of any of this. `EmpInfo.companyId` (`USER_COMP_ID`) is "the company I belong to"; it anchors permission *rules*, not the selection. A rule anchored on the selection would widen every time the user switched the header, and a grant derived from the affiliation would make one role behave differently per user — an HR in company A seeing all of A's salaries, the same role in B seeing B's. `context.getCompanyId()` is the selection; `context.getEmpInfo().getCompanyId()` is the affiliation.
+
+### When narrowing is skipped
+
+Every skip is silent by design: an over-eager condition empties a list the user needs, which is worse than showing too much.
+
+- **no selection in context** — anonymous and public endpoints, service-to-service calls, a tenant with no company yet. Also how a deliberate "all companies" view works: send no header and nothing narrows by company. The country axis has one exception, below.
+- **the caller filters by `id`** — a display expansion, a by-id read, a cascade resolving stored values. `XToOneGroupProcessor` expands a stored `ManyToOne` with `searchList(relatedModel, id IN (…))`; narrowing that would render a row's stored reference blank whenever it belongs to another company or country. Note `FilterControl.bypassAll()` does *not* cover this — it only waives active-control and soft-delete.
+- **the caller already constrains the anchor field** — see above.
+
+### The country axis when no company can be selected
+
+A role granted no company selects none — the switcher has nothing to offer, so no header goes out. Skipping there leaves the caller looking at **every** country's value domains: all of the ID types, pass types and document types in the system, in a form that wants one country's. That caller is a self-service employee, and they are the one user whose country is never in doubt, since they belong to exactly one company. So `CompanyCountryEnricher` falls back to the country of `EmpInfo.companyId` when nothing is selected, and only the country axis does this — a fallback on the company axis would be a *grant* invented from an affiliation, which is the thing [above](#selection-vs-grant--and-the-third-state) exists to prevent.
+
+`Context.companyCountry` may therefore be set while `Context.companyId` is null. That asymmetry is deliberate and it is the one thing to know when reading this code:
+
+| | `companyId` | `companyCountry` | country narrowing | `{{SELECTED_COMP_COUNTRY}}` in a scope rule |
+|---|---|---|---|---|
+| a company is selected | 8712 | `SG` | `country = 'SG'` | `SG` |
+| nothing to select, own company known | `null` | `SG` | `country = 'SG'` | **`null`** |
+| nothing to select, no affiliation | `null` | `null` | skipped | `null` |
+| selected, but its row has no country | 8712 | `null` | skipped (WARN) | `null` |
+
+The third column and the fourth deliberately disagree in row two. Per-country partitioning is data correctness — another country's pass types do not *apply*, whoever you are — whereas a scope rule is authorization, and a rule someone wrote against the header (`["country","=","SELECTED_COMP_COUNTRY"]`) must keep matching what it matched when they wrote it. Had the placeholder followed the fallback, that rule would go from matching nothing to matching the caller's own country, widening a configured data scope with nothing in the configuration having changed. So `FilterUnitParser` guards the placeholder on `companyId` rather than on the country being present, and `MultiCountryScope` — the one consumer that wants the fallback — emits the resolved value instead of the placeholder when there is no selection. Both are one line, and they have to agree: emitting the placeholder under the fallback would compile to `country = NULL` and match nothing, which is how an empty required dropdown gets shipped.
+
+The fallback needs the affiliation, so `CompanyCountryEnricher` declares `ContextEnricher.ORDER_DERIVED` and `EmployeeContextEnricher` declares `ORDER_IDENTITY`. Reading it rather than resolving the employee a second time keeps the company → country lookup the only domain knowledge in the enricher; the ordering is declared rather than assumed because unordered beans arrive in whatever sequence the container registered them — stable enough to pass every test, and free to change on an unrelated edit.
+
+### Cost
+
+`MultiCompanyScope` needs nothing but the id in the context, so it costs nothing. `MultiCountryScope` depends on the enricher's company → country lookup — one per request, whether the company came from the header or from the fallback — cached in Redis for five minutes — short deliberately, because the country is an editable field on the company's own form and there is no eviction hook on the generic write path. The two degrade independently: if the country cannot be resolved (a deleted company, a row with no country, an application with no company model at all), country narrowing turns off while company narrowing keeps working.
 
 ## Configuration
 ### MQ Topic

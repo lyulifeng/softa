@@ -1,5 +1,6 @@
 package io.softa.starter.permission.interceptor;
 
+import java.util.Arrays;
 import java.util.List;
 import java.util.Set;
 
@@ -11,6 +12,7 @@ import org.springframework.mock.web.MockHttpServletResponse;
 
 import io.softa.framework.base.context.Context;
 import io.softa.framework.base.context.ContextHolder;
+import io.softa.framework.base.enums.SystemRole;
 import io.softa.framework.base.exception.ConfigurationException;
 import io.softa.framework.base.exception.PermissionException;
 import io.softa.starter.permission.spi.PermissionInfo;
@@ -128,6 +130,48 @@ class PermissionInterceptorTest {
         assertThat(allowed).isTrue();
         org.mockito.Mockito.verify(endpointIndex, org.mockito.Mockito.never())
                 .lookup(anyString(), anyString());
+    }
+
+    @Test
+    void superAdmin_doesNotBecomeCrossTenant() {
+        // The bypass is about the permission gate, not about tenant isolation. This used to also set
+        // crossTenant, which silently widened every read on the request to all tenants and stopped
+        // tenant_id being stamped on every write. Reaching across tenants is now opted into per
+        // operation (@CrossTenant / ContextUtils windows), so a super-admin request stays in its tenant.
+        PermissionInfo pi = PermissionInfo.builder()
+                .roleCodes(Set.of(PermissionInfo.CODE_SUPER_ADMIN))
+                .build();
+        when(snapshotProvider.get(eq(10L), eq(42L))).thenReturn(pi);
+
+        MockHttpServletRequest r = req("POST", "/Employee/searchList");
+        Context ctx = new Context();
+        ctx.setTenantId(10L);
+        ctx.setUserId(42L);
+        ContextHolder.runWith(ctx, () -> interceptor.preHandle(r, new MockHttpServletResponse(), null));
+
+        assertThat(ctx.isCrossTenant()).isFalse();
+    }
+
+    @Test
+    void superAdmin_stillGetsEverySystemRoleCode() {
+        // The role-code bridge is what @RequireRole reads, and it must survive independently of the
+        // tenant flag — the two used to be entangled in one branch, so removing the flag could have
+        // taken the expansion with it. A super-admin keeps its own code and gains every framework
+        // SystemRole, so a system-role gate is never stricter for it than the permission gate.
+        PermissionInfo pi = PermissionInfo.builder()
+                .roleCodes(Set.of(PermissionInfo.CODE_SUPER_ADMIN))
+                .build();
+        when(snapshotProvider.get(eq(10L), eq(42L))).thenReturn(pi);
+
+        MockHttpServletRequest r = req("POST", "/Employee/searchList");
+        Context ctx = new Context();
+        ctx.setTenantId(10L);
+        ctx.setUserId(42L);
+        ContextHolder.runWith(ctx, () -> interceptor.preHandle(r, new MockHttpServletResponse(), null));
+
+        assertThat(ctx.getRoleCodes()).contains(PermissionInfo.CODE_SUPER_ADMIN);
+        assertThat(ctx.getRoleCodes())
+                .containsAll(Arrays.stream(SystemRole.values()).map(SystemRole::getCode).toList());
     }
 
     // ─── unmapped endpoint → 403 ───

@@ -82,6 +82,8 @@ class SysJdbcRoundtripTest {
                   storage_type VARCHAR(64),
                   version_lock TINYINT,
                   multi_tenant TINYINT,
+                  multi_country TINYINT NOT NULL DEFAULT 0,
+                  multi_company TINYINT NOT NULL DEFAULT 0,
                   copyable TINYINT NOT NULL DEFAULT 1,
                   data_source VARCHAR(64),
                   service_name VARCHAR(64),

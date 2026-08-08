@@ -19,7 +19,7 @@ import static org.mockito.Mockito.when;
 
 /**
  * Tests for the data-driven identity scope compiler that replaced the four
- * SELF / DIRECT_REPORTS / CREATED_BY_SELF / LEGAL_ENTITY contributors. Feeds a
+ * SELF / DIRECT_REPORTS / CREATED_BY_SELF contributors. Feeds a
  * stubbed {@link DataScopeTypeReader} mirroring the Builtin seed (filter templates)
  * and asserts the compiled anchor + fail-closed behaviour matches what those
  * contributors did. Env placeholders (USER_EMP_ID / USER_ID / USER_COMP_ID) are left
@@ -48,8 +48,6 @@ class IdentityScopeCompilerTest {
                         "filter", List.of("managerId", "=", "USER_EMP_ID"),
                         "identityModel", "Employee",
                         "identityFilter", List.of("piEmployeeId", "=", "USER_EMP_ID")),
-                Map.<String, Object>of("id", "LEGAL_ENTITY",
-                        "filter", List.of("legalEntityId", "=", "USER_COMP_ID")),
                 Map.<String, Object>of("id", "CREATED_BY_SELF",
                         "filter", List.of("createdId", "=", "USER_ID")),
                 Map.<String, Object>of("id", "DEPT_SUBTREE", "applicableFields", List.of("departmentId")),
@@ -62,7 +60,6 @@ class IdentityScopeCompilerTest {
     void handles_onlyIdentityTypes() {
         assertThat(compiler.handles(ScopeType.SELF)).isTrue();
         assertThat(compiler.handles(ScopeType.DIRECT_REPORTS)).isTrue();
-        assertThat(compiler.handles(ScopeType.LEGAL_ENTITY)).isTrue();
         assertThat(compiler.handles(ScopeType.CREATED_BY_SELF)).isTrue();
         assertThat(compiler.handles(ScopeType.DEPT_SUBTREE)).isFalse();
         assertThat(compiler.handles(ScopeType.CUSTOM)).isFalse();
@@ -138,28 +135,6 @@ class IdentityScopeCompilerTest {
         // No userId bound → USER_ID token unresolvable → fail closed (no rows).
         Filters out = ContextHolder.callWith(new Context(),
                 () -> compiler.compile(ScopeType.CREATED_BY_SELF, rule(ScopeType.CREATED_BY_SELF), "AnyModel"));
-        assertThat(Filters.isEmpty(out)).isTrue();
-    }
-
-    // ─── LEGAL_ENTITY: legalEntityId = USER_COMP_ID (caller's company) ───
-
-    @Test
-    void legalEntity_usesCompanyId() {
-        EmpInfo e = new EmpInfo();
-        e.setCompanyId(99L);
-        Filters out = ContextHolder.callWith(ctxEmp(e),
-                () -> compiler.compile(ScopeType.LEGAL_ENTITY, rule(ScopeType.LEGAL_ENTITY), "AnyModel"));
-        assertThat(Filters.isEmpty(out)).isFalse();
-        assertThat(out.getFilterUnit().getField()).isEqualTo("legalEntityId");
-        assertThat(out.getFilterUnit().getValue()).isEqualTo("USER_COMP_ID");
-    }
-
-    @Test
-    void legalEntity_noEmpInfo_failsClosed() {
-        // USER_COMP_ID is an EMP_INFO token; no EmpInfo bound → fail closed
-        // (also avoids FilterUnitParser throwing at SQL time).
-        Filters out = ContextHolder.callWith(new Context(),
-                () -> compiler.compile(ScopeType.LEGAL_ENTITY, rule(ScopeType.LEGAL_ENTITY), "AnyModel"));
         assertThat(Filters.isEmpty(out)).isTrue();
     }
 
