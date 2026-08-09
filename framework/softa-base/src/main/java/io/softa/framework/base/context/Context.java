@@ -160,6 +160,7 @@ public class Context implements Serializable {
         newContext.setCompanyCountry(this.companyCountry);
         newContext.setUserInfo(this.userInfo);
         newContext.setEmpInfo(this.empInfo);
+        newContext.setRoleCodes(this.roleCodes);
         newContext.setSkipAutoAudit(this.skipAutoAudit);
         newContext.setCrossTenant(this.crossTenant);
         newContext.setDataMask(this.dataMask);
