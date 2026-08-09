@@ -4,6 +4,8 @@ import com.fasterxml.jackson.annotation.JsonValue;
 import lombok.AllArgsConstructor;
 import lombok.Getter;
 
+import io.softa.framework.base.annotation.OptionSet;
+
 /**
  * Source of a user_role assignment.
  * - MANUAL:  Admin-granted via UI or REST API. Deleted only by explicit admin action.
@@ -12,6 +14,7 @@ import lombok.Getter;
  */
 @Getter
 @AllArgsConstructor
+@OptionSet
 public enum UserRoleSource {
     MANUAL("Manual", "Admin-granted"),
     DYNAMIC("Dynamic", "Auto-synced by DynamicRoleSyncJob")
