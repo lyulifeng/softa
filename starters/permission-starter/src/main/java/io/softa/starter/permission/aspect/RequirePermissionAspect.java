@@ -29,7 +29,7 @@ import io.softa.framework.orm.service.PermissionService;
 import lombok.RequiredArgsConstructor;
 
 /**
- * Enforces {@link io.softa.starter.permission.annotation.RequireModel}:
+ * Enforces {@link io.softa.starter.permission.annotation.RequirePermission}:
  * verify the caller's row scope on the endpoint's main model, THEN open the
  * narrow {@code Context.skipDataScope} bypass for the endpoint body.
  *
@@ -53,13 +53,13 @@ import lombok.RequiredArgsConstructor;
  * second scope on top — the entry rewrite is the single application.
  *
  * <p>Resolution (model inference, parameter lookup) is cached per method and
- * validated at startup by {@link RequireModelStartupValidator}; a resolution
+ * validated at startup by {@link RequirePermissionStartupValidator}; a resolution
  * failure here is therefore a programming error, not a request-time condition.
  */
 @Aspect
 @Component
 @RequiredArgsConstructor
-public class RequireModelAspect {
+public class RequirePermissionAspect {
 
     private final PermissionService permissionService;
 
@@ -72,11 +72,11 @@ public class RequireModelAspect {
                          List<java.lang.reflect.Method> idPathAccessors, String idPath) {
     }
 
-    @Around("@annotation(io.softa.starter.permission.annotation.RequireModel)"
-            + " || @annotation(io.softa.starter.permission.annotation.RequireModels)")
+    @Around("@annotation(io.softa.starter.permission.annotation.RequirePermission)"
+            + " || @annotation(io.softa.starter.permission.annotation.RequirePermissions)")
     public Object enforce(ProceedingJoinPoint jp) throws Throwable {
         Method method = ((MethodSignature) jp.getSignature()).getMethod();
-        List<ResolvedScope> scopes = cache.computeIfAbsent(method, RequireModelAspect::resolve);
+        List<ResolvedScope> scopes = cache.computeIfAbsent(method, RequirePermissionAspect::resolve);
         Object[] args = jp.getArgs();
 
         // ── ① verify / rewrite — flag still closed, real scope applies
@@ -133,7 +133,7 @@ public class RequireModelAspect {
     // ─────────────────────── resolution ───────────────────────
 
     /**
-     * Resolve every declared {@code @RequireModel} against the method:
+     * Resolve every declared {@code @RequirePermission} against the method:
      * infer the model when omitted, locate the named parameters. Throws
      * {@link IllegalStateException} with the concrete fix on any mismatch —
      * called at startup by the validator, so misconfiguration fails the boot,
@@ -141,13 +141,13 @@ public class RequireModelAspect {
      */
     static List<ResolvedScope> resolve(Method method) {
         var declared = method.getAnnotationsByType(
-                io.softa.starter.permission.annotation.RequireModel.class);
+                io.softa.starter.permission.annotation.RequirePermission.class);
         if (declared.length == 0) {
             // The pointcut matched but this Method carries no resolvable
             // annotation (interface-proxied / bridge method). Proceeding would
             // open the bypass with zero checks — fail instead. If this fires,
             // move the annotation onto the method the proxy actually exposes.
-            throw new IllegalStateException("@RequireModel pointcut matched " + method
+            throw new IllegalStateException("@RequirePermission pointcut matched " + method
                     + " but no annotation is resolvable on it — refusing to open the"
                     + " scope bypass unchecked.");
         }
@@ -156,7 +156,7 @@ public class RequireModelAspect {
             String model = scope.model().isEmpty() ? inferModel(method) : scope.model();
             boolean hasPath = !scope.idPath().isEmpty();
             if (hasPath && scope.idParam().isEmpty()) {
-                throw new IllegalStateException("@RequireModel on " + method
+                throw new IllegalStateException("@RequirePermission on " + method
                         + " declares idPath without idParam — idPath navigates INSIDE the"
                         + " parameter idParam names. Declare both.");
             }
@@ -165,7 +165,7 @@ public class RequireModelAspect {
             int filterIndex = scope.filterParam().isEmpty() ? -1
                     : paramIndex(method, scope.filterParam(), Filters.class, true);
             if (idIndex < 0 && filterIndex < 0) {
-                throw new IllegalStateException("@RequireModel on " + method
+                throw new IllegalStateException("@RequirePermission on " + method
                         + " declares neither idParam nor filterParam — nothing to check."
                         + " Declare at least one, or drop the annotation.");
             }
@@ -195,7 +195,7 @@ public class RequireModelAspect {
                 }
             }
         }
-        throw new IllegalStateException("@RequireModel on " + method
+        throw new IllegalStateException("@RequirePermission on " + method
                 + " has no model and the declaring class has no request-mapping"
                 + " path to infer it from. Declare model=\"...\" explicitly.");
     }
@@ -208,12 +208,12 @@ public class RequireModelAspect {
                 Class<?> type = parameters[i].getType();
                 if (requiredType == null && holdsIdsDirectly
                         && type.isArray() && type.componentType().isPrimitive()) {
-                    throw new IllegalStateException("@RequireModel on " + method
+                    throw new IllegalStateException("@RequirePermission on " + method
                             + ": idParam '" + name + "' is a primitive array (" + type.getSimpleName()
                             + ") — its elements cannot be read as ids. Use Long[] / List<Long>.");
                 }
                 if (requiredType != null && !requiredType.isAssignableFrom(parameters[i].getType())) {
-                    throw new IllegalStateException("@RequireModel on " + method
+                    throw new IllegalStateException("@RequirePermission on " + method
                             + ": parameter '" + name + "' is " + parameters[i].getType().getSimpleName()
                             + ", but only " + requiredType.getSimpleName() + " can be scope-rewritten."
                             + " Ad-hoc DTO/Map conditions must be filtered manually in the service.");
@@ -221,7 +221,7 @@ public class RequireModelAspect {
                 return i;
             }
         }
-        throw new IllegalStateException("@RequireModel on " + method
+        throw new IllegalStateException("@RequirePermission on " + method
                 + ": no parameter named '" + name + "'. Available: "
                 + Arrays.stream(parameters).map(Parameter::getName).toList()
                 + " (parameter names require the -parameters compiler flag).");
@@ -242,12 +242,12 @@ public class RequireModelAspect {
             boolean many = segment.endsWith("[]");
             String prop = many ? segment.substring(0, segment.length() - 2) : segment;
             if (prop.isEmpty()) {
-                throw new IllegalStateException("@RequireModel on " + where
+                throw new IllegalStateException("@RequirePermission on " + where
                         + ": idPath '" + path + "' has an empty segment.");
             }
             java.beans.PropertyDescriptor pd = BeanUtils.getPropertyDescriptor(current, prop);
             if (pd == null || pd.getReadMethod() == null) {
-                throw new IllegalStateException("@RequireModel on " + where
+                throw new IllegalStateException("@RequirePermission on " + where
                         + ": idPath segment '" + prop + "' does not exist on "
                         + current.getSimpleName() + ". Available: "
                         + Arrays.stream(BeanUtils.getPropertyDescriptors(current))
@@ -258,7 +258,7 @@ public class RequireModelAspect {
             accessors.add(getter);
             if (many) {
                 if (!Collection.class.isAssignableFrom(getter.getReturnType())) {
-                    throw new IllegalStateException("@RequireModel on " + where
+                    throw new IllegalStateException("@RequirePermission on " + where
                             + ": idPath segment '" + prop + "[]' expands elements, but "
                             + prop + " is " + getter.getReturnType().getSimpleName()
                             + ", not a Collection.");
@@ -266,7 +266,7 @@ public class RequireModelAspect {
                 Class<?> element = ResolvableType.forMethodReturnType(getter)
                         .asCollection().getGeneric(0).resolve();
                 if (element == null) {
-                    throw new IllegalStateException("@RequireModel on " + where
+                    throw new IllegalStateException("@RequirePermission on " + where
                             + ": idPath segment '" + prop + "[]' is a raw Collection —"
                             + " its element type cannot be resolved. Add the generic.");
                 }
@@ -276,7 +276,7 @@ public class RequireModelAspect {
             }
         }
         if (!Serializable.class.isAssignableFrom(current) || Collection.class.isAssignableFrom(current)) {
-            throw new IllegalStateException("@RequireModel on " + where
+            throw new IllegalStateException("@RequirePermission on " + where
                     + ": idPath '" + path + "' leaf is " + current.getSimpleName()
                     + ", not a Serializable id. Point the path at the id property itself.");
         }

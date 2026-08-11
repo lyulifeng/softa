@@ -37,13 +37,13 @@ import java.lang.annotation.Target;
  * validated at startup, not at request time.
  *
  * <p>Repeatable: stack one per model when the endpoint spans several
- * ({@code @RequireModel(model="LeaveRequest", idParam="reqId")} +
- * {@code @RequireModel(model="Employee", idParam="empId")}).
+ * ({@code @RequirePermission(model="LeaveRequest", idParam="reqId")} +
+ * {@code @RequirePermission(model="Employee", idParam="empId")}).
  */
 @Retention(RetentionPolicy.RUNTIME)
 @Target(ElementType.METHOD)
-@Repeatable(RequireModels.class)
-public @interface RequireModel {
+@Repeatable(RequirePermissions.class)
+public @interface RequirePermission {
 
     /**
      * Main model name. Empty = infer from the controller's class-level request
@@ -66,7 +66,7 @@ public @interface RequireModel {
      * endpoints whose ids ride inside a request-body DTO:
      *
      * <pre>{@code
-     * @RequireModel(model = "Employee", idParam = "request",
+     * @RequirePermission(model = "Employee", idParam = "request",
      *                 idPath = "documents[].employeeId")
      * public ... initiate(@RequestBody InitiateDocumentSigningRequest request)
      * }</pre>
