@@ -15,7 +15,7 @@ import io.softa.framework.orm.enums.OnDelete;
  */
 @Data
 @EqualsAndHashCode(callSuper = true)
-@Model(label = "Import Template Fields")
+@Model(label = "Import Template Fields", multiTenant = true)
 public class ImportTemplateField extends AuditableModel {
 
     @Serial
@@ -23,6 +23,9 @@ public class ImportTemplateField extends AuditableModel {
 
     @Field(label = "ID")
     private Long id;
+
+    @Field(label = "Tenant ID")
+    private Long tenantId;
 
     // onDelete = CASCADE: field mappings are owned by the template — deleting the template removes them.
     @Field(label = "Import Template ID", fieldType = FieldType.MANY_TO_ONE, relatedModel = ImportTemplate.class,

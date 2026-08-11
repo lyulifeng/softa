@@ -16,7 +16,7 @@ import io.softa.starter.file.enums.ImportRule;
  */
 @Data
 @EqualsAndHashCode(callSuper = true)
-@Model
+@Model(multiTenant = true)
 public class ImportTemplate extends AuditableModel {
 
     @Serial
