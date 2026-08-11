@@ -27,9 +27,9 @@ import io.softa.starter.tenant.enums.TenantStatus;
  * <p><b>Idempotency</b>: progress is upserted by {@code (tenantId, seederKey)} — redelivery re-writes DONE
  * without churn; readiness is a set-containment query over DONE rows (never a counter), so it is repeat-safe.
  *
- * <p><b>FAILED has a single authoritative source: {@link #failTimedOut()}</b>, the time-driven guard driven
- * by tenant-starter's own cron consumer (softa-self-sufficient — no dependency on the app opting into a DLQ).
- * The per-seeder failure path ({@link #markSeederFailed}) is not triggered today — see its javadoc.
+ * <p><b>FAILED comes from {@link #markSeederFailed}</b>, called by each seed consumer from its catch block,
+ * so a failure is recorded in seconds with the seeder named. Not terminal: {@link #markSeederReady} flips a
+ * tenant back once the seed completes, so a transient cause that MQ redelivery heals corrects itself.
  *
  * <p><b>Context</b>: every public entry point runs {@code inSystemContext} because it is driven from a Pulsar
  * consumer (no ambient tenant context) and touches shared, non-multiTenant models ({@link TenantSeedProgress}
@@ -80,17 +80,16 @@ public class TenantProvisioningStatusService extends EntityServiceImpl<TenantSee
      * A seeder reported terminal failure ({@code SeederCompletedMessage.success=false}): record per-seeder
      * FAILED and flag the tenant.
      *
-     * <p><b>Not triggered today, and deliberately so.</b> A seeder never reports its own failure — a failure
-     * is an exception, which MQ answers by redelivering. Redelivery is capped rather than listened to, so an
-     * exhausted message ends up on a dead-letter topic nobody reads. The tenant-level {@link #failTimedOut()}
-     * guard is therefore the only FAILED source, and "which seeder" is answered by the {@code [SEED_FAILURE]}
-     * line each consumer writes before rethrowing.
+     * <p><b>Called by each seed consumer from its catch block</b>, before it rethrows. Marking on the first
+     * failure is safe because this is not a terminal state: the rethrow keeps MQ redelivering, and a later
+     * {@link #markSeederReady} flips the tenant back. A transient cause therefore shows as a brief DRAFT and
+     * heals itself, while a permanent one is visible within seconds — and names the failing seeder, which a
+     * tenant-level status alone cannot tell you.
      *
-     * <p>Kept, not deleted, because it is the receiving half of a hook that already exists on the wire
-     * ({@code SeederCompletedMessage.success}). Reporting the exact seeder would need one dead-letter listener
-     * per seeder, maintained forever, and a forgotten one fails silently — that was judged not worth it for a
-     * diagnosis the log already supports. Revisit if the seeder count grows or a slow diagnosis starts costing
-     * more than the upkeep.
+     * <p><b>What is no longer covered</b>: a seed that never reaches a catch block — message undelivered,
+     * consumer down, or redelivery exhausted into the dead-letter topic — leaves the tenant in INITIALIZING
+     * indefinitely. The time-driven sweep that used to catch that was removed with its cron; such a tenant is
+     * found by querying INITIALIZING rows, not by a status flip.
      */
     @Transactional
     public void markSeederFailed(Long tenantId, String seederKey) {
@@ -102,46 +101,6 @@ public class TenantProvisioningStatusService extends EntityServiceImpl<TenantSee
         });
     }
 
-    /**
-     * Time-driven fallback (the authoritative FAILED source): flips any tenant stuck in INITIALIZING past
-     * {@code readyTimeoutSeconds} to FAILED, so a seed that never completes (real failure / consumer down /
-     * MQ stalled) surfaces instead of hanging forever. Driven by tenant-starter's own cron consumer, so it is
-     * <b>softa-self-sufficient</b> — it does NOT require the app to opt into a DLQ.
-     *
-     * <p>Idempotent: {@code markStatus} is a no-op at target. Not terminal either — if the seed
-     * later completes, {@code markSeederReady} flips the tenant back from FAILED to READY. {@code TenantInfo}
-     * is a shared table, swept in system context.
-     *
-     * <h3>Stalled, not slow</h3>
-     * The anchor is the tenant's <b>last sign of progress</b> — the most recent {@link TenantSeedProgress} row
-     * for it, falling back to {@code createdTime} when no seeder has reported yet. Anchoring on
-     * {@code createdTime} alone measured total elapsed time, which is the wrong question: a large tenant, or a
-     * busy Pulsar cluster, can legitimately take longer than the timeout while completing one seeder after
-     * another. Such a tenant was marked FAILED, shown to ops as broken, and then silently un-FAILED when the
-     * last seeder landed — training everyone to ignore the state. What actually indicates a problem is a
-     * tenant that has stopped moving, and that is what this now measures.
-     *
-     * @return number of tenants flipped to FAILED this pass
-     */
-    public int failTimedOut() {
-        return inSystemContext(() -> {
-            LocalDateTime cutoff = LocalDateTime.now().minusSeconds(props.getReadyTimeoutSeconds());
-            List<TenantInfo> initializing = tenantInfoService.searchList(new Filters()
-                    .eq(TenantInfo::getStatus, TenantStatus.INITIALIZING));
-            int failed = 0;
-            for (TenantInfo tenant : initializing) {
-                LocalDateTime lastProgress = lastProgressAt(tenant);
-                if (lastProgress != null && lastProgress.isAfter(cutoff)) {
-                    continue;   // still moving — slow is not stalled
-                }
-                tenantInfoService.markStatus(tenant.getId(), TenantStatus.DRAFT);
-                log.warn("Tenant {} made no provisioning progress since {} (past {}s) → FAILED",
-                        tenant.getId(), lastProgress, props.getReadyTimeoutSeconds());
-                failed++;
-            }
-            return failed;
-        });
-    }
 
     /**
      * When this tenant last moved: the newest {@link TenantSeedProgress} write, or its creation time when no

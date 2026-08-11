@@ -15,10 +15,9 @@ import io.softa.framework.base.annotation.OptionSet;
 @OptionSet
 public enum SeederStatus {
     DONE("Done"),
-    // Not written today: a seeder failure is an exception, answered by redelivery, and an exhausted message
-    // goes to a dead-letter topic nobody reads. The tenant-level FAILED comes from failTimedOut(); "which
-    // seeder" comes from the [SEED_FAILURE] log line. Retained as the receiving half of the success=false
-    // hook — see TenantProvisioningStatusService.markSeederFailed.
+    // Written by each seed consumer from its catch block (TenantProvisioningStatusService.markSeederFailed),
+    // so the row names which seeder failed while the tenant itself only shows Draft. Not terminal: the
+    // consumer rethrows, MQ redelivers, and a later success overwrites this row with DONE.
     FAILED("Failed"),
     ;
 

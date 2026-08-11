@@ -11,26 +11,25 @@ import io.softa.framework.base.context.Context;
 import io.softa.framework.base.context.ContextHolder;
 import io.softa.starter.cron.message.dto.CronTaskMessage;
 import io.softa.starter.tenant.entitlement.SubscriptionProjectionJob;
-import io.softa.starter.tenant.service.impl.TenantProvisioningStatusService;
 
 /**
  * tenant-starter's own thin cron consumer for the crons whose domain <b>is tenant-starter itself</b> —
- * currently the provisioning-timeout guard and subscription-lifecycle expiry. Subscribes to the shared
+ * currently subscription-lifecycle expiry. Subscribes to the shared
  * {@code cron-task} broadcast under an independent subscription (Pulsar fan-out — coexists with any other
  * module's cron consumer) and handles only these; any other cron name is ignored.
  *
- * <p>Both are tenant / billing-domain crons whose job logic already lives in tenant-starter
- * ({@link TenantProvisioningStatusService#failTimedOut()} and {@link SubscriptionProjectionJob}). Keeping their
- * trigger here — rather than as a corehr {@code CronTaskHandler} bridge — means softa's own tenant/billing
- * crons don't live in the HR business module. Both jobs are idempotent, so the Shared subscription
- * redelivering / multiple app instances receiving are harmless. Gated by {@code mq.topics.cron-task.topic}.
+ * <p>A billing-domain cron whose job logic already lives in tenant-starter ({@link SubscriptionProjectionJob}).
+ * Keeping its trigger here — rather than as a corehr {@code CronTaskHandler} bridge — means softa's own
+ * tenant/billing crons don't live in the HR business module. The job is idempotent, so the Shared
+ * subscription redelivering / multiple app instances receiving are harmless. Gated by
+ * {@code mq.topics.cron-task.topic}.
  */
 @Slf4j
 @Component
 // Optional cron-starter integration: only wires up when cron-starter is on the classpath (CronTaskMessage
 // present) AND the cron-task topic is configured. A deployment using a different scheduler (Quartz,
 // @Scheduled, XXL-Job, …) simply omits cron-starter — this consumer stays dormant and the app drives
-// TenantProvisioningStatusService.failTimedOut() / SubscriptionProjectionJob.syncDueTransitions() itself.
+// SubscriptionProjectionJob.syncDueTransitions() itself.
 @ConditionalOnClass(name = "io.softa.starter.cron.message.dto.CronTaskMessage")
 @ConditionalOnProperty(name = "mq.topics.cron-task.topic")
 public class TenantMaintenanceCronConsumer {
@@ -42,17 +41,12 @@ public class TenantMaintenanceCronConsumer {
     // business SQL and has no `sys_pre_data` binding, so the seed cannot reconcile it: a rename leaves that
     // row behind — still active, still firing — while its messages stop matching anything here, and the seed
     // adds a second row alongside it. Delete the orphan in the same deployment, or don't rename.
-    /** Provisioning-timeout guard — seeded in tenant-starter's SysCron.TenantMaintenance.json. */
-    static final String PROVISIONING_TIMEOUT = "ProvisioningTimeout";
-    /** Subscription projection + expiry reminders — same seed file. */
+    /** Subscription projection + expiry reminders — seeded in tenant-starter's SysCron.TenantMaintenance.json. */
     static final String SUBSCRIPTION_EXPIRY = "SubscriptionExpiry";
 
-    private final TenantProvisioningStatusService statusService;
     private final SubscriptionProjectionJob subscriptionProjectionJob;
 
-    public TenantMaintenanceCronConsumer(TenantProvisioningStatusService statusService,
-                                         SubscriptionProjectionJob subscriptionProjectionJob) {
-        this.statusService = statusService;
+    public TenantMaintenanceCronConsumer(SubscriptionProjectionJob subscriptionProjectionJob) {
         this.subscriptionProjectionJob = subscriptionProjectionJob;
     }
 
@@ -77,13 +71,6 @@ public class TenantMaintenanceCronConsumer {
     private void dispatch(String cronName) {
         try {
             switch (cronName) {
-                case PROVISIONING_TIMEOUT -> {
-                    int failed = statusService.failTimedOut();
-                    if (failed > 0) {
-                        log.warn("[CRON] {} — {} tenant(s) timed out in provisioning → FAILED",
-                                PROVISIONING_TIMEOUT, failed);
-                    }
-                }
                 case SUBSCRIPTION_EXPIRY -> {
                     int changed = subscriptionProjectionJob.syncDueTransitions();
                     log.info("[CRON] {} — {} subscription(s) transitioned (activate / expire)",

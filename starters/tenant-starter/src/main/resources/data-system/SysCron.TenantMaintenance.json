@@ -1,16 +1,6 @@
 {
   "SysCron": [
     {
-      "id": "ProvisioningTimeout",
-      "name": "ProvisioningTimeout",
-      "cronExpression": "0 */5 * * * ?",
-      "cronSemantic": "Every 5 minutes",
-      "limitExecution": false,
-      "tenantJobMode": "CrossTenant",
-      "active": true,
-      "description": "Flip tenants stuck in provisioning INITIALIZING past softa.tenant.provisioning.ready-timeout-seconds (default 600s) to FAILED. Consumed by tenant-starter's TenantMaintenanceCronConsumer (CrossTenant; idempotent + self-healing)."
-    },
-    {
       "id": "SubscriptionExpiry",
       "name": "SubscriptionExpiry",
       "cronExpression": "0 20 * * * ?",

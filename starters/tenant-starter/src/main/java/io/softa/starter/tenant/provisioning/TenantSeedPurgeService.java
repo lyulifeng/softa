@@ -61,10 +61,12 @@ import io.softa.starter.tenant.service.impl.TenantProvisioningStatusService;
  * only once per-company narrowing shipped and its lists came back empty.
  *
  * <p>The way out of {@code INITIALIZING} is therefore not this method but
- * {@code TenantProvisioningStatusService.failTimedOut()}, which flips a tenant that has stopped making
- * progress to {@code DRAFT}. <b>That guard is load-bearing now</b>: with this check in place a stalled tenant
- * has no other exit, so a cron that never fires — or a clock skew that makes "last progress" look like the
- * future and every tenant look busy — leaves it stuck for good.
+ * {@code TenantProvisioningStatusService.markSeederFailed()}, which each seed consumer calls from its catch
+ * block — a failing seed reaches {@code DRAFT} within seconds and becomes rebuildable. <b>The gap that leaves</b>:
+ * a seed that never reaches a catch block at all (message undelivered, consumer down, redelivery exhausted)
+ * stays {@code INITIALIZING} with nothing running, and no longer has an automatic exit — the time-driven sweep
+ * that used to provide one was removed with its cron. Such a tenant needs its status set to {@code Draft} by
+ * hand before {@link #rebuild} will take it.
  *
  * <p>{@code TenantInfo} and its {@code TenantSubscription} survive: the tenant keeps its id, code and the
  * periods ops recorded. Neither is produced by provisioning, so re-running it would not bring them back.
@@ -122,8 +124,9 @@ public class TenantSeedPurgeService {
         Assert.isTrue(TenantStatus.DRAFT.equals(tenant.getStatus()),
                 "Tenant {0} is {1}, and a rebuild starts from Draft only. A tenant that finished setup holds "
                         + "more than setup output, so discarding it is not on offer; one still Initializing has "
-                        + "seeders running, and a stalled one reaches Draft through the provisioning-timeout "
-                        + "guard, which is the way out.", tenantId, tenant.getStatus());
+                        + "seeders running. A seeder that fails reports it and the tenant lands in Draft on its "
+                        + "own; one stuck in Initializing with nothing running (message lost, consumer down) has "
+                        + "to be set to Draft by hand before it can be rebuilt.", tenantId, tenant.getStatus());
 
         Map<String, Integer> cleared = inSystemContext(
                 () -> seedCleaner.clearModels(tenantId, PROVISIONING_STATE));
