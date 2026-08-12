@@ -17,7 +17,7 @@ import io.softa.starter.file.enums.SigningRequestStatus;
  */
 @Data
 @EqualsAndHashCode(callSuper = true)
-@Model(copyable = false)
+@Model(multiTenant = true, copyable = false)
 public class SigningRequest extends AuditableModel {
 
     @Serial

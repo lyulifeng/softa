@@ -17,7 +17,7 @@ import io.softa.starter.file.enums.ImportType;
  */
 @Data
 @EqualsAndHashCode(callSuper = true)
-@Model(copyable = false)
+@Model(multiTenant = true, copyable = false)
 public class ImportHistory extends AuditableModel {
 
     @Serial

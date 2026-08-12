@@ -14,7 +14,7 @@ import io.softa.framework.orm.entity.AuditableModel;
  */
 @Data
 @EqualsAndHashCode(callSuper = true)
-@Model
+@Model(multiTenant = true)
 public class DocumentTemplateSignSlot extends AuditableModel {
 
     @Serial

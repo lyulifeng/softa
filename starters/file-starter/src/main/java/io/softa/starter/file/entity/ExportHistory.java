@@ -14,7 +14,7 @@ import io.softa.framework.orm.enums.FieldType;
  */
 @Data
 @EqualsAndHashCode(callSuper = true)
-@Model(copyable = false)
+@Model(multiTenant = true, copyable = false)
 public class ExportHistory extends AuditableModel {
 
     @Serial
