@@ -4,9 +4,12 @@ import com.fasterxml.jackson.annotation.JsonValue;
 import lombok.AllArgsConstructor;
 import lombok.Getter;
 
+import io.softa.framework.base.annotation.OptionSet;
+
 /**
  * Origin of a {@code dead_letter_message} row — the unified dead-letter store
- * has two independent feeders.
+ * has two independent feeders. Carries {@code @OptionSet} because
+ * {@code DeadLetterMessage.source} is an OPTION field.
  *
  * <ul>
  *   <li>{@link #BROKER_POISON}: a Pulsar consumer could not process a message
@@ -19,6 +22,7 @@ import lombok.Getter;
  */
 @Getter
 @AllArgsConstructor
+@OptionSet
 public enum DeadLetterSource {
     BROKER_POISON("BrokerPoison"),
     SEND_EXHAUSTED("SendExhausted");

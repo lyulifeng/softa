@@ -55,4 +55,13 @@ public interface OutboxService extends EntityService<OutboxEntry, Long> {
     boolean markNew(Long id, long expectedVersion, int attempts, String lastError, LocalDateTime nextAttemptAt);
 
     void markDead(Long id, long expectedVersion, int attempts, String lastError);
+
+    /**
+     * Manually requeue a {@code DEAD} entry: back to {@code NEW} with a fresh publish
+     * budget ({@code attempts = 0}, due now). DEAD means the previous attempts were spent
+     * against a broken broker; once the operator fixes it, the full budget applies again.
+     * Any other status is rejected with a business error — NEW/PUBLISHING are live and
+     * PUBLISHED must not be re-delivered from here.
+     */
+    boolean requeue(Long id);
 }

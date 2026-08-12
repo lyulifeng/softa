@@ -45,6 +45,16 @@ public interface MailSendRecordService extends EntityService<MailSendRecord, Lon
                       LocalDateTime nextRetryAt);
 
     /**
+     * Manually requeue one record for delivery: {@code PENDING} / {@code RETRY} /
+     * {@code FAILED} / {@code DEAD_LETTER} → {@code RETRY} plus a fresh outbox row,
+     * atomically. The fresh row also rescues records whose original outbox row died
+     * (broker outage), the case the automatic machinery never recovers. {@code SENT}
+     * and in-flight {@code SENDING} records are rejected with a business error —
+     * stuck SENDING is the zombie sweeper's job.
+     */
+    boolean retry(Long id);
+
+    /**
      * Terminally fail a record with no more retries. Bumps version.
      */
     boolean markFailed(Long id, long expectedVersion, String errorCode, String errorMessage);

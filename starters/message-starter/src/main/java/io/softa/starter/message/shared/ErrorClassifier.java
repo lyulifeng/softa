@@ -27,9 +27,12 @@ public class ErrorClassifier {
     }
 
     private ErrorCategory classifyByCode(String code) {
-        // Our own marker codes emitted from the service layer.
+        // Our own marker codes emitted from the service layer. Config problems are
+        // AUTH-class: not retryable (a deleted / broken config never heals on its
+        // own), goes straight to the DLQ for an operator.
         if (code.equals("PROVIDER_NOT_FOUND")
-                || code.equals("PROVIDER_RESOLVE_FAILED")) {
+                || code.equals("PROVIDER_RESOLVE_FAILED")
+                || code.equals("CONFIG_NOT_RESOLVABLE")) {
             return ErrorCategory.AUTH;
         }
         // SMTP reply codes from SmtpMailTransport: "SMTP_<ExceptionType>".

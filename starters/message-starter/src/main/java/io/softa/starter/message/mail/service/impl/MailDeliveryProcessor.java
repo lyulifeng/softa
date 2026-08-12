@@ -75,9 +75,19 @@ public class MailDeliveryProcessor {
         try {
             config = dispatcher.resolveSendById(record.getServerConfigId());
         } catch (Exception e) {
+            // Keep the stack — this catch also swallows infrastructure bugs, and the
+            // record only persists the message text. The marker code classifies as
+            // AUTH (not retryable): a missing config never heals by retrying, so the
+            // record goes straight to the DLQ for an operator instead of burning the
+            // retry budget; fix the config, then requeue via the manual Retry action.
+            log.error("MailDeliveryProcessor: config resolution failed for record id={} configId={}",
+                    recordId, record.getServerConfigId(), e);
             if (recordService.casStatus(recordId, expectedVersion, MailSendStatus.SENDING)) {
-                handleFailure(record, expectedVersion + 1, null,
+                handleFailure(record, expectedVersion + 1, "CONFIG_NOT_RESOLVABLE",
                         "Config not resolvable: " + e.getMessage(), SmtpMailTransport.NAME);
+            } else {
+                log.debug("MailDeliveryProcessor: CAS miss for id={} while handling config failure "
+                        + "(concurrent worker owns the record)", recordId);
             }
             return;
         }
@@ -118,6 +128,10 @@ public class MailDeliveryProcessor {
                         result.getErrorCode(), result.getErrorMessage(), SmtpMailTransport.NAME);
             }
         } catch (Exception e) {
+            // Known SMTP failures arrive as SmtpSendResult with a code; anything
+            // reaching this catch is unexpected — keep the stack in the log.
+            log.error("MailDeliveryProcessor: unexpected send failure for record id={}",
+                    record.getId(), e);
             handleFailure(record, sendingVersion, null, e.getMessage(), SmtpMailTransport.NAME);
         }
     }

@@ -11,7 +11,10 @@ import tools.jackson.core.type.TypeReference;
 public interface CacheService {
 
     /**
-     * Get the full key path.
+     * Resolve the full physical key (root-key prefix applied), for callers
+     * that access Redis directly, e.g. Lua scripts. Every other method of
+     * this service takes the logical key and applies the prefix internally —
+     * never pass a resolved key back into them, or it gets prefixed twice.
      *
      * @param key cache key
      */

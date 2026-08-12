@@ -5,12 +5,16 @@ import java.util.Collection;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 
+import io.softa.framework.base.exception.BusinessException;
 import io.softa.framework.orm.domain.Filters;
 import io.softa.starter.message.mail.entity.MailSendRecord;
 import io.softa.starter.message.mail.enums.MailSendStatus;
 import io.softa.starter.message.mail.service.MailSendRecordService;
+import io.softa.starter.message.mq.TopicRoute;
+import io.softa.starter.message.mq.outbox.OutboxRecordWriter;
 import io.softa.starter.message.shared.AbstractCasSendRecordServiceImpl;
 
 /**
@@ -26,9 +30,42 @@ import io.softa.starter.message.shared.AbstractCasSendRecordServiceImpl;
 public class MailSendRecordServiceImpl extends AbstractCasSendRecordServiceImpl<MailSendRecord>
         implements MailSendRecordService {
 
+    private static final String MANUAL_RETRY_CODE = "MANUAL_RETRY";
+    private static final String MANUAL_RETRY_MESSAGE = "Manually requeued for delivery";
+
+    @Autowired
+    private OutboxRecordWriter outboxRecordWriter;
+
     @Override
     public boolean casStatus(Long id, long expectedVersion, MailSendStatus next) {
         return transitionStatus(id, expectedVersion, next);
+    }
+
+    @Override
+    public boolean retry(Long id) {
+        MailSendRecord record = getById(id).orElseThrow(() ->
+                new BusinessException("Mail send record {0} does not exist.", id));
+        MailSendStatus status = record.getStatus();
+        if (status == MailSendStatus.SENT) {
+            throw new BusinessException("This email was already sent — there is nothing to retry.");
+        }
+        if (status == MailSendStatus.SENDING) {
+            throw new BusinessException("This email is being sent right now. If it is stuck, "
+                    + "stale SENDING records are requeued automatically after the zombie window.");
+        }
+        // Same atomic primitive the zombie sweeper uses: CAS to RETRY + a fresh outbox
+        // row. retryCount keeps counting — a manual retry grants ONE new attempt and a
+        // failure returns the record to FAILED / DEAD_LETTER instead of silently
+        // re-arming the whole automatic retry budget.
+        LocalDateTime retryAt = LocalDateTime.now();
+        long expectedVersion = record.getVersion() != null ? record.getVersion() : 0L;
+        boolean ok = outboxRecordWriter.transitionAndEnqueueAt(
+                () -> markRetry(id, expectedVersion, MANUAL_RETRY_CODE, MANUAL_RETRY_MESSAGE, retryAt),
+                id, "MailSendRecord", TopicRoute.MAIL_SEND, retryAt);
+        if (!ok) {
+            throw new BusinessException("The record changed concurrently — refresh and retry again.");
+        }
+        return true;
     }
 
     @Override
