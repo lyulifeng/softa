@@ -27,9 +27,16 @@ import io.softa.starter.file.dto.ImportFieldDTO;
  *   <li>{@code deptId.code} — use Department.code to reverse-lookup, write back deptId</li>
  * </ul>
  *
+ * <p><b>OneToOne is not a lookup.</b> A ManyToOne / to-many root points at a row that already exists
+ * and is shared, so its dotted columns are a business key to search by. A OneToOne root is the main
+ * row's own 1:1 sub-record, so its dotted columns are the sub-record's <i>content</i>: they are folded
+ * into a nested value object and written inline by the ORM cascade
+ * ({@code XToOneGroupProcessor#processNestedOneToOneRows}) — see {@link #resolveNestedOneToOneGroup}.
+ *
  * <p>Rules:
  * <ul>
- *   <li>A fieldName containing a dot whose root field is ManyToOne/OneToOne is treated as a relation lookup field.</li>
+ *   <li>A fieldName containing a dot whose root field is a relation field is treated as a relation
+ *       lookup (ManyToOne / to-many) or a nested sub-record (OneToOne).</li>
  *   <li>Only one level of cascade is supported: {@code deptId.code} is OK, {@code deptId.companyId.code} is NOT.</li>
  *   <li>A direct FK field (e.g. {@code deptId}) and a lookup field (e.g. {@code deptId.code}) must not coexist in the same template.</li>
  * </ul>
@@ -51,9 +58,13 @@ public class RelationLookupResolver {
      * @param dottedPaths the original template field names, for example {@code ["deptId.code"]}
      * @param ignoreEmpty whether empty source values should leave the root field untouched
      * @param toMany whether the root relation field is a to-many relation
+     * @param oneToOne whether the root relation field is the main row's own 1:1 sub-record, in which
+     *                 case the dotted columns are folded into a nested value object instead of being
+     *                 used as a business key to look an existing row up
      */
     public record LookupGroup(String rootField, String relatedModel, List<String> lookupFields,
-                              List<String> dottedPaths, boolean ignoreEmpty, boolean toMany) {}
+                              List<String> dottedPaths, boolean ignoreEmpty, boolean toMany,
+                              boolean oneToOne) {}
 
     /**
      * Detect, validate and return the lookup groups from the import field list.
@@ -128,7 +139,9 @@ public class RelationLookupResolver {
                     .toList();
             boolean ignoreEmpty = Boolean.TRUE.equals(fieldDTOs.getFirst().getIgnoreEmpty());
             boolean toMany = FieldType.TO_MANY_TYPES.contains(rootMetaField.getFieldType());
-            groups.add(new LookupGroup(rootField, relatedModel, lookupFields, dottedPaths, ignoreEmpty, toMany));
+            boolean oneToOne = FieldType.ONE_TO_ONE.equals(rootMetaField.getFieldType());
+            groups.add(new LookupGroup(rootField, relatedModel, lookupFields, dottedPaths, ignoreEmpty,
+                    toMany, oneToOne));
         }
         return groups;
     }
@@ -143,11 +156,45 @@ public class RelationLookupResolver {
      */
     public void resolveRows(List<Map<String, Object>> rows, List<LookupGroup> lookupGroups, boolean skipException) {
         for (LookupGroup group : lookupGroups) {
-            if (group.toMany()) {
+            if (group.oneToOne()) {
+                resolveNestedOneToOneGroup(rows, group);
+            } else if (group.toMany()) {
                 resolveToManyGroup(rows, group, skipException);
             } else {
                 resolveToOneGroup(rows, group, skipException);
             }
+        }
+    }
+
+    /**
+     * Fold one OneToOne group into a nested value object on the root field.
+     *
+     * <p>A OneToOne root is the main row's <b>own</b> 1:1 sub-record (e.g. {@code Employee
+     * .employeeProfileId}), not a reference to some pre-existing row, so its dotted columns carry the
+     * sub-record's content rather than a business key to search by. They are collected into a nested
+     * map, which the ORM write pipeline creates or updates inline — see
+     * {@code XToOneGroupProcessor#processNestedOneToOneRows}. Looking such a group up instead would be
+     * meaningless (no row matches "every attribute equal") and blows up on the first blank cell, since
+     * a business key may not contain nulls.
+     *
+     * <p>Blank cells are omitted from the map, so "blank means keep the existing value" holds on
+     * update. An all-blank group still yields an <i>empty</i> map rather than nothing: the sub-record
+     * belongs to the main row, so a create must still produce one (the owning FK is typically
+     * required) and an update simply relinks the sub-row already there without touching a field.
+     */
+    private void resolveNestedOneToOneGroup(List<Map<String, Object>> rows, LookupGroup group) {
+        for (Map<String, Object> row : rows) {
+            if (!row.containsKey(FileConstant.FAILED_REASON)) {
+                Map<String, Object> nested = new LinkedHashMap<>();
+                for (int i = 0; i < group.dottedPaths().size(); i++) {
+                    Object value = row.get(group.dottedPaths().get(i));
+                    if (value != null && (!(value instanceof String text) || !text.isBlank())) {
+                        nested.put(group.lookupFields().get(i), value);
+                    }
+                }
+                row.put(group.rootField(), nested);
+            }
+            removeDottedPaths(row, group);
         }
     }
 

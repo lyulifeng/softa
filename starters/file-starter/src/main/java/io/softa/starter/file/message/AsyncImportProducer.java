@@ -7,6 +7,7 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.pulsar.core.PulsarTemplate;
 import org.springframework.stereotype.Component;
 
+import io.softa.framework.base.context.ContextHolder;
 import io.softa.starter.file.dto.ImportTemplateDTO;
 
 /**
@@ -33,6 +34,11 @@ public class AsyncImportProducer {
             log.info("Async import topic is not configured, the import task will be executed asynchronously by @Async.");
             asyncImportHandler.asyncHandler(message);
         } else {
+            // Carry the caller's context across the MQ hop — the listener thread has none of its
+            // own, and an import is all framework reads/writes (tenant isolation, relation
+            // lookups, audit). Cloned, not the live object: the request may complete before the
+            // consumer runs. See ImportTemplateDTO.context.
+            message.setContext(ContextHolder.cloneContext());
             pulsarTemplate.sendAsync(importTopic, message).whenComplete((_, ex) -> {
                 if (ex == null) {
                     log.debug("The asynchronous import message was successfully sent: {}", message);

@@ -34,11 +34,13 @@ import io.softa.framework.orm.constant.ModelConstant;
 import io.softa.framework.orm.domain.FlexQuery;
 import io.softa.framework.orm.domain.Filters;
 import io.softa.framework.orm.domain.Page;
+import io.softa.framework.orm.domain.SubQueries;
 import io.softa.framework.orm.enums.ConvertType;
 import io.softa.framework.orm.service.CacheService;
 import io.softa.framework.orm.service.ModelService;
 import io.softa.framework.orm.utils.IdUtils;
 import io.softa.framework.web.controller.EntityController;
+import io.softa.framework.web.dto.GetByIdParams;
 import io.softa.framework.web.dto.QueryParams;
 import io.softa.framework.web.dto.SearchListParams;
 import io.softa.framework.web.response.ApiResponse;
@@ -251,6 +253,41 @@ public class UserAccountController extends EntityController<UserAccountService, 
     }
 
     /**
+     * Typed shadow of the generic {@code /UserAccount/getById} — the detail read behind the roster.
+     *
+     * <p>The list the platform super-admin browses spans tenants ({@link #searchPage} /
+     * {@link #searchList} above), but the generic getById ran tenant-filtered, so opening any row
+     * from another tenant answered "Record Not Found". Same window, same caller gate, and the SAME
+     * BOUNDS: the detail read is re-checked against {@link #scopeToAdminAccounts}, so the super-admin
+     * opens exactly what the roster lists — every tenant's admins plus its own tenant's accounts —
+     * and an id outside that roster answers like a nonexistent record. Everyone else reads exactly
+     * what the generic path read.
+     */
+    @Operation(summary = "Get one account by id — the platform super-admin reads its cross-tenant roster")
+    @PostMapping("/getById")
+    @DataMask
+    public ApiResponse<Map<String, Object>> getById(@RequestBody GetByIdParams getByIdParams) {
+        Assert.notNull(getByIdParams.getId(), "The ID of the data to be read cannot be null!");
+        ContextHolder.getContext().setEffectiveDate(getByIdParams.getEffectiveDate());
+        Long id = IdUtils.formatId(MODEL, getByIdParams.getId());
+        SubQueries subQueries = new SubQueries();
+        if (getByIdParams.getSubQueries() != null && !getByIdParams.getSubQueries().isEmpty()) {
+            subQueries.setQueryMap(getByIdParams.getSubQueries());
+        }
+        return ApiResponse.success(inRosterScope(() -> {
+            // Roster membership first (super-admin only — everyone else never enters the window and
+            // stays on the ORM's own tenant filter). Both the check and the roster resolution must sit
+            // inside the window, same as the list reads.
+            if (isPlatformSuperAdmin() && modelService.count(MODEL,
+                    scopeToAdminAccounts(new Filters().eq(ModelConstant.ID, id))) == 0) {
+                return null;   // outside the roster — same answer as a nonexistent record
+            }
+            return modelService.getById(MODEL, id, getByIdParams.getFields(), subQueries, ConvertType.REFERENCE)
+                    .orElse(null);
+        }));
+    }
+
+    /**
      * Re-scope a UserAccount list read. {@link UserAccount} is now framework-multiTenant, so a normal
      * tenant user's reads are auto-filtered to their tenant by the ORM (nothing to add) and a generic
      * cross-tenant/system caller sees everything. Only the platform super-admin needs custom scoping
@@ -357,7 +394,7 @@ public class UserAccountController extends EntityController<UserAccountService, 
     @PostMapping("/lockAccount")
     public ApiResponse<Void> lockAccount(@RequestParam @NotNull Long id) {
         validateNotSelf(id, "lock");
-        service.lockAccount(id);
+        onRosterAccounts(List.of(id), () -> service.lockAccount(id));
         return ApiResponse.success();
     }
 
@@ -366,7 +403,7 @@ public class UserAccountController extends EntityController<UserAccountService, 
     public ApiResponse<Void> unlockAccount(@RequestParam @NotNull Long id,
                                            @RequestBody UnlockAccountDTO unlockAccountDTO) {
         validateNotSelf(id, "unlock");
-        service.unlockAccount(id, unlockAccountDTO.getReason());
+        onRosterAccounts(List.of(id), () -> service.unlockAccount(id, unlockAccountDTO.getReason()));
         return ApiResponse.success();
     }
 
@@ -378,7 +415,7 @@ public class UserAccountController extends EntityController<UserAccountService, 
         if (currentUserId != null && userIds.contains(currentUserId)) {
             throw new BusinessException("You cannot unlock your own account.");
         }
-        service.unlockAccounts(userIds, unlockAccountsDTO.getReason());
+        onRosterAccounts(userIds, () -> service.unlockAccounts(userIds, unlockAccountsDTO.getReason()));
         return ApiResponse.success();
     }
 
@@ -388,8 +425,31 @@ public class UserAccountController extends EntityController<UserAccountService, 
     public ApiResponse<Void> invite(@RequestParam @NotNull Long id) {
         Long currentUserId = ContextHolder.getContext() == null ? null
                 : ContextHolder.getContext().getUserId();
-        invitationService.invite(id, currentUserId);
+        onRosterAccounts(List.of(id), () -> invitationService.invite(id, currentUserId));
         return ApiResponse.success();
+    }
+
+    /**
+     * Run a by-id account OPERATION with the same reach as the roster reads. The account list the
+     * platform super-admin acts from spans tenants ({@link #searchPage}), but these operations
+     * resolved their target inside the caller's own tenant, so Lock / Unlock / Invite on any row
+     * from another tenant failed with "User not found" (#686 — the operation twin of the getById
+     * fix above). Same window, same bounds: the super-admin reaches roster members only, and an id
+     * outside the roster gets the same answer as a nonexistent one; every other caller runs
+     * tenant-locally, exactly as before.
+     */
+    private void onRosterAccounts(List<Long> ids, Runnable op) {
+        inRosterScope(() -> {
+            if (isPlatformSuperAdmin()) {
+                long visible = modelService.count(MODEL,
+                        scopeToAdminAccounts(new Filters().in(ModelConstant.ID, ids)));
+                if (visible != ids.stream().distinct().count()) {
+                    throw new BusinessException("User not found.");
+                }
+            }
+            op.run();
+            return null;
+        });
     }
 
     private void validateNotSelf(Long userId, String action) {

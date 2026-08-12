@@ -7,11 +7,27 @@ import lombok.Data;
 import lombok.NoArgsConstructor;
 import org.springframework.util.CollectionUtils;
 
+import io.softa.framework.base.context.Context;
 import io.softa.starter.file.enums.ImportRule;
 
 @Data
 @NoArgsConstructor
 public class ImportTemplateDTO {
+
+    /**
+     * The caller's context, carried across the MQ hop so the consumer can restore it.
+     *
+     * <p>An import runs entirely on framework reads and writes — tenant isolation, relation
+     * lookups, audit stamping — and a Pulsar listener thread has no ambient context. Without
+     * this the consumer runs with a blank one: {@code WhereBuilder.handleMultiTenant} then
+     * emits {@code tenant_id = NULL}, which matches no row, so every relation lookup fails
+     * ("Cannot find LegalEntity by code=…") while the data sits right there, and anything
+     * written gets a null tenantId. The {@code @Async} path does not need this — {@code
+     * AsyncConfig}'s TaskDecorator ({@code ContextHolder::wrap}) already clones the context
+     * onto the pool thread — but the MQ path crosses a process boundary, so it must travel
+     * in the message. Same shape as {@code CronTaskMessage.context}.
+     */
+    private Context context;
 
     private String modelName;
 

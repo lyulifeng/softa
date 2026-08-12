@@ -87,6 +87,137 @@ class ModelServiceImplTest {
         }
     }
 
+    // ------------------------------------------------------- nested to-one value objects (cascade)
+    // A to-one field carrying a nested map with no id of its own describes a sub-record that BELONGS
+    // to the main row. On update it must be linked to the sub-row the main row already points at,
+    // otherwise the write pipeline creates a second one and orphans the first.
+
+    @Test
+    void createOrUpdateLinksNestedToOneToTheExistingSubRow() {
+        try (MockedStatic<ModelManager> modelManager = Mockito.mockStatic(ModelManager.class)) {
+            stubEmployeeWithProfile(modelManager);
+
+            ModelServiceImpl<Long> modelService = Mockito.spy(new ModelServiceImpl<>());
+            doReturn(List.of(new HashMap<>(Map.of(
+                    ModelConstant.ID, 10L, "code", "E001", "profileId", 77L
+            )))).when(modelService).searchList(eq("Employee"), any(FlexQuery.class));
+            doReturn(Boolean.TRUE).when(modelService).updateList(eq("Employee"), anyList());
+
+            List<Map<String, Object>> rows = new ArrayList<>();
+            // Immutable on purpose: the nested map belongs to the caller and must not be mutated.
+            rows.add(new HashMap<>(Map.of("code", "E001", "profileId", Map.of("nickname", "Amy"))));
+
+            modelService.createOrUpdate("Employee", rows, List.of("code"));
+
+            // The existing sub-row id must be read back, so it has to be in the select list.
+            ArgumentCaptor<FlexQuery> flexQueryCaptor = ArgumentCaptor.forClass(FlexQuery.class);
+            verify(modelService).searchList(eq("Employee"), flexQueryCaptor.capture());
+            Assertions.assertTrue(flexQueryCaptor.getValue().getFields().contains("profileId"));
+
+            @SuppressWarnings("unchecked")
+            ArgumentCaptor<List<Map<String, Object>>> updateCaptor = ArgumentCaptor.forClass(List.class);
+            verify(modelService).updateList(eq("Employee"), updateCaptor.capture());
+            Object nested = updateCaptor.getValue().getFirst().get("profileId");
+            Assertions.assertEquals(Map.of("nickname", "Amy", ModelConstant.ID, 77L), nested);
+            verify(modelService, never()).createList(eq("Employee"), anyList());
+        }
+    }
+
+    @Test
+    void createOrUpdateLeavesNestedToOneAloneWhenTheRowIsNew() {
+        try (MockedStatic<ModelManager> modelManager = Mockito.mockStatic(ModelManager.class)) {
+            stubEmployeeWithProfile(modelManager);
+
+            ModelServiceImpl<Long> modelService = Mockito.spy(new ModelServiceImpl<>());
+            doReturn(List.of()).when(modelService).searchList(eq("Employee"), any(FlexQuery.class));
+            doReturn(List.of(20L)).when(modelService).createList(eq("Employee"), anyList());
+
+            List<Map<String, Object>> rows = new ArrayList<>();
+            rows.add(new HashMap<>(Map.of("code", "E002", "profileId", Map.of("nickname", "Bob"))));
+
+            modelService.createOrUpdate("Employee", rows, List.of("code"));
+
+            // No existing row to link to: the sub-record is created inline and its new id linked back.
+            @SuppressWarnings("unchecked")
+            ArgumentCaptor<List<Map<String, Object>>> createCaptor = ArgumentCaptor.forClass(List.class);
+            verify(modelService).createList(eq("Employee"), createCaptor.capture());
+            Assertions.assertEquals(Map.of("nickname", "Bob"), createCaptor.getValue().getFirst().get("profileId"));
+            verify(modelService, never()).updateList(eq("Employee"), anyList());
+        }
+    }
+
+    @Test
+    void createOrUpdateKeepsAnExplicitNestedIdAndDoesNotReadTheFkBack() {
+        try (MockedStatic<ModelManager> modelManager = Mockito.mockStatic(ModelManager.class)) {
+            stubEmployeeWithProfile(modelManager);
+
+            ModelServiceImpl<Long> modelService = Mockito.spy(new ModelServiceImpl<>());
+            doReturn(List.of(new HashMap<>(Map.of(ModelConstant.ID, 10L, "code", "E001", "profileId", 77L))))
+                    .when(modelService).searchList(eq("Employee"), any(FlexQuery.class));
+            doReturn(Boolean.TRUE).when(modelService).updateList(eq("Employee"), anyList());
+
+            List<Map<String, Object>> rows = new ArrayList<>();
+            rows.add(new HashMap<>(Map.of("code", "E001",
+                    "profileId", new HashMap<>(Map.of(ModelConstant.ID, 99L, "nickname", "Amy")))));
+
+            modelService.createOrUpdate("Employee", rows, List.of("code"));
+
+            // The caller named the sub-row explicitly — that wins, and the FK is not even read back.
+            ArgumentCaptor<FlexQuery> flexQueryCaptor = ArgumentCaptor.forClass(FlexQuery.class);
+            verify(modelService).searchList(eq("Employee"), flexQueryCaptor.capture());
+            Assertions.assertFalse(flexQueryCaptor.getValue().getFields().contains("profileId"));
+
+            @SuppressWarnings("unchecked")
+            ArgumentCaptor<List<Map<String, Object>>> updateCaptor = ArgumentCaptor.forClass(List.class);
+            verify(modelService).updateList(eq("Employee"), updateCaptor.capture());
+            Assertions.assertEquals(Map.of(ModelConstant.ID, 99L, "nickname", "Amy"),
+                    updateCaptor.getValue().getFirst().get("profileId"));
+        }
+    }
+
+    @Test
+    void createOrUpdateRoutesBlankAutoSequenceKeyStraightToCreate() {
+        try (MockedStatic<ModelManager> modelManager = Mockito.mockStatic(ModelManager.class)) {
+            MetaField code = createMetaField("Employee", "code", FieldType.STRING);
+            ReflectionTestUtils.setField(code, "autoSequence", true);
+            modelManager.when(() -> ModelManager.getModelField("Employee", "code")).thenReturn(code);
+
+            ModelServiceImpl<Long> modelService = Mockito.spy(new ModelServiceImpl<>());
+            doReturn(List.of(new HashMap<>(Map.of(ModelConstant.ID, 10L, "code", "E001"))))
+                    .when(modelService).searchList(eq("Employee"), any(FlexQuery.class));
+            doReturn(Boolean.TRUE).when(modelService).updateList(eq("Employee"), anyList());
+            doReturn(List.of(20L)).when(modelService).createList(eq("Employee"), anyList());
+
+            List<Map<String, Object>> rows = new ArrayList<>();
+            Map<String, Object> blankCodeRow = new HashMap<>(Map.of("fullName", "Amy"));   // no code at all
+            Map<String, Object> updateRow = new HashMap<>(Map.of("code", "E001", "fullName", "Bob"));
+            rows.add(blankCodeRow);
+            rows.add(updateRow);
+
+            modelService.createOrUpdate("Employee", rows, List.of("code"));
+
+            // The keyless row is a plain create — the sequence assigns its code on insert; it must
+            // never reach the not-null key assertion. The keyed row still matches and updates.
+            @SuppressWarnings("unchecked")
+            ArgumentCaptor<List<Map<String, Object>>> createCaptor = ArgumentCaptor.forClass(List.class);
+            verify(modelService).createList(eq("Employee"), createCaptor.capture());
+            Assertions.assertEquals(List.of(blankCodeRow), createCaptor.getValue());
+
+            @SuppressWarnings("unchecked")
+            ArgumentCaptor<List<Map<String, Object>>> updateCaptor = ArgumentCaptor.forClass(List.class);
+            verify(modelService).updateList(eq("Employee"), updateCaptor.capture());
+            Assertions.assertEquals(10L, updateCaptor.getValue().getFirst().get(ModelConstant.ID));
+        }
+    }
+
+    private void stubEmployeeWithProfile(MockedStatic<ModelManager> modelManager) {
+        modelManager.when(() -> ModelManager.getModelField("Employee", "code"))
+                .thenReturn(createMetaField("Employee", "code", FieldType.STRING));
+        modelManager.when(() -> ModelManager.existField("Employee", "profileId")).thenReturn(true);
+        modelManager.when(() -> ModelManager.getModelField("Employee", "profileId"))
+                .thenReturn(createMetaField("Employee", "profileId", FieldType.ONE_TO_ONE));
+    }
+
     private MetaField createMetaField(String modelName, String fieldName, FieldType fieldType) {
         MetaField metaField = new MetaField();
         ReflectionTestUtils.setField(metaField, "modelName", modelName);

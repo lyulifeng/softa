@@ -8,7 +8,6 @@ import io.softa.framework.base.context.Context;
 import io.softa.framework.base.context.ContextHolder;
 import io.softa.starter.cron.message.dto.CronTaskMessage;
 import io.softa.starter.tenant.entitlement.SubscriptionProjectionJob;
-import io.softa.starter.tenant.service.impl.TenantProvisioningStatusService;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatCode;
@@ -32,27 +31,17 @@ import static org.mockito.Mockito.when;
  */
 class TenantMaintenanceCronConsumerTest {
 
-    private TenantProvisioningStatusService statusService;
     private SubscriptionProjectionJob projectionJob;
     private TenantMaintenanceCronConsumer consumer;
 
     @BeforeEach
     void setUp() {
-        statusService = mock(TenantProvisioningStatusService.class);
         projectionJob = mock(SubscriptionProjectionJob.class);
-        consumer = new TenantMaintenanceCronConsumer(statusService, projectionJob);
+        consumer = new TenantMaintenanceCronConsumer(projectionJob);
     }
 
     // ─── routing ───
 
-    @Test
-    @DisplayName("the provisioning-timeout cron runs only the timeout guard")
-    void provisioningTimeout_runsOnlyTheGuard() {
-        consumer.onMessage(message(TenantMaintenanceCronConsumer.PROVISIONING_TIMEOUT));
-
-        verify(statusService).failTimedOut();
-        verify(projectionJob, never()).syncDueTransitions();
-    }
 
     @Test
     @DisplayName("the subscription-expiry cron runs only the projection sweep")
@@ -60,7 +49,6 @@ class TenantMaintenanceCronConsumerTest {
         consumer.onMessage(message(TenantMaintenanceCronConsumer.SUBSCRIPTION_EXPIRY));
 
         verify(projectionJob).syncDueTransitions();
-        verify(statusService, never()).failTimedOut();
     }
 
     @Test
@@ -71,7 +59,7 @@ class TenantMaintenanceCronConsumerTest {
         consumer.onMessage(message("DynamicRoleSync"));
         consumer.onMessage(message("PayrollPeriodClose"));
 
-        verifyNoInteractions(statusService, projectionJob);
+        verifyNoInteractions(projectionJob);
     }
 
     @Test
@@ -80,7 +68,7 @@ class TenantMaintenanceCronConsumerTest {
         consumer.onMessage(message(null));
         consumer.onMessage(null);
 
-        verifyNoInteractions(statusService, projectionJob);
+        verifyNoInteractions(projectionJob);
     }
 
     // ─── the context the scheduler shipped ───
@@ -130,18 +118,6 @@ class TenantMaintenanceCronConsumerTest {
                 .doesNotThrowAnyException();
     }
 
-    @Test
-    @DisplayName("a failing timeout guard is swallowed too, and does not take the consumer down")
-    void failingGuard_swallowedAndConsumerSurvives() {
-        when(statusService.failTimedOut()).thenThrow(new IllegalStateException("db down"));
-
-        assertThatCode(() -> consumer.onMessage(message(TenantMaintenanceCronConsumer.PROVISIONING_TIMEOUT)))
-                .doesNotThrowAnyException();
-
-        // Still routing afterwards — the listener is not left in a broken state by one bad tick.
-        consumer.onMessage(message(TenantMaintenanceCronConsumer.SUBSCRIPTION_EXPIRY));
-        verify(projectionJob).syncDueTransitions();
-    }
 
     /**
      * The names are matched against {@code sys_cron.name}, which is what {@code CronScheduler} puts on the
@@ -152,7 +128,6 @@ class TenantMaintenanceCronConsumerTest {
     @Test
     @DisplayName("the matched names are the sys_cron names, spelled as the seed spells them")
     void cronNamesMatchTheSeed() {
-        assertThat(TenantMaintenanceCronConsumer.PROVISIONING_TIMEOUT).isEqualTo("ProvisioningTimeout");
         assertThat(TenantMaintenanceCronConsumer.SUBSCRIPTION_EXPIRY).isEqualTo("SubscriptionExpiry");
     }
 

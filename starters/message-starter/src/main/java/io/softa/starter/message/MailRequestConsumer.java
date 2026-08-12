@@ -20,7 +20,10 @@ import io.softa.starter.message.service.MessageService;
  */
 @Slf4j
 @Component
-@ConditionalOnProperty(name = "mq.topics.mail-request.topic")
+// Gated on the SUBSCRIPTION name, not the topic: with MailRequestPublisher living in this starter,
+// every service that can publish mail configures the topic — but only the deployment that owns
+// delivery (SMTP + templates) declares a subscription. Topic-only config = publish-only role.
+@ConditionalOnProperty(name = "mq.topics.mail-request.sub")
 public class MailRequestConsumer {
 
     private final MessageService messageService;
@@ -30,7 +33,7 @@ public class MailRequestConsumer {
     }
 
     @PulsarListener(topics = "${mq.topics.mail-request.topic}",
-            subscriptionName = "${mq.topics.mail-request.sub:mail-request-message}")
+            subscriptionName = "${mq.topics.mail-request.sub}")
     public void onMessage(MailRequestMessage message) {
         if (message == null || message.to() == null || message.to().isEmpty()
                 || message.templateCode() == null || message.templateCode().isBlank()) {

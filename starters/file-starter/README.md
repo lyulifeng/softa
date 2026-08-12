@@ -120,8 +120,16 @@ The `fieldName` in ImportTemplateField (or `importFieldDTOList` in dynamic impor
 
 **Syntax:** `{fkField}.{businessKey}` — e.g. `deptId.code`, `deptId.name`
 
-**How it works:**
-1. The system detects dotted-path fields whose root is a ManyToOne/OneToOne field.
+> ⚠️ **A dotted path means two different things, decided by the root field's type.** A **ManyToOne /
+> to-many** root points at a row that already exists and is shared, so the dotted columns are a
+> *business key to look it up by* — described below. A **OneToOne** root is the main row's *own* 1:1
+> sub-record, so its dotted columns are that sub-record's *content*, written inline — see
+> [1.1.1 Nested OneToOne Import](#111-nested-onetoone-import-cascade-write). Looking a OneToOne group
+> up would be meaningless (no row matches "every attribute equal") and fails on the first blank cell,
+> since a business key may not contain nulls.
+
+**How it works (ManyToOne / to-many roots):**
+1. The system detects dotted-path fields whose root is a ManyToOne or to-many field.
 2. Groups them by root FK field (e.g. `deptId.code` and `deptId.name` form one group).
 3. Batch-queries the related model by the business key values to resolve FK ids.
 4. Writes back the resolved FK id to the root field (`deptId`) and removes the dotted-path columns.
@@ -136,6 +144,24 @@ The `fieldName` in ImportTemplateField (or `importFieldDTOList` in dynamic impor
 - When a lookup fails (no matching record found):
   - If `skipException = true`: the row is marked as failed with a reason message.
   - If `skipException = false`: a `ValidationException` is thrown immediately.
+
+#### 1.1.1 Nested OneToOne Import (Cascade Write)
+
+When the root field is **OneToOne**, the related row belongs to the row being imported — `Employee.employeeProfileId` is *this* employee's profile, not a shared one to be found. The dotted columns are therefore folded into a **nested value object** on the root field, which the ORM write pipeline (`XToOneGroupProcessor#processNestedOneToOneRows`) creates or updates inline, in the same transaction.
+
+**Syntax:** identical — `{oneToOneField}.{subField}`, e.g. `employeeProfileId.gender`
+
+**How it works:**
+1. Standard field handlers run first, keyed by the dotted path, so sub-values get the same type conversion / option mapping as flat columns (dates parsed, options mapped).
+2. Non-blank cells are collected into a nested map under the root field; the dotted columns are removed.
+3. On **create**, the sub-record is created and its new id linked back into the FK.
+4. On **update** via `createOrUpdate`, the sub-record the main row already points at is reused (its id is read back and carried into the nested object), so the existing row is updated in place rather than replaced and orphaned.
+
+**Rules:**
+- **Blank means "keep the existing value"** — blank cells are left out of the nested object, so an update never blanks a field the file did not fill in.
+- An **all-blank** group still produces an *empty* object rather than nothing: the sub-record belongs to the main row, so a create must still produce one (the owning FK is typically `required`) and an update simply relinks the existing sub-row.
+- `ignoreEmpty` does not apply — it describes whether to null a *reference*, which a sub-record is not.
+- No lookup is issued, so there is no "not found" failure mode. Validation errors from the sub-record surface per row like any other write error.
 
 **Example — Template-based import:**
 
@@ -231,7 +257,12 @@ curl -X POST http://localhost:8080/import/dynamicImport \
 ### 3. Import Result and Failed Rows
 - Import returns `ImportHistory`.
 - If any row fails, a “failed data” Excel file is generated and saved, with a `Failed Reason` column.
-- Import status can be `PROCESSING`, `SUCCESS`, `FAILURE`, `PARTIAL_FAILURE`.
+- Import status can be `PROCESSING`, `SUCCESS`, `FAILURE`, `PARTIAL_FAILURE`; a validation run
+  (§5) records `VALIDATION_SUCCESS` / `VALIDATION_FAILURE` instead and attaches a result Excel
+  containing **all** rows, passed and failed.
+- Failure is per row, not all-or-nothing: rows marked with `Failed Reason` are removed from the batch
+  and the rest are written (`PARTIAL_FAILURE`). Only `skipException = false` makes the first bad row
+  abort the whole import.
 
 ### 4. Custom Import Handler
 You can register a Spring bean implementing `CustomImportHandler` and reference it by name in
@@ -243,8 +274,12 @@ import io.softa.starter.file.excel.imports.CustomImportHandler;
 @Component("productImportHandler")
 public class ProductImportHandler implements CustomImportHandler {
     @Override
-    public void handleImportData(List<Map<String, Object>> rows, Map<String, Object> env) {
-        // custom preprocessing
+    public void handleImportData(List<Map<String, Object>> rows, Map<String, Object> env,
+                                boolean validateOnly) {
+        // custom preprocessing — always runs
+        if (!validateOnly) {
+            // side effects only: provisioning, outbound calls, sequence allocation
+        }
     }
 }
 ```
@@ -253,6 +288,51 @@ Contract:
 - You may update row values in place.
 - You may mark a row failed by writing `FileConstant.FAILED_REASON`.
 - Do not add, remove, reorder, or replace row objects.
+- Your **checks** run in both modes — they are part of the feedback a validation run produces. Your
+  **side effects** must be skipped when `validateOnly` is true; the pipeline can withhold its own
+  persistence, not yours.
+
+The two-arg `handleImportData(rows, env)` overload is `@Deprecated(forRemoval = true)` and delegates
+with `false`. It exists so an existing implementation still compiles; the pipeline never calls it.
+
+### 5. Import vs validate-only — one pipeline, two modes
+
+`/import/validateImport` is a dry run: same checks, nothing written. Both entry points funnel through
+the same private `ImportRowPipeline.processRows`, which takes an `ImportMode`:
+
+```
+importByTemplate / dynamicImport → syncImport   → importData   → processRows(IMPORT)        → persist
+validateImport                   → syncValidate → validateData → processRows(VALIDATE_ONLY)   (no write)
+```
+
+`ImportMode` does **not** control whether rows are validated. Field handlers, relation lookup, unique
+constraints, the custom handler and failure collection run identically in both modes. The mode is purely
+subtractive: `VALIDATE_ONLY` skips `persist`, and is passed to the custom handler so it can skip its own
+side effects. Two consequences worth knowing:
+
+- **Sync vs async is a different axis.** `ImportTemplate.syncImport` decides who runs the import (the
+  request thread, or an MQ consumer / `@Async`); the async consumer calls the very same `syncImport`
+  method. Neither mode nor validation differs between them. The method name means "run an import
+  synchronously", not "the sync-mode import".
+- **A validation run cannot see model-level errors.** Required fields, type and model constraints are
+  raised by `ModelService` at write time, which `VALIDATE_ONLY` never reaches. A file that validates
+  clean can still fail per row on a real import.
+
+#### Why the mode is a parameter and not a field on `ImportTemplateDTO`
+
+`skipException`, `importRule`, `uniqueConstraints` all live on that DTO, so the mode looks like it
+belongs there too. It does not, for four reasons:
+
+| | |
+|---|---|
+| **It is not configuration** | Every other field on the DTO has an origin in the `import_template` row (or the wizard's equivalent input). The mode is "which endpoint the caller invoked" — there is no column for it and there should not be. Mixing the two means a reader can no longer tell stored config from per-call intent. |
+| **The DTO is the MQ message** | It carries `Context` across the async-import hop. A mode field becomes wire surface for a path where only `IMPORT` is ever legal — and a stray `VALIDATE_ONLY` there would make the consumer write nothing while `import_history` reports success. |
+| **A mutable field needs a save/restore dance** | `validateData` already has to set and restore `skipException`. Doing the same for the mode buys the worst failure class available: a stale `VALIDATE_ONLY` silently writes zero rows and still reports success. As an argument it cannot leak between calls. |
+| **One decision, one reader** | `persist` is called by `importData`, not from inside `processRows`. As a field the mode would be read in two places to answer one question; as an argument each call site simply states what it is doing. |
+
+The consistent alternative, if it is ever wanted, runs the other way: make the per-run options
+(`skipException` included) immutable on the DTO, fixed once at construction. That removes the
+save/restore in `validateData` — and only then does the mode have a coherent place to sit alongside them.
 
 ## B. Data Export
 File Starter supports three export modes:

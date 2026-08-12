@@ -13,6 +13,7 @@ import io.softa.framework.base.utils.SpringContextUtils;
 import io.softa.framework.base.utils.StringTools;
 import io.softa.starter.file.dto.ImportDataDTO;
 import io.softa.starter.file.dto.ImportTemplateDTO;
+import io.softa.starter.file.enums.ImportMode;
 import io.softa.starter.file.enums.ImportRule;
 import io.softa.starter.file.excel.imports.handler.BaseImportHandler;
 
@@ -43,7 +44,7 @@ public class ImportRowPipeline {
      * 5. Persistence
      */
     public void importData(ImportTemplateDTO importTemplateDTO, ImportDataDTO importDataDTO) {
-        processRows(importTemplateDTO, importDataDTO);
+        processRows(importTemplateDTO, importDataDTO, ImportMode.IMPORT);
         importPersistenceService.persist(importTemplateDTO, importDataDTO);
     }
 
@@ -62,7 +63,7 @@ public class ImportRowPipeline {
         Boolean originalSkipException = importTemplateDTO.getSkipException();
         try {
             importTemplateDTO.setSkipException(true);
-            processRows(importTemplateDTO, importDataDTO);
+            processRows(importTemplateDTO, importDataDTO, ImportMode.VALIDATE_ONLY);
         } finally {
             importTemplateDTO.setSkipException(originalSkipException);
         }
@@ -75,8 +76,12 @@ public class ImportRowPipeline {
      * 3. Unique constraint pre-check against the database (for ONLY_CREATE rule)
      * 4. Custom handler
      * 5. Failure collection
+     *
+     * <p>Every step above runs in BOTH modes — the mode reaches only the custom handler, which is the
+     * one step that can have side effects the pipeline cannot withhold on its behalf.
      */
-    private void processRows(ImportTemplateDTO importTemplateDTO, ImportDataDTO importDataDTO) {
+    private void processRows(ImportTemplateDTO importTemplateDTO, ImportDataDTO importDataDTO,
+                             ImportMode mode) {
         boolean skipException = Boolean.TRUE.equals(importTemplateDTO.getSkipException());
         List<BaseImportHandler> handlers = importHandlerFactory.createHandlers(importTemplateDTO);
         for (BaseImportHandler handler : handlers) {
@@ -93,11 +98,11 @@ public class ImportRowPipeline {
             uniqueConstraintValidator.validate(importTemplateDTO.getModelName(),
                     importTemplateDTO.getUniqueConstraints(), importDataDTO.getRows(), skipException);
         }
-        executeCustomHandler(importTemplateDTO.getCustomHandler(), importDataDTO);
+        executeCustomHandler(importTemplateDTO.getCustomHandler(), importDataDTO, mode);
         importFailureCollector.collect(importDataDTO);
     }
 
-    private void executeCustomHandler(String handlerName, ImportDataDTO importDataDTO) {
+    private void executeCustomHandler(String handlerName, ImportDataDTO importDataDTO, ImportMode mode) {
         if (StringUtils.isBlank(handlerName)) {
             return;
         }
@@ -109,7 +114,7 @@ public class ImportRowPipeline {
             List<Map<String, Object>> rows = importDataDTO.getRows();
             int originalSize = rows.size();
             List<Integer> rowIdentitySnapshot = rows.stream().map(System::identityHashCode).toList();
-            handler.handleImportData(rows, importDataDTO.getEnv());
+            handler.handleImportData(rows, importDataDTO.getEnv(), mode.isValidateOnly());
             validateCustomHandlerContract(handlerName, rows, originalSize, rowIdentitySnapshot);
         } catch (NoSuchBeanDefinitionException e) {
             throw new IllegalArgumentException("The custom import handler `{0}` is not found.", handlerName);

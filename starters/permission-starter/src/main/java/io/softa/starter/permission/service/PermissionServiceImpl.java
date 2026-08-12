@@ -12,6 +12,7 @@ import io.softa.framework.orm.enums.FieldType;
 import io.softa.framework.orm.meta.MetaField;
 import org.apache.commons.lang3.StringUtils;
 
+import io.softa.framework.orm.meta.MetaModel;
 import io.softa.framework.orm.meta.ModelManager;
 import io.softa.framework.orm.service.ModelService;
 import io.softa.framework.orm.service.PermissionService;
@@ -109,12 +110,36 @@ public class PermissionServiceImpl implements PermissionService {
             if (scope == null) return originalFilters; // ALL rule → no restriction
             return combineAnd(originalFilters, scope);
         }
-        // No explicit grant. Real business data (has a forward scope anchor)
-        // stays fail-closed; only a truly anchorless config/extension model gets
-        // the metadata-derived follow-parent / shared treatment below. (Cross-
-        // model display expansion still bypasses everything via skipPermissionCheck.)
+        return scopeWithoutGrant(model, pi, originalFilters);
+    }
+
+    /**
+     * What a model resolves to when the caller holds no rule for it.
+     *
+     * <p>Separate from {@link #appendScopeAccessFilters} because the two answer different questions.
+     * Above, the subject is the caller — may this principal bypass, which companies is it bounded to,
+     * what did an administrator configure. Here the subject is the model — is it business data, a value
+     * domain, or a child of something the caller can already see. Read as one method they hid that
+     * boundary; the caller-side checks are now the whole of the public one and read as a policy.
+     *
+     * <p>Fail-closed is the default, and every branch below is an argument against it:
+     * <ol>
+     *   <li><b>Has a forward anchor</b> → real business data, which someone was supposed to grant. Closed.</li>
+     *   <li><b>A country value domain</b> → the rows are a dropdown's own domain; see
+     *       {@link #isCountryValueDomain}. Readable.</li>
+     *   <li><b>Reachable from a granted model</b> → follow that owner; see {@link #findReferencer}.</li>
+     *   <li><b>Otherwise</b> → nothing connects the caller to it. Closed.</li>
+     * </ol>
+     *
+     * <p>Cross-model display expansion never arrives here — it bypasses everything upstream via
+     * {@code skipPermissionCheck}.
+     */
+    private Filters scopeWithoutGrant(String model, PermissionInfo pi, Filters originalFilters) {
         if (hasForwardAnchor(model)) {
             return combineAnd(originalFilters, ScopeRuleCompiler.matchNone());
+        }
+        if (isCountryValueDomain(model)) {
+            return originalFilters;
         }
         Referencer ref = findReferencer(model, pi);
         if (ref == null) {
@@ -451,8 +476,66 @@ public class PermissionServiceImpl implements PermissionService {
      * no explicit grant fail-closed to zero rows / 403, even for a child row the caller reaches
      * through a parent it can see.
      */
+
     private static final Set<ScopeType> UNIVERSAL_SCOPE_TYPES =
             EnumSet.of(ScopeType.ALL, ScopeType.CUSTOM, ScopeType.CREATED_BY_SELF);
+
+    /**
+     * A country value domain — a table whose rows are one country's allowed values for some field — is
+     * readable without a grant.
+     *
+     * <p>Row-scoping one is meaningless: the rows are the domain of a dropdown, so anyone who can open the
+     * form needs all of them, and there is nothing in "Singapore issues NRIC, FIN and Passport" to protect.
+     * What narrows them is the country axis, which is data correctness rather than authorization, and what
+     * protects them is the endpoint permission on the page that maintains them — writes are untouched here.
+     *
+     * <p>These are the tables that used to be {@code @OptionSet} enums and only became tables because their
+     * values differ per country. The enum side never had this problem — {@code /SysOptionSet/getOptionItems/*}
+     * is yml-whitelisted as tenant-public dictionary metadata and served from {@code OptionManager}'s memory,
+     * so it is not a scoped read at all. This restores the treatment they lost on the way out of the enum.
+     *
+     * <p>Without it they fail closed, and invisibly: {@code IdType} is only ever referenced from
+     * {@code EmployeeProfile}, which is reached through {@code Employee} rather than granted in its own
+     * right, so {@link #findReferencer} — which scans the GRANTED models — finds nothing and the read
+     * returns zero rows. On screen that is an ID Type dropdown reading "No options available", with the
+     * data present and the country filter correct.
+     *
+     * <h3>Why these two flags</h3>
+     * {@code multiCountry} is a declaration about what the data IS — "rows are partitioned by country" —
+     * rather than about how it is keyed, which makes it the honest thing for an authorization rule to read.
+     * It does not on its own mean "value domain": a country-partitioned business table would carry it too.
+     * {@code !multiTenant} is what rules that out — business data belongs to a tenant, a value domain does
+     * not — and the two together select, on both live databases, exactly seven models: {@code IdType},
+     * {@code PassType}, {@code ResidenceStatus}, {@code EmploymentType}, {@code HighestEducationLevel},
+     * {@code HighestEducationTrack}, {@code WorkPattern}. No platform metadata, no {@code Navigation},
+     * no {@code Plan} — nothing but the catalogues the country axis exists for.
+     *
+     * <p>A broader predicate was measured and rejected. Keying on {@code EXTERNAL_ID} (code-as-id) instead
+     * selects 24 models — the seven plus every {@code Sys*} catalogue, {@code Navigation}, {@code Permission},
+     * {@code Plan}, the flow templates. Those are all definitions rather than data, and their sensitive
+     * counterparts stay closed ({@code RoleNavigation}, {@code TenantSubscription}, {@code FlowInstance} are
+     * all surrogate-keyed), so it was defensible — but it opens thirteen models this bug never needed, and
+     * a rule that reads a key strategy to infer a purpose is inference where a declaration was available.
+     *
+     * <h3>What it deliberately leaves broken</h3>
+     * {@code CountryRegion} (34 referring fields), {@code Currency}, {@code CountrySubdivision} and
+     * {@code Bank} are value domains too, and still need an explicit grant. The first three are not
+     * {@code multiCountry} and must not be made so — they ARE the country and currency masters, not data
+     * partitioned by country, and marking them would be a lie told to a permission rule. {@code Bank}
+     * genuinely should be {@code multiCountry} (its rows are per-country: the clearing code is national and
+     * the BIC embeds the country) and is pending that change. Until then their absence from a role's scope
+     * is what it has always been — a configuration gap, now the only one left in this class.
+     *
+     * <p>Reached only after {@link #hasForwardAnchor}, so a model carrying an employee / department /
+     * company anchor can never qualify however it is flagged — the anchor list stays in one place
+     * (the {@code DataScopeType} registry) instead of being restated here.
+     */
+    private boolean isCountryValueDomain(String model) {
+        MetaModel meta = ModelManager.getModel(model);
+        return meta != null
+                && meta.isMultiCountry()
+                && !meta.isMultiTenant();
+    }
 
     /** A model has a forward scope anchor when some NON-universal ScopeType applies
      *  (a dept / employee / … field the contributors can filter on). A model where only

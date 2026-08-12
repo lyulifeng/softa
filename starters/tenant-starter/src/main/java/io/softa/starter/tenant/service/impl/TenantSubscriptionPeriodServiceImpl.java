@@ -286,6 +286,15 @@ public class TenantSubscriptionPeriodServiceImpl
         // subscription. That is what the old guards were really protecting — one baseline, unambiguous — and
         // it still holds, while allowing the one row that has to exist.
         Plan floor = floorPlan();
+
+        // A sold (above-floor) period must be time-boxed: expiry sweeps, auto-downgrade and billing all
+        // key off the end date, so an open-ended paid period would keep the tenant on the paid tier
+        // forever. Only the floor period is legitimately open-ended — it IS the baseline entitlement.
+        if (floor == null || !floor.getId().equals(period.getPlanId())) {
+            Assert.notNull(period.getEffectiveEndDate(),
+                    "A sold period must have an end date — only the floor period may be open-ended.");
+        }
+
         if (floor != null && floor.getId().equals(period.getPlanId())) {
             boolean anotherFloorPeriod = periodsOf(period.getSubscriptionId()).stream()
                     .filter(other -> selfId == null || !selfId.equals(other.getId()))

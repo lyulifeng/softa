@@ -9,7 +9,6 @@ import org.springframework.web.bind.annotation.RestController;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
 
-import io.softa.framework.web.controller.EntityController;
 import io.softa.framework.web.response.ApiResponse;
 import io.softa.starter.user.entity.RoleSensitiveFieldSet;
 import io.softa.starter.user.service.RoleSensitiveFieldSetService;
@@ -26,17 +25,22 @@ import io.softa.starter.user.service.RoleSensitiveFieldSetService;
 @RestController
 @RequestMapping("/RoleSensitiveFieldSet")
 public class RoleSensitiveFieldSetController
-        extends EntityController<RoleSensitiveFieldSetService, RoleSensitiveFieldSet, Long> {
+        extends SystemRoleGuardedController<RoleSensitiveFieldSetService, RoleSensitiveFieldSet, Long> {
 
-    @Operation(summary = "deleteById — routes through the typed service (cache eviction)")
-    @PostMapping("/deleteById")
-    public ApiResponse<Boolean> deleteById(@RequestParam Long id) {
-        return ApiResponse.success(service.deleteById(id));
+    @Override
+    protected String modelName() {
+        return "RoleSensitiveFieldSet";
     }
 
-    @Operation(summary = "deleteByIds — routes through the typed service (cache eviction)")
-    @PostMapping("/deleteByIds")
-    public ApiResponse<Boolean> deleteByIds(@RequestParam List<Long> ids) {
-        return ApiResponse.success(service.deleteByIds(ids));
+    /** Typed service, not ModelService: it publishes RoleGrantChangedEvent for cache eviction.
+     *  The mapped endpoint (and its guard call) lives in the base class and is final. */
+    @Override
+    protected boolean doDeleteById(Long id) {
+        return service.deleteById(id);
+    }
+
+    @Override
+    protected boolean doDeleteByIds(List<Long> ids) {
+        return service.deleteByIds(ids);
     }
 }

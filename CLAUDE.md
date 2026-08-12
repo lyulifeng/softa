@@ -218,7 +218,15 @@ public enum CustomerTier {
   rewrites a condition on it back to the cascade path, so the narrowing compiles to a LEFT JOIN and the
   anchor stays a plain field name that can also be filtered, sorted and displayed. Boot-rejected: the
   anchor field missing, a field of that name that is not a to-one onto the target model, and the company
-  model itself being `multiCompany`.
+  model itself being `multiCompany`. **`multiCountry` also decides a permission default**: a
+  `multiCountry` model that is not `multiTenant` is a *country value domain* — a table whose rows are one
+  country's allowed values for a field — and reads of it skip row-scope entirely (`PermissionServiceImpl`,
+  reached only after the anchor check, so business data can never qualify). Row-scoping a dropdown's own
+  domain is meaningless, and the country axis already narrows it; writes stay gated by the endpoint
+  permission. So **removing `multiCountry` from a catalogue silently empties every dropdown it feeds** —
+  the symptom appears far from the change. Seven models qualify today; `CountryRegion` / `Currency` /
+  `CountrySubdivision` deliberately do not (they *are* the masters, not data partitioned by country) and
+  still need an explicit grant.
 
   **Selection, grant, affiliation — three different things, never merged.** The narrowing above applies
   the *selection* (`Context.companyId`, from `X-Company-Id`): which of my companies am I looking at. What

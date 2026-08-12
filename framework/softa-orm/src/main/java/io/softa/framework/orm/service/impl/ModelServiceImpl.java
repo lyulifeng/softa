@@ -209,9 +209,15 @@ public class ModelServiceImpl<K extends Serializable> implements ModelService<K>
         List<Map<String, Object>> createDataList = new ArrayList<>();
         List<Map<String, Object>> updateDataList = new ArrayList<>();
 
-        // Step 1: Get the unique key to a row map
+        // Step 1: Get the unique key to a row map. A row whose unique-constraint value is blank on an
+        // autoSequence field has no key yet by design — the sequence fills it on insert — so it goes
+        // straight to the create list instead of failing the not-null key check.
         Map<UniqueKey, Map<String, Object>> rowKeyMap = new LinkedHashMap<>();
         for (Map<String, Object> row : rows) {
+            if (this.hasBlankAutoSequenceKey(modelName, row, uniqueConstraints)) {
+                createDataList.add(row);
+                continue;
+            }
             UniqueKey key = this.generateUniqueKey(modelName, row, uniqueConstraints);
             Assert.notTrue(rowKeyMap.containsKey(key),
                     "The unique key `{0}` of uniqueConstraints `{1}` is duplicated in the data to be created or updated.",
@@ -219,15 +225,20 @@ public class ModelServiceImpl<K extends Serializable> implements ModelService<K>
             rowKeyMap.put(key, row);
         }
 
-        // Step 2: Get the row key map from the database by the values of unique constraints
-        Map<UniqueKey, Map<String, Object>> dbRowKeyMap = this.getRowKeyMapFromDB(modelName, uniqueConstraints, rowKeyMap.keySet());
+        // Step 2: Get the row key map from the database by the values of unique constraints. Nested
+        // to-one value objects need their current FK read back as well, see linkExistingNestedRows.
+        Set<String> nestedToOneFields = this.collectNestedToOneFields(modelName, rows);
+        Map<UniqueKey, Map<String, Object>> dbRowKeyMap =
+                this.getRowKeyMapFromDB(modelName, uniqueConstraints, rowKeyMap.keySet(), nestedToOneFields);
 
         // Step 3: Compare the row key map from the database and the import data, to get the data to be created and updated
         for (Map.Entry<UniqueKey, Map<String, Object>> entry : rowKeyMap.entrySet()) {
             UniqueKey key = entry.getKey();
             Map<String, Object> row = entry.getValue();
             if (dbRowKeyMap.containsKey(key)) {
-                row.put(ModelConstant.ID, dbRowKeyMap.get(key).get(ModelConstant.ID));
+                Map<String, Object> dbRow = dbRowKeyMap.get(key);
+                row.put(ModelConstant.ID, dbRow.get(ModelConstant.ID));
+                this.linkExistingNestedRows(row, dbRow, nestedToOneFields);
                 updateDataList.add(row);
             } else {
                 createDataList.add(row);
@@ -243,21 +254,96 @@ public class ModelServiceImpl<K extends Serializable> implements ModelService<K>
     }
 
     /**
+     * Whether the row's unique-constraint values include a blank one on an autoSequence field.
+     *
+     * <p>Such a row cannot be matched against existing data — its business key does not exist until
+     * the sequence assigns it on insert — so {@code createOrUpdate} treats it as a plain create. A
+     * blank value on a NON-autoSequence unique field is still an error (nothing will ever fill it).
+     */
+    private boolean hasBlankAutoSequenceKey(String modelName, Map<String, Object> row, List<String> uniqueConstraints) {
+        for (String field : uniqueConstraints) {
+            Object value = row.get(field);
+            boolean blank = value == null || (value instanceof String text && StringUtils.isBlank(text));
+            if (blank && ModelManager.getModelField(modelName, field).isAutoSequence()) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
+     * Collect the to-one fields carrying a nested value object with no id of its own.
+     *
+     * <p>Such a value describes a sub-record that belongs to the main row (a OneToOne sub-block), not a
+     * reference to a shared row. On update the sub-record must be matched to the row the main row
+     * already points at — otherwise the cascade creates a second one and orphans the first.
+     *
+     * @param modelName the name of the model
+     * @param rows the rows to be created or updated
+     * @return the field names whose current FK must be read back from the database
+     */
+    private Set<String> collectNestedToOneFields(String modelName, List<Map<String, Object>> rows) {
+        Set<String> nestedToOneFields = new LinkedHashSet<>();
+        for (Map<String, Object> row : rows) {
+            for (Map.Entry<String, Object> entry : row.entrySet()) {
+                String fieldName = entry.getKey();
+                if (nestedToOneFields.contains(fieldName)
+                        || !(entry.getValue() instanceof Map<?, ?> nested)
+                        || nested.get(ModelConstant.ID) != null
+                        || !ModelManager.existField(modelName, fieldName)) {
+                    continue;
+                }
+                if (FieldType.TO_ONE_TYPES.contains(ModelManager.getModelField(modelName, fieldName).getFieldType())) {
+                    nestedToOneFields.add(fieldName);
+                }
+            }
+        }
+        return nestedToOneFields;
+    }
+
+    /**
+     * Carry the sub-record the matched row already points at into its nested value object, so the write
+     * pipeline updates that row in place instead of creating a new one and leaving the old one orphaned.
+     *
+     * @param row the input row being updated
+     * @param dbRow the matched database row, carrying the current FK values
+     * @param nestedToOneFields the fields collected by {@link #collectNestedToOneFields}
+     */
+    private void linkExistingNestedRows(Map<String, Object> row, Map<String, Object> dbRow,
+                                        Set<String> nestedToOneFields) {
+        for (String fieldName : nestedToOneFields) {
+            Object relatedId = dbRow.get(fieldName);
+            if (relatedId != null && row.get(fieldName) instanceof Map<?, ?> nested
+                    && nested.get(ModelConstant.ID) == null) {
+                // Copied rather than mutated in place: the caller may have supplied an immutable map.
+                Map<String, Object> linked = new LinkedHashMap<>(Cast.of(nested));
+                linked.put(ModelConstant.ID, relatedId);
+                row.put(fieldName, linked);
+            }
+        }
+    }
+
+    /**
      * Get the row key map from the database
      *
      * @param modelName The model name
      * @param uniqueConstraints The unique constraints
      * @param uniqueKeys The unique keys of input rows
+     * @param extraFields Additional fields to read back, e.g. the FKs of nested to-one value objects
      * @return The row key map
      */
     private Map<UniqueKey, Map<String, Object>> getRowKeyMapFromDB(String modelName, List<String> uniqueConstraints,
-                                                                   Collection<UniqueKey> uniqueKeys) {
+                                                                   Collection<UniqueKey> uniqueKeys,
+                                                                   Collection<String> extraFields) {
         if (CollectionUtils.isEmpty(uniqueKeys)) {
             return Collections.emptyMap();
         }
         Filters filters = this.buildUniqueConstraintFilters(uniqueConstraints, uniqueKeys);
         List<String> fields = new ArrayList<>(List.of(ModelConstant.ID));
         fields.addAll(uniqueConstraints);
+        if (!CollectionUtils.isEmpty(extraFields)) {
+            extraFields.stream().filter(field -> !fields.contains(field)).forEach(fields::add);
+        }
         FlexQuery flexQuery = new FlexQuery(fields, filters);
         // Unique-constraint dedup must see soft-deleted / inactive rows too,
         // otherwise INSERTs can collide on a "hidden" existing row.
