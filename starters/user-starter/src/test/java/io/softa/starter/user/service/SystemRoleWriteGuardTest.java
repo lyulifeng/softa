@@ -1,15 +1,12 @@
-package io.softa.starter.user.aspect;
+package io.softa.starter.user.service;
 
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
-import org.aspectj.lang.JoinPoint;
-import org.aspectj.lang.Signature;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
-import org.springframework.beans.factory.ObjectProvider;
 
 import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -48,9 +45,7 @@ class SystemRoleWriteGuardTest {
     @SuppressWarnings("unchecked")
     void setUp() {
         modelService = mock(ModelService.class);
-        ObjectProvider<ModelService<?>> provider = mock(ObjectProvider.class);
-        when(provider.getIfAvailable()).thenReturn((ModelService) modelService);
-        guard = new SystemRoleWriteGuard(provider);
+        guard = new SystemRoleWriteGuard(modelService);
 
         // Role lookups: 1 is built-in, 2 is not. Filtered by whichever ids the guard asks about, so a
         // case that resolves the wrong rows fails instead of quietly passing.
@@ -73,7 +68,7 @@ class SystemRoleWriteGuardTest {
     void refusesANewGrantOnABuiltInRole() {
         stubRows("RoleNavigation");
 
-        assertThatThrownBy(() -> guard.guard(call("createOne", "RoleNavigation", row("roleId", BUILT_IN))))
+        assertThatThrownBy(() -> guard.guardCreate("RoleNavigation", List.of(row("roleId", BUILT_IN))))
                 .isInstanceOf(BusinessException.class)
                 .hasMessageContaining("Employee")
                 .hasMessageContaining("EMPLOYEE");
@@ -86,8 +81,7 @@ class SystemRoleWriteGuardTest {
         // The payload names only the grant row's id, so the role is only visible by reading it back.
         stubRows("RoleDataScope", row("roleId", BUILT_IN));
 
-        assertThatThrownBy(() -> guard.guard(call("updateOne", "RoleDataScope",
-                row("id", 99L, "dataScopes", "[{\"scopeType\":\"ALL\"}]"))))
+        assertThatThrownBy(() -> guard.guardUpdate("RoleDataScope", List.of(row("id", 99L, "dataScopes", "[{\"scopeType\":\"ALL\"}]"))))
                 .isInstanceOf(BusinessException.class);
     }
 
@@ -97,8 +91,7 @@ class SystemRoleWriteGuardTest {
         // side would let this through.
         stubRows("RoleSensitiveFieldSet", row("roleId", ORDINARY));
 
-        assertThatThrownBy(() -> guard.guard(call("updateOne", "RoleSensitiveFieldSet",
-                row("id", 99L, "roleId", BUILT_IN))))
+        assertThatThrownBy(() -> guard.guardUpdate("RoleSensitiveFieldSet", List.of(row("id", 99L, "roleId", BUILT_IN))))
                 .isInstanceOf(BusinessException.class);
     }
 
@@ -106,16 +99,16 @@ class SystemRoleWriteGuardTest {
     void refusesStrippingABuiltInRolesGrants() {
         stubRows("RoleNavigation", row("roleId", BUILT_IN));
 
-        assertThatThrownBy(() -> guard.guard(call("deleteByIds", "RoleNavigation", List.of(7L, 8L))))
+        assertThatThrownBy(() -> guard.guardByIds("RoleNavigation", List.of(7L, 8L)))
                 .isInstanceOf(BusinessException.class);
     }
 
     @Test
-    void refusesADeleteThatSelectsABuiltInRoleByFilter() {
+    void refusesADeleteWhoseStoredRowBelongsToABuiltInRole() {
+        // The payload names only row ids; which role they belong to is read back before the delete.
         stubRows("RoleDataScope", row("roleId", BUILT_IN));
 
-        assertThatThrownBy(() -> guard.guard(
-                call("deleteByFilters", "RoleDataScope", new Filters().eq("roleId", BUILT_IN))))
+        assertThatThrownBy(() -> guard.guardByIds("RoleDataScope", List.of(11L, 12L)))
                 .isInstanceOf(BusinessException.class);
     }
 
@@ -124,8 +117,8 @@ class SystemRoleWriteGuardTest {
         // Three-argument signature: the rows come from the filter, the new values from the third arg.
         stubRows("RoleNavigation", row("roleId", BUILT_IN));
 
-        assertThatThrownBy(() -> guard.guard(call("updateByFilter", "RoleNavigation",
-                new Filters().eq("navigationId", "navigation.payroll"), row("permissionIds", "[]"))))
+        assertThatThrownBy(() -> guard.guardUpdateByFilter("RoleNavigation",
+                new Filters().eq("navigationId", "navigation.payroll"), row("permissionIds", "[]")))
                 .isInstanceOf(BusinessException.class);
     }
 
@@ -133,7 +126,7 @@ class SystemRoleWriteGuardTest {
     void letsAnOrdinaryRolesGrantsThrough() {
         stubRows("RoleNavigation", row("roleId", ORDINARY));
 
-        assertThatCode(() -> guard.guard(call("updateOne", "RoleNavigation", row("id", 99L))))
+        assertThatCode(() -> guard.guardUpdate("RoleNavigation", List.of(row("id", 99L))))
                 .doesNotThrowAnyException();
     }
 
@@ -141,7 +134,7 @@ class SystemRoleWriteGuardTest {
 
     @Test
     void refusesEditingTheBuiltInRoleRow() {
-        assertThatThrownBy(() -> guard.guard(call("updateOne", "Role", row("id", BUILT_IN, "name", "Renamed"))))
+        assertThatThrownBy(() -> guard.guardUpdate("Role", List.of(row("id", BUILT_IN, "name", "Renamed"))))
                 .isInstanceOf(BusinessException.class);
     }
 
@@ -149,14 +142,14 @@ class SystemRoleWriteGuardTest {
     void refusesMintingARoleThatClaimsACode() {
         // Otherwise the guard is self-defeating: anyone who can name their own code can declare a role
         // untouchable, and the generic /Role/createOne skips RoleController's own check.
-        assertThatThrownBy(() -> guard.guard(call("createOne", "Role", row("name", "Mine", "code", "EMPLOYEE"))))
+        assertThatThrownBy(() -> guard.guardCreate("Role", List.of(row("name", "Mine", "code", "EMPLOYEE"))))
                 .isInstanceOf(BusinessException.class)
                 .hasMessageContaining("reserved");
     }
 
     @Test
     void letsAnAdminCreatedRoleThrough() {
-        assertThatCode(() -> guard.guard(call("createOne", "Role", row("name", "Payroll Clerk"))))
+        assertThatCode(() -> guard.guardCreate("Role", List.of(row("name", "Payroll Clerk"))))
                 .doesNotThrowAnyException();
     }
 
@@ -166,14 +159,14 @@ class SystemRoleWriteGuardTest {
     void leavesMembershipAlone() {
         // Assigning users to a built-in role is the one change that stays open, so UserRoleRel must not
         // even be looked at.
-        assertThatCode(() -> guard.guard(call("createOne", "UserRoleRel",
-                row("roleId", BUILT_IN, "userId", 5L)))).doesNotThrowAnyException();
+        assertThatCode(() -> guard.guardCreate("UserRoleRel",
+                List.of(row("roleId", BUILT_IN, "userId", 5L)))).doesNotThrowAnyException();
         verify(modelService, never()).searchList(eq("Role"), any(FlexQuery.class));
     }
 
     @Test
     void ignoresModelsItDoesNotGuard() {
-        assertThatCode(() -> guard.guard(call("updateOne", "Employee", row("id", 3L))))
+        assertThatCode(() -> guard.guardUpdate("Employee", List.of(row("id", 3L))))
                 .doesNotThrowAnyException();
         verify(modelService, never()).searchList(eq("Role"), any(FlexQuery.class));
     }
@@ -186,21 +179,9 @@ class SystemRoleWriteGuardTest {
         system.setSkipPermissionCheck(true);
 
         assertThatCode(() -> ContextHolder.runWith(system,
-                () -> guard.guard(call("createOne", "RoleNavigation", row("roleId", BUILT_IN)))))
+                () -> guard.guardCreate("RoleNavigation", List.of(row("roleId", BUILT_IN)))))
                 .doesNotThrowAnyException();
         verify(modelService, never()).searchList(eq("Role"), any(FlexQuery.class));
-    }
-
-    @Test
-    void refusesEverythingWhenItCannotVerify() {
-        @SuppressWarnings("unchecked")
-        ObjectProvider<ModelService<?>> empty = mock(ObjectProvider.class);
-        when(empty.getIfAvailable()).thenReturn(null);
-
-        assertThatThrownBy(() -> new SystemRoleWriteGuard(empty)
-                .guard(call("deleteByIds", "RoleNavigation", List.of(7L))))
-                .isInstanceOf(BusinessException.class)
-                .hasMessageContaining("refused");
     }
 
     // ── helpers ───────────────────────────────────────────────────────────────────────────────────
@@ -228,14 +209,5 @@ class SystemRoleWriteGuardTest {
         return row;
     }
 
-    /** A JoinPoint standing in for one {@code ModelService} write signature. */
-    private static JoinPoint call(String method, Object... args) {
-        Signature signature = mock(Signature.class);
-        when(signature.getName()).thenReturn(method);
-        JoinPoint joinPoint = mock(JoinPoint.class);
-        when(joinPoint.getSignature()).thenReturn(signature);
-        when(joinPoint.getArgs()).thenReturn(args);
-        return joinPoint;
-    }
 
 }

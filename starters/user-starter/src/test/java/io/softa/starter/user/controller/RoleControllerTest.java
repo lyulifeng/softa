@@ -26,6 +26,7 @@ import io.softa.starter.user.service.RoleDataScopeService;
 import io.softa.starter.user.service.RoleNavigationService;
 import io.softa.starter.user.service.RoleSensitiveFieldSetService;
 import io.softa.starter.user.service.RoleService;
+import io.softa.starter.user.service.SystemRoleWriteGuard;
 import io.softa.starter.user.service.UserRoleRelService;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -56,6 +57,7 @@ class RoleControllerTest {
     @SuppressWarnings({"rawtypes", "unchecked"})
     private ModelService modelService;
     private io.softa.starter.user.service.impl.UiContextBuilder uiContextBuilder;
+    private SystemRoleWriteGuard writeGuard;
     private RoleController controller;
 
     @SuppressWarnings({"rawtypes", "unchecked"})
@@ -68,56 +70,16 @@ class RoleControllerTest {
         userRoleRelService = mock(UserRoleRelService.class);
         dynamicRoleSyncJob = mock(DynamicRoleSyncJob.class);
         modelService = mock(ModelService.class);
+        writeGuard = mock(SystemRoleWriteGuard.class);
         uiContextBuilder = mock(io.softa.starter.user.service.impl.UiContextBuilder.class);
         controller = new RoleController(
                 roleService, roleNavigationService,
                 roleDataScopeService, roleSensitiveFieldSetService,
-                userRoleRelService, dynamicRoleSyncJob, modelService, uiContextBuilder);
-    }
-
-    // ─── typed shadows: reject client `code` on create + block generic edits to a system role ───
-
-    @Test
-    void createOne_withClientCode_rejected() {
-        assertThatThrownBy(() ->
-                controller.createOne(Map.<String, Object>of("name", "Evil", "code", "SUPER_ADMIN")))
-                .isInstanceOf(BusinessException.class)
-                .hasMessageContaining("reserved for system roles");
-        verify(modelService, never()).createOne(any(), any());
-    }
-
-    @Test
-    void createOne_noCode_delegatesToGenericCreate() {
-        when(modelService.createOne(eq("Role"), any())).thenReturn(42L);
-        controller.createOne(Map.<String, Object>of("name", "HR Manager"));
-        verify(modelService).createOne(eq("Role"), any());
-    }
-
-    @Test
-    void updateOne_systemRole_blocked() {
-        Role sa = new Role();
-        sa.setId(1L);
-        sa.setName("Super Admin");
-        sa.setCode("SUPER_ADMIN");
-        when(roleService.getById(1L)).thenReturn(java.util.Optional.of(sa));
-
-        assertThatThrownBy(() ->
-                controller.updateOne(Map.<String, Object>of("id", 1L, "name", "x")))
-                .isInstanceOf(BusinessException.class)
-                .hasMessageContaining("not allowed on system role");
-        verify(modelService, never()).updateOne(any(), any());
-    }
-
-    @Test
-    void updateOne_nonSystemRole_delegatesToGenericUpdate() {
-        Role hr = new Role();
-        hr.setId(500L);
-        hr.setName("HR Manager");   // no code → not a system role
-        when(roleService.getById(500L)).thenReturn(java.util.Optional.of(hr));
-        when(modelService.updateOne(eq("Role"), any())).thenReturn(true);
-
-        controller.updateOne(Map.<String, Object>of("id", 500L, "name", "HR Lead"));
-        verify(modelService).updateOne(eq("Role"), any());
+                userRoleRelService, dynamicRoleSyncJob, uiContextBuilder);
+        // Injected by Spring in production; set directly here (same package) because the write
+        // verbs and their SystemRoleWriteGuard call now live in SystemRoleGuardedController.
+        controller.modelService = castModelService(modelService);
+        controller.writeGuard = writeGuard;
     }
 
     // ─── createWithWizard ───
@@ -328,5 +290,10 @@ class RoleControllerTest {
 
     private static ObjectNode navRow(String navId) {
         return JSON.objectNode().put("navigationId", navId);
+    }
+
+    @SuppressWarnings("unchecked")
+    private static ModelService<Long> castModelService(ModelService<?> service) {
+        return (ModelService<Long>) service;
     }
 }

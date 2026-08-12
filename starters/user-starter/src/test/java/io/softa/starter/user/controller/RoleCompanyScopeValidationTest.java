@@ -21,6 +21,7 @@ import io.softa.starter.user.service.RoleDataScopeService;
 import io.softa.starter.user.service.RoleNavigationService;
 import io.softa.starter.user.service.RoleSensitiveFieldSetService;
 import io.softa.starter.user.service.RoleService;
+import io.softa.starter.user.service.SystemRoleWriteGuard;
 import io.softa.starter.user.service.UserRoleRelService;
 
 import static org.assertj.core.api.Assertions.assertThatCode;
@@ -73,8 +74,12 @@ class RoleCompanyScopeValidationTest {
         controller = new RoleController(
                 roleService, mock(RoleNavigationService.class),
                 roleDataScopeService, mock(RoleSensitiveFieldSetService.class),
-                mock(UserRoleRelService.class), mock(DynamicRoleSyncJob.class), modelService,
+                mock(UserRoleRelService.class), mock(DynamicRoleSyncJob.class),
                 mock(io.softa.starter.user.service.impl.UiContextBuilder.class));
+        // Injected by Spring in production; assigned directly here (same package) now that the write
+        // verbs and their SystemRoleWriteGuard call live in SystemRoleGuardedController.
+        controller.modelService = castModelService(modelService);
+        controller.writeGuard = mock(SystemRoleWriteGuard.class);
     }
 
     @AfterEach
@@ -204,5 +209,10 @@ class RoleCompanyScopeValidationTest {
         assertThatThrownBy(() -> controller.saveWizard(7L, wizardWith(scopeRow(COMPANY_SCOPED_MODEL, "ALL"))))
                 .isInstanceOf(BusinessException.class);
         verify(roleDataScopeService, never()).createList(any());
+    }
+
+    @SuppressWarnings("unchecked")
+    private static ModelService<Long> castModelService(ModelService<?> service) {
+        return (ModelService<Long>) service;
     }
 }

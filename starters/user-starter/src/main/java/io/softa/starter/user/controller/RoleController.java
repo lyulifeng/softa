@@ -58,7 +58,7 @@ import java.util.Map;
 @RestController
 @RequestMapping("/Role")
 @RequiredArgsConstructor
-public class RoleController {
+public class RoleController extends SystemRoleGuardedController<RoleService, Role, Long> {
 
     /**
      * {@code ScopeType.ALL}'s wire form. The name, not the {@code @JsonValue} code: the snapshot reads
@@ -73,71 +73,28 @@ public class RoleController {
     private final RoleSensitiveFieldSetService roleSensitiveFieldSetService;
     private final UserRoleRelService userRoleRelService;
     private final DynamicRoleSyncJob dynamicRoleSyncJob;
-    /** Used for explicit-null column updates that bypass the entity-based
-     *  {@code ignoreNull=true} semantics (e.g. wizard "Clear" on
-     *  dynamicFilter). The map-based updateOne writes whatever keys are
-     *  present in the map, null values included. */
-    private final ModelService<?> modelService;
     private final UiContextBuilder uiContextBuilder;
 
-    @Operation(summary = "Delete a role by id — typed (system-role guard + cache eviction); "
-            + "shadows the generic /Role/deleteById which skips both")
-    @PostMapping("/deleteById")
-    public ApiResponse<Boolean> deleteById(@RequestParam Long id) {
-        return ApiResponse.success(roleService.deleteById(id));
+    @Override
+    protected String modelName() {
+        return "Role";
     }
 
-    @Operation(summary = "Delete roles by ids — typed (system-role guard + cache eviction); "
-            + "shadows the generic /Role/deleteByIds which skips both")
-    @PostMapping("/deleteByIds")
-    public ApiResponse<Boolean> deleteByIds(@RequestParam List<Long> ids) {
-        return ApiResponse.success(roleService.deleteByIds(ids));
+    /**
+     * Typed service, not {@code ModelService}: {@code RoleServiceImpl} evicts the per-role permission
+     * cache and applies its own field-level {@code guardSystemMutation}. The mapped endpoints and their
+     * {@code SystemRoleWriteGuard} calls live in the base class and are final — the two former private
+     * guards here ({@code rejectClientCode} on create, "not a system role" on update) are exactly what
+     * the shared guard does for every write verb, not just the three this class used to declare.
+     */
+    @Override
+    protected boolean doDeleteById(Long id) {
+        return roleService.deleteById(id);
     }
 
-    @Operation(summary = "Create a role — typed shadow that rejects a client-supplied `code` (reserved for "
-            + "system roles, code-initialized only); the generic /Role/createOne would skip that guard.")
-    @PostMapping("/createOne")
-    public ApiResponse<Object> createOne(@RequestBody Map<String, Object> row) {
-        rejectClientCode(row);
-        return ApiResponse.success(modelService.createOne("Role", row));
-    }
-
-    @Operation(summary = "Batch-create roles — typed shadow that rejects any client-supplied `code`.")
-    @PostMapping("/createList")
-    public ApiResponse<Object> createList(@RequestBody List<Map<String, Object>> rows) {
-        if (rows != null) rows.forEach(RoleController::rejectClientCode);
-        return ApiResponse.success(modelService.createList("Role", rows));
-    }
-
-    @Operation(summary = "Update a role — typed shadow that blocks generic edits to a system-reserved role "
-            + "(code != null: SUPER_ADMIN / TENANT_ADMIN / …); the generic /Role/updateOne would skip the guard.")
-    @PostMapping("/updateOne")
-    public ApiResponse<Boolean> updateOne(@RequestBody Map<String, Object> row) {
-        guardNotSystemRole(row);
-        return ApiResponse.success(modelService.updateOne("Role", row));
-    }
-
-    /** Reject a client-supplied non-blank {@code code} on create — reserved for system seeds (mirrors
-     *  {@code RoleServiceImpl.guardAdminCreatedCode}; the generic ModelController create bypasses it). */
-    private static void rejectClientCode(Map<String, Object> row) {
-        Object code = row == null ? null : row.get("code");
-        if (code != null && !code.toString().isBlank()) {
-            throw new BusinessException(
-                    "Role code is reserved for system roles; admin-created roles must have code=null");
-        }
-    }
-
-    /** Block a generic update targeting a system-reserved role (code != null). The nuanced field-level
-     *  guard for the typed edit paths (wizard / active) is {@code RoleServiceImpl.guardSystemMutation}. */
-    private void guardNotSystemRole(Map<String, Object> row) {
-        Object id = row == null ? null : row.get("id");
-        if (id == null) return;
-        roleService.getById(Long.valueOf(id.toString()))
-                .filter(RoleConstant::isSystemRole)
-                .ifPresent(r -> {
-                    throw new BusinessException(
-                            "Update is not allowed on system role '" + r.getName() + "' (code=" + r.getCode() + ")");
-                });
+    @Override
+    protected boolean doDeleteByIds(List<Long> ids) {
+        return roleService.deleteByIds(ids);
     }
 
     @GetMapping("/{id}/effective-access")
