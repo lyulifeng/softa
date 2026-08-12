@@ -7,6 +7,7 @@ import lombok.Data;
 import lombok.EqualsAndHashCode;
 
 import io.softa.framework.orm.annotation.Field;
+import io.softa.framework.orm.annotation.Index;
 import io.softa.framework.orm.annotation.Model;
 import io.softa.framework.orm.enums.FieldType;
 import io.softa.framework.orm.entity.AuditableModel;
@@ -18,6 +19,7 @@ import io.softa.starter.file.enums.SigningRequestStatus;
 @Data
 @EqualsAndHashCode(callSuper = true)
 @Model(multiTenant = true, copyable = false)
+@Index(fields = {"tenantId", "createdTime"})
 public class SigningRequest extends AuditableModel {
 
     @Serial
@@ -26,8 +28,8 @@ public class SigningRequest extends AuditableModel {
     @Field(label = "ID")
     private Long id;
 
-    @Field(label = "Tenant ID", length = 32)
-    private String tenantId;
+    @Field(label = "Tenant ID")
+    private Long tenantId;
 
     @Field
     private String modelName;

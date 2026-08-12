@@ -7,6 +7,7 @@ import lombok.EqualsAndHashCode;
 import tools.jackson.databind.JsonNode;
 
 import io.softa.framework.orm.annotation.Field;
+import io.softa.framework.orm.annotation.Index;
 import io.softa.framework.orm.annotation.Model;
 import io.softa.framework.orm.entity.AuditableModel;
 import io.softa.starter.file.enums.SigningDocumentStatus;
@@ -17,6 +18,7 @@ import io.softa.starter.file.enums.SigningDocumentStatus;
 @Data
 @EqualsAndHashCode(callSuper = true)
 @Model(multiTenant = true, copyable = false)
+@Index(fields = {"tenantId", "signingRequestId"})
 public class SigningDocument extends AuditableModel {
 
     @Serial
@@ -25,8 +27,8 @@ public class SigningDocument extends AuditableModel {
     @Field(label = "ID")
     private Long id;
 
-    @Field(label = "Tenant ID", length = 32)
-    private String tenantId;
+    @Field(label = "Tenant ID")
+    private Long tenantId;
 
     @Field(label = "Signing Request ID")
     private Long signingRequestId;

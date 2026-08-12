@@ -23,8 +23,8 @@ public class DocumentTemplateSignSlot extends AuditableModel {
     @Field(label = "ID")
     private Long id;
 
-    @Field(label = "Tenant ID", length = 32)
-    private String tenantId;
+    @Field(label = "Tenant ID")
+    private Long tenantId;
 
     @Field(label = "Document Template")
     private Long templateId;
