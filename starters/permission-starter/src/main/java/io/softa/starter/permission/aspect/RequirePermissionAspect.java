@@ -30,8 +30,8 @@ import lombok.RequiredArgsConstructor;
 
 /**
  * Enforces {@link io.softa.starter.permission.annotation.RequirePermission}:
- * verify the caller's row scope on the endpoint's main model, THEN open the
- * narrow {@code Context.skipDataScope} bypass for the endpoint body.
+ * verify the caller's row scope on the endpoint's main model, THEN open
+ * {@code Context.skipPermissionCheck} for the endpoint body.
  *
  * <h3>Order is the security property</h3>
  * The main-model check runs while the flag is still CLOSED, so
@@ -40,11 +40,13 @@ import lombok.RequiredArgsConstructor;
  * {@code @RequireRole} ("enabled ONLY after verified — never before") — and
  * is restored in a finally block, so the bypass cannot leak past this call.
  *
- * <h3>What the bypass is NOT</h3>
- * {@code skipDataScope} bypasses row scope only (scope filters + id checks).
- * Sensitive-field masking and write-payload guards keep running inside the
- * endpoint — that is the difference from {@code skipPermissionCheck}, and
- * the reason this aspect does not reuse it.
+ * <h3>How wide the bypass is</h3>
+ * It is the framework's single bypass flag, so inside the endpoint body every
+ * layer is off — row scope, field-level guards and sensitive-field masking
+ * alike. Field-level confidentiality is not enforced through this path: once
+ * the entry check has passed, the body is trusted business logic ("the endpoint
+ * is the resource"). An endpoint that needs masking on its own response must
+ * not declare this annotation and should check scope by hand.
  *
  * <h3>Filter rewrite, not filter check</h3>
  * A declared {@code filterParam} argument is REPLACED with itself AND-ed with
@@ -114,19 +116,19 @@ public class RequirePermissionAspect {
             }
         }
 
-        // ── ② bypass — only now, and only row scope
+        // ── ② bypass — only now
         if (!ContextHolder.existContext()) {
             // Unbound context (scheduler / MQ threads): shouldBypass() is already
             // true downstream, the flag would land on a throwaway Context anyway.
             return jp.proceed(args);
         }
         Context ctx = ContextHolder.getContext();
-        boolean previous = ctx.isSkipDataScope();
+        boolean previous = ctx.isSkipPermissionCheck();
         try {
-            ctx.setSkipDataScope(true);
+            ctx.setSkipPermissionCheck(true);
             return jp.proceed(args);
         } finally {
-            ctx.setSkipDataScope(previous);
+            ctx.setSkipPermissionCheck(previous);
         }
     }
 

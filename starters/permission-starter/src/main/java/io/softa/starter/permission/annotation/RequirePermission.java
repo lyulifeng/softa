@@ -24,11 +24,12 @@ import java.lang.annotation.Target;
  *       any out-of-scope id); {@code filterParam} arguments are REWRITTEN with
  *       the caller's scope filters AND-ed in ({@code appendScopeAccessFilters},
  *       silently narrows — query semantics, mirrors the standard endpoints).</li>
- *   <li><b>Then bypass</b> — only after the check passes, the narrow
- *       {@code Context.skipDataScope} flag opens for the rest of the call, so
- *       internal reads/writes of OTHER models are no longer emptied/blocked by
- *       row scope. Field-level guards (sensitive masking, write payload) stay
- *       active. The flag is restored in a finally block.</li>
+ *   <li><b>Then bypass</b> — only after the check passes,
+ *       {@code Context.skipPermissionCheck} opens for the rest of the call, so
+ *       internal reads/writes of OTHER models are no longer emptied/blocked.
+ *       It is the framework's single bypass flag, so every layer is off for the
+ *       body — row scope, field guards and sensitive masking alike. The flag is
+ *       restored in a finally block.</li>
  * </ol>
  *
  * <p>{@code model} may be omitted when the controller's class-level request

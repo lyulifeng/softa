@@ -22,11 +22,17 @@ import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 /**
- * The narrow flag's contract: {@code skipDataScope} bypasses the TWO row-scope
- * entry points and nothing else — the point of adding it instead of reusing
- * {@code skipPermissionCheck} is that field-level protection stays on.
+ * The bypass contract behind {@code @RequirePermission}: the aspect opens
+ * {@code Context.skipPermissionCheck} once the entry check has passed, and that
+ * single flag turns off EVERY layer for the endpoint body — the row-scope entry
+ * points and the field-level guards alike, sensitive masking included.
+ *
+ * <p>That reach is the decision, not an oversight: a narrow row-scope-only flag
+ * ({@code skipDataScope}) existed and was removed in favour of one honest flag.
+ * {@link #fieldGuards_alsoBypassed_snapshotNotConsulted()} is the test that used
+ * to assert the opposite — it now pins the current contract.
  */
-class SkipDataScopeBypassTest {
+class RequirePermissionBypassTest {
 
     private final PermissionSnapshotProvider snapshotProvider = mock(PermissionSnapshotProvider.class);
     private final ScopeRuleCompiler scopeCompiler = mock(ScopeRuleCompiler.class);
@@ -38,11 +44,11 @@ class SkipDataScopeBypassTest {
     private final PermissionServiceImpl service = new PermissionServiceImpl(
             snapshotProvider, scopeCompiler, sfsCache, modelService, applicability);
 
-    private static Context ctx(boolean skipDataScope) {
+    private static Context ctx(boolean skipPermissionCheck) {
         Context ctx = new Context();
         ctx.setUserId(7L);
         ctx.setTenantId(1L);
-        ctx.setSkipDataScope(skipDataScope);
+        ctx.setSkipPermissionCheck(skipPermissionCheck);
         return ctx;
     }
 
@@ -66,17 +72,14 @@ class SkipDataScopeBypassTest {
     }
 
     @Test
-    void fieldMasking_NOT_bypassed_snapshotStillConsulted() {
-        PermissionInfo pi = mock(PermissionInfo.class);
-        when(pi.isAdmin()).thenReturn(false);
-        when(snapshotProvider.get(1L, 7L)).thenReturn(pi);
-
+    void fieldGuards_alsoBypassed_snapshotNotConsulted() {
+        // One flag, one reach: inside a @RequirePermission body the field-level
+        // guards are off too. Whoever wants masking to survive an elevated call
+        // must reintroduce a separate flag rather than weaken this assertion.
         ContextHolder.callWith(ctx(true),
                 () -> service.getUserBlockedModelFields("Employee", AccessType.READ));
 
-        // the field-level path still resolves the caller's snapshot — the narrow
-        // flag did not short-circuit it (skipPermissionCheck would have)
-        verify(snapshotProvider).get(1L, 7L);
+        verifyNoInteractions(snapshotProvider);
     }
 
     @Test

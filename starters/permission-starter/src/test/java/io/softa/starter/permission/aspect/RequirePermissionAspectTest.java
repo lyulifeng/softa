@@ -36,7 +36,7 @@ import static org.mockito.Mockito.when;
 /**
  * The aspect's contract, in order of importance: ① the main-model check runs
  * BEFORE the bypass opens (with the caller's real scope), ② the bypass is the
- * narrow {@code skipDataScope} flag, opened only on success and restored on
+ * single {@code skipPermissionCheck} flag, opened only on success and restored on
  * exit, ③ {@code filterParam} arguments are rewritten, not checked, ④
  * resolution failures carry the concrete fix.
  */
@@ -173,7 +173,7 @@ class RequirePermissionAspectTest {
 
         AtomicBoolean flagDuringBody = new AtomicBoolean(false);
         ProceedingJoinPoint jp = joinPoint(m, new Object[]{42L}, args -> {
-            flagDuringBody.set(ContextHolder.getContext().isSkipDataScope());
+            flagDuringBody.set(ContextHolder.getContext().isSkipPermissionCheck());
             return null;
         });
 
@@ -188,7 +188,7 @@ class RequirePermissionAspectTest {
         assertThat(ids.getValue()).containsExactly(42L);
         // narrow flag was open inside the body, closed again after
         assertThat(flagDuringBody).isTrue();
-        assertThat(ctx.isSkipDataScope()).isFalse();
+        assertThat(ctx.isSkipPermissionCheck()).isFalse();
     }
 
     @Test
@@ -209,7 +209,7 @@ class RequirePermissionAspectTest {
         assertThatThrownBy(() -> ContextHolder.callWith(ctx, () -> aspect.enforce(jp)))
                 .hasMessageContaining("out of scope");
         assertThat(bodyRan).isFalse();
-        assertThat(ctx.isSkipDataScope()).isFalse();
+        assertThat(ctx.isSkipPermissionCheck()).isFalse();
     }
 
     @Test
@@ -224,7 +224,7 @@ class RequirePermissionAspectTest {
         Context ctx = userContext();
         assertThatThrownBy(() -> ContextHolder.callWith(ctx, () -> aspect.enforce(jp)))
                 .hasMessageContaining("business failure");
-        assertThat(ctx.isSkipDataScope()).isFalse();
+        assertThat(ctx.isSkipPermissionCheck()).isFalse();
     }
 
     // ── ③ filter rewrite ─────────────────────────────────────────────────
@@ -302,7 +302,7 @@ class RequirePermissionAspectTest {
         assertThatThrownBy(() -> ContextHolder.callWith(ctx, () -> aspect.enforce(jp)))
                 .hasMessageContaining("required");
         assertThat(bodyRan).isFalse();
-        assertThat(ctx.isSkipDataScope()).isFalse();
+        assertThat(ctx.isSkipPermissionCheck()).isFalse();
         verify(permissionService, never()).checkIdsAccess(anyString(), anyCollection(), any());
     }
 
@@ -352,7 +352,7 @@ class RequirePermissionAspectTest {
         assertThatThrownBy(() -> ContextHolder.callWith(ctx, () -> aspect.enforce(jp)))
                 .hasMessageContaining("hit null");
         assertThat(bodyRan).isFalse();
-        assertThat(ctx.isSkipDataScope()).isFalse();
+        assertThat(ctx.isSkipPermissionCheck()).isFalse();
         verify(permissionService, never()).checkIdsAccess(anyString(), anyCollection(), any());
     }
 
