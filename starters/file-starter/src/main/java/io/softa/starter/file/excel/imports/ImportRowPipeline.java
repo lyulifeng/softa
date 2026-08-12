@@ -1,6 +1,5 @@
 package io.softa.starter.file.excel.imports;
 
-import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
@@ -11,7 +10,6 @@ import org.springframework.stereotype.Component;
 
 import io.softa.framework.base.exception.IllegalArgumentException;
 import io.softa.framework.base.utils.SpringContextUtils;
-import io.softa.framework.orm.constant.FileConstant;
 import io.softa.framework.base.utils.StringTools;
 import io.softa.starter.file.dto.ImportDataDTO;
 import io.softa.starter.file.dto.ImportTemplateDTO;
@@ -45,7 +43,7 @@ public class ImportRowPipeline {
      * 5. Persistence
      */
     public void importData(ImportTemplateDTO importTemplateDTO, ImportDataDTO importDataDTO) {
-        processRows(importTemplateDTO, importDataDTO);
+        processRows(importTemplateDTO, importDataDTO, false);
         importPersistenceService.persist(importTemplateDTO, importDataDTO);
     }
 
@@ -64,18 +62,9 @@ public class ImportRowPipeline {
         Boolean originalSkipException = importTemplateDTO.getSkipException();
         try {
             importTemplateDTO.setSkipException(true);
-            // Flag validation mode for the custom handler: it still runs (its checks are part of the
-            // validation feedback), but must skip anything that writes.
-            if (importDataDTO.getEnv() == null) {
-                importDataDTO.setEnv(new HashMap<>());
-            }
-            importDataDTO.getEnv().put(FileConstant.VALIDATE_ONLY_ENV, Boolean.TRUE);
-            processRows(importTemplateDTO, importDataDTO);
+            processRows(importTemplateDTO, importDataDTO, true);
         } finally {
             importTemplateDTO.setSkipException(originalSkipException);
-            if (importDataDTO.getEnv() != null) {
-                importDataDTO.getEnv().remove(FileConstant.VALIDATE_ONLY_ENV);
-            }
         }
     }
 
@@ -87,7 +76,8 @@ public class ImportRowPipeline {
      * 4. Custom handler
      * 5. Failure collection
      */
-    private void processRows(ImportTemplateDTO importTemplateDTO, ImportDataDTO importDataDTO) {
+    private void processRows(ImportTemplateDTO importTemplateDTO, ImportDataDTO importDataDTO,
+                             boolean validateOnly) {
         boolean skipException = Boolean.TRUE.equals(importTemplateDTO.getSkipException());
         List<BaseImportHandler> handlers = importHandlerFactory.createHandlers(importTemplateDTO);
         for (BaseImportHandler handler : handlers) {
@@ -104,11 +94,12 @@ public class ImportRowPipeline {
             uniqueConstraintValidator.validate(importTemplateDTO.getModelName(),
                     importTemplateDTO.getUniqueConstraints(), importDataDTO.getRows(), skipException);
         }
-        executeCustomHandler(importTemplateDTO.getCustomHandler(), importDataDTO);
+        executeCustomHandler(importTemplateDTO.getCustomHandler(), importDataDTO, validateOnly);
         importFailureCollector.collect(importDataDTO);
     }
 
-    private void executeCustomHandler(String handlerName, ImportDataDTO importDataDTO) {
+    private void executeCustomHandler(String handlerName, ImportDataDTO importDataDTO,
+                                      boolean validateOnly) {
         if (StringUtils.isBlank(handlerName)) {
             return;
         }
@@ -120,7 +111,7 @@ public class ImportRowPipeline {
             List<Map<String, Object>> rows = importDataDTO.getRows();
             int originalSize = rows.size();
             List<Integer> rowIdentitySnapshot = rows.stream().map(System::identityHashCode).toList();
-            handler.handleImportData(rows, importDataDTO.getEnv());
+            handler.handleImportData(rows, importDataDTO.getEnv(), validateOnly);
             validateCustomHandlerContract(handlerName, rows, originalSize, rowIdentitySnapshot);
         } catch (NoSuchBeanDefinitionException e) {
             throw new IllegalArgumentException("The custom import handler `{0}` is not found.", handlerName);
