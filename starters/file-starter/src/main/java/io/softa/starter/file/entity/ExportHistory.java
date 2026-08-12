@@ -5,6 +5,7 @@ import lombok.Data;
 import lombok.EqualsAndHashCode;
 
 import io.softa.framework.orm.annotation.Field;
+import io.softa.framework.orm.annotation.Index;
 import io.softa.framework.orm.annotation.Model;
 import io.softa.framework.orm.entity.AuditableModel;
 import io.softa.framework.orm.enums.FieldType;
@@ -15,6 +16,7 @@ import io.softa.framework.orm.enums.FieldType;
 @Data
 @EqualsAndHashCode(callSuper = true)
 @Model(multiTenant = true, copyable = false)
+@Index(fields = {"tenantId", "createdTime"})
 public class ExportHistory extends AuditableModel {
 
     @Serial
