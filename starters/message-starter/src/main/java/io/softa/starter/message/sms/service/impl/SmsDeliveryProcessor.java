@@ -86,7 +86,12 @@ public class SmsDeliveryProcessor {
         try {
             config = dispatcher.resolveProviderById(record.getProviderConfigId());
         } catch (Exception e) {
-            handleFailure(record, sendingVersion, null,
+            // Mirror of MailDeliveryProcessor: keep the stack, and classify with a
+            // marker code so a missing config dead-letters immediately instead of
+            // burning the retry budget.
+            log.error("SmsDeliveryProcessor: config resolution failed for record id={} configId={}",
+                    record.getId(), record.getProviderConfigId(), e);
+            handleFailure(record, sendingVersion, "CONFIG_NOT_RESOLVABLE",
                     "Config not resolvable: " + e.getMessage(), null);
             return;
         }
@@ -120,6 +125,10 @@ public class SmsDeliveryProcessor {
                     : "Provider returned failure";
             return new AttemptResult(false, null, code, msg);
         } catch (Exception e) {
+            // Known provider failures return a coded result above; anything reaching
+            // this catch is unexpected — keep the stack in the log.
+            log.error("SmsDeliveryProcessor: unexpected provider failure for phone={}",
+                    phoneNumber, e);
             return new AttemptResult(false, null, null, e.getMessage());
         }
     }

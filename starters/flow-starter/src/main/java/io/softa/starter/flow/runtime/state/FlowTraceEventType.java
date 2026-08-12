@@ -4,11 +4,17 @@ import com.fasterxml.jackson.annotation.JsonValue;
 import lombok.AllArgsConstructor;
 import lombok.Getter;
 
+import io.softa.framework.base.annotation.OptionItem;
+import io.softa.framework.base.annotation.OptionSet;
+
 /**
- * Trace event types emitted by the runtime engine.
+ * Trace event types emitted by the runtime engine. Carries {@code @OptionSet} because
+ * {@code FlowExecutionTrace.eventType} is an OPTION field — the trace viewer renders it
+ * through the generic metadata surface.
  */
 @Getter
 @AllArgsConstructor
+@OptionSet
 public enum FlowTraceEventType {
     ENTER_NODE("EnterNode"),
     COMPLETE_NODE("CompleteNode"),
@@ -18,7 +24,10 @@ public enum FlowTraceEventType {
     APPROVAL_TRANSFERRED("ApprovalTransferred"),
     APPROVAL_DELEGATED("ApprovalDelegated"),
     APPROVAL_ADD_SIGNED("ApprovalAddSigned"),
+    // Explicit labels: humanize flattens the CC acronym to "Cced" / "Cc Read".
+    @OptionItem(label = "Approval CC'd")
     APPROVAL_CCED("ApprovalCced"),
+    @OptionItem(label = "Approval CC Read")
     APPROVAL_CC_READ("ApprovalCcRead"),
     APPROVAL_RETURNED("ApprovalReturned"),
     FLOW_RESUBMITTED("FlowResubmitted"),

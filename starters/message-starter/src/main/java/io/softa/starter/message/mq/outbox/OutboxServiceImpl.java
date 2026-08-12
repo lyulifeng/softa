@@ -7,6 +7,7 @@ import java.util.List;
 import java.util.Map;
 import org.springframework.stereotype.Service;
 
+import io.softa.framework.base.exception.BusinessException;
 import io.softa.framework.base.exception.VersionException;
 import io.softa.framework.orm.constant.ModelConstant;
 import io.softa.framework.orm.domain.Filters;
@@ -95,6 +96,23 @@ public class OutboxServiceImpl extends EntityServiceImpl<OutboxEntry, Long>
         patch.put("attempts", attempts);
         patch.put("lastError", lastError);
         updateVersioned(patch);
+    }
+
+    @Override
+    public boolean requeue(Long id) {
+        OutboxEntry entry = getById(id).orElseThrow(() ->
+                new BusinessException("Outbox entry {0} does not exist.", id));
+        if (entry.getStatus() != OutboxStatus.DEAD) {
+            throw new BusinessException(
+                    "Only DEAD outbox entries can be requeued — entry {0} is {1}.",
+                    id, entry.getStatus());
+        }
+        long expectedVersion = entry.getVersion() != null ? entry.getVersion() : 0L;
+        boolean ok = markNew(id, expectedVersion, 0, "Manually requeued", LocalDateTime.now());
+        if (!ok) {
+            throw new BusinessException("The entry changed concurrently — refresh and retry again.");
+        }
+        return true;
     }
 
     private Map<String, Object> versionedPatch(Long id, long expectedVersion) {

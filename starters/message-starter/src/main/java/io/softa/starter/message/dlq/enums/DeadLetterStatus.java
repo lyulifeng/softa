@@ -4,8 +4,12 @@ import com.fasterxml.jackson.annotation.JsonValue;
 import lombok.AllArgsConstructor;
 import lombok.Getter;
 
+import io.softa.framework.base.annotation.OptionSet;
+
 /**
- * Lifecycle of a {@code dead_letter_message} row.
+ * Lifecycle of a {@code dead_letter_message} row. Carries {@code @OptionSet} because
+ * {@code DeadLetterMessage.status} is an OPTION field and the triage UI renders it
+ * through the generic metadata surface.
  *
  * <ul>
  *   <li>{@link #PENDING}: just landed; awaits human triage</li>
@@ -15,6 +19,7 @@ import lombok.Getter;
  */
 @Getter
 @AllArgsConstructor
+@OptionSet
 public enum DeadLetterStatus {
     PENDING("Pending"),
     RESOLVED("Resolved"),

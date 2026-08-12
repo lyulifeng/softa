@@ -23,9 +23,11 @@ import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.argThat;
 import static org.mockito.ArgumentMatchers.contains;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.AdditionalMatchers.gt;
 import static org.mockito.ArgumentMatchers.isNull;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -85,12 +87,29 @@ class OutboxPublisherTest {
 
     @Test
     void noAvailableRoutes_skipsScanEntirely() {
-        // All routes unavailable → the publisher must not even query the outbox,
-        // so unroutable rows never occupy the scan batch.
+        // All routes unavailable → the publisher must not run the claim scan, so
+        // unroutable rows never occupy the scan batch. The only query allowed is
+        // the stranded-route existence probe (LIMIT 1, throttled).
         publisher.pollAndPublish();
 
-        verify(outboxService, never()).findDueNew(anyInt(), any(LocalDateTime.class), anyCollection());
+        verify(outboxService, never()).findDueNew(gt(1), any(LocalDateTime.class), anyCollection());
         verify(mqProducer, never()).sendAsync(any(), any());
+    }
+
+    @Test
+    void strandedRoutes_probeIsThrottled_andNeverScans() {
+        // All routes unavailable while due rows wait on them: the WARN probe runs
+        // once per throttle window (not once per poll), and the claim scan never
+        // runs. Without the probe a down broker leaves records PENDING with zero
+        // log evidence.
+        when(outboxService.findDueNew(eq(1), any(LocalDateTime.class), anyCollection()))
+                .thenReturn(List.of(new OutboxEntry()));
+
+        publisher.pollAndPublish();
+        publisher.pollAndPublish();   // inside the throttle window → no second probe
+
+        verify(outboxService, times(1)).findDueNew(eq(1), any(LocalDateTime.class), anyCollection());
+        verify(outboxService, never()).findDueNew(gt(1), any(LocalDateTime.class), anyCollection());
     }
 
     @Test

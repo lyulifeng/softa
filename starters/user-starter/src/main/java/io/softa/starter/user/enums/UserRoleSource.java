@@ -4,14 +4,19 @@ import com.fasterxml.jackson.annotation.JsonValue;
 import lombok.AllArgsConstructor;
 import lombok.Getter;
 
+import io.softa.framework.base.annotation.OptionSet;
+
 /**
- * Source of a user_role assignment.
+ * Source of a user_role assignment. Carries {@code @OptionSet} because
+ * {@code UserRoleRel.source} is an OPTION field — the role-assignment UI needs the
+ * option set to label and filter it.
  * - MANUAL:  Admin-granted via UI or REST API. Deleted only by explicit admin action.
  * - DYNAMIC: Auto-assigned by DynamicRoleSyncJob based on role.dynamic_filter.
  *            Re-evaluated each sync run; removed when user no longer matches filter.
  */
 @Getter
 @AllArgsConstructor
+@OptionSet
 public enum UserRoleSource {
     MANUAL("Manual", "Admin-granted"),
     DYNAMIC("Dynamic", "Auto-synced by DynamicRoleSyncJob")

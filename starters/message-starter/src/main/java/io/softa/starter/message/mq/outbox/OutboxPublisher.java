@@ -52,6 +52,10 @@ public class OutboxPublisher {
     private static final int BATCH_TIMEOUT_SECONDS = 30;
     /** Release delay when a route drops between scan and dispatch (flap guard). */
     private static final int ROUTE_UNAVAILABLE_RETRY_SECONDS = 30;
+    /** Throttle for the stranded-route WARN: one line per window, not one per poll. */
+    private static final long STRANDED_WARN_INTERVAL_MS = 300_000L;
+
+    private volatile long strandedWarnedAt;
 
     @Autowired
     private OutboxService outboxService;
@@ -108,16 +112,18 @@ public class OutboxPublisher {
         }
     }
 
-    protected List<Claim> claimBatch() {
+    private List<Claim> claimBatch() {
         // Scan only broker-available routes: rows on unconfigured routes must not
         // occupy the id-ordered LIMIT batch, or they starve routable rows behind
         // them (partial topic configuration is an explicitly supported state).
         List<TopicRoute> available = Arrays.stream(TopicRoute.values())
                 .filter(mqProducer::isAvailable)
                 .toList();
+        warnStrandedRoutes(available);
         if (available.isEmpty()) {
             return List.of();
         }
+
         List<OutboxEntry> candidates = outboxService.findDueNew(BATCH_SIZE, LocalDateTime.now(), available);
         List<Claim> claims = new ArrayList<>(candidates.size());
         for (OutboxEntry row : candidates) {
@@ -133,6 +139,37 @@ public class OutboxPublisher {
                     attempts(row.getAttempts())));
         }
         return claims;
+    }
+
+    /**
+     * Name the routes whose due rows can never be picked up. The scan filter above
+     * silently skips unavailable routes — correct for throughput, but without this
+     * WARN a down broker leaves send records PENDING with zero log evidence at any
+     * level. A route can also be legitimately unconfigured (partial topic
+     * configuration is a supported state), so silence alone and noise alone are
+     * both wrong: warn only when DUE rows are actually waiting on an unavailable
+     * route, and at most once per {@link #STRANDED_WARN_INTERVAL_MS} (the existence
+     * probe costs one LIMIT-1 query per window, not per poll).
+     */
+    private void warnStrandedRoutes(List<TopicRoute> available) {
+        long now = System.currentTimeMillis();
+        if (now - strandedWarnedAt < STRANDED_WARN_INTERVAL_MS) {
+            return;
+        }
+        List<TopicRoute> unavailable = Arrays.stream(TopicRoute.values())
+                .filter(route -> !available.contains(route))
+                .toList();
+        if (unavailable.isEmpty()) {
+            return;
+        }
+        List<OutboxEntry> stranded = outboxService.findDueNew(1, LocalDateTime.now(), unavailable);
+        if (stranded.isEmpty()) {
+            return;
+        }
+        strandedWarnedAt = now;
+        log.warn("OutboxPublisher: due outbox rows are waiting on unavailable broker route(s) {} — "
+                + "they stay NEW (and their send records PENDING) until the broker / topic "
+                + "configuration is restored", unavailable);
     }
 
     /**

@@ -134,7 +134,7 @@ class SmsDeliveryProcessorTest {
         processor.process(7L);
 
         verify(sendFailureHandler).handle(eq("sms"), isNull(), eq(TopicRoute.SMS_SEND), eq("SmsSendRecord"),
-                eq(7L), eq(1L), eq(0), isNull(), contains("Config not resolvable"),
+                eq(7L), eq(1L), eq(0), eq("CONFIG_NOT_RESOLVABLE"), contains("Config not resolvable"),
                 any(SendFailureHandler.RecordTransitions.class));
         verifyNoInteractions(adapterFactory);
     }

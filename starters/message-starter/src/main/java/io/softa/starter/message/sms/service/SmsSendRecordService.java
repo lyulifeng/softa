@@ -30,6 +30,13 @@ public interface SmsSendRecordService extends EntityService<SmsSendRecord, Long>
     boolean markRetry(Long id, long expectedVersion, String errorCode, String errorMessage,
                       LocalDateTime nextRetryAt);
 
+    /**
+     * Manually requeue one record for delivery — the SMS mirror of
+     * {@code MailSendRecordService#retry}: PENDING / RETRY / FAILED / DEAD_LETTER →
+     * RETRY plus a fresh outbox row, atomically; SENT / SENDING rejected.
+     */
+    boolean retry(Long id);
+
     /** Terminally fail a record. */
     boolean markFailed(Long id, long expectedVersion, String errorCode, String errorMessage);
 

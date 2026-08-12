@@ -116,7 +116,8 @@ class MailDeliveryProcessorTest {
         processor.process(5L);
 
         verify(sendFailureHandler).handle(eq("mail"), eq(SmtpMailTransport.NAME), eq(TopicRoute.MAIL_SEND),
-                eq("MailSendRecord"), eq(5L), eq(1L), eq(0), isNull(), contains("Config not resolvable"),
+                eq("MailSendRecord"), eq(5L), eq(1L), eq(0), eq("CONFIG_NOT_RESOLVABLE"),
+                contains("Config not resolvable"),
                 any(SendFailureHandler.RecordTransitions.class));
         verify(smtpMailTransport, never()).send(any(), any());
     }

@@ -1,16 +1,16 @@
 package io.softa.framework.orm.service.impl;
 
+import java.time.Duration;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.concurrent.TimeUnit;
 import java.util.stream.Collectors;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.lang3.StringUtils;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.data.redis.core.StringRedisTemplate;
-import org.springframework.data.redis.core.ValueOperations;
+import org.springframework.data.redis.core.script.RedisScript;
 import org.springframework.stereotype.Service;
 import tools.jackson.core.type.TypeReference;
 
@@ -25,6 +25,19 @@ import io.softa.framework.orm.service.CacheService;
 @Service
 @Slf4j
 public class CacheServiceImpl implements CacheService {
+
+    /**
+     * Atomically INCR the counter and, when this call creates it (count == 1), apply the TTL in
+     * the same server-side step. Splitting INCR and EXPIRE client-side leaves a window where the
+     * key is created without an expiration, so the counter would accumulate forever.
+     */
+    private static final RedisScript<Long> INCREMENT_SCRIPT = RedisScript.of("""
+            local count = redis.call('INCR', KEYS[1])
+            if count == 1 then
+                redis.call('EXPIRE', KEYS[1], ARGV[1])
+            end
+            return count
+            """, Long.class);
 
     /**
      * Root key, such as: "softa:"
@@ -56,8 +69,7 @@ public class CacheServiceImpl implements CacheService {
      */
     @Override
     public void save(String key, Object object) {
-        String cacheKey = this.getKeyPath(key);
-        this.save(cacheKey, object, RedisConstant.DEFAULT_EXPIRE_SECONDS);
+        this.save(key, object, RedisConstant.DEFAULT_EXPIRE_SECONDS);
     }
 
     /**
@@ -76,7 +88,12 @@ public class CacheServiceImpl implements CacheService {
                     RedisConstant.DEFAULT_EXPIRE_SECONDS);
             expireSeconds = RedisConstant.DEFAULT_EXPIRE_SECONDS;
         }
-        stringRedisTemplate.opsForValue().set(cacheKey, value, expireSeconds, TimeUnit.SECONDS);
+        if (expireSeconds == 0) {
+            // 0 means permanent validity: plain SET, since SETEX rejects a zero timeout.
+            stringRedisTemplate.opsForValue().set(cacheKey, value);
+        } else {
+            stringRedisTemplate.opsForValue().set(cacheKey, value, Duration.ofSeconds(expireSeconds));
+        }
     }
 
     /**
@@ -178,6 +195,8 @@ public class CacheServiceImpl implements CacheService {
     /**
      * Increment count.
      * If the key does not exist, set the initial value and expiration time.
+     * The increment and the first-write expiration run as one atomic server-side script,
+     * so concurrent callers cannot lose a count or leave the counter without a TTL.
      *
      * @param key            cache key
      * @param expiredSeconds expired seconds
@@ -186,14 +205,7 @@ public class CacheServiceImpl implements CacheService {
     @Override
     public Long increment(String key, long expiredSeconds) {
         String cacheKey = this.getKeyPath(key);
-        ValueOperations<String, String> valueOperations = stringRedisTemplate.opsForValue();
-        if (Boolean.TRUE.equals(stringRedisTemplate.hasKey(cacheKey))) {
-            return valueOperations.increment(cacheKey);
-        } else {
-            // Set the initial value and expiration time in seconds.
-            valueOperations.set(cacheKey, "1", expiredSeconds, TimeUnit.SECONDS);
-            return 1L;
-        }
+        return stringRedisTemplate.execute(INCREMENT_SCRIPT, List.of(cacheKey), String.valueOf(expiredSeconds));
     }
 
     /**
