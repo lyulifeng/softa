@@ -25,6 +25,7 @@ import io.softa.framework.base.context.ContextHolder;
 import io.softa.framework.base.exception.PermissionException;
 import io.softa.framework.orm.domain.Filters;
 import io.softa.framework.orm.enums.AccessType;
+import io.softa.framework.orm.meta.ModelManager;
 import io.softa.framework.orm.service.PermissionService;
 import lombok.RequiredArgsConstructor;
 
@@ -156,6 +157,7 @@ public class RequirePermissionAspect {
         List<ResolvedScope> out = new ArrayList<>(declared.length);
         for (var scope : declared) {
             String model = scope.model().isEmpty() ? inferModel(method) : scope.model();
+            assertModelKnown(model, method, scope.model().isEmpty());
             boolean hasPath = !scope.idPath().isEmpty();
             if (hasPath && scope.idParam().isEmpty()) {
                 throw new IllegalStateException("@RequirePermission on " + method
@@ -177,6 +179,31 @@ public class RequirePermissionAspect {
             out.add(new ResolvedScope(model, idIndex, filterIndex, accessors, scope.idPath()));
         }
         return out;
+    }
+
+    /**
+     * Reject a model name the registry does not know — a typo in {@code model = "Employe"}, or a
+     * path whose first segment is not a model name at all ({@code /api/LeaveRequest} infers
+     * {@code api}). Without this, every other kind of misconfiguration fails the boot while a wrong
+     * model waits until the first request, where it surfaces as an unrelated-looking error.
+     *
+     * <p>Guarded by {@link ModelManager#hasModels()}: the registry is empty until metadata scanning
+     * runs, and this resolver deliberately has no ordering dependency on it (see
+     * {@code RequirePermissionStartupValidator}). Empty registry = the question cannot be answered,
+     * so it is not asked — the check then happens on first request instead, where the registry is
+     * certainly populated.
+     */
+    private static void assertModelKnown(String model, Method method, boolean inferred) {
+        if (!ModelManager.hasModels() || ModelManager.existModel(model)) {
+            return;
+        }
+        throw new IllegalStateException("@RequirePermission on " + method + ": model '" + model
+                + "' does not exist"
+                + (inferred
+                        ? " — it was inferred from the controller's request-mapping path, which"
+                          + " apparently does not start with the model name. Declare model=\"...\""
+                          + " explicitly."
+                        : ". Check the spelling."));
     }
 
     /**
@@ -214,6 +241,12 @@ public class RequirePermissionAspect {
                             + ": idParam '" + name + "' is a primitive array (" + type.getSimpleName()
                             + ") — its elements cannot be read as ids. Use Long[] / List<Long>.");
                 }
+                if (requiredType == null && holdsIdsDirectly) {
+                    // A Collection idParam is cast to Collection<? extends Serializable> unchecked at
+                    // request time, so a List<SomeDto> passes the boot and its elements only fail deep
+                    // inside checkIdsAccess. idPath already validates its leaf type — do the same here.
+                    assertIdElementType(method, name, parameters[i]);
+                }
                 if (requiredType != null && !requiredType.isAssignableFrom(parameters[i].getType())) {
                     throw new IllegalStateException("@RequirePermission on " + method
                             + ": parameter '" + name + "' is " + parameters[i].getType().getSimpleName()
@@ -227,6 +260,46 @@ public class RequirePermissionAspect {
                 + ": no parameter named '" + name + "'. Available: "
                 + Arrays.stream(parameters).map(Parameter::getName).toList()
                 + " (parameter names require the -parameters compiler flag).");
+    }
+
+    /**
+     * A direct {@code idParam} must yield ids, so its declared type has to be a {@code Serializable}
+     * (a single id), an array of them, or a {@code Collection} whose ELEMENT type is one. The
+     * collection case is the one worth checking: the request-time cast to
+     * {@code Collection<? extends Serializable>} is unchecked, so without this a
+     * {@code List<SomeDto>} boots fine and only misbehaves once ids reach the scope count.
+     *
+     * <p>A raw or wildcard {@code Collection} whose element type cannot be resolved is left alone
+     * rather than rejected: unlike {@code idPath} — where the whole point of the grammar is
+     * compile-time resolvability — a controller signature may legitimately be generic, and failing
+     * the boot on it would be stricter than the previous behaviour for no security gain.
+     */
+    private static void assertIdElementType(Method method, String name, Parameter parameter) {
+        Class<?> type = parameter.getType();
+        if (!Collection.class.isAssignableFrom(type)) {
+            return;   // single id or array — the primitive-array case is rejected above
+        }
+        Class<?> element = ResolvableType.forMethodParameter(method, indexOf(method, parameter))
+                .asCollection().getGeneric(0).resolve();
+        if (element == null) {
+            return;   // raw / unresolvable generic — see javadoc
+        }
+        if (!Serializable.class.isAssignableFrom(element) || Collection.class.isAssignableFrom(element)) {
+            throw new IllegalStateException("@RequirePermission on " + method
+                    + ": idParam '" + name + "' is a Collection of " + element.getSimpleName()
+                    + ", which is not a Serializable id. Point idParam at a Collection of ids"
+                    + " (List<Long>), or use idPath to navigate into the DTO's id property.");
+        }
+    }
+
+    private static int indexOf(Method method, Parameter parameter) {
+        Parameter[] parameters = method.getParameters();
+        for (int i = 0; i < parameters.length; i++) {
+            if (parameters[i] == parameter) {
+                return i;
+            }
+        }
+        throw new IllegalStateException("Parameter " + parameter + " does not belong to " + method);
     }
 
     // ─────────────────────── idPath ───────────────────────
@@ -313,7 +386,19 @@ public class RequirePermissionAspect {
                             + " scope-verified; refusing instead of skipping it.");
                 }
                 if (value instanceof Collection<?> c) {
-                    next.addAll(c);
+                    // Reject a null ELEMENT here, not on the next hop. Adding it would make it the
+                    // next accessor's target, and Method.invoke(null) throws a bare NPE — which is
+                    // not a ReflectiveOperationException, so it escapes the catch above and the
+                    // caller gets no explanation. Same fail-closed reason as the null value below.
+                    for (Object element : c) {
+                        if (element == null) {
+                            throw new PermissionException("idPath '" + path + "': '"
+                                    + accessor.getName() + "' contains a null element — a row"
+                                    + " without its id cannot be scope-verified; refusing"
+                                    + " instead of skipping it.");
+                        }
+                        next.add(element);
+                    }
                 } else {
                     next.add(value);
                 }

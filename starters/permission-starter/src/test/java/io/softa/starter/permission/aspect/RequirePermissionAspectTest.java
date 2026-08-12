@@ -2,6 +2,7 @@ package io.softa.starter.permission.aspect;
 
 import java.io.Serializable;
 import java.lang.reflect.Method;
+import java.util.Arrays;
 import java.util.Collection;
 import java.util.List;
 import java.util.Map;
@@ -11,17 +12,22 @@ import org.aspectj.lang.ProceedingJoinPoint;
 import org.aspectj.lang.reflect.MethodSignature;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
+import org.mockito.MockedStatic;
+import org.mockito.Mockito;
 import org.springframework.web.bind.annotation.RequestMapping;
 
 import io.softa.framework.base.context.Context;
 import io.softa.framework.base.context.ContextHolder;
 import io.softa.framework.base.enums.Operator;
+import io.softa.framework.base.exception.PermissionException;
 import io.softa.framework.orm.domain.Filters;
 import io.softa.framework.orm.enums.AccessType;
+import io.softa.framework.orm.meta.ModelManager;
 import io.softa.framework.orm.service.PermissionService;
 import io.softa.starter.permission.annotation.RequirePermission;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyCollection;
@@ -75,6 +81,19 @@ class RequirePermissionAspectTest {
 
         @RequirePermission(idParam = "ids")
         public void primitiveIds(long[] ids) {
+        }
+
+        @RequirePermission(idParam = "docs")
+        public void dtoCollectionIds(List<SigningDoc> docs) {
+        }
+
+        @RequirePermission(model = "Employe", idParam = "leaveRequestId")
+        public void misspelledModel(Long leaveRequestId) {
+        }
+
+        @SuppressWarnings("rawtypes")
+        @RequirePermission(idParam = "ids")
+        public void rawCollectionIds(Collection ids) {
         }
 
         public void notAnnotated(Long id) {
@@ -467,5 +486,75 @@ class RequirePermissionAspectTest {
         assertThatThrownBy(() -> RequirePermissionAspect.resolve(m))
                 .isInstanceOf(IllegalStateException.class)
                 .hasMessageContaining("Declare model=");
+    }
+
+    // ── resolution: model name, id element type ──────────────────────────
+
+    @Test
+    void unknownModel_failsResolution_whenRegistryIsPopulated() {
+        // The registry is empty in this unit test, so resolution must NOT reject the name —
+        // that is the ordering-independence the validator's javadoc promises.
+        Method m = method(LeaveRequestController.class, "approve", Long.class);
+        assertThatCode(() -> RequirePermissionAspect.resolve(m)).doesNotThrowAnyException();
+    }
+
+    @Test
+    void dtoCollectionIdParam_rejectedAtResolution() {
+        Method m = method(LeaveRequestController.class, "dtoCollectionIds", List.class);
+        assertThatThrownBy(() -> RequirePermissionAspect.resolve(m))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("Collection of SigningDoc")
+                .hasMessageContaining("idPath");
+    }
+
+    @Test
+    void idPathNullCollectionElement_rejectsWithTheFailClosedMessage() {
+        InitiateReq request = new InitiateReq(Arrays.asList(new SigningDoc(7L), null));
+
+        Method m = method(SigningController.class, "initiate", InitiateReq.class);
+        var scopes = RequirePermissionAspect.resolve(m);
+
+        assertThatThrownBy(() -> RequirePermissionAspect.extractByPath(
+                request, scopes.getFirst().idPathAccessors(), scopes.getFirst().idPath()))
+                .isInstanceOf(PermissionException.class)
+                .hasMessageContaining("null element");
+    }
+
+    @Test
+    void unknownModel_rejectedAtResolution_whenRegistryIsPopulated() {
+        Method m = method(LeaveRequestController.class, "misspelledModel", Long.class);
+        try (MockedStatic<ModelManager> mm = Mockito.mockStatic(ModelManager.class)) {
+            mm.when(ModelManager::hasModels).thenReturn(true);
+            mm.when(() -> ModelManager.existModel("Employe")).thenReturn(false);
+
+            assertThatThrownBy(() -> RequirePermissionAspect.resolve(m))
+                    .isInstanceOf(IllegalStateException.class)
+                    .hasMessageContaining("model 'Employe' does not exist")
+                    .hasMessageContaining("Check the spelling");
+        }
+    }
+
+    @Test
+    void unknownInferredModel_pointsAtTheRequestMappingPath() {
+        // Same rejection, different remedy: the name came from the path, so telling the author to
+        // check their spelling would send them looking at an annotation that has no model at all.
+        Method m = method(LeaveRequestController.class, "approve", Long.class);
+        try (MockedStatic<ModelManager> mm = Mockito.mockStatic(ModelManager.class)) {
+            mm.when(ModelManager::hasModels).thenReturn(true);
+            mm.when(() -> ModelManager.existModel("LeaveRequest")).thenReturn(false);
+
+            assertThatThrownBy(() -> RequirePermissionAspect.resolve(m))
+                    .isInstanceOf(IllegalStateException.class)
+                    .hasMessageContaining("inferred from the controller's request-mapping path")
+                    .hasMessageContaining("Declare model");
+        }
+    }
+
+    @Test
+    void rawCollectionIdParam_isAllowed_elementTypeUnresolvable() {
+        // Deliberately NOT rejected: unlike idPath, a generic controller signature is legitimate,
+        // and failing the boot on it would be stricter than before for no security gain.
+        Method m = method(LeaveRequestController.class, "rawCollectionIds", Collection.class);
+        assertThatCode(() -> RequirePermissionAspect.resolve(m)).doesNotThrowAnyException();
     }
 }

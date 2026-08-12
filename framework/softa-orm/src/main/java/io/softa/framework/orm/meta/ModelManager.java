@@ -923,6 +923,22 @@ public class ModelManager {
     }
 
     /**
+     * Whether any model is registered yet — i.e. whether {@link #existModel} can be trusted to
+     * mean "this name is wrong" rather than "metadata has not loaded".
+     *
+     * <p>The registry starts as {@link MetadataSnapshot#empty()}, so before metadata scanning runs
+     * {@code existModel} answers false for every name. Startup-time validators that want to reject
+     * an unknown model name must therefore ask this first, or they would fail the boot on a
+     * perfectly good name purely because they ran earlier — which is why the question is exposed
+     * rather than left to each caller to guess by probing for a well-known model.
+     *
+     * @return true when the metadata registry is populated
+     */
+    public static boolean hasModels() {
+        return !modelMap().isEmpty();
+    }
+
+    /**
      * Check if the model exists, if not, throw an exception
      * @param modelName model name
      */
