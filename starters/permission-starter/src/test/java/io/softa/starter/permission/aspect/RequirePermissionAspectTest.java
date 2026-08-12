@@ -10,6 +10,8 @@ import java.util.concurrent.atomic.AtomicBoolean;
 
 import org.aspectj.lang.ProceedingJoinPoint;
 import org.aspectj.lang.reflect.MethodSignature;
+import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
 import org.mockito.MockedStatic;
@@ -47,6 +49,27 @@ import static org.mockito.Mockito.when;
  * resolution failures carry the concrete fix.
  */
 class RequirePermissionAspectTest {
+
+    /**
+     * Stand in for a loaded metadata registry: {@code assertModelKnown} rejects any model
+     * {@code existModel} does not know, and a bare unit test never runs the boot path that
+     * populates it — so without this every resolution here would fail on a perfectly good
+     * fixture model. Only {@code existModel} is stubbed; the rest of {@code ModelManager}
+     * keeps its real behaviour ({@code CALLS_REAL_METHODS}). The two tests that assert the
+     * rejection re-stub their own name to false.
+     */
+    private MockedStatic<ModelManager> modelRegistry;
+
+    @BeforeEach
+    void registryKnowsEveryFixtureModel() {
+        modelRegistry = Mockito.mockStatic(ModelManager.class, Mockito.CALLS_REAL_METHODS);
+        modelRegistry.when(() -> ModelManager.existModel(anyString())).thenReturn(true);
+    }
+
+    @AfterEach
+    void closeRegistryStub() {
+        modelRegistry.close();
+    }
 
     // ── fixture controllers ──────────────────────────────────────────────
 
@@ -521,17 +544,15 @@ class RequirePermissionAspectTest {
     }
 
     @Test
-    void unknownModel_rejectedAtResolution_whenRegistryIsPopulated() {
+    void unknownModel_rejectedAtResolution() {
         Method m = method(LeaveRequestController.class, "misspelledModel", Long.class);
-        try (MockedStatic<ModelManager> mm = Mockito.mockStatic(ModelManager.class)) {
-            mm.when(ModelManager::hasModels).thenReturn(true);
-            mm.when(() -> ModelManager.existModel("Employe")).thenReturn(false);
+        // Narrower than the fixture-wide stub, and declared later, so it wins for this one name.
+        modelRegistry.when(() -> ModelManager.existModel("Employe")).thenReturn(false);
 
-            assertThatThrownBy(() -> RequirePermissionAspect.resolve(m))
-                    .isInstanceOf(IllegalStateException.class)
-                    .hasMessageContaining("model 'Employe' does not exist")
-                    .hasMessageContaining("Check the spelling");
-        }
+        assertThatThrownBy(() -> RequirePermissionAspect.resolve(m))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("model 'Employe' does not exist")
+                .hasMessageContaining("Check the spelling");
     }
 
     @Test
@@ -539,15 +560,12 @@ class RequirePermissionAspectTest {
         // Same rejection, different remedy: the name came from the path, so telling the author to
         // check their spelling would send them looking at an annotation that has no model at all.
         Method m = method(LeaveRequestController.class, "approve", Long.class);
-        try (MockedStatic<ModelManager> mm = Mockito.mockStatic(ModelManager.class)) {
-            mm.when(ModelManager::hasModels).thenReturn(true);
-            mm.when(() -> ModelManager.existModel("LeaveRequest")).thenReturn(false);
+        modelRegistry.when(() -> ModelManager.existModel("LeaveRequest")).thenReturn(false);
 
-            assertThatThrownBy(() -> RequirePermissionAspect.resolve(m))
-                    .isInstanceOf(IllegalStateException.class)
-                    .hasMessageContaining("inferred from the controller's request-mapping path")
-                    .hasMessageContaining("Declare model");
-        }
+        assertThatThrownBy(() -> RequirePermissionAspect.resolve(m))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("inferred from the controller's request-mapping path")
+                .hasMessageContaining("Declare model");
     }
 
     @Test

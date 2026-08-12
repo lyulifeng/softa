@@ -187,14 +187,13 @@ public class RequirePermissionAspect {
      * {@code api}). Without this, every other kind of misconfiguration fails the boot while a wrong
      * model waits until the first request, where it surfaces as an unrelated-looking error.
      *
-     * <p>Guarded by {@link ModelManager#hasModels()}: the registry is empty until metadata scanning
-     * runs, and this resolver deliberately has no ordering dependency on it (see
-     * {@code RequirePermissionStartupValidator}). Empty registry = the question cannot be answered,
-     * so it is not asked — the check then happens on first request instead, where the registry is
-     * certainly populated.
+     * <p>The registry is populated by the time this runs: {@code AppStartup} loads it from an
+     * {@code InitializingBean} callback, which the container completes for every singleton before
+     * {@code RequirePermissionStartupValidator} — a {@code SmartInitializingSingleton} — resolves
+     * anything. So an unknown name here means the name is wrong, not that metadata is late.
      */
     private static void assertModelKnown(String model, Method method, boolean inferred) {
-        if (!ModelManager.hasModels() || ModelManager.existModel(model)) {
+        if (ModelManager.existModel(model)) {
             return;
         }
         throw new IllegalStateException("@RequirePermission on " + method + ": model '" + model
