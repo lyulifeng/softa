@@ -21,6 +21,7 @@ import io.softa.framework.orm.annotation.CrossTenant;
 import io.softa.framework.orm.annotation.SkipPermissionCheck;
 import io.softa.framework.orm.domain.Filters;
 import io.softa.framework.base.message.MailRequestMessage;
+import io.softa.framework.base.message.SmsRequestMessage;
 import io.softa.framework.orm.service.impl.EntityServiceImpl;
 import io.softa.starter.user.dto.InvitationInfo;
 import io.softa.starter.user.entity.UserAccount;
@@ -47,8 +48,12 @@ public class UserInvitationServiceImpl extends EntityServiceImpl<UserInvitation,
     private static final int TOKEN_BYTES = 32;
     /** Minimum password length enforced server-side (FE mirrors it). */
     private static final int MIN_PASSWORD_LENGTH = 8;
-    /** MailTemplate codes — seeded as system ({@code tenantId=0}) templates in message-starter. */
+    /** Template codes, seeded as system ({@code tenantId=0}) rows by the host app.
+     *  {@code MailTemplate} and {@code SmsTemplate} are separate models, so one code names
+     *  the invitation in BOTH channels — same message, different transport. */
     private static final String TEMPLATE_INVITE = "user.invitation";
+    /** Mail only. A password reset starts from the login screen by typing an email, so the
+     *  address is known and an SMS counterpart would add cost without reach. */
     private static final String TEMPLATE_RESET = "user.password-reset";
 
     private final UserAccountService accountService;
@@ -70,7 +75,15 @@ public class UserInvitationServiceImpl extends EntityServiceImpl<UserInvitation,
         Assert.notNull(userId, "userId is required");
         UserAccount account = accountService.getById(userId)
                 .orElseThrow(() -> new BusinessException("User not found."));
-        Assert.notBlank(account.getEmail(), "This user has no email to send the invitation to.");
+        // At least ONE channel must be maintained — the invitation goes to every channel the
+        // account has (work mobile SMS + work email), so requiring the email specifically would
+        // block an account reachable only by phone. Refusing here (rather than issuing a token
+        // nobody receives) is what keeps the account's status honest: it stays PENDING, so the
+        // list still reads "not contacted" instead of claiming an invitation went out.
+        if (StringUtils.isBlank(account.getEmail()) && StringUtils.isBlank(account.getMobile())) {
+            throw new BusinessException(
+                    "This user has no work email or work mobile — add a contact method before inviting.");
+        }
         if (applyInviteTransition(account)) {
             accountService.updateOne(account);
         }
@@ -190,9 +203,23 @@ public class UserInvitationServiceImpl extends EntityServiceImpl<UserInvitation,
         // (user-starter ⊥ message-starter). The listener runs AFTER_COMMIT, so the mail only goes out
         // once this invitation has committed; if no message-starter is present it is a graceful no-op.
         String link = frontendBaseUrl.replaceAll("/+$", "") + "/set-password?token=" + rawToken;
-        String template = purpose == InvitationPurpose.PASSWORD_RESET ? TEMPLATE_RESET : TEMPLATE_INVITE;
-        eventPublisher.publishEvent(new MailRequestMessage(
-                List.of(account.getEmail()), template, Map.of("link", link, "expiryDays", EXPIRY_DAYS)));
+
+        // Deliver to EVERY channel the account has, not just the email: an employee reachable
+        // only by work mobile is a normal case, and one who has both should not depend on which
+        // inbox they check first. Both carry the SAME link — it is one invitation, so accepting
+        // from either channel consumes the same token.
+        if (StringUtils.isNotBlank(account.getEmail())) {
+            String template = purpose == InvitationPurpose.PASSWORD_RESET ? TEMPLATE_RESET : TEMPLATE_INVITE;
+            eventPublisher.publishEvent(new MailRequestMessage(
+                    List.of(account.getEmail()), template, Map.of("link", link, "expiryDays", EXPIRY_DAYS)));
+        }
+        // Invitations only. A password reset is started from the login screen by typing an email,
+        // so the address is known and SMS adds nothing but cost.
+        if (purpose != InvitationPurpose.PASSWORD_RESET && StringUtils.isNotBlank(account.getMobile())) {
+            eventPublisher.publishEvent(new SmsRequestMessage(
+                    List.of(account.getMobile()), TEMPLATE_INVITE,
+                    Map.of("link", link, "expiryDays", EXPIRY_DAYS)));
+        }
         // Dev aid: surface the set-password / reset link so it can be copied from the logs when SMTP / MQ
         // is not wired locally. ⚠️ The link carries a one-time credential token — lower this to debug or
         // remove it before production so the token is not leaked into prod logs.
