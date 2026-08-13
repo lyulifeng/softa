@@ -110,6 +110,7 @@ public class LoginServiceImpl implements LoginService {
             case FROZEN, PENDING_DELETION, DELETED -> "your account has been deactivated";
             case LOCKED -> "your account is locked";
             case BLACKLISTED -> "your account has been blocked";
+            case PENDING -> "your account has not been invited yet — ask your administrator to send the invitation";
             case INVITED -> "your account invitation has not been accepted yet";
             case UNVERIFIED -> "your account has not been verified yet";
             default -> "your account is not active";

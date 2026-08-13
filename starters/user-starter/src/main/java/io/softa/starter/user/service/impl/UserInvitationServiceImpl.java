@@ -71,12 +71,7 @@ public class UserInvitationServiceImpl extends EntityServiceImpl<UserInvitation,
         UserAccount account = accountService.getById(userId)
                 .orElseThrow(() -> new BusinessException("User not found."));
         Assert.notBlank(account.getEmail(), "This user has no email to send the invitation to.");
-        // Create→invite is decoupled: creating a user no longer emails — this explicit Invite does.
-        // A never-activated account (no password yet) is marked INVITED here so the set-password link
-        // activates it (acceptToken flips INVITED→ACTIVE). An account that already has a password
-        // (ACTIVE / LOCKED / …) is left untouched — re-inviting it just re-sends the link.
-        if (StringUtils.isBlank(account.getPassword())) {
-            account.setStatus(AccountStatus.INVITED);
+        if (applyInviteTransition(account)) {
             accountService.updateOne(account);
         }
         issue(account, InvitationPurpose.INVITE, invitedBy);
@@ -96,6 +91,29 @@ public class UserInvitationServiceImpl extends EntityServiceImpl<UserInvitation,
             return;
         }
         issue(account.get(), InvitationPurpose.PASSWORD_RESET, null);
+    }
+
+    /**
+     * Advance the account's status for an outgoing invitation, returning whether it changed
+     * (so the caller only writes when there is something to write).
+     *
+     * <p>Create→invite is decoupled: creating a user contacts nobody — this explicit Invite
+     * does, and it is what advances {@code PENDING → INVITED}. {@code acceptToken} then flips
+     * {@code INVITED → ACTIVE}, giving the three-state axis the account list renders.
+     *
+     * <p>The gate is "has no password yet", not "is PENDING", for two reasons:
+     * an account already sitting on {@code INVITED} must stay invitable (re-sending the link
+     * is the normal remedy for a lost or expired mail) yet needs no write; and one that
+     * already has a password ({@code ACTIVE} / {@code LOCKED} / …) is left untouched —
+     * re-inviting must never demote a working account.
+     */
+    static boolean applyInviteTransition(UserAccount account) {
+        if (StringUtils.isNotBlank(account.getPassword())
+                || account.getStatus() == AccountStatus.INVITED) {
+            return false;
+        }
+        account.setStatus(AccountStatus.INVITED);
+        return true;
     }
 
     /**
@@ -184,7 +202,13 @@ public class UserInvitationServiceImpl extends EntityServiceImpl<UserInvitation,
         String salt = PasswordUtils.generateSalt();
         account.setPasswordSalt(salt);
         account.setPassword(PasswordUtils.hashPassword(newPassword, salt));
-        if (account.getStatus() == AccountStatus.INVITED) {
+        // PENDING is accepted alongside INVITED defensively: today every token comes from
+        // invite() (which has already flipped to INVITED) or forgotPassword() (the account
+        // has a password and stays as it is), so PENDING-with-a-token is unreachable. Were a
+        // future path to issue a token without flipping, the account would otherwise receive
+        // a password and stay unable to log in — a silent lockout that looks like a bad
+        // password rather than a wrong status.
+        if (account.getStatus() == AccountStatus.INVITED || account.getStatus() == AccountStatus.PENDING) {
             account.setStatus(AccountStatus.ACTIVE);
             account.setActivationTime(LocalDateTime.now());
         }
