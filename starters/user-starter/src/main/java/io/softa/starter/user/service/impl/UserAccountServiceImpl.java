@@ -80,7 +80,8 @@ public class UserAccountServiceImpl extends EntityServiceImpl<UserAccount, Long>
     }
 
     /**
-     * Self-registration (credential auto-provision + OAuth) creates accounts with no tenant
+     * Self-registration (OAuth only, since the email+password route was removed) creates
+     * accounts with no tenant
      * context, which under multi-tenancy would land as tenant-less orphans. So it is allowed only
      * in single-tenant mode; multi-tenant deployments create/invite accounts via an administrator.
      */
@@ -142,45 +143,6 @@ public class UserAccountServiceImpl extends EntityServiceImpl<UserAccount, Long>
      * @param password Password
      * @return UserInfo
      */
-    // @SkipPermissionCheck: see the overload above.
-    @SkipPermissionCheck
-    @Override
-    @Transactional
-    public UserInfo registerNewUser(String email, String mobile, String password) {
-        assertSelfRegistrationAllowed();
-        // Build account info DTO and profile info DTO
-        UserAccountDTO accountInfo = new UserAccountDTO();
-        UserProfileDTO profileInfo = new UserProfileDTO();
-
-        accountInfo.setEmail(email);
-        accountInfo.setMobile(mobile);
-        // Set username (use email if available, otherwise use mobile)
-        if (StringUtils.isNotBlank(email)) {
-            accountInfo.setUsername(email);
-            profileInfo.setFullName(email);
-        } else if (StringUtils.isNotBlank(mobile)) {
-            accountInfo.setUsername(mobile);
-            profileInfo.setFullName(mobile);
-        }
-
-        // Create user account
-        UserAccount userAccount = this.buildUserAccount(accountInfo);
-        Long userId = this.createOne(userAccount);
-
-        // Profile (and its identity) first, THEN the password: the credential lives on the person's
-        // identity now, so there is nothing to write it to until registration has created that row.
-        UserInfo userInfo = profileService.registerUserProfile(userId, profileInfo);
-        if (StringUtils.isNotBlank(password)) {
-            // Re-read rather than reuse userAccount above: registerUserProfile linked the person on
-            // its OWN copy of the row, so this instance still has a null profileId and resolving the
-            // identity from it would fail with "not linked to a person".
-            UserAccount linked = this.getById(userId)
-                    .orElseThrow(() -> new BusinessException("User not found."));
-            identityService.setPassword(linked, password);
-        }
-        return userInfo;
-    }
-
     // @SkipPermissionCheck: the path that pairs an employee with a login. Without it, a role granted
     // "create employee" — and nothing on the user models, which the role wizard does not require it
     // to hold — creates the Employee row and then fails on the person behind it, leaving the caller

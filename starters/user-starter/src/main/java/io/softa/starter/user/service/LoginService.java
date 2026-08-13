@@ -47,16 +47,6 @@ public interface LoginService {
      * @return Session ID
      */
     String generateSessionId(Long userId);
-
-    /**
-     * User registration by email and password
-     *
-     * @param email    email
-     * @param password Password
-     * @return UserInfo
-     */
-    UserInfo registerByEmailAndPassword(String email, String password);
-
     /**
      * User login by email and password
      *

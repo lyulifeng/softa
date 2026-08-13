@@ -107,25 +107,6 @@ public class LoginController {
         return ApiResponse.success();
     }
 
-    /**
-     * Register by email and password.
-     * Automatically login after successful registration.
-     * Set cookie with session id
-     */
-    @PostMapping("/registerByPassword")
-    @SwitchUser(SystemUser.REGISTERED_USER)
-    public ApiResponse<UserInfo> registerByPassword(@RequestBody @Valid EmailPasswordDTO emailPasswordDTO, HttpServletResponse response) {
-        try {
-            UserInfo userInfo = loginService.registerByEmailAndPassword(emailPasswordDTO.getEmail(),
-                    emailPasswordDTO.getPassword());
-            String sessionId = loginService.generateSessionId(userInfo.getUserId());
-            CookieUtils.setCookie(response, BaseConstant.SESSION_ID, sessionId);
-            return ApiResponse.success(userInfo);
-        } catch (Exception e) {
-            log.error("Register error: ", e);
-            return ApiResponse.error(ResponseCode.EMAIL_OR_PASSWORD_ERROR, e.getMessage());
-        }
-    }
 
     /**
      * Login by email and password

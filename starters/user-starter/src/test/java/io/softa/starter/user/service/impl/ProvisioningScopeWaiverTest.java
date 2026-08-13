@@ -49,8 +49,6 @@ class ProvisioningScopeWaiverTest {
         assertWaived(UserAccountServiceImpl.class, "registerInvitedUser",
                 String.class, String.class, String.class);
         assertWaived(UserAccountServiceImpl.class, "registerNewUser",
-                String.class, String.class, String.class);
-        assertWaived(UserAccountServiceImpl.class, "registerNewUser",
                 UserAccountDTO.class, UserProfileDTO.class);
     }
 

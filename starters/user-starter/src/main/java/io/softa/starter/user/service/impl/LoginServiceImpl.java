@@ -170,27 +170,23 @@ public class LoginServiceImpl implements LoginService {
     @Override
     public UserInfo loginByEmailCode(String email, String code) {
         verifyCode(email, code);
-        Optional<UserAccount> optionalUserAccount = accountService.getUserByEmail(email);
-        UserInfo userInfo;
-        if (optionalUserAccount.isEmpty()) {
-            userInfo = accountService.registerNewUser(email, null, null);
-        } else {
-            userInfo = profileService.getUserInfo(optionalUserAccount.get().getId());
-        }
-        return userInfo;
+        // No auto-provisioning: an account exists only because someone was invited into a
+        // company. A verified code still cannot conjure a membership.
+        UserAccount account = accountService.getUserByEmail(email).orElseThrow(
+                () -> new BusinessException(
+                        "This account is not linked to any company. Please contact your HR."));
+        return profileService.getUserInfo(account.getId());
     }
 
     @Override
     public UserInfo loginByMobileCode(String mobile, String code) {
         verifyCode(mobile, code);
-        Optional<UserAccount> optionalUserAccount = accountService.getUserByMobile(mobile);
-        UserInfo userInfo;
-        if (optionalUserAccount.isEmpty()) {
-            userInfo = accountService.registerNewUser(null, mobile, null);
-        } else {
-            userInfo = profileService.getUserInfo(optionalUserAccount.get().getId());
-        }
-        return userInfo;
+        // No auto-provisioning: an account exists only because someone was invited into a
+        // company. A verified code still cannot conjure a membership.
+        UserAccount account = accountService.getUserByMobile(mobile).orElseThrow(
+                () -> new BusinessException(
+                        "This account is not linked to any company. Please contact your HR."));
+        return profileService.getUserInfo(account.getId());
     }
 
     /**
@@ -244,22 +240,6 @@ public class LoginServiceImpl implements LoginService {
         return sessionId;
     }
 
-    /**
-     * User registration by email and password
-     * @param email    email
-     * @param password Password
-     * @return UserInfo
-     */
-    @Override
-    @Transactional
-    public UserInfo registerByEmailAndPassword(String email, String password) {
-        // Check if username already exists
-        Filters filter = new Filters().eq(UserAccount::getEmail, email);
-        if (accountService.count(filter) > 0) {
-            throw new BusinessException("Email already exists: " + email);
-        }
-        return accountService.registerNewUser(email, null, password);
-    }
 
     /**
      * Forgot password — issue a self-service PASSWORD_RESET token and email the set-password link.

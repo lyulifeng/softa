@@ -40,15 +40,6 @@ public interface UserAccountService extends EntityService<UserAccount, Long> {
      */
     UserInfo registerNewUser(@NotNull UserAccountDTO accountInfo, @NotNull UserProfileDTO profileInfo);
 
-    /**
-     * Register a new user (legacy method for backward compatibility)
-     *
-     * @param email Email
-     * @param mobile Mobile
-     * @param password Password
-     * @return UserInfo
-     */
-    UserInfo registerNewUser(String email, String mobile, String password);
 
     /**
      * Register an account for someone who has not been contacted yet — an
