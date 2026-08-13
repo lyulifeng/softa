@@ -1,7 +1,10 @@
 package io.softa.starter.user.service;
 
 import io.softa.framework.base.context.UserInfo;
+import java.util.List;
+
 import io.softa.starter.user.dto.InvitationInfo;
+import io.softa.starter.user.dto.MembershipOption;
 
 /**
  * UserAccount Model Service Interface
@@ -47,6 +50,39 @@ public interface LoginService {
      * @return Session ID
      */
     String generateSessionId(Long userId);
+    /**
+     * The companies this person may log into, for the "choose your company" step.
+     *
+     * <p>Authentication answers WHO; this answers WHERE. They are separate calls because one
+     * person can belong to several companies while a session must carry exactly one membership.
+     *
+     * @param profileId the authenticated person
+     * @return their memberships, off-boarded ones excluded, non-ACTIVE ones listed but flagged
+     *         unselectable (so a frozen company is visibly present rather than silently missing)
+     */
+    List<MembershipOption> listCompanies(Long profileId);
+
+    /**
+     * Resolve which membership an authenticated person lands in.
+     *
+     * <p>0 → refuse; exactly 1 → that one (so a single-company person sees no extra step, which
+     * is today's behaviour unchanged); more than 1 → refuse and let the caller present
+     * {@link #listCompanies}.
+     *
+     * @throws io.softa.framework.base.exception.BusinessException when the person belongs to no
+     *         company, or to several and must choose
+     */
+    Long resolveSingleMembership(Long profileId);
+
+    /**
+     * Verify that this membership really belongs to this person, then hand back its account id
+     * for session issuance.
+     *
+     * <p>The ownership check is the security point: without it, anyone who authenticated as
+     * themselves could name someone else's accountId and be issued a session in a company they
+     * have no membership of.
+     */
+    Long selectCompany(Long profileId, Long accountId);
     /**
      * User login by email and password
      *

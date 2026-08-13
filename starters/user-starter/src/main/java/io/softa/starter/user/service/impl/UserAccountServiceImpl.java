@@ -67,6 +67,19 @@ public class UserAccountServiceImpl extends EntityServiceImpl<UserAccount, Long>
         return updated;
     }
 
+    // @CrossTenant: the company step runs BEFORE a tenant context exists — the whole point is to
+    // list memberships ACROSS tenants so the person can pick one.
+    @Override
+    @CrossTenant
+    public List<UserAccount> listMembershipsOf(Long profileId) {
+        if (profileId == null) {
+            return List.of();
+        }
+        return this.searchList(new Filters().eq(UserAccount::getProfileId, profileId)).stream()
+                .filter(account -> account.getStatus() != AccountStatus.DEACTIVATED)
+                .toList();
+    }
+
     // @CrossTenant: login / forgot-password resolve an account by credential BEFORE a tenant
     // context exists (UserAccount is multiTenant); without it the ORM would filter by the absent
     // tenant and never find the account. Called only by other beans → the AOP proxy applies (no self).

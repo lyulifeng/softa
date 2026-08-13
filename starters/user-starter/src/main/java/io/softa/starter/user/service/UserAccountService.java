@@ -16,6 +16,17 @@ import io.softa.starter.user.entity.UserAccount;
 public interface UserAccountService extends EntityService<UserAccount, Long> {
 
     /**
+     * Every membership belonging to one person, across all companies.
+     *
+     * <p>{@code @CrossTenant} by nature: it is asked after authenticating but before a company is
+     * chosen, so there is no tenant context to scope it to — that is the whole point of the call.
+     *
+     * <p>Off-boarded memberships are excluded: a former employee must not see their previous
+     * company in the picker.
+     */
+    List<UserAccount> listMembershipsOf(Long profileId);
+
+    /**
      * Get user by email
      *
      * @param email email

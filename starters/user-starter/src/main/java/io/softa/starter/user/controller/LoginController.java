@@ -1,13 +1,17 @@
 package io.softa.starter.user.controller;
 
+import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.servlet.http.HttpServletResponse;
 import jakarta.validation.Valid;
+import jakarta.validation.constraints.NotNull;
+import java.util.List;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
 import io.softa.framework.base.constant.BaseConstant;
@@ -19,6 +23,7 @@ import io.softa.framework.web.response.ApiResponse;
 import io.softa.framework.web.utils.CookieUtils;
 import io.softa.starter.user.dto.*;
 import io.softa.starter.user.service.LoginService;
+import io.softa.starter.user.service.UserProfileService;
 import io.softa.starter.user.service.OAuth2Service;
 
 /**
@@ -33,6 +38,10 @@ public class LoginController {
 
     @Autowired
     private LoginService loginService;
+
+    /** Builds the session payload once a membership is chosen. */
+    @Autowired
+    private UserProfileService profileService;
 
     @Autowired
     private OAuth2Service oAuth2Service;
@@ -119,6 +128,39 @@ public class LoginController {
         UserInfo userInfo = loginService.loginByEmailAndPassword(userNameLoginDTO.getEmail(),
                         userNameLoginDTO.getPassword());
         String sessionId = loginService.generateSessionId(userInfo.getUserId());
+        CookieUtils.setCookie(response, BaseConstant.SESSION_ID, sessionId);
+        return ApiResponse.success(userInfo);
+    }
+
+    /**
+     * The companies an authenticated person may enter.
+     *
+     * <p>Reached when authentication succeeded but the person belongs to more than one company
+     * (or to one they cannot enter), so no session was issued yet. Not tenant-scoped by nature —
+     * the caller has proven who they are but not yet chosen where they are going.
+     */
+    @Operation(summary = "List the companies this person can log into (multi-company login step)")
+    @PostMapping("/listCompanies")
+    @SwitchUser(SystemUser.REGISTERED_USER)
+    public ApiResponse<List<MembershipOption>> listCompanies(@RequestParam @NotNull Long profileId) {
+        return ApiResponse.success(loginService.listCompanies(profileId));
+    }
+
+    /**
+     * Enter one company, issuing the session.
+     *
+     * <p>The service verifies the membership really belongs to this person before returning its
+     * account id — naming someone else's would otherwise mint a session in a company the caller
+     * is not a member of.
+     */
+    @Operation(summary = "Enter the chosen company and issue the session")
+    @PostMapping("/selectCompany")
+    @SwitchUser(SystemUser.REGISTERED_USER)
+    public ApiResponse<UserInfo> selectCompany(@RequestParam @NotNull Long profileId,
+            @RequestParam @NotNull Long accountId, HttpServletResponse response) {
+        Long resolved = loginService.selectCompany(profileId, accountId);
+        UserInfo userInfo = profileService.getUserInfo(resolved);
+        String sessionId = loginService.generateSessionId(resolved);
         CookieUtils.setCookie(response, BaseConstant.SESSION_ID, sessionId);
         return ApiResponse.success(userInfo);
     }

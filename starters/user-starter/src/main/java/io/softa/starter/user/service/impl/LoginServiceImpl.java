@@ -1,5 +1,7 @@
 package io.softa.starter.user.service.impl;
 
+import java.util.Comparator;
+import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
 import lombok.extern.slf4j.Slf4j;
@@ -20,6 +22,8 @@ import io.softa.framework.orm.domain.Filters;
 import io.softa.framework.orm.service.CacheService;
 import io.softa.framework.orm.service.TenantInfoService;
 import io.softa.starter.user.dto.InvitationInfo;
+import io.softa.starter.user.dto.MembershipOption;
+import io.softa.starter.user.exception.MultipleMembershipsException;
 import io.softa.starter.user.entity.UserAccount;
 import io.softa.starter.user.entity.UserIdentity;
 import io.softa.starter.user.enums.AccountStatus;
@@ -222,12 +226,60 @@ public class LoginServiceImpl implements LoginService {
         return profileService.getUserInfo(userAccount.getId());
     }
 
+    @Override
+    public List<MembershipOption> listCompanies(Long profileId) {
+        return accountService.listMembershipsOf(profileId).stream()
+                .map(account -> new MembershipOption(
+                        account.getId(), account.getTenantId(),
+                        tenantInfoService == null ? null
+                                : tenantInfoService.getTenantName(account.getTenantId()),
+                        account.getStatus()))
+                // Selectable first: the common case is one usable company among some frozen ones,
+                // and making the person hunt for it in a mixed list is a needless step.
+                .sorted(Comparator.comparing(MembershipOption::selectable).reversed())
+                .toList();
+    }
+
+    @Override
+    public Long resolveSingleMembership(Long profileId) {
+        List<MembershipOption> options = this.listCompanies(profileId);
+        if (options.isEmpty()) {
+            // Authenticated, but a member of nothing — the account was off-boarded everywhere, or
+            // a profile exists with no membership yet. Either way there is nowhere to go.
+            throw new BusinessException("Your account is not linked to any company. Please contact your HR.");
+        }
+        List<MembershipOption> selectable = options.stream().filter(MembershipOption::selectable).toList();
+        if (selectable.size() == 1 && options.size() == 1) {
+            return selectable.get(0).accountId();
+        }
+        // More than one, or exactly one that is not enterable: both need the picker. Refusing here
+        // rather than auto-picking is deliberate — silently choosing for someone who belongs to two
+        // companies puts them in a workspace they did not ask for, and the wrong one is worse than
+        // an extra click.
+        throw new MultipleMembershipsException(options);
+    }
+
+    @Override
+    public Long selectCompany(Long profileId, Long accountId) {
+        MembershipOption chosen = this.listCompanies(profileId).stream()
+                .filter(option -> option.accountId().equals(accountId))
+                .findFirst()
+                // Ownership check, not a convenience: without it an authenticated person could name
+                // any accountId and be issued a session in a company they are not a member of.
+                .orElseThrow(() -> new BusinessException("That company is not available for your account."));
+        if (!chosen.selectable()) {
+            throw new BusinessException(accountDeniedMessage(chosen.status()));
+        }
+        return accountId;
+    }
+
     /**
      * Generate a new session ID for a user
      *
      * @param userId User ID
      * @return Session ID
      */
+    @Override
     public String generateSessionId(Long userId) {
         // Tenant + account lifecycle gates — the single choke point every login flow
         // passes through, and it runs AFTER credentials are verified.
