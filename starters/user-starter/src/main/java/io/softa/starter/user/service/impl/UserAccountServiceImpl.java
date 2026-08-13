@@ -215,6 +215,29 @@ public class UserAccountServiceImpl extends EntityServiceImpl<UserAccount, Long>
 
     @Override
     @Transactional
+    public void setMyFirstPassword(String newPassword) {
+        Assert.notBlank(newPassword, "New password cannot be empty.");
+        Long userId = ContextHolder.getContext().getUserId();
+        Assert.notNull(userId, "Cannot set a password without logged-in user context.");
+
+        UserAccount user = this.getById(userId)
+                .orElseThrow(() -> new BusinessException("Current user not found."));
+        UserIdentity identity = identityService.requireIdentity(user);
+        if (StringUtils.isNotBlank(identity.getPassword())) {
+            // Whoever holds this session already had a way in that they must prove again. Letting
+            // the call through here would turn "I forgot my password" into "I am already inside",
+            // which is the one thing the change-password flow exists to prevent.
+            throw new BusinessException(
+                    "A password is already set — use change password instead.");
+        }
+        // Strength is enforced inside setPassword, against this person's own contact details.
+        identityService.setPassword(identity.getId(), newPassword);
+
+        log.info("User ID {} set their first password (identity {}).", userId, identity.getId());
+    }
+
+    @Override
+    @Transactional
     public boolean forceResetPassword(Long userId, String newPassword) {
         Assert.notBlank(newPassword, "New password cannot be empty.");
         // TODO: Add password strength validation

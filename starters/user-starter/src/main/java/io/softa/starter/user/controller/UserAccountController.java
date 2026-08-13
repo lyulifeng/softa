@@ -47,6 +47,7 @@ import io.softa.framework.web.response.ApiResponse;
 import io.softa.framework.web.utils.CookieUtils;
 import io.softa.starter.user.constant.RoleConstant;
 import io.softa.starter.user.dto.ChangePasswordDTO;
+import io.softa.starter.user.dto.SetFirstPasswordDTO;
 import io.softa.starter.user.dto.UnlockAccountDTO;
 import io.softa.starter.user.dto.UnlockAccountsDTO;
 import io.softa.starter.user.dto.UserAccountDTO;
@@ -471,6 +472,13 @@ public class UserAccountController extends EntityController<UserAccountService, 
     @PostMapping("/changeMyPassword")
     public ApiResponse<Void> changeMyPassword(@RequestBody @Valid ChangePasswordDTO changePasswordDTO) {
         service.changeMyPassword(changePasswordDTO.getCurrentPassword(), changePasswordDTO.getNewPassword());
+        return ApiResponse.success();
+    }
+
+    @Operation(summary = "setMyFirstPassword")
+    @PostMapping("/setMyFirstPassword")
+    public ApiResponse<Void> setMyFirstPassword(@RequestBody @Valid SetFirstPasswordDTO dto) {
+        service.setMyFirstPassword(dto.getNewPassword());
         return ApiResponse.success();
     }
 

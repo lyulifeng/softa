@@ -66,6 +66,20 @@ public interface UserAccountService extends EntityService<UserAccount, Long> {
     void changeMyPassword(String currentPassword, String newPassword);
 
     /**
+     * Sets a FIRST password for the logged-in person — the actionable half of
+     * {@code AuthenticationResult.mustSetPassword}.
+     *
+     * <p>Separate from {@link #changeMyPassword} because that method demands the current password,
+     * which is precisely what these people do not have: they arrived by invitation or verification
+     * code, so requiring it would make the forced step impossible to complete.
+     *
+     * <p>Refuses when a password already exists. Without that check this would be an
+     * authenticated password reset with no proof of the old one — any hijacked session could
+     * silently take the account over.
+     */
+    void setMyFirstPassword(String newPassword);
+
+    /**
      * Force reset user password (admin operation)
      *
      * @param userId User ID
