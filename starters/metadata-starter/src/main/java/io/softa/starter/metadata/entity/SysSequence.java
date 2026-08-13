@@ -69,7 +69,21 @@ public class SysSequence extends AuditableModel {
     @Field(required = true, description = "Step size; v1 enforces 1")
     private Integer incrementStep;
 
-    @Field(required = true,
+    /**
+     * Last allocated value; next = {@code current_value + step}.
+     *
+     * <p><b>Runtime state, not configuration — never put it in a seed file.</b> Deliberately
+     * optional (defaulting to 0) so a seed row can leave it out: {@code loadPreTenantData} is
+     * create-or-update, so a seed that carries the counter rewinds a live one every time it is
+     * re-applied, and the sequence then re-issues numbers it already handed out until it climbs
+     * back past the highest one in use. That surfaces far from its cause — as a duplicate-key
+     * error on the business table, with the code field left blank on screen.
+     *
+     * <p>Omitting it costs nothing: the allocator's reset branch keys on {@code lastResetKey},
+     * which is NULL on a fresh row, so the first allocation takes {@code startValue} regardless
+     * of what sits here.
+     */
+    @Field(defaultValue = "0",
             description = "Last allocated value; next = current_value + step")
     private Long currentValue;
 
