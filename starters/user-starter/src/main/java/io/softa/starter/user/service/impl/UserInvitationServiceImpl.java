@@ -68,6 +68,32 @@ public class UserInvitationServiceImpl extends EntityServiceImpl<UserInvitation,
         this.frontendBaseUrl = frontendBaseUrl;
     }
 
+    /**
+     * Advance the account's status for an outgoing invitation, returning whether it changed
+     * (so the caller only writes when there is something to write).
+     *
+     * <p>Create→invite is decoupled: creating a user contacts nobody — this explicit Invite
+     * does, and it is what advances {@code PENDING → INVITED}. {@code acceptToken} then flips
+     * {@code INVITED → ACTIVE}, giving the three-state axis the account list renders.
+     *
+     * <p>The gate is "has no password yet", not "is PENDING", for two reasons:
+     * an account already sitting on {@code INVITED} must stay invitable (re-sending the link
+     * is the normal remedy for a lost or expired mail) yet needs no write; and one that
+     * already has a password ({@code ACTIVE} / {@code LOCKED} / …) is left untouched —
+     * re-inviting must never demote a working account.
+     *
+     * <p>{@code hasPassword} arrives as a parameter rather than being read off the account:
+     * credentials live on {@link io.softa.starter.user.entity.UserIdentity}, resolved through
+     * the person, and this method stays static so the axis is testable without wiring beans.
+     */
+    static boolean applyInviteTransition(UserAccount account, boolean hasPassword) {
+        if (hasPassword || account.getStatus() == AccountStatus.INVITED) {
+            return false;
+        }
+        account.setStatus(AccountStatus.INVITED);
+        return true;
+    }
+
     @SkipPermissionCheck
     @Override
     @Transactional
@@ -76,19 +102,16 @@ public class UserInvitationServiceImpl extends EntityServiceImpl<UserInvitation,
         UserAccount account = accountService.getById(userId)
                 .orElseThrow(() -> new BusinessException("User not found."));
         Assert.notBlank(account.getEmail(), "This user has no email to send the invitation to.");
-        // Create→invite is decoupled: creating a user no longer emails — this explicit Invite does.
-        // A never-activated account (no password yet) is marked INVITED here so the set-password link
-        // activates it (acceptToken flips INVITED→ACTIVE). An account that already has a password
-        // (ACTIVE / LOCKED / …) is left untouched — re-inviting it just re-sends the link.
-        // "Has this person set a password yet?" — read from the profile when the account is linked.
-        // An account with no profile link is broken legacy/partial data (it already cannot log in);
-        // treat it as password-less so an invite still marks it INVITED and sends the set-password
-        // link, rather than throwing requireIdentity's "not linked to a person" and dead-ending the
-        // one operation that could recover it.
+// Create→invite is decoupled: creating a user contacts nobody — this explicit Invite does,
+        // and it is what advances PENDING → INVITED. "Has this person set a password yet?" — read
+        // from the person's credentials when the account is linked. An account with no profile link
+        // is broken legacy/partial data (it already cannot log in); treat it as password-less so an
+        // invite still marks it INVITED and sends the set-password link, rather than throwing
+        // requireIdentity's "not linked to a person" and dead-ending the one operation that could
+        // recover it.
         boolean hasPassword = account.getProfileId() != null
                 && StringUtils.isNotBlank(identityService.requireIdentity(account).getPassword());
-        if (!hasPassword) {
-            account.setStatus(AccountStatus.INVITED);
+        if (applyInviteTransition(account, hasPassword)) {
             accountService.updateOne(account);
         }
         issue(account, InvitationPurpose.INVITE, invitedBy);
@@ -237,10 +260,16 @@ public class UserInvitationServiceImpl extends EntityServiceImpl<UserInvitation,
 
         UserAccount account = accountService.getById(invitation.getUserId())
                 .orElseThrow(() -> new BusinessException("Account not found."));
-        // The password goes on the PERSON, so accepting an invitation from company B when you
+// The password goes on the PERSON, so accepting an invitation from company B when you
         // already work at company A replaces one global credential rather than minting a second.
         identityService.setPassword(account, newPassword);
-        if (account.getStatus() == AccountStatus.INVITED) {
+        // PENDING is accepted alongside INVITED defensively: today every token comes from
+        // invite() (which has already flipped to INVITED) or forgotPassword() (the account
+        // has a password and stays as it is), so PENDING-with-a-token is unreachable. Were a
+        // future path to issue a token without flipping, the account would otherwise receive
+        // a password and stay unable to log in — a silent lockout that looks like a bad
+        // password rather than a wrong status.
+        if (account.getStatus() == AccountStatus.INVITED || account.getStatus() == AccountStatus.PENDING) {
             account.setStatus(AccountStatus.ACTIVE);
             account.setActivationTime(LocalDateTime.now());
         }

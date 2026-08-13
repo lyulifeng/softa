@@ -51,8 +51,12 @@ public interface UserAccountService extends EntityService<UserAccount, Long> {
     UserInfo registerNewUser(String email, String mobile, String password);
 
     /**
-     * Register an invited user — an {@link io.softa.starter.user.enums.AccountStatus#INVITED}
-     * account with NO password. The user sets their password later via an invitation link.
+     * Register an account for someone who has not been contacted yet — an
+     * {@link io.softa.starter.user.enums.AccountStatus#PENDING} account with NO password.
+     * Sending the invitation is a separate, explicit action
+     * ({@code UserInvitationService.invite}) which flips the account to
+     * {@link io.softa.starter.user.enums.AccountStatus#INVITED}; accepting the link then
+     * sets the password and activates it.
      *
      * @param email    Email (used as the username when present)
      * @param mobile   Mobile (used as the username when email is absent)

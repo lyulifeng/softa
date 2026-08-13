@@ -215,8 +215,11 @@ public class UserAccountServiceImpl extends EntityServiceImpl<UserAccount, Long>
         profileInfo.setFullName(displayName);
 
         UserAccount userAccount = this.buildUserAccount(accountInfo);
-        // INVITED, no password — the user sets it later via the invitation link.
-        userAccount.setStatus(AccountStatus.INVITED);
+        // PENDING, no password. Creating an account does NOT contact anyone — the explicit
+        // Invite action does, and that is what flips PENDING -> INVITED. Landing on INVITED
+        // here would claim an invitation was sent when none was, which is exactly the
+        // distinction the account list needs to show ("created" vs "contacted").
+        userAccount.setStatus(AccountStatus.PENDING);
         Long userId = this.createOne(userAccount);
 
         return profileService.registerUserProfile(userId, profileInfo);
