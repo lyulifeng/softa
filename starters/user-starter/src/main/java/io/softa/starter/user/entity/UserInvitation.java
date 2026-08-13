@@ -56,8 +56,15 @@ public class UserInvitation extends AuditableModel {
             description = "The account being invited / reset")
     private Long userId;
 
-    @Field(description = "Recipient email (denormalized for display + auditing)")
+    @Field(description = "Recipient email (denormalized for display + auditing); null when the "
+            + "account had no work email and the invitation went out by SMS alone")
     private String email;
+
+    @Field(description = "Recipient mobile, dial code included (denormalized for display + auditing); "
+            + "null when the account had no work mobile. Together with email this records WHICH "
+            + "channels one invitation was addressed to — the delivery OUTCOME lives in "
+            + "message-starter's MailSendRecord / SmsSendRecord, which stay the authority on it")
+    private String mobile;
 
     @Field(description = "Why the token was issued: INVITE (onboarding) / PASSWORD_RESET (self-service)")
     private InvitationPurpose purpose;
