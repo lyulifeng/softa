@@ -564,6 +564,8 @@ public class PermissionServiceImpl implements PermissionService {
      *       so the two cannot share one filter shape;</li>
      *   <li>else a {@code MANY_TO_ONE} referrer → shared reference/config
      *       ({@link Kind#SHARED});</li>
+     *   <li>failing all three, a {@code MANY_TO_ONE} referrer on an <b>owned child</b> of a granted
+     *       model → also shared ({@link #sharedThroughOwnedChild});</li>
      *   <li>none → {@code null} (not reachable from any grant → stays fail-closed).</li>
      * </ul>
      *
@@ -580,10 +582,18 @@ public class PermissionServiceImpl implements PermissionService {
         if (pi.getModelScopeMap() == null) return null;
         Referencer backRef = null;
         Referencer shared = null;
+        List<String> ownedChildren = new ArrayList<>();
         for (String granted : pi.getModelScopeMap().keySet()) {
             if (!ModelManager.existModel(granted)) continue;
             for (MetaField f : ModelManager.getModelFields(granted)) {
-                if (!childModel.equals(f.getRelatedModel())) continue;
+                String related = f.getRelatedModel();
+                if (related == null) continue;
+                boolean owned = f.getFieldType() == FieldType.ONE_TO_ONE
+                        || f.getFieldType() == FieldType.ONE_TO_MANY;
+                if (!childModel.equals(related)) {
+                    if (owned) ownedChildren.add(related);
+                    continue;
+                }
                 if (f.getFieldType() == FieldType.ONE_TO_ONE) {
                     return new Referencer(granted, f.getFieldName(), Kind.OWNED_ONE_TO_ONE);
                 }
@@ -596,7 +606,44 @@ public class PermissionServiceImpl implements PermissionService {
                 }
             }
         }
-        return backRef != null ? backRef : shared;
+        if (backRef != null) return backRef;
+        if (shared != null) return shared;
+        return sharedThroughOwnedChild(childModel, ownedChildren);
+    }
+
+    /**
+     * Second hop, shared references only: a config master referenced from an <b>owned child</b> of a
+     * granted model.
+     *
+     * <p>An owned child is never granted in its own right — the role wizard does not offer OneToOne /
+     * OneToMany children as separate models, precisely because they are bounded by the parent's scope —
+     * so a master reached only through one is invisible to the single-hop scan above and fails closed.
+     * On screen that is a required dropdown reading "No options available" with the data present: a
+     * preboarding form reaches Attendance Group / Holiday Calendar / Leave Policy through
+     * {@code EmpPreOnboarding → EmpPreTimeProfile → …}, two edges away from the only granted model.
+     *
+     * <p>This restores the symmetry the endpoint layer already assumes. {@code EndpointIndex} derives
+     * lookup grants two layers deep — direct relations get the full view set, relations of relations get
+     * the picker subset — so the caller is allowed to CALL {@code /AttendanceGroup/searchName} and then
+     * row-scope hands it zero rows. One layer has to move; widening the scope scan is the cheaper of the
+     * two, because narrowing the endpoint derivation would break the nested sub-form pickers it was
+     * written for.
+     *
+     * <p>Only {@code MANY_TO_ONE} qualifies, and only after both single-hop kinds miss. An ownership edge
+     * is a statement about the granted model's own rows and stays a one-hop question; a shared master
+     * is not owned by anyone, so the extra hop cannot widen anything the direct case would not already.
+     */
+    private Referencer sharedThroughOwnedChild(String childModel, List<String> ownedChildren) {
+        for (String owned : ownedChildren) {
+            if (!ModelManager.existModel(owned)) continue;
+            for (MetaField f : ModelManager.getModelFields(owned)) {
+                if (!childModel.equals(f.getRelatedModel())) continue;
+                if (f.getFieldType() == FieldType.MANY_TO_ONE) {
+                    return new Referencer(owned, f.getFieldName(), Kind.SHARED);
+                }
+            }
+        }
+        return null;
     }
 
     /** How a granted parent reaches an anchorless child — decides which filter shape applies. */
