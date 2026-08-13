@@ -49,6 +49,10 @@ public class LoginServiceImpl implements LoginService {
     @Autowired
     private UserInvitationService invitationService;
 
+    /** Send / attempt limits for one-time codes (PRD D2) — see the class for why each exists. */
+    @Autowired
+    private VerificationCodeGuard codeGuard;
+
     /**
      * Tenant lifecycle gate at login: only ACTIVE tenants may log in. Enforced at the single
      * session-issuance choke point ({@link #generateSessionId}), so every login flow — password,
@@ -124,29 +128,22 @@ public class LoginServiceImpl implements LoginService {
         return RedisConstant.VERIFICATION_CODE + "login:" + identifier;
     }
 
-    private void generateNumericCode(String identifier) {
-        // 1. Generate 6-digit numeric code
-        String code = RandomStringUtils.insecure().nextNumeric(6);
-        // 2. Generate Redis Key (can be partitioned by scenario, e.g., login/signup/reset_password)
-        String redisKey = buildLoginCodeKey(identifier);
-        // 3. Store in Redis with 5 minutes expiration
-        cacheService.save(redisKey, code, RedisConstant.FIVE_MINUTES);
-
+    /**
+     * Issue a code for this identifier, subject to the send limits.
+     *
+     * <p>The rate check runs BEFORE generating: an over-limit request must be refused without
+     * overwriting a code the user may still be typing.
+     */
+    private String generateNumericCode(String identifier) {
+        codeGuard.beforeSend(identifier);
+        String code = RandomStringUtils.insecure()
+                .nextNumeric(VerificationCodeGuard.CODE_LENGTH);
+        codeGuard.store(identifier, code);
+        return code;
     }
 
     public void verifyCode(String identifier, String inputCode) {
-        String redisKey = buildLoginCodeKey(identifier);
-        String cachedCode = cacheService.get(redisKey);
-        if (cachedCode == null) {
-            throw new BusinessException("Verification code expired or not found");
-        } if (!cachedCode.equals(inputCode)) {
-            throw new BusinessException("Verification code is incorrect");
-        }
-    }
-
-    private void clearCode(String identifier) {
-        String redisKey = buildLoginCodeKey(identifier);
-        cacheService.clear(redisKey);
+        codeGuard.verify(identifier, inputCode);
     }
 
     @Override
@@ -175,7 +172,6 @@ public class LoginServiceImpl implements LoginService {
         } else {
             userInfo = profileService.getUserInfo(optionalUserAccount.get().getId());
         }
-        clearCode(email);
         return userInfo;
     }
 
@@ -189,7 +185,6 @@ public class LoginServiceImpl implements LoginService {
         } else {
             userInfo = profileService.getUserInfo(optionalUserAccount.get().getId());
         }
-        clearCode(mobile);
         return userInfo;
     }
 
