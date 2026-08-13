@@ -86,4 +86,38 @@ class DefaultDepartmentCascadePathResolverTest {
             assertThat(resolver.resolve("NoDeptModel")).isEmpty();
         }
     }
+    @Test
+    void departmentItself_resolvesToTheSelfPath() {
+        // The department IS the row, so the subtree filter reads its own idPath with no hop.
+        MetaField idPath = mock(MetaField.class);
+        try (MockedStatic<ModelManager> mm = mockStatic(ModelManager.class)) {
+            mm.when(() -> ModelManager.getModelFieldOrNull("Department", "idPath"))
+                    .thenReturn(idPath);
+
+            assertThat(resolver.resolve("Department"))
+                    .contains(DepartmentCascadePathResolver.SELF_PATH);
+        }
+    }
+
+    /**
+     * A model merely NAMED Department, with no idPath, is not the tree. Resolving it to the self
+     * path would compile a filter on a column that is not there — worse than the empty result,
+     * which fails loudly.
+     */
+    @Test
+    void departmentWithoutIdPath_doesNotSelfResolve() {
+        try (MockedStatic<ModelManager> mm = mockStatic(ModelManager.class)) {
+            assertThat(resolver.resolve("Department")).isEmpty();
+        }
+    }
+
+    @Test
+    void idPathField_joinsOnlyWhenThereIsAPathToJoin() {
+        assertThat(DepartmentCascadePathResolver.idPathField(
+                DepartmentCascadePathResolver.SELF_PATH)).isEqualTo("idPath");
+        assertThat(DepartmentCascadePathResolver.idPathField("departmentId"))
+                .isEqualTo("departmentId.idPath");
+        assertThat(DepartmentCascadePathResolver.idPathField("employeeId.departmentId"))
+                .isEqualTo("employeeId.departmentId.idPath");
+    }
 }

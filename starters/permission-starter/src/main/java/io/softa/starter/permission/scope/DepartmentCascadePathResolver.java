@@ -74,12 +74,27 @@ import java.util.Optional;
  */
 public interface DepartmentCascadePathResolver {
 
+    /** The path a model that IS Department resolves to — no hop, the row is the department. */
+    String SELF_PATH = "";
+
     /**
      * @param modelName PascalCase model name being queried
      *                  (e.g. {@code "LeaveRequest"})
      * @return the dot-path leading to Department on this model (without
-     *         the trailing {@code ".idPath"}); {@code Optional.empty()}
+     *         the trailing {@code ".idPath"}), or {@link #SELF_PATH} when the model
+     *         is Department itself; {@code Optional.empty()}
      *         when no path can be resolved
      */
     Optional<String> resolve(String modelName);
+
+    /**
+     * The field a department scope filters on, given a resolved path.
+     *
+     * <p>Lives here rather than in each contributor because {@link #SELF_PATH} makes the join
+     * conditional: every other path appends {@code ".idPath"}, the empty one must not, or the
+     * filter would name {@code ".idPath"} and match nothing while looking well-formed.
+     */
+    static String idPathField(String cascadePath) {
+        return SELF_PATH.equals(cascadePath) ? "idPath" : cascadePath + ".idPath";
+    }
 }

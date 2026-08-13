@@ -33,7 +33,6 @@ import java.util.Optional;
 public class DepartmentSubtreeScopeContributor implements ScopeContributor {
 
     private static final String DEPT_FIELD = "departmentId";
-    private static final String ID_PATH_SUFFIX = ".idPath";
     private static final String PATH_SEPARATOR = "/";
     private static final String SCOPE_EXPR_DEPT_ID = "deptId";
 
@@ -79,7 +78,7 @@ public class DepartmentSubtreeScopeContributor implements ScopeContributor {
         Optional<String> rootPathOpt = idPathResolver.idPathOf(rootId);
         if (rootPathOpt.isEmpty()) return new Filters();
         String rootPath = rootPathOpt.get();
-        String field = path.get() + ID_PATH_SUFFIX;
+        String field = DepartmentCascadePathResolver.idPathField(path.get());
 
         // Two-branch form to avoid the "1/12 matches 1/120" prefix collision:
         //   field = rootPath                        ← the root itself
