@@ -263,7 +263,14 @@ public class UserInvitationServiceImpl extends EntityServiceImpl<UserInvitation,
         // renders (its MailTemplate) + delivers (its outbox/MQ) — no message-starter dependency here
         // (user-starter ⊥ message-starter). The listener runs AFTER_COMMIT, so the mail only goes out
         // once this invitation has committed; if no message-starter is present it is a graceful no-op.
-        String link = frontendBaseUrl.replaceAll("/+$", "") + "/set-password?token=" + rawToken;
+        // The two purposes land on DIFFERENT pages, and must. A password reset is exactly one
+        // action — set a credential — while an invitation has to check the link, verify identity,
+        // set a password if the person is new, and then confirm joining, because that confirmation
+        // is what binds them to the company. Sending an invitation to /set-password (as this did)
+        // sets a password and leaves the membership INVITED forever: the person appears to have
+        // completed the flow and still cannot get in.
+        String page = purpose == InvitationPurpose.PASSWORD_RESET ? "/set-password" : "/join";
+        String link = frontendBaseUrl.replaceAll("/+$", "") + page + "?token=" + rawToken;
         // Deliver to EVERY channel the account has, not just the email: an employee reachable
         // only by work mobile is a normal case, and one who has both should not depend on which
         // inbox they check first. Both carry the SAME link — it is one invitation, so accepting

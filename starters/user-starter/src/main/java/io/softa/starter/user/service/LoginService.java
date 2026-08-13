@@ -73,6 +73,7 @@ public interface LoginService {
      */
     void setJoinPassword(String rawToken, Long profileId, String newPassword);
 
+    /** Whether this person still has to set a password (arrived by invitation or code only). */
     boolean mustSetPassword(Long profileId);
 
     /**
