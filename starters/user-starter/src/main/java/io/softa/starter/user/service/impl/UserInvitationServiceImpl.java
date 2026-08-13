@@ -80,6 +80,24 @@ public class UserInvitationServiceImpl extends EntityServiceImpl<UserInvitation,
     @SkipPermissionCheck
     @Override
     @Transactional
+    public void revokeInvitation(Long userId) {
+        Assert.notNull(userId, "userId is required");
+        UserAccount account = accountService.getById(userId)
+                .orElseThrow(() -> new BusinessException("User not found."));
+        boolean statusChanged = applyRevokeTransition(account);
+        // Kill the live link regardless of the status write: revoking an account already sitting
+        // on PENDING (a stray token from an earlier cycle) still has to invalidate that token —
+        // gating the revoke on the status change would leave it working.
+        revokePending(userId);
+        if (statusChanged) {
+            accountService.updateOne(account);
+        }
+        log.info("Invitation revoked for user {} — link invalidated, account back to PENDING.", userId);
+    }
+
+    @SkipPermissionCheck
+    @Override
+    @Transactional
     public void forgotPassword(String email) {
         if (StringUtils.isBlank(email)) {
             return;
@@ -113,6 +131,27 @@ public class UserInvitationServiceImpl extends EntityServiceImpl<UserInvitation,
             return false;
         }
         account.setStatus(AccountStatus.INVITED);
+        return true;
+    }
+
+    /**
+     * Move the account back for a withdrawn invitation, returning whether it changed.
+     *
+     * <p>Refuses outright once the account has a password: the person has already joined, and
+     * "revoking" them would strand a working account in a pre-activation state nothing can move
+     * forward. Ending an existing membership is off-boarding — a different action with different
+     * obligations (release the work-email binding).
+     *
+     * @throws BusinessException when the account has already been activated
+     */
+    static boolean applyRevokeTransition(UserAccount account) {
+        if (StringUtils.isNotBlank(account.getPassword())) {
+            throw new BusinessException("This user has already joined — revoke does not apply.");
+        }
+        if (account.getStatus() != AccountStatus.INVITED) {
+            return false;
+        }
+        account.setStatus(AccountStatus.PENDING);
         return true;
     }
 

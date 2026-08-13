@@ -108,6 +108,7 @@ public class LoginServiceImpl implements LoginService {
     private static String accountDeniedMessage(AccountStatus status) {
         String reason = switch (status == null ? AccountStatus.FROZEN : status) {
             case FROZEN, PENDING_DELETION, DELETED -> "your account has been deactivated";
+            case DEACTIVATED -> "your membership of this company has ended";
             case LOCKED -> "your account is locked";
             case BLACKLISTED -> "your account has been blocked";
             case PENDING -> "your account has not been invited yet — ask your administrator to send the invitation";
