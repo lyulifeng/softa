@@ -10,6 +10,8 @@ import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
+import io.softa.framework.base.enums.SystemUser;
+import io.softa.framework.orm.annotation.SwitchUser;
 import io.softa.framework.web.controller.EntityController;
 import io.softa.framework.web.response.ApiResponse;
 import io.softa.starter.referencedata.dto.DialCodeItemDTO;
@@ -29,6 +31,10 @@ public class CountryRegionController extends EntityController<CountryRegionServi
     @Operation(summary = "List dial codes",
             description = "Returns one row per country for phone-input / SMS-region selectors. "
                     + "Ordered by English name asc. dialCode is not unique across countries.")
+    // Public: the login screen needs dial codes to accept a mobile number, and it runs before any
+    // session exists. Safe to open — the response is ISO 3166 / E.164 reference data, identical for
+    // every caller and containing nothing about any tenant, account, or person.
+    @SwitchUser(SystemUser.REGISTERED_USER)
     @GetMapping("/listDialCodes")
     public ApiResponse<List<DialCodeItemDTO>> listDialCodes() {
         List<DialCodeItemDTO> items = service.searchList().stream()
