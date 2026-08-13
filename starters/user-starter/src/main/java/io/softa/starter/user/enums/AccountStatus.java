@@ -26,6 +26,16 @@ public enum AccountStatus {
     UNVERIFIED("Unverified"),
     LOCKED("Locked"),
     FROZEN("Frozen"),
+    /**
+     * Off-boarded: the person has left this company, so this tenant's membership is
+     * closed. Terminal — re-hiring creates a NEW employee record and a NEW account
+     * (bound back to the same person), it does not revive this one.
+     *
+     * <p>Off-boarding must also release the work-email binding: once the address is
+     * recycled, a new hire holding it could otherwise verify by code straight into
+     * the previous holder's personal account.
+     */
+    DEACTIVATED("Deactivated"),
     PENDING_DELETION("PendingDeletion"),
     DELETED("Deleted"),
     BLACKLISTED("Blacklisted"),

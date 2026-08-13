@@ -120,6 +120,28 @@ public class UserInvitationServiceImpl extends EntityServiceImpl<UserInvitation,
     @SkipPermissionCheck
     @Override
     @Transactional
+    public void revokeInvitation(Long userId) {
+        Assert.notNull(userId, "userId is required");
+        UserAccount account = accountService.getById(userId)
+                .orElseThrow(() -> new BusinessException("User not found."));
+        // Credentials live on the person; an account with no profile link cannot have joined, so
+        // treat it as password-less — revoke stays applicable rather than throwing on broken data.
+        boolean hasPassword = account.getProfileId() != null
+                && StringUtils.isNotBlank(identityService.requireIdentity(account).getPassword());
+        boolean statusChanged = applyRevokeTransition(account, hasPassword);
+        // Kill the live link regardless of the status write: revoking an account already sitting
+        // on PENDING (a stray token from an earlier cycle) still has to invalidate that token —
+        // gating the revoke on the status change would leave it working.
+        revokePending(userId);
+        if (statusChanged) {
+            accountService.updateOne(account);
+        }
+        log.info("Invitation revoked for user {} — link invalidated, account back to PENDING.", userId);
+    }
+
+    @SkipPermissionCheck
+    @Override
+    @Transactional
     public void forgotPassword(String email) {
         if (StringUtils.isBlank(email)) {
             return;
@@ -134,7 +156,32 @@ public class UserInvitationServiceImpl extends EntityServiceImpl<UserInvitation,
     }
 
     /**
-     * Revoke prior PENDING tokens for the user, issue a fresh one, and email the link.
+    /**
+     * Move the account back for a withdrawn invitation, returning whether it changed.
+     *
+     * <p>Refuses outright once the account has a password: the person has already joined, and
+     * "revoking" them would strand a working account in a pre-activation state nothing can move
+     * forward. Ending an existing membership is off-boarding — a different action with different
+     * obligations (release the work-email binding).
+     *
+     * <p>{@code hasPassword} is passed in rather than read off the account: credentials live on the
+     * person's {@link io.softa.starter.user.entity.UserIdentity} now, and keeping this static leaves
+     * the axis unit-testable without wiring beans.
+     *
+     * @throws BusinessException when the account has already been activated
+     */
+    static boolean applyRevokeTransition(UserAccount account, boolean hasPassword) {
+        if (hasPassword) {
+            throw new BusinessException("This user has already joined — revoke does not apply.");
+        }
+        if (account.getStatus() != AccountStatus.INVITED) {
+            return false;
+        }
+        account.setStatus(AccountStatus.PENDING);
+        return true;
+    }
+
+    /**     * Revoke prior PENDING tokens for the user, issue a fresh one, and email the link.
      *
      * <p>{@link UserInvitation} is multiTenant, so the ORM auto-stamps {@code tenant_id} from the CURRENT
      * request context — with {@code enableMultiTenancy=true}, {@code tenant_id} is readonly and CANNOT be

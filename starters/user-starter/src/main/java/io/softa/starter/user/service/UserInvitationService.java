@@ -14,6 +14,19 @@ import io.softa.starter.user.entity.UserInvitation;
 public interface UserInvitationService extends EntityService<UserInvitation, Long> {
 
     /**
+     * Revoke the outstanding invitation: kill the live link and put the account back to
+     * {@link io.softa.starter.user.enums.AccountStatus#PENDING}, so it reads as "created,
+     * not contacted" again and can be invited afresh.
+     *
+     * <p>Refuses once the account has a password: at that point the person has already
+     * joined, and revoking would strand a working account in a pre-activation state.
+     * Undoing THAT is off-boarding, not revocation.
+     *
+     * @param userId the account whose invitation is being withdrawn
+     */
+    void revokeInvitation(Long userId);
+
+    /**
      * Issue (or re-issue) an INVITE token for a user and email the set-password link. Any prior
      * PENDING token for the user is revoked so only the newest link works.
      *

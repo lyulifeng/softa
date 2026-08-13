@@ -429,6 +429,14 @@ public class UserAccountController extends EntityController<UserAccountService, 
         return ApiResponse.success();
     }
 
+    @Operation(summary = "Revoke the outstanding invitation — invalidates the link and returns "
+            + "the account to Pending so it can be invited again")
+    @PostMapping("/revokeInvitation")
+    public ApiResponse<Void> revokeInvitation(@RequestParam @NotNull Long id) {
+        onRosterAccounts(List.of(id), () -> invitationService.revokeInvitation(id));
+        return ApiResponse.success();
+    }
+
     /**
      * Run a by-id account OPERATION with the same reach as the roster reads. The account list the
      * platform super-admin acts from spans tenants ({@link #searchPage}), but these operations

@@ -2,10 +2,12 @@ package io.softa.starter.user.service.impl;
 
 import org.junit.jupiter.api.Test;
 
+import io.softa.framework.base.exception.BusinessException;
 import io.softa.starter.user.entity.UserAccount;
 import io.softa.starter.user.enums.AccountStatus;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 /**
  * The account status axis PENDING → INVITED → ACTIVE, which is what makes
@@ -72,6 +74,66 @@ class InvitationStatusAxisTest {
 
         assertThat(changed).isFalse();
         assertThat(locked.getStatus()).isEqualTo(AccountStatus.LOCKED);
+    }
+
+    // ── revoke:Invited → Pending,旧链作废(PRD D3 / W4)──────────────
+
+    @Test
+    void revokingAnInvitation_returnsTheAccountToPending() {
+        UserAccount invited = account(AccountStatus.INVITED);
+
+        boolean changed = UserInvitationServiceImpl.applyRevokeTransition(invited, false);
+
+        assertThat(changed).isTrue();
+        assertThat(invited.getStatus()).isEqualTo(AccountStatus.PENDING);
+    }
+
+    @Test
+    void revokingAnAlreadyJoinedAccount_isRefused() {
+        // Revoking would strand a working account in a pre-activation state that nothing
+        // can move forward. Ending an existing membership is off-boarding, not revocation.
+        UserAccount active = account(AccountStatus.ACTIVE);
+
+        assertThatThrownBy(() -> UserInvitationServiceImpl.applyRevokeTransition(active, true))
+                .isInstanceOf(BusinessException.class)
+                .hasMessageContaining("already joined");
+        assertThat(active.getStatus()).isEqualTo(AccountStatus.ACTIVE);
+    }
+
+    @Test
+    void revokingAPendingAccount_reportsNoStatusChange() {
+        // Idempotent: nothing to move. The caller still invalidates any stray token —
+        // that step is deliberately NOT gated on this returning true.
+        UserAccount pending = account(AccountStatus.PENDING);
+
+        boolean changed = UserInvitationServiceImpl.applyRevokeTransition(pending, false);
+
+        assertThat(changed).isFalse();
+        assertThat(pending.getStatus()).isEqualTo(AccountStatus.PENDING);
+    }
+
+    @Test
+    void inviteThenRevoke_roundTrips() {
+        // The two transitions are inverses on the pre-activation axis, which is what makes
+        // "invite again after revoking" (D3) work without a special case.
+        UserAccount account = account(AccountStatus.PENDING);
+
+        UserInvitationServiceImpl.applyInviteTransition(account, false);
+        assertThat(account.getStatus()).isEqualTo(AccountStatus.INVITED);
+
+        UserInvitationServiceImpl.applyRevokeTransition(account, false);
+        assertThat(account.getStatus()).isEqualTo(AccountStatus.PENDING);
+
+        assertThat(UserInvitationServiceImpl.applyInviteTransition(account, false)).isTrue();
+        assertThat(account.getStatus()).isEqualTo(AccountStatus.INVITED);
+    }
+
+    @Test
+    void deactivatedIsAvailableForOffboarding() {
+        // Off-boarding's terminal state (PRD §2.1). Distinct from Frozen: Frozen is an
+        // admin hold on a current member, Deactivated ends the membership.
+        assertThat(AccountStatus.DEACTIVATED.getStatus()).isEqualTo("Deactivated");
+        assertThat(AccountStatus.DEACTIVATED).isNotEqualTo(AccountStatus.FROZEN);
     }
 
     @Test
