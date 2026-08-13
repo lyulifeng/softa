@@ -273,6 +273,11 @@ curl -X POST http://localhost:8080/import/dynamicImport \
   paste is what the detail page shows, and `displayName` joins fields with `" / "`. A code-as-id master
   (`CountryRegion`, `Currency`) is exempt: its id IS the portable code, so a bare column is correct
   there.
+- An **option** or **boolean** column takes either the stored code or the label a person sees, in any
+  casing — `Technology` or its label, `true` / `false` or `Yes` / `No`. This matters because an export
+  writes the label, and an exported file is what people re-import: a column that only accepted the
+  stored code would refuse the file the product just produced. Nothing else is accepted; `1` / `0` is
+  not a boolean spelling here.
 
 ### 4. Custom Import Handler
 You can register a Spring bean implementing `CustomImportHandler` and reference it by name in
