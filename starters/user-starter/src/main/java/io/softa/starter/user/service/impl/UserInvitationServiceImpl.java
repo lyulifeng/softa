@@ -188,7 +188,12 @@ public class UserInvitationServiceImpl extends EntityServiceImpl<UserInvitation,
         String rawToken = RandomUtils.randomString(TOKEN_BYTES);
         UserInvitation invitation = new UserInvitation();
         invitation.setUserId(account.getId());
+        // Both identifiers are recorded, so the row answers "which channels was this addressed
+        // to?" — which the email alone could not once delivery fanned out. The delivery OUTCOME
+        // (sent / bounced / retried) stays in message-starter's send records; duplicating it here
+        // would give two answers that drift.
         invitation.setEmail(account.getEmail());
+        invitation.setMobile(account.getMobile());
         invitation.setPurpose(purpose);
         invitation.setTokenHash(EncryptUtils.computeSha256(rawToken));
         invitation.setStatus(InvitationStatus.PENDING);
