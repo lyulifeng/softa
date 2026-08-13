@@ -11,6 +11,7 @@ import io.softa.framework.base.exception.IllegalArgumentException;
 import io.softa.framework.base.exception.ValidationException;
 import io.softa.framework.base.utils.Assert;
 import io.softa.framework.orm.constant.FileConstant;
+import io.softa.framework.orm.domain.Filters;
 import io.softa.framework.orm.enums.FieldType;
 import io.softa.framework.orm.meta.MetaField;
 import io.softa.framework.orm.meta.ModelManager;
@@ -61,10 +62,16 @@ public class RelationLookupResolver {
      * @param oneToOne whether the root relation field is the main row's own 1:1 sub-record, in which
      *                 case the dotted columns are folded into a nested value object instead of being
      *                 used as a business key to look an existing row up
+     * @param relationFilters the root field's own {@code MetaField.filters}, ANDed into the lookup so
+     *                        the business key is resolved within the domain the field declares. A
+     *                        field pointing at {@code TenantOptionItem} names its option set that way
+     *                        ({@code ["optionSetCode", "=", "OrganizationType"]}), and {@code itemCode}
+     *                        is only unique inside one set — without it a lookup can match another
+     *                        set's row, or match several and fail the import as a duplicate key
      */
     public record LookupGroup(String rootField, String relatedModel, List<String> lookupFields,
                               List<String> dottedPaths, boolean ignoreEmpty, boolean toMany,
-                              boolean oneToOne) {}
+                              boolean oneToOne, Filters relationFilters) {}
 
     /**
      * Detect, validate and return the lookup groups from the import field list.
@@ -141,7 +148,7 @@ public class RelationLookupResolver {
             boolean toMany = FieldType.TO_MANY_TYPES.contains(rootMetaField.getFieldType());
             boolean oneToOne = FieldType.ONE_TO_ONE.equals(rootMetaField.getFieldType());
             groups.add(new LookupGroup(rootField, relatedModel, lookupFields, dottedPaths, ignoreEmpty,
-                    toMany, oneToOne));
+                    toMany, oneToOne, Filters.of(rootMetaField.getFilters())));
         }
         return groups;
     }
@@ -221,7 +228,7 @@ public class RelationLookupResolver {
 
         // Step 2: Batch query related model to get businessKey -> id mapping
         Map<List<Object>, ?> keyToIdMap = modelService.getIdsByBusinessKeys(
-                group.relatedModel(), group.lookupFields(), distinctKeys);
+                group.relatedModel(), group.lookupFields(), distinctKeys, group.relationFilters());
 
         // Step 3: Write back the FK id and remove dotted-path columns
         for (Map<String, Object> row : rows) {
@@ -271,7 +278,7 @@ public class RelationLookupResolver {
         }
 
         Map<List<Object>, ?> keyToIdMap = modelService.getIdsByBusinessKeys(
-                group.relatedModel(), group.lookupFields(), distinctKeys);
+                group.relatedModel(), group.lookupFields(), distinctKeys, group.relationFilters());
 
         for (Map<String, Object> row : rows) {
             if (row.containsKey(FileConstant.FAILED_REASON)) {

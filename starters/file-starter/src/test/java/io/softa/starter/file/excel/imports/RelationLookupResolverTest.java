@@ -15,6 +15,7 @@ import io.softa.framework.orm.service.ModelService;
 import io.softa.starter.file.dto.ImportFieldDTO;
 
 import static org.junit.jupiter.api.Assertions.*;
+import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyCollection;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
@@ -54,11 +55,11 @@ class RelationLookupResolverTest {
     void resolveRowsToOneWritesBackFkId() {
         RelationLookupResolver resolver = createResolver();
         var group = new RelationLookupResolver.LookupGroup(
-                "deptId", "Department", List.of("code"), List.of("deptId.code"), true, false, false);
+                "deptId", "Department", List.of("code"), List.of("deptId.code"), true, false, false, null);
         Map<String, Object> row = new LinkedHashMap<>(Map.of("deptId.code", "D001"));
 
         ModelService<Long> typedService = (ModelService<Long>) getModelService(resolver);
-        when(typedService.getIdsByBusinessKeys(eq("Department"), eq(List.of("code")), anyCollection()))
+        when(typedService.getIdsByBusinessKeys(eq("Department"), eq(List.of("code")), anyCollection(), any()))
                 .thenReturn(Map.of(List.of("D001"), 100L));
 
         resolver.resolveRows(new ArrayList<>(List.of(row)), List.of(group), true);
@@ -76,7 +77,7 @@ class RelationLookupResolverTest {
         RelationLookupResolver resolver = createResolver();
         var group = new RelationLookupResolver.LookupGroup(
                 "profileId", "Profile", List.of("nickname", "gender"),
-                List.of("profileId.nickname", "profileId.gender"), true, false, true);
+                List.of("profileId.nickname", "profileId.gender"), true, false, true, null);
         Map<String, Object> row = new LinkedHashMap<>();
         row.put("profileId.nickname", "Amy");
         row.put("profileId.gender", "  ");
@@ -97,7 +98,7 @@ class RelationLookupResolverTest {
         RelationLookupResolver resolver = createResolver();
         var group = new RelationLookupResolver.LookupGroup(
                 "profileId", "Profile", List.of("nickname"), List.of("profileId.nickname"),
-                true, false, true);
+                true, false, true, null);
         Map<String, Object> row = new LinkedHashMap<>();
         row.put("profileId.nickname", "");
 
@@ -111,7 +112,7 @@ class RelationLookupResolverTest {
     void resolveRowsToOneIgnoreEmptyFalseWritesNull() {
         RelationLookupResolver resolver = createResolver();
         var group = new RelationLookupResolver.LookupGroup(
-                "deptId", "Department", List.of("code"), List.of("deptId.code"), false, false, false);
+                "deptId", "Department", List.of("code"), List.of("deptId.code"), false, false, false, null);
         Map<String, Object> row = new LinkedHashMap<>();
         row.put("deptId.code", "");
 
@@ -126,11 +127,11 @@ class RelationLookupResolverTest {
     void resolveRowsToManyWritesBackIdList() {
         RelationLookupResolver resolver = createResolver();
         var group = new RelationLookupResolver.LookupGroup(
-                "roleIds", "Role", List.of("code"), List.of("roleIds.code"), true, true, false);
+                "roleIds", "Role", List.of("code"), List.of("roleIds.code"), true, true, false, null);
         Map<String, Object> row = new LinkedHashMap<>(Map.of("roleIds.code", "ADMIN,USER"));
 
         ModelService<Long> typedService = (ModelService<Long>) getModelService(resolver);
-        when(typedService.getIdsByBusinessKeys(eq("Role"), eq(List.of("code")), anyCollection()))
+        when(typedService.getIdsByBusinessKeys(eq("Role"), eq(List.of("code")), anyCollection(), any()))
                 .thenReturn(Map.of(List.of("ADMIN"), 11L, List.of("USER"), 12L));
 
         resolver.resolveRows(new ArrayList<>(List.of(row)), List.of(group), true);
@@ -144,11 +145,11 @@ class RelationLookupResolverTest {
     void resolveRowsToManyByNameWritesBackIdList() {
         RelationLookupResolver resolver = createResolver();
         var group = new RelationLookupResolver.LookupGroup(
-                "roleIds", "Role", List.of("name"), List.of("roleIds.name"), true, true, false);
+                "roleIds", "Role", List.of("name"), List.of("roleIds.name"), true, true, false, null);
         Map<String, Object> row = new LinkedHashMap<>(Map.of("roleIds.name", "Admin,User"));
 
         ModelService<Long> typedService = (ModelService<Long>) getModelService(resolver);
-        when(typedService.getIdsByBusinessKeys(eq("Role"), eq(List.of("name")), anyCollection()))
+        when(typedService.getIdsByBusinessKeys(eq("Role"), eq(List.of("name")), anyCollection(), any()))
                 .thenReturn(Map.of(List.of("Admin"), 21L, List.of("User"), 22L));
 
         resolver.resolveRows(new ArrayList<>(List.of(row)), List.of(group), true);
@@ -162,13 +163,13 @@ class RelationLookupResolverTest {
     void resolveRowsToManyByCompositeBusinessKeysWritesBackIdList() {
         RelationLookupResolver resolver = createResolver();
         var group = new RelationLookupResolver.LookupGroup(
-                "roleIds", "Role", List.of("code", "name"), List.of("roleIds.code", "roleIds.name"), true, true, false);
+                "roleIds", "Role", List.of("code", "name"), List.of("roleIds.code", "roleIds.name"), true, true, false, null);
         Map<String, Object> row = new LinkedHashMap<>();
         row.put("roleIds.code", "ADMIN,USER");
         row.put("roleIds.name", "Admin,User");
 
         ModelService<Long> typedService = (ModelService<Long>) getModelService(resolver);
-        when(typedService.getIdsByBusinessKeys(eq("Role"), eq(List.of("code", "name")), anyCollection()))
+        when(typedService.getIdsByBusinessKeys(eq("Role"), eq(List.of("code", "name")), anyCollection(), any()))
                 .thenReturn(Map.of(List.of("ADMIN", "Admin"), 31L, List.of("USER", "User"), 32L));
 
         resolver.resolveRows(new ArrayList<>(List.of(row)), List.of(group), true);
@@ -183,11 +184,11 @@ class RelationLookupResolverTest {
     void resolveRowsToManyMarksFailedWhenCodeNotFound() {
         RelationLookupResolver resolver = createResolver();
         var group = new RelationLookupResolver.LookupGroup(
-                "roleIds", "Role", List.of("code"), List.of("roleIds.code"), true, true, false);
+                "roleIds", "Role", List.of("code"), List.of("roleIds.code"), true, true, false, null);
         Map<String, Object> row = new LinkedHashMap<>(Map.of("roleIds.code", "ADMIN,UNKNOWN"));
 
         ModelService<Long> typedService = (ModelService<Long>) getModelService(resolver);
-        when(typedService.getIdsByBusinessKeys(eq("Role"), eq(List.of("code")), anyCollection()))
+        when(typedService.getIdsByBusinessKeys(eq("Role"), eq(List.of("code")), anyCollection(), any()))
                 .thenReturn(Map.of(List.of("ADMIN"), 11L));
 
         resolver.resolveRows(new ArrayList<>(List.of(row)), List.of(group), true);
@@ -201,7 +202,7 @@ class RelationLookupResolverTest {
     void resolveRowsToManyIgnoreEmptyFalseWritesEmptyList() {
         RelationLookupResolver resolver = createResolver();
         var group = new RelationLookupResolver.LookupGroup(
-                "roleIds", "Role", List.of("code"), List.of("roleIds.code"), false, true, false);
+                "roleIds", "Role", List.of("code"), List.of("roleIds.code"), false, true, false, null);
         Map<String, Object> row = new LinkedHashMap<>();
         row.put("roleIds.code", "");
 
@@ -215,7 +216,7 @@ class RelationLookupResolverTest {
     void resolveRowsToManyIgnoreEmptyFalseWithNameWritesEmptyList() {
         RelationLookupResolver resolver = createResolver();
         var group = new RelationLookupResolver.LookupGroup(
-                "roleIds", "Role", List.of("name"), List.of("roleIds.name"), false, true, false);
+                "roleIds", "Role", List.of("name"), List.of("roleIds.name"), false, true, false, null);
         Map<String, Object> row = new LinkedHashMap<>();
         row.put("roleIds.name", "");
 
@@ -223,6 +224,43 @@ class RelationLookupResolverTest {
 
         assertEquals(Collections.emptyList(), row.get("roleIds"));
         assertFalse(row.containsKey("roleIds.name"));
+    }
+
+    @Test
+    void detectLookupGroupsCarriesTheRelationFieldsOwnFilters() {
+        // The lookup has to be narrowed to the domain the FK field declares. Department.orgType points
+        // at TenantOptionItem and names its option set in `filters`; itemCode is unique inside one set,
+        // not across the table, so a lookup that ignores the filter can resolve another set's row — or
+        // find two and fail the whole import as a duplicate business key.
+        try (MockedStatic<ModelManager> mm = Mockito.mockStatic(ModelManager.class)) {
+            MetaField orgType = metaField("Department", "orgType", FieldType.MANY_TO_ONE, "TenantOptionItem");
+            ReflectionTestUtils.setField(orgType, "filters", "[\"optionSetCode\", \"=\", \"OrganizationType\"]");
+            mm.when(() -> ModelManager.existField("Department", "orgType")).thenReturn(true);
+            mm.when(() -> ModelManager.getModelField("Department", "orgType")).thenReturn(orgType);
+            RelationLookupResolver resolver = createResolver();
+
+            List<RelationLookupResolver.LookupGroup> groups = resolver.detectLookupGroups(
+                    "Department", List.of(importField("orgType.itemCode", null)));
+
+            assertEquals(1, groups.size());
+            assertNotNull(groups.getFirst().relationFilters());
+            assertTrue(groups.getFirst().relationFilters().toString().contains("OrganizationType"));
+        }
+    }
+
+    @Test
+    void detectLookupGroupsLeavesFiltersNullWhenTheFieldDeclaresNone() {
+        // The common case — a plain FK with no domain to narrow to. Null, not an empty Filters, so the
+        // lookup keeps its single unfiltered query shape.
+        try (MockedStatic<ModelManager> mm = Mockito.mockStatic(ModelManager.class)) {
+            setupModelManager(mm);
+            RelationLookupResolver resolver = createResolver();
+
+            List<RelationLookupResolver.LookupGroup> groups = resolver.detectLookupGroups(
+                    "TestOrder", List.of(importField("deptId.code", null)));
+
+            assertNull(groups.getFirst().relationFilters());
+        }
     }
 
     private RelationLookupResolver createResolver() {
