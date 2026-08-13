@@ -4,9 +4,11 @@ import java.util.ArrayList;
 import java.util.List;
 import org.apache.commons.lang3.StringUtils;
 import org.springframework.stereotype.Component;
+import org.springframework.util.CollectionUtils;
 
 import io.softa.framework.orm.enums.FieldType;
 import io.softa.framework.orm.meta.MetaField;
+import io.softa.framework.orm.meta.MetaModel;
 import io.softa.framework.orm.meta.ModelManager;
 import io.softa.starter.file.dto.ImportFieldDTO;
 import io.softa.starter.file.dto.ImportTemplateDTO;
@@ -86,7 +88,41 @@ public class ImportHandlerFactory {
             case TIME -> new TimeHandler(metaField, importFieldDTO);
             case MULTI_OPTION -> new MultiOptionHandler(metaField, importFieldDTO);
             case OPTION -> new OptionHandler(metaField, importFieldDTO);
+            case INTEGER, LONG, DOUBLE, BIG_DECIMAL -> new NumberHandler(metaField, importFieldDTO);
+            case MANY_TO_ONE, ONE_TO_ONE -> createToOneHandler(metaField, importFieldDTO);
             default -> new DefaultHandler(metaField, importFieldDTO);
         };
+    }
+
+    /**
+     * A to-one column mapped by its bare field name imports the related row's <b>id</b>. When that id is
+     * numeric, guard it so a pasted display value is reported by column name instead of reaching the
+     * write and surfacing as the JDK's bare {@code For input string: "..."}.
+     *
+     * <p>A code-as-id master keeps the default handler: its id IS the portable code, so a bare column is
+     * the correct mapping there and needs no conversion. {@code relatedFieldType} is the resolved
+     * physical type of the referenced id, materialized at reconciliation time; when it is absent (a
+     * template built before that column was populated) the column is left alone rather than guessed at.
+     */
+    private BaseImportHandler createToOneHandler(MetaField metaField, ImportFieldDTO importFieldDTO) {
+        if (!FieldType.LONG.equals(metaField.getRelatedFieldType())) {
+            return new DefaultHandler(metaField, importFieldDTO);
+        }
+        return new RelationIdHandler(metaField, importFieldDTO, lookupHint(metaField));
+    }
+
+    /**
+     * The dotted path to suggest: the related model's first business key, falling back to its first
+     * displayName field, and to a generic hint when the model declares neither.
+     */
+    private String lookupHint(MetaField metaField) {
+        String relatedModel = metaField.getRelatedModel();
+        List<String> keys = List.of();
+        if (StringUtils.isNotBlank(relatedModel) && ModelManager.existModel(relatedModel)) {
+            MetaModel meta = ModelManager.getModel(relatedModel);
+            keys = CollectionUtils.isEmpty(meta.getBusinessKey()) ? meta.getDisplayName() : meta.getBusinessKey();
+        }
+        String key = CollectionUtils.isEmpty(keys) ? "<businessKey>" : keys.getFirst();
+        return metaField.getFieldName() + "." + key;
     }
 }
