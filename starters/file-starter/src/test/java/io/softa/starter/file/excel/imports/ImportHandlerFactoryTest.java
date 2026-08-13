@@ -26,6 +26,8 @@ import io.softa.starter.file.excel.imports.handler.TimeHandler;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -227,5 +229,58 @@ class ImportHandlerFactoryTest {
         ReflectionTestUtils.setField(metaField, "fieldType", fieldType);
         ReflectionTestUtils.setField(metaField, "relatedModel", relatedModel);
         return metaField;
+    }
+
+    /**
+     * A mandatory relation filled by a lookup path must be caught by column name, before the write.
+     * It used to reach the ORM and come back as `Model field Department:legalEntityId is a required
+     * field and cannot be null!` — a model field name, on a sheet whose column is "Legal Entity Code".
+     */
+    @Test
+    void lookupPath_onARequiredRelation_getsARequiredCheck() {
+        ImportHandlerFactory factory = new ImportHandlerFactory();
+        MetaField required = relationField("LegalEntity", true);
+        try (MockedStatic<ModelManager> mm = Mockito.mockStatic(ModelManager.class)) {
+            mm.when(() -> ModelManager.existField("Department", "legalEntityId")).thenReturn(true);
+            mm.when(() -> ModelManager.getModelField("Department", "legalEntityId")).thenReturn(required);
+
+            ImportFieldDTO dto = new ImportFieldDTO();
+            dto.setFieldName("legalEntityId.code");
+            BaseImportHandler handler =
+                    factory.createLookupRequiredHandler("Department", "legalEntityId.code", dto);
+            assertNotNull(handler);
+
+            Map<String, Object> row = new LinkedHashMap<>();
+            row.put("legalEntityId.code", "");
+            assertThrows(ValidationException.class, () -> handler.handleRow(row));
+
+            // A filled cell reaches RelationLookupResolver untouched.
+            row.put("legalEntityId.code", "lyztest20265508");
+            handler.handleRow(row);
+            assertEquals("lyztest20265508", row.get("legalEntityId.code"));
+        }
+    }
+
+    /** An optional relation keeps having no handler, so nothing about its empty-cell path changes. */
+    @Test
+    void lookupPath_onAnOptionalRelation_staysUnhandled() {
+        ImportHandlerFactory factory = new ImportHandlerFactory();
+        MetaField optional = relationField("CostCentre", false);
+        try (MockedStatic<ModelManager> mm = Mockito.mockStatic(ModelManager.class)) {
+            mm.when(() -> ModelManager.existField("Department", "costCentreId")).thenReturn(true);
+            mm.when(() -> ModelManager.getModelField("Department", "costCentreId")).thenReturn(optional);
+
+            ImportFieldDTO dto = new ImportFieldDTO();
+            dto.setFieldName("costCentreId.code");
+            assertNull(factory.createLookupRequiredHandler("Department", "costCentreId.code", dto));
+        }
+    }
+
+    private static MetaField relationField(String relatedModel, boolean required) {
+        MetaField f = Mockito.mock(MetaField.class);
+        Mockito.when(f.getFieldType()).thenReturn(FieldType.MANY_TO_ONE);
+        Mockito.when(f.getRelatedModel()).thenReturn(relatedModel);
+        Mockito.when(f.isRequired()).thenReturn(required);
+        return f;
     }
 }

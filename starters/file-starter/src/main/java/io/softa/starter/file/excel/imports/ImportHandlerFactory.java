@@ -33,6 +33,14 @@ public class ImportHandlerFactory {
                 BaseImportHandler nestedHandler = createNestedOneToOneHandler(modelName, fieldName, importFieldDTO);
                 if (nestedHandler != null) {
                     handlers.add(nestedHandler);
+                    continue;
+                }
+                // A relation lookup path. RelationLookupResolver resolves the value, but nothing was
+                // checking that a mandatory relation was filled in at all — see LookupRequiredHandler.
+                BaseImportHandler requiredHandler =
+                        createLookupRequiredHandler(modelName, fieldName, importFieldDTO);
+                if (requiredHandler != null) {
+                    handlers.add(requiredHandler);
                 }
                 continue;
             }
@@ -63,6 +71,29 @@ public class ImportHandlerFactory {
      *
      * @return the handler keyed by the dotted path, or null when the path is a relation lookup instead
      */
+    /**
+     * A required-only handler for a lookup column, or null when the column is not mandatory.
+     *
+     * <p>Registered only when the relation really is required: an optional column keeps having no
+     * handler at all, so this adds a check without pulling those columns into the empty-value paths
+     * (defaultValue / ignoreEmpty) that a handler would otherwise start participating in.
+     */
+    BaseImportHandler createLookupRequiredHandler(String modelName, String fieldName,
+                                                  ImportFieldDTO importFieldDTO) {
+        String rootField = fieldName.substring(0, fieldName.indexOf('.'));
+        if (!ModelManager.existField(modelName, rootField)) {
+            return null;
+        }
+        MetaField metaField = ModelManager.getModelField(modelName, rootField);
+        if (!Boolean.TRUE.equals(importFieldDTO.getRequired())) {
+            importFieldDTO.setRequired(metaField.isRequired());
+        }
+        if (!Boolean.TRUE.equals(importFieldDTO.getRequired())) {
+            return null;
+        }
+        return new LookupRequiredHandler(metaField, importFieldDTO, fieldName);
+    }
+
     BaseImportHandler createNestedOneToOneHandler(String modelName, String fieldName, ImportFieldDTO importFieldDTO) {
         String[] parts = fieldName.split("\\.");
         if (parts.length != 2 || !ModelManager.existField(modelName, parts[0])) {
