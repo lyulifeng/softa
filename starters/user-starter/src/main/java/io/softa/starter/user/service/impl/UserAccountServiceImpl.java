@@ -27,6 +27,7 @@ import io.softa.starter.user.entity.UserAccount;
 import io.softa.starter.user.enums.AccountStatus;
 import io.softa.starter.user.service.UserAccountService;
 import io.softa.starter.user.service.UserIdentityService;
+import io.softa.starter.user.service.UserRoleRelService;
 import io.softa.starter.user.service.UserProfileService;
 
 /**
@@ -41,6 +42,10 @@ public class UserAccountServiceImpl extends EntityServiceImpl<UserAccount, Long>
 
     @Autowired
     private UserIdentityService identityService;
+
+    /** Role grants are cleared on off-boarding and on reviving a membership. */
+    @Autowired
+    private UserRoleRelService roleRelService;
 
     /**
      * Every single-entity account write funnels through here, so this is the one place that has to
@@ -185,6 +190,118 @@ public class UserAccountServiceImpl extends EntityServiceImpl<UserAccount, Long>
         Long userId = this.createOne(userAccount);
 
         return profileService.registerUserProfile(userId, profileInfo);
+    }
+
+    @Override
+    @CrossTenant
+    @Transactional
+    public void offBoard(Long accountId) {
+        UserAccount account = this.getById(accountId)
+                .orElseThrow(() -> new BusinessException("Account not found."));
+        if (offBoardWith(account)) {
+            this.updateOne(account);
+        }
+    }
+
+    /**
+     * The three things off-boarding must do, on an already-loaded membership.
+     *
+     * <p>Separated from the lookup so the rules are testable without the ORM, and because their
+     * ORDER is deliberate — see the comments inline.
+     *
+     * @return whether the membership changed (false when it was already closed)
+     */
+    boolean offBoardWith(UserAccount account) {
+        if (account.getStatus() == AccountStatus.DEACTIVATED) {
+            return false;   // idempotent: an HR workflow may legitimately fire twice
+        }
+
+        // ① Release the work contact from the person's login identifiers FIRST. Doing this before
+        // the status write means a failure here cannot leave a closed membership whose address is
+        // still a live login route — the order encodes which half is security-critical.
+        //
+        // Only the value THIS company issued is reclaimed: a personal login email is not ours to
+        // take, which is why it compares rather than blindly nulling.
+        Long profileId = account.getProfileId();
+        identityService.findByProfile(profileId).ifPresent(identity -> {
+            boolean released = false;
+            if (StringUtils.isNotBlank(account.getEmail())
+                    && account.getEmail().equalsIgnoreCase(identity.getLoginEmail())) {
+                identity.setLoginEmail(null);
+                released = true;
+            }
+            if (StringUtils.isNotBlank(account.getMobile())
+                    && account.getMobile().equals(identity.getLoginMobile())) {
+                identity.setLoginMobile(null);
+                released = true;
+            }
+            if (released) {
+                // updateOne(entity) drops null keys — the one thing this write is FOR. The
+                // overload that keeps them is not optional here.
+                identityService.updateOne(identity, false);
+                log.info("Released work contact(s) from identity {} on off-boarding account {}.",
+                        identity.getId(), account.getId());
+            }
+        });
+
+        // ② Clear role grants. A closed membership holding live grants is a standing hole by
+        // itself, and since a re-hire REVIVES this row, anything left here is silently inherited.
+        clearRoleGrants(account);
+
+        // ③ Close the membership.
+        account.setStatus(AccountStatus.DEACTIVATED);
+        return true;
+    }
+
+    @Override
+    @CrossTenant
+    @Transactional
+    public Optional<UserAccount> reviveMembership(Long profileId, String workEmail, String workMobile) {
+        if (profileId == null) {
+            return Optional.empty();
+        }
+        Optional<UserAccount> closed = this.searchList(new Filters()
+                        .eq(UserAccount::getProfileId, profileId)
+                        .eq(UserAccount::getStatus, AccountStatus.DEACTIVATED)).stream()
+                .findFirst();
+        if (closed.isEmpty()) {
+            return Optional.empty();
+        }
+        UserAccount account = closed.get();
+        reviveWith(account, workEmail, workMobile);
+        this.updateOne(account);
+        log.info("Revived membership {} for profile {} — reset to PENDING, awaiting a new invitation.",
+                account.getId(), profileId);
+        return Optional.of(account);
+    }
+
+    /**
+     * Reset a closed membership for someone re-joining, on an already-loaded row.
+     *
+     * <p>Nothing from the previous stint may leak into the new one: new work contacts, no
+     * activation (they must accept a fresh invitation), no roles. The employment history that DOES
+     * carry over lives on the employee record, which is created anew.
+     */
+    void reviveWith(UserAccount account, String workEmail, String workMobile) {
+        account.setEmail(workEmail);
+        account.setMobile(workMobile);
+        account.setStatus(AccountStatus.PENDING);
+        account.setActivationTime(null);
+        clearRoleGrants(account);
+    }
+
+    /**
+     * Drop every role grant held by a membership.
+     *
+     * <p>Both the {@code roles} field and the {@code UserRoleRel} rows: the former is what the UI
+     * edits, the latter is what the permission snapshot reads, and leaving either behind means
+     * "no roles" in one place and live grants in the other.
+     */
+    private void clearRoleGrants(UserAccount account) {
+        roleRelService.deleteByFilters(new Filters().eq("userId", account.getId()));
+        if (account.getRoles() != null && !account.getRoles().isEmpty()) {
+            account.setRoles(List.of());
+        }
     }
 
     @Override

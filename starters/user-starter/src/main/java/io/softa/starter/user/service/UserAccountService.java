@@ -58,6 +58,41 @@ public interface UserAccountService extends EntityService<UserAccount, Long> {
     UserInfo registerInvitedUser(String email, String mobile, String fullName);
 
     /**
+     * Off-board a membership: close it and strip what must not outlive it (A7 / S3, PRD W6).
+     *
+     * <p>Three things happen together because leaving any one of them out is a real defect:
+     *
+     * <ol>
+     *   <li><b>status → DEACTIVATED</b> — the membership is over;</li>
+     *   <li><b>role grants cleared</b> — a closed membership carrying live grants is a standing
+     *       hole, and because a re-hire REVIVES this same row, grants left behind would be
+     *       silently inherited by the returning employee;</li>
+     *   <li><b>the work email released from the person's login identifiers</b> — otherwise, once
+     *       the address is recycled, a new hire holding it could verify by code straight into the
+     *       previous holder's personal account.</li>
+     * </ol>
+     *
+     * <p>Idempotent: off-boarding an already-off-boarded membership changes nothing.
+     *
+     * @param accountId the membership to close
+     */
+    void offBoard(Long accountId);
+
+    /**
+     * Prepare a membership for someone re-joining this company, reusing the closed row.
+     *
+     * <p>Re-hire revives rather than inserts, because {@code (tenantId, profileId)} is unique —
+     * one person has at most one membership per company, which is what lets the database enforce
+     * it instead of application code racing with itself. The row is reset to a fresh
+     * {@code PENDING} (new work contacts, no activation, no roles) so nothing from the previous
+     * stint leaks into the new one; employment history lives on the employee record, which IS
+     * created anew.
+     *
+     * @return the revived membership, or empty when this person has no closed membership here
+     */
+    java.util.Optional<UserAccount> reviveMembership(Long profileId, String workEmail, String workMobile);
+
+    /**
      * Change the current user's password
      *
      * @param currentPassword Current password

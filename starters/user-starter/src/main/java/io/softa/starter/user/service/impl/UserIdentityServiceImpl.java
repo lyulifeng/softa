@@ -46,8 +46,18 @@ public class UserIdentityServiceImpl extends EntityServiceImpl<UserIdentity, Lon
             // password" would let a password-less path through, so refuse loudly instead.
             throw new BusinessException("This account is not linked to a person yet — contact support.");
         }
-        return this.searchOne(new Filters().eq(UserIdentity::getProfileId, profileId))
+        return this.findByProfile(profileId)
                 .orElseThrow(() -> new BusinessException("Credentials not found for this account."));
+    }
+
+    @SkipPermissionCheck
+    @CrossTenant
+    @Override
+    public Optional<UserIdentity> findByProfile(Long profileId) {
+        if (profileId == null) {
+            return Optional.empty();
+        }
+        return this.searchOne(new Filters().eq(UserIdentity::getProfileId, profileId));
     }
 
     @SkipPermissionCheck

@@ -36,6 +36,15 @@ public interface UserIdentityService extends EntityService<UserIdentity, Long> {
     UserIdentity requireIdentity(UserAccount account);
 
     /**
+     * The person's credentials, or empty when they have none yet.
+     *
+     * <p>The lenient twin of {@link #requireIdentity}: for callers that must keep working when the
+     * row is absent — off-boarding has to close a membership whether or not credentials were ever
+     * minted, and refusing there would leave the membership open on a data fault.
+     */
+    Optional<UserIdentity> findByProfile(Long profileId);
+
+    /**
      * Finds a person's credentials by an email OR a dial-code mobile.
      *
      * <p>⚠️ NO CALLER THIS RELEASE — deliberately. Login still resolves the account by its email;
