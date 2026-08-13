@@ -93,6 +93,12 @@ public class UserIdentityServiceImpl extends EntityServiceImpl<UserIdentity, Lon
     public void setPassword(Long identityId, String rawPassword) {
         UserIdentity identity = this.getById(identityId)
                 .orElseThrow(() -> new BusinessException("Credentials not found."));
+        // Enforced HERE rather than at each call site: invitation-accept, forced set-password,
+        // self-service change and admin reset all land in this method, and a rule that every
+        // caller must remember to apply is a rule that one of them eventually will not.
+        // Checked against the person's OWN identifiers — that is what makes "not derived from
+        // your contact details" mean anything (PRD D4).
+        PasswordPolicy.validate(rawPassword, identity.getLoginMobile(), identity.getLoginEmail());
         String salt = PasswordUtils.generateSalt();
         identity.setPasswordSalt(salt);
         identity.setPassword(PasswordUtils.hashPassword(rawPassword, salt));

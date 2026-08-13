@@ -48,8 +48,6 @@ public class UserInvitationServiceImpl extends EntityServiceImpl<UserInvitation,
     private static final int EXPIRY_DAYS = 7;
     /** Token entropy: 32 random bytes → URL-safe Base64 (~43 chars). */
     private static final int TOKEN_BYTES = 32;
-    /** Minimum password length enforced server-side (FE mirrors it). */
-    private static final int MIN_PASSWORD_LENGTH = 8;
     /** Template codes, seeded as system ({@code tenantId=0}) rows by the host app.
      *  {@code MailTemplate} and {@code SmsTemplate} are separate models, so one code names
      *  the invitation in BOTH channels — same message, different transport. */
@@ -324,8 +322,8 @@ public class UserInvitationServiceImpl extends EntityServiceImpl<UserInvitation,
     public void acceptToken(String rawToken, String newPassword) {
         Assert.notBlank(rawToken, "This link is invalid.");
         Assert.notBlank(newPassword, "New password cannot be empty.");
-        Assert.isTrue(newPassword.trim().length() >= MIN_PASSWORD_LENGTH,
-                "Password must be at least " + MIN_PASSWORD_LENGTH + " characters.");
+        // Strength is checked inside credentialService.setPassword against the person's own
+        // identifiers (PRD D4) — a bare minimum-length assertion here would contradict it.
 
         UserInvitation invitation = this.searchOne(
                         new Filters().eq(UserInvitation::getTokenHash, EncryptUtils.computeSha256(rawToken)))
