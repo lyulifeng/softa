@@ -16,7 +16,9 @@ import io.softa.starter.message.mail.dto.MailSendStatusDTO;
 import io.softa.starter.message.mail.dto.MailSenderSummaryDTO;
 import io.softa.starter.message.mail.dto.MailTemplatePreviewDTO;
 import io.softa.starter.message.mail.dto.MailTemplateSummaryDTO;
+import io.softa.starter.message.mail.dto.MailTemplateVariableDTO;
 import io.softa.starter.message.mail.dto.SendMailDTO;
+import io.softa.starter.message.mail.dto.TemplateVariableKind;
 import io.softa.starter.message.mail.entity.MailSendRecord;
 import io.softa.starter.message.mail.entity.MailSendServerConfig;
 import io.softa.starter.message.mail.entity.MailTemplate;
@@ -161,7 +163,7 @@ class MailApiControllerTest {
         template.setSubject("Hello, {{ name }}!");
         template.setBodyHtml("<p>Welcome {{ name }}!</p>");
 
-        when(templateService.resolve("WELCOME")).thenReturn(template);
+        when(templateService.resolveAny("WELCOME")).thenReturn(template);
         when(templateService.renderSubject(any(), any())).thenReturn("Hello, Alice!");
         when(templateService.renderBodyHtml(any(), any())).thenReturn("<p>Welcome Alice!</p>");
         when(templateService.renderBodyText(any(), any())).thenReturn(null);
@@ -182,7 +184,7 @@ class MailApiControllerTest {
         MailTemplate template = new MailTemplate();
         template.setCode("SIMPLE");
 
-        when(templateService.resolve("SIMPLE")).thenReturn(template);
+        when(templateService.resolveAny("SIMPLE")).thenReturn(template);
         when(templateService.renderSubject(any(), any())).thenReturn("Subject");
         when(templateService.renderBodyHtml(any(), any())).thenReturn("Body");
         when(templateService.renderBodyText(any(), any())).thenReturn(null);
@@ -194,6 +196,44 @@ class MailApiControllerTest {
         ApiResponse<MailTemplatePreviewDTO> response = controller.previewTemplate(request);
         Assertions.assertNotNull(response.getData());
         Assertions.assertEquals("Subject", response.getData().getRenderedSubject());
+    }
+
+    @Test
+    void listTemplateVariablesDelegatesToService() {
+        List<MailTemplateVariableDTO> vars = List.of(
+                new MailTemplateVariableDTO("name", TemplateVariableKind.VARIABLE));
+        when(templateService.listVariables("WELCOME")).thenReturn(vars);
+
+        ApiResponse<List<MailTemplateVariableDTO>> response = controller.listTemplateVariables(null, "WELCOME");
+        Assertions.assertEquals(vars, response.getData());
+    }
+
+    @Test
+    void listTemplateVariablesById_addressesExactRowAndWins() {
+        List<MailTemplateVariableDTO> vars = List.of(
+                new MailTemplateVariableDTO("name", TemplateVariableKind.VARIABLE));
+        when(templateService.listVariablesById(7L)).thenReturn(vars);
+
+        ApiResponse<List<MailTemplateVariableDTO>> response = controller.listTemplateVariables(7L, "IGNORED");
+        Assertions.assertEquals(vars, response.getData());
+        verify(templateService, never()).listVariables(any());
+    }
+
+    @Test
+    void previewTemplateById_addressesExactRow() {
+        MailTemplate template = new MailTemplate();
+        template.setCode("WELCOME");
+        when(templateService.getRequiredById(7L)).thenReturn(template);
+        when(templateService.renderSubject(any(), any())).thenReturn("S");
+        when(templateService.renderBodyHtml(any(), any())).thenReturn(null);
+        when(templateService.renderBodyText(any(), any())).thenReturn(null);
+
+        MailTemplatePreviewDTO request = new MailTemplatePreviewDTO();
+        request.setId(7L);
+
+        ApiResponse<MailTemplatePreviewDTO> response = controller.previewTemplate(request);
+        Assertions.assertEquals("S", response.getData().getRenderedSubject());
+        verify(templateService, never()).resolveAny(any());
     }
 
     @Test

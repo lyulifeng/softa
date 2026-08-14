@@ -22,6 +22,7 @@ import io.softa.starter.message.mail.enums.MailSendStatus;
 import io.softa.starter.message.mail.service.MailSendRecordService;
 import io.softa.starter.message.mail.service.MailTemplateService;
 import io.softa.starter.message.mail.service.impl.MailDeliveryProcessor;
+import io.softa.starter.message.mail.support.MailAddresses;
 import io.softa.starter.message.mail.support.MailServerDispatcher;
 import io.softa.starter.message.mq.TopicRoute;
 import io.softa.starter.message.mq.outbox.OutboxRecordWriter;
@@ -84,9 +85,14 @@ final class MailMessageHandler {
      * Resolve template defaults and validate one email request.
      */
     private ResolvedMail resolve(SendMailDTO dto) {
-        MailTemplate template = StringUtils.hasText(dto.getTemplateCode())
-                ? templateService.resolve(dto.getTemplateCode())
-                : null;
+        // templateId addresses the exact row (editor test sends: what you
+        // preview is what goes out, enabled or not); templateCode goes through
+        // production resolution (tenant → platform overlay, enabled only).
+        MailTemplate template = dto.getTemplateId() != null
+                ? templateService.getRequiredById(dto.getTemplateId())
+                : StringUtils.hasText(dto.getTemplateCode())
+                        ? templateService.resolve(dto.getTemplateCode())
+                        : null;
 
         String subject = dto.getSubject();
         String htmlBody = dto.getHtmlBody();
@@ -125,8 +131,12 @@ final class MailMessageHandler {
         ResolvedMail resolved = new ResolvedMail(
                 immutableCopy(dto.getTo()), immutableCopy(dto.getCc()), immutableCopy(dto.getBcc()),
                 subject, textBody, htmlBody, bodyMode, immutableCopy(attachments), serverConfigId,
-                replyTo, dto.getReadReceiptRequested(), priority);
+                MailAddresses.normalizeAddressList(replyTo), dto.getReadReceiptRequested(), priority);
         requireRecipients(resolved.to());
+        MailAddresses.requireValidMailboxes("to", resolved.to());
+        MailAddresses.requireValidMailboxes("cc", resolved.cc());
+        MailAddresses.requireValidMailboxes("bcc", resolved.bcc());
+        MailAddresses.requireValidAddressList("replyTo", resolved.replyTo());
         requireBody(resolved);
         requireBodyWithinLimit(resolved);
         return resolved;

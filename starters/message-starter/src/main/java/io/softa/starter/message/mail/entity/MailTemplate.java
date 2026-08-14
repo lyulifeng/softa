@@ -64,6 +64,8 @@ public class MailTemplate extends AuditableModel {
 
     @Field(label = "Body HTML", fieldType = FieldType.TEXT,
             description = "HTML body template, supports {{ variable }} placeholders. "
+                    + "Variable output is HTML-escaped; embed a trusted HTML fragment "
+                    + "with {{ fragment | raw }}. "
                     + "Required for HTML / HTML_WITH_DERIVED_PLAIN / HTML_WITH_AUTHORED_PLAIN modes.")
     private String bodyHtml;
 
@@ -99,7 +101,9 @@ public class MailTemplate extends AuditableModel {
     private MailPriority defaultPriority;
 
     @Field(length = 255,
-            description = "Default Reply-To address for this template. Optional. "
+            description = "Default Reply-To for this template — one or more addresses separated by "
+                    + "comma / semicolon / newline (normalized to an RFC822 comma list at send time; "
+                    + "display-name form allowed). Optional. "
                     + "Resolution chain at send time: dto.replyTo > template.replyTo > config.replyToAddress.")
     private String replyTo;
 

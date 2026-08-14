@@ -19,6 +19,36 @@ class PlaceholderUtilsTest {
     }
 
     @Test
+    void replacePlaceholders() {
+        Map<String, Object> variables = Map.of("userName", "Tom", "count", 3);
+        // The documented spaced form and the compact form resolve the same key,
+        // and non-string values are rendered via toString
+        Assertions.assertEquals("Hello Tom, you have 3 tasks.",
+                PlaceholderUtils.replacePlaceholders("Hello {{ userName }}, you have {{count}} tasks.", variables));
+        // A variable missing from the map is left in place literally
+        Assertions.assertEquals("Hi {{ unknown }}!",
+                PlaceholderUtils.replacePlaceholders("Hi {{ unknown }}!", variables));
+        // A resolved value containing placeholder syntax is not substituted again
+        Assertions.assertEquals("{{ b }}",
+                PlaceholderUtils.replacePlaceholders("{{ a }}", Map.of("a", "{{ b }}", "b", "x")));
+        // Null text and null map pass through unchanged
+        Assertions.assertNull(PlaceholderUtils.replacePlaceholders(null, variables));
+        Assertions.assertEquals("Hi {{ userName }}",
+                PlaceholderUtils.replacePlaceholders("Hi {{ userName }}", null));
+    }
+
+    @Test
+    void replacePlaceholder() {
+        Assertions.assertEquals("Hello Tom!",
+                PlaceholderUtils.replacePlaceholder("Hello {{ userName }}!", "userName", "Tom"));
+        Assertions.assertEquals("Hello Tom!",
+                PlaceholderUtils.replacePlaceholder("Hello {{userName}}!", "userName", "Tom"));
+        // The replacement value is inserted literally, even with regex metacharacters
+        Assertions.assertEquals("Rate: $5",
+                PlaceholderUtils.replacePlaceholder("Rate: {{ rate }}", "rate", "$5"));
+    }
+
+    @Test
     void extractVariable() {
         PlaceholderToken token = PlaceholderUtils.parsePlaceholder("{{ TriggerParams.status }}");
         Assertions.assertEquals("PAID", PlaceholderUtils.extractVariable(token, Map.of("TriggerParams",

@@ -201,7 +201,7 @@ public class SigningDocumentServiceImpl extends EntityServiceImpl<SigningDocumen
             }
         }
         if (StringUtils.isNotBlank(template.getHtmlTemplate())) {
-            String renderedHtml = TemplateEngine.render(template.getHtmlTemplate(), Collections.emptyMap());
+            String renderedHtml = TemplateEngine.renderHtml(template.getHtmlTemplate(), Collections.emptyMap());
             return new OriginalPdfSource(null, PdfFileGenerator.convertHtmlToPdf(renderedHtml));
         }
         throw new BusinessException("The signing document template does not contain a signable source file.");

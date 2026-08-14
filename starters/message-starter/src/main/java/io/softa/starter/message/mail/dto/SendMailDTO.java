@@ -58,7 +58,8 @@ public class SendMailDTO {
     @Schema(description = "Explicit server config ID; null = auto-resolved via MailServerDispatcher")
     private Long serverConfigId;
 
-    @Schema(description = "Reply-to address override")
+    @Schema(description = "Reply-To override — one or more addresses separated by comma / semicolon / "
+            + "newline (normalized to an RFC822 comma list at acceptance)")
     private String replyTo;
 
     @Schema(description = "Whether to request a read receipt (overrides server config default)")
@@ -69,6 +70,10 @@ public class SendMailDTO {
 
     @Schema(description = "Template code for template-based sending (e.g. USER_WELCOME)")
     private String templateCode;
+
+    @Schema(description = "Template row id — editor test sends address the exact row being edited "
+            + "(no enabled filter, no tenant→platform resolution); takes precedence over templateCode")
+    private Long templateId;
 
     @Schema(description = "Template placeholder variables")
     private Map<String, Object> templateVariables;

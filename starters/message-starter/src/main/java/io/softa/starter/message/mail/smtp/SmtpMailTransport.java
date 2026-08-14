@@ -15,6 +15,7 @@ import org.springframework.util.StringUtils;
 
 import io.softa.framework.base.exception.BusinessException;
 import io.softa.framework.orm.dto.FileInfo;
+import io.softa.starter.message.mail.support.MailAddresses;
 import io.softa.framework.orm.service.FileService;
 import io.softa.starter.message.config.MessageProperties;
 import io.softa.starter.message.mail.entity.MailSendServerConfig;
@@ -125,7 +126,9 @@ public class SmtpMailTransport {
             helper.setBcc(req.getBcc().toArray(new String[0]));
         }
         if (StringUtils.hasText(req.getReplyTo())) {
-            helper.setReplyTo(req.getReplyTo());
+            // RFC822 address-list: one or more mailboxes, comma-separated
+            // (validated at acceptance by MailAddresses).
+            message.setReplyTo(MailAddresses.parseAddressList(req.getReplyTo()));
         }
         helper.setSubject(req.getSubject());
 

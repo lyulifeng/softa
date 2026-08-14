@@ -7,6 +7,7 @@ import java.util.Map;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import org.apache.commons.text.StringSubstitutor;
+import org.apache.commons.text.lookup.StringLookup;
 import org.jspecify.annotations.Nullable;
 
 import io.softa.framework.base.constant.StringConstant;
@@ -137,34 +138,48 @@ public class PlaceholderUtils {
     }
 
     /**
-     * Replace a single placeholder variable in the text
+     * Replace a single placeholder variable in the text.
+     * Whitespace inside the delimiters is tolerated: {{ name }} and {{name}} are equivalent.
      *
      * @param text text
      * @param placeholder placeholder variable
-     * @param value value
+     * @param value value, inserted literally (regex replacement metacharacters have no effect)
      * @return replaced text
      */
     public static String replacePlaceholder(String text, String placeholder, String value) {
         String regex = Pattern.quote(StringConstant.PLACEHOLDER_PREFIX)
-                + Pattern.quote(placeholder)
+                + "\\s*" + Pattern.quote(placeholder) + "\\s*"
                 + Pattern.quote(StringConstant.PLACEHOLDER_SUFFIX);
-        return text.replaceAll(regex, value);
+        return text.replaceAll(regex, Matcher.quoteReplacement(value));
     }
 
     /**
-     * Replace multiple placeholder variables in the text
+     * Replace multiple placeholder variables in the text.
+     * The variable name is trimmed before lookup, so the documented spaced form
+     * {{ name }} and the compact form {{name}} resolve the same map key.
+     * A variable missing from the map is left in place literally, keeping typos
+     * visible in the rendered text instead of silently blanking them.
      * @param text text
-     * @param placeholderMap placeholder variable map
+     * @param placeholderMap placeholder variable map, values are rendered via toString
      * @return replaced text
      */
     public static String replacePlaceholders(String text, Map<String, Object> placeholderMap) {
+        if (text == null || placeholderMap == null) {
+            return text;
+        }
+        StringLookup trimmedKeyLookup = key -> {
+            Object value = placeholderMap.get(key.trim());
+            return value == null ? null : value.toString();
+        };
         StringSubstitutor sub = new StringSubstitutor(
-                placeholderMap,
+                trimmedKeyLookup,
                 StringConstant.PLACEHOLDER_PREFIX,
-                StringConstant.PLACEHOLDER_SUFFIX
+                StringConstant.PLACEHOLDER_SUFFIX,
+                StringSubstitutor.DEFAULT_ESCAPE
         );
         // Disable recursive and nested placeholders
         sub.setEnableSubstitutionInVariables(false);
+        sub.setDisableSubstitutionInValues(true);
         return sub.replace(text);
     }
 

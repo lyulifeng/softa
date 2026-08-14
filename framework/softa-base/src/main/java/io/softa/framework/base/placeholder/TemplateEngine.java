@@ -12,12 +12,16 @@ import io.pebbletemplates.pebble.template.PebbleTemplate;
 import io.softa.framework.base.exception.IllegalArgumentException;
 
 /**
- * Template engine wrapper based on Pebble.
- * <p>
- * Provides a unified API for rendering templates from the classpath.
- * Used for both Java code generation ({@code templates/code/*.peb})
- * and SQL DDL generation ({@code templates/sql/mysql/*.peb}).
- * <p>
+ * Template engine wrapper based on Pebble, exposing two escaping profiles:
+ * <ul>
+ *   <li>{@link #render} / {@link #renderFilePath} — verbatim output, for targets
+ *       that are not HTML: SQL DDL generation ({@code templates/sql/mysql/*.peb}),
+ *       Java code generation ({@code templates/code/*.peb}), plain-text bodies.</li>
+ *   <li>{@link #renderHtml} — HTML content (mail HTML bodies, rich-text document
+ *       templates): every {@code {{ }}} output is HTML-escaped, so data values
+ *       cannot inject markup. Template authors embed a trusted HTML fragment
+ *       explicitly with the {@code raw} filter: {@code {{ fragment | raw }}}.</li>
+ * </ul>
  * Pebble uses {@code {{ var }}} / {@code {% if %}} syntax, which is consistent
  * with the project-wide placeholder convention ({@code {{ }} }).
  * <p>
@@ -32,6 +36,13 @@ public class TemplateEngine {
 
     private static final PebbleEngine ENGINE = new PebbleEngine.Builder()
             .autoEscaping(false)      // SQL and Java code must not be HTML-escaped
+            .strictVariables(false)   // Allow missing variables to render as empty
+            .cacheActive(true)        // Cache compiled templates for performance
+            .extension(new TemplateEngineExtension())
+            .build();
+
+    private static final PebbleEngine HTML_ENGINE = new PebbleEngine.Builder()
+            .autoEscaping(true)       // HTML-escape every {{ }} output; opt out per-value with | raw
             .strictVariables(false)   // Allow missing variables to render as empty
             .cacheActive(true)        // Cache compiled templates for performance
             .extension(new TemplateEngineExtension())
@@ -89,6 +100,23 @@ public class TemplateEngine {
             return renderTemplate(ENGINE.getLiteralTemplate(templateContent), context);
         } catch (Exception e) {
             throw new IllegalArgumentException("Failed to render raw template: {0}", e.getMessage());
+        }
+    }
+
+    /**
+     * Render a raw Pebble template string as HTML content with the given data model.
+     * Every {@code {{ }}} output is HTML-escaped; a template embeds a trusted HTML
+     * fragment explicitly with {@code {{ fragment | raw }}}.
+     *
+     * @param templateContent raw Pebble template content producing HTML
+     * @param context         data model (Map of variable names to values)
+     * @return rendered HTML
+     */
+    public static String renderHtml(String templateContent, Map<String, Object> context) {
+        try {
+            return renderTemplate(HTML_ENGINE.getLiteralTemplate(templateContent), context);
+        } catch (Exception e) {
+            throw new IllegalArgumentException("Failed to render HTML template: {0}", e.getMessage());
         }
     }
 

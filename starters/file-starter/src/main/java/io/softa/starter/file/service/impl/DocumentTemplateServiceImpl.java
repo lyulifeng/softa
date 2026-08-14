@@ -92,7 +92,7 @@ public class DocumentTemplateServiceImpl extends EntityServiceImpl<DocumentTempl
     @Override
     public FileInfo generatePreviewDocument(String htmlBody) {
         Assert.notBlank(htmlBody, "The htmlBody of preview document is empty.");
-        String renderedHtml = TemplateEngine.render(htmlBody, Collections.emptyMap());
+        String renderedHtml = TemplateEngine.renderHtml(htmlBody, Collections.emptyMap());
         byte[] pdfBytes = PdfFileGenerator.convertHtmlToPdf(renderedHtml);
         return uploadGeneratedFile(this.modelName, PREVIEW_FILE_NAME, pdfBytes, FileType.PDF);
     }
@@ -223,7 +223,7 @@ public class DocumentTemplateServiceImpl extends EntityServiceImpl<DocumentTempl
      */
     private FileInfo generateRichTextDocument(DocumentTemplate template, Map<String, Object> data) {
         // Render HTML from rich text template content using Pebble
-        String renderedHtml = TemplateEngine.render(template.getHtmlTemplate(), data);
+        String renderedHtml = TemplateEngine.renderHtml(template.getHtmlTemplate(), data);
         // Convert rendered HTML to PDF via OpenHTMLToPDF
         byte[] pdfBytes = PdfFileGenerator.convertHtmlToPdf(renderedHtml);
         return uploadGeneratedFile(template, pdfBytes, FileType.PDF);
@@ -251,7 +251,7 @@ public class DocumentTemplateServiceImpl extends EntityServiceImpl<DocumentTempl
             }
         }
         if (StringUtils.hasText(template.getHtmlTemplate())) {
-            String renderedHtml = TemplateEngine.render(template.getHtmlTemplate(), Collections.emptyMap());
+            String renderedHtml = TemplateEngine.renderHtml(template.getHtmlTemplate(), Collections.emptyMap());
             return PdfFileGenerator.convertHtmlToPdf(renderedHtml);
         }
         throw new IllegalArgumentException("The template does not contain previewable content.");

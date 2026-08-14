@@ -9,6 +9,9 @@ import jakarta.validation.Valid;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.web.bind.annotation.*;
 
+import org.springframework.util.StringUtils;
+
+import io.softa.framework.base.exception.BusinessException;
 import io.softa.framework.orm.domain.Filters;
 import io.softa.framework.orm.domain.FlexQuery;
 import io.softa.framework.orm.domain.Orders;
@@ -128,13 +131,41 @@ public class MailApiController {
     }
 
     /**
+     * List the placeholder tokens of a template, for variable-input UIs
+     * (Send Test / Preview dialogs render one input per VARIABLE token).
+     * Address by {@code id} (editor tooling — the exact row) or {@code code}
+     * (programmatic callers — overlay resolution); id wins.
+     */
+    @Operation(summary = "List placeholder variables of a mail template")
+    @GetMapping("/templates/variables")
+    public ApiResponse<List<MailTemplateVariableDTO>> listTemplateVariables(
+            @RequestParam(required = false) Long id,
+            @RequestParam(required = false) String code) {
+        if (id != null) {
+            return ApiResponse.success(templateService.listVariablesById(id));
+        }
+        if (!StringUtils.hasText(code)) {
+            throw new BusinessException("Provide either a template id or a template code.");
+        }
+        return ApiResponse.success(templateService.listVariables(code));
+    }
+
+    /**
      * Preview a rendered mail template with given variables, without sending.
      */
     @Operation(summary = "Preview a rendered mail template")
     @PostMapping("/templates/preview")
     public ApiResponse<MailTemplatePreviewDTO> previewTemplate(
             @RequestBody @Valid MailTemplatePreviewDTO request) {
-        MailTemplate template = templateService.resolve(request.getCode());
+        if (request.getId() == null && !StringUtils.hasText(request.getCode())) {
+            throw new BusinessException("Provide either a template id or a template code.");
+        }
+        // By id: the exact row being edited. By code: resolveAny — preview must
+        // work for a disabled template (authoring tools verify BEFORE enabling);
+        // delivery paths keep the strict resolve.
+        MailTemplate template = request.getId() != null
+                ? templateService.getRequiredById(request.getId())
+                : templateService.resolveAny(request.getCode());
         Map<String, Object> variables = request.getVariables() != null
                 ? request.getVariables() : Collections.emptyMap();
 
