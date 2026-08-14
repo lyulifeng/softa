@@ -87,6 +87,23 @@ class MailMessageHandlerTest {
     }
 
     @Test
+    void templateByIdRequest_addressesExactRow_ignoringResolution() {
+        MailTemplate template = htmlTemplate("WELCOME");
+        when(templateService.getRequiredById(7L)).thenReturn(template);
+        when(templateService.renderSubject(eq(template), any())).thenReturn("Welcome, Alice!");
+        when(templateService.renderBodyHtml(eq(template), any())).thenReturn("<p>Hello Alice</p>");
+
+        SendMailDTO dto = new SendMailDTO();
+        dto.setTo(List.of("alice@example.com"));
+        dto.setTemplateId(7L);
+        dto.setTemplateCode("IGNORED");
+        dto.setTemplateVariables(Map.of("name", "Alice"));
+
+        handler.send(dto);
+        verify(templateService, never()).resolve(any());
+    }
+
+    @Test
     void templateRequestRendersContent() {
         MailTemplate template = htmlTemplate("WELCOME");
         when(templateService.resolve("WELCOME")).thenReturn(template);

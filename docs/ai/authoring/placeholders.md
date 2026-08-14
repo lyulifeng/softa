@@ -69,6 +69,12 @@ expressions. The rendering entry points live in `io.softa.framework.base.placeho
 (`PlaceholderUtils`, `TemplateEngine`) if you need to render a template yourself
 in service code.
 
+**HTML templates auto-escape.** Templates rendered as HTML (mail HTML bodies,
+rich-text document templates — `TemplateEngine.renderHtml`) HTML-escape every
+`{{ }}` output, so data values cannot inject markup. To embed a trusted HTML
+fragment, opt out explicitly per value: `{{ fragment | raw }}`. Subjects,
+plain-text bodies and SMS are not HTML and are never escaped.
+
 ---
 
 ## Where you'll use it

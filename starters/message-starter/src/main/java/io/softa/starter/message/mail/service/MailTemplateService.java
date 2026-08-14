@@ -1,9 +1,11 @@
 package io.softa.starter.message.mail.service;
 
+import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 
 import io.softa.framework.orm.service.EntityService;
+import io.softa.starter.message.mail.dto.MailTemplateVariableDTO;
 import io.softa.starter.message.mail.entity.MailTemplate;
 
 /**
@@ -38,6 +40,20 @@ public interface MailTemplateService extends EntityService<MailTemplate, Long> {
     Optional<MailTemplate> findPlatformByCode(String code);
 
     /**
+     * Like {@link #resolve(String)} but WITHOUT the {@code isEnabled} filter —
+     * for read-only authoring tools (preview, variable listing) where a
+     * disabled template must stay inspectable so it can be verified before
+     * being enabled. Delivery paths must keep using {@link #resolve(String)}.
+     */
+    MailTemplate resolveAny(String code);
+
+    /**
+     * {@link #findPlatformByCode(String)} without the {@code isEnabled}
+     * filter; platform-fallback half of {@link #resolveAny(String)}.
+     */
+    Optional<MailTemplate> findPlatformByCodeAny(String code);
+
+    /**
      * Render the subject of {@code template} by substituting {@code variables}
      * into {@code {{ key }}} placeholders.
      */
@@ -56,4 +72,24 @@ public interface MailTemplateService extends EntityService<MailTemplate, Long> {
      * has no plain-text body (HTML-only / HTML_WITH_DERIVED_PLAIN templates).
      */
     String renderBodyText(MailTemplate template, Map<String, Object> variables);
+
+    /**
+     * List the distinct placeholder tokens of the template resolved for
+     * {@code code}, in first-appearance order across subject / bodyHtml /
+     * bodyText — for variable-input UIs (Send Test / Preview dialogs).
+     */
+    List<MailTemplateVariableDTO> listVariables(String code);
+
+    /**
+     * Load one template row by id for editor tooling (preview / variable
+     * listing): no code resolution, no {@code isEnabled} filter — the row
+     * being edited is the row inspected. Tenant visibility follows the ORM
+     * filter, i.e. exactly the rows whose edit form the caller can open.
+     *
+     * @throws io.softa.framework.base.exception.BusinessException if the row does not exist
+     */
+    MailTemplate getRequiredById(Long id);
+
+    /** {@link #listVariables(String)} addressed by row id (editor tooling). */
+    List<MailTemplateVariableDTO> listVariablesById(Long id);
 }

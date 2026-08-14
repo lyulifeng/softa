@@ -4,7 +4,9 @@ import com.fasterxml.jackson.annotation.JsonValue;
 import lombok.AllArgsConstructor;
 import lombok.Getter;
 
+import io.softa.framework.base.annotation.OptionItem;
 import io.softa.framework.base.annotation.OptionSet;
+import io.softa.framework.base.enums.OptionItemTone;
 
 /**
  * Lifecycle of an outbox entry.
@@ -22,12 +24,17 @@ import io.softa.framework.base.annotation.OptionSet;
 @AllArgsConstructor
 @OptionSet
 public enum OutboxStatus {
-    NEW("New", "Not yet published to broker"),
-    PUBLISHING("Publishing", "Claimed by a publisher instance"),
-    PUBLISHED("Published", "Successfully published; kept for audit / replay"),
-    DEAD("Dead", "Broker failure beyond retry budget — needs manual intervention");
+    @OptionItem(description = "Not yet published to broker", itemTone = OptionItemTone.NEUTRAL)
+    NEW("New"),
+    @OptionItem(description = "Claimed by a publisher instance", itemTone = OptionItemTone.INFO)
+    PUBLISHING("Publishing"),
+    @OptionItem(description = "Successfully published; kept for audit / replay",
+            itemTone = OptionItemTone.SUCCESS)
+    PUBLISHED("Published"),
+    @OptionItem(description = "Broker failure beyond retry budget — needs manual intervention",
+            itemTone = OptionItemTone.ERROR)
+    DEAD("Dead");
 
     @JsonValue
     private final String code;
-    private final String description;
 }

@@ -2,20 +2,26 @@ package io.softa.starter.message.mail.dto;
 
 import java.util.Map;
 import io.swagger.v3.oas.annotations.media.Schema;
-import jakarta.validation.constraints.NotEmpty;
 import lombok.Data;
 
 /**
  * Request DTO for previewing a rendered mail template.
  * Renders the template with the given variables and returns the result
  * without actually sending an email.
+ *
+ * <p>Addressing: editor tooling passes {@code id} (the exact row being
+ * edited — no resolution semantics, no enabled filter); programmatic callers
+ * pass {@code code} (tenant → platform overlay resolution, mirroring the send
+ * path). {@code id} wins when both are present; one of them is required.
  */
 @Data
 @Schema(name = "MailTemplatePreviewDTO")
 public class MailTemplatePreviewDTO {
 
-    @NotEmpty
-    @Schema(description = "Template code to preview", requiredMode = Schema.RequiredMode.REQUIRED)
+    @Schema(description = "Template row id — addresses the exact row (editor tooling); takes precedence over code")
+    private Long id;
+
+    @Schema(description = "Template code — resolved tenant → platform (programmatic callers)")
     private String code;
 
     @Schema(description = "Variables to substitute into the template placeholders")

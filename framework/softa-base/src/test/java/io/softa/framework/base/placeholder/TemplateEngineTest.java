@@ -38,6 +38,28 @@ class TemplateEngineTest {
     }
 
     @Test
+    void renderHtmlEscapesVariableOutput() {
+        String template = "<p>{{ name }}</p>";
+        String result = TemplateEngine.renderHtml(template, Map.of("name", "<script>alert(1)</script>"));
+        assertEquals("<p>&lt;script&gt;alert(1)&lt;/script&gt;</p>", result);
+    }
+
+    @Test
+    void renderHtmlRawFilterEmbedsTrustedFragment() {
+        String template = "<div>{{ fragment | raw }}</div>";
+        String result = TemplateEngine.renderHtml(template, Map.of("fragment", "<b>bold</b>"));
+        assertEquals("<div><b>bold</b></div>", result);
+    }
+
+    @Test
+    void renderKeepsOutputVerbatim() {
+        // The codegen/plain-text profile must not HTML-escape: SQL, Java code and
+        // text/plain bodies embed values exactly as provided
+        String result = TemplateEngine.render("{{ value }}", Map.of("value", "a < b && c > d"));
+        assertEquals("a < b && c > d", result);
+    }
+
+    @Test
     void renderWithExtraSpacesInPlaceholder() {
         // Pebble handles ${  name  } — spaces are part of the expression,
         // but for simple var names Pebble trims them in expression evaluation.

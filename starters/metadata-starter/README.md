@@ -121,8 +121,8 @@ need to specify):
 
 The runtime `sys_model` / `sys_field` / `sys_option_set` /
 `sys_option_item` / `sys_model_index` catalog no longer carries an
-`ownership` column. The ownership tier was retired before the current baseline;
-see `deploy/migrations/README.md` for the removed V1/V3/V7 migrations.
+`ownership` column. The ownership tier (and its V1/V3/V7 migrations) was
+retired before the current baseline.
 
 Every app-scoped runtime metadata row is instead stamped with `app_code` from
 `system.app-code`. This is the catalog identity used by scanner writes,

@@ -374,11 +374,19 @@ half-applied rename manually). The manual `CHANGE COLUMN` migration in
 skipped-version chain).
 
 **When is manual DDL/DML needed at all?** Additive structure (new
-model/field/index/option, attribute widening — including `sys_*`'s own
-schema) is annotation-only and self-applies; hand-written SQL is reserved
-for data transformation, destructive cleanup, and business-data DML. Full
-decision tree + authoring obligations:
-[`deploy/migrations/README.md`](deploy/migrations/README.md).
+model/field/index/option, attribute widening) is annotation-only and
+self-applies — **except new columns on the `sys_*` / `design_*` catalog
+tables themselves**: the scanner's strict catalog read SELECTs every entity
+column and runs *before* any auto-DDL, so a catalog-table column added in
+code crashes the boot of every existing environment until its migration has
+run (chicken-and-egg; fresh installs are unaffected — the baseline DDL
+already carries it). Hand-written SQL is therefore reserved for catalog-table
+columns, data transformation, destructive cleanup, and business-data DML.
+Migrations live in `deploy/migrations/<db>/V<N>__<slug>.sql` — the next free
+number is the registration, and the header comment carries the context,
+variants, and run-before-boot ordering contract (copy the structure of
+`V34__add_auto_sequence_to_sys_field.sql`); see also the *DB schema or data
+change* branch of [`docs/README.md`](docs/README.md)'s decision tree.
 
 ### Metadata identity (`app_code`)
 

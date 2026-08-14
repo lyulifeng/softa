@@ -20,7 +20,7 @@ proposals were retired pre-production). The operating rules are:
 |---|---|---|
 | **Module README** | API surface, configuration, usage examples, behavioral invariants, known limitations | `<module>/README.md` |
 | **AI agent guidance** | Copy-paste guides for AI agents, split by audience | `docs/ai/**` — `authoring/` (downstream apps) · `framework/` (this repo) · `studio-no-code.md` |
-| **Migration guide & ledger** | When SQL is needed at all (vs annotation self-upgrade), and the ordered ledger of hand-run migrations | `deploy/migrations/README.md` + `deploy/migrations/<db>/V<N>__<slug>.sql` |
+| **Migration ledger** | The ordered ledger of hand-run migrations; each file's header comment carries its context, variants, and run-before-boot ordering contract | `deploy/migrations/<db>/V<N>__<slug>.sql` (the version-numbered listing *is* the ledger) |
 | **Top-level agent guidance** | What an AI / new contributor needs to operate the repo | `CLAUDE.md` / `AGENTS.md` |
 
 ## Decision tree — which doc should I write?
@@ -39,14 +39,17 @@ I have a code change to land
   │         module READMEs it touches). No separate decision document.
   │
   ├── DB schema or data change
-  │       → FIRST check deploy/migrations/README.md "Decision tree — do I
-  │         need to write SQL?" — additive structure is annotation-only
-  │         (scanner self-applies, incl. sys_* itself); SQL is only for
-  │         data transformation / destruction / non-scanner-owned rows.
-  │         If SQL is needed: deploy/migrations/<db>/V<N>__<slug>.sql
+  │       → additive structure is annotation-only (scanner self-applies) —
+  │         EXCEPT new columns on the sys_*/design_* catalog tables
+  │         themselves: the strict catalog read runs before any auto-DDL,
+  │         so those always ship a migration (run before the patched
+  │         binary boots). SQL is otherwise only for data transformation /
+  │         destruction / non-scanner-owned rows.
+  │         If SQL is needed: deploy/migrations/<db>/V<N>__<slug>.sql —
+  │         the next free number is the registration; put context, variants
+  │         and ordering contract in the header comment (copy V34's shape)
   │         AND mirror the end state into deploy/{demo,mini}-app/init_mysql/
   │         1.Metadata.ddl.sql (seed DML 2./3. files are retired — skip)
-  │         AND register it in deploy/migrations/README.md
   │
   ├── AI agent will be operating in this area
   │       → downstream-app guidance: docs/ai/authoring/ ; framework-internal:
