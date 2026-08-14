@@ -163,6 +163,64 @@ class AnchorlessChildScopeTest {
         assertThat(scopeOf("EmpAddress")).isEqualTo(matchNoneAnded());
     }
 
+    // ── shared master two hops out: granted → owned child → master ─────────────────────────
+
+    /** A relation field of {@code owner} pointing at {@code target}. */
+    private static MetaField relation(String target, FieldType type, String fieldName) {
+        MetaField f = mock(MetaField.class);
+        when(f.getRelatedModel()).thenReturn(target);
+        when(f.getFieldType()).thenReturn(type);
+        when(f.getFieldName()).thenReturn(fieldName);
+        return f;
+    }
+
+    private void modelFields(String model, MetaField... fields) {
+        modelManager.when(() -> ModelManager.existModel(model)).thenReturn(true);
+        modelManager.when(() -> ModelManager.getModelFields(model)).thenReturn(List.of(fields));
+    }
+
+    @Test
+    void aSharedMasterReferencedFromAnOwnedChildIsReadable() {
+        // Employee.empTimeProfileId -> EmpTimeProfile.attendanceGroupId -> AttendanceGroup. The child
+        // is never granted in its own right (the wizard does not offer owned children), so a
+        // single-hop scan misses the master and the picker reads "No options available" — while the
+        // endpoint layer, which derives lookups two layers deep, has already let the call through.
+        when(applicability.applicableFor("AttendanceGroup")).thenReturn(UNIVERSAL_ONLY);
+        modelFields("Employee", relation("EmpTimeProfile", FieldType.ONE_TO_ONE, "empTimeProfileId"));
+        modelFields("EmpTimeProfile",
+                relation("AttendanceGroup", FieldType.MANY_TO_ONE, "attendanceGroupId"));
+
+        assertThat(scopeOf("AttendanceGroup")).isEqualTo(new Filters());
+    }
+
+    @Test
+    void theSecondHopFollowsOwnedChildrenOnlyNotSharedReferences() {
+        // Employee.departmentId -> Department is a shared reference, not something Employee owns.
+        // Walking through it would make every master any reference of a granted model happens to
+        // point at readable, which is a different (and much wider) claim than "owned by a row I see".
+        when(applicability.applicableFor("CostCentre")).thenReturn(UNIVERSAL_ONLY);
+        modelFields("Employee", relation("Department", FieldType.MANY_TO_ONE, "departmentId"));
+        modelFields("Department", relation("CostCentre", FieldType.MANY_TO_ONE, "costCentreId"));
+
+        assertThat(scopeOf("CostCentre")).isEqualTo(matchNoneAnded());
+    }
+
+    @Test
+    void aDirectReferenceStillWinsOverTheSecondHop() {
+        // Reachable both ways — the one-hop answer is the more precise statement, so the extra hop
+        // must never pre-empt it.
+        when(applicability.applicableFor("AttendanceGroup")).thenReturn(UNIVERSAL_ONLY);
+        modelFields("Employee",
+                relation("EmpTimeProfile", FieldType.ONE_TO_ONE, "empTimeProfileId"),
+                relation("AttendanceGroup", FieldType.ONE_TO_ONE, "attendanceGroupId"));
+        modelFields("EmpTimeProfile",
+                relation("AttendanceGroup", FieldType.MANY_TO_ONE, "attendanceGroupId"));
+        when(modelService.getRelatedIds(eq("Employee"), any(Filters.class), eq("attendanceGroupId")))
+                .thenReturn(List.of(7L));
+
+        assertThat(scopeOf("AttendanceGroup").toString()).contains("id", "7");
+    }
+
     // ── unreachable ────────────────────────────────────────────────────────────────────────
 
     @Test
