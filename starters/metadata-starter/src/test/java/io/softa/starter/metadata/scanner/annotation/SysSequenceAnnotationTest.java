@@ -70,12 +70,28 @@ class SysSequenceAnnotationTest {
     void allocationInputs_areRequired() {
         List<SysField> fields = parse().fields();
         for (String required : List.of("code", "template", "startValue", "incrementStep",
-                "currentValue", "resetCadence", "mode")) {
+                "resetCadence", "mode")) {
             assertEquals(Boolean.TRUE, byFieldName(fields, required).getRequired(),
                     required + " is dereferenced by the allocator and must be present");
         }
         assertEquals(Boolean.FALSE, byFieldName(fields, "lastResetKey").getRequired(),
                 "lastResetKey is null until the first reset");
+    }
+
+    /**
+     * The two counter columns are runtime state, and a required field must be supplied by whoever
+     * creates the row — which for sequences is a seed file, and {@code loadPreTenantData} re-applies
+     * those with create-or-update. Requiring them is therefore what forces a live counter to be
+     * rewound on every re-apply; the default carries the first insert instead.
+     */
+    @Test
+    void counterColumns_areOptionalSoSeedsNeedNotCarryThem() {
+        List<SysField> fields = parse().fields();
+        SysField current = byFieldName(fields, "currentValue");
+        assertEquals(Boolean.FALSE, current.getRequired());
+        assertEquals("0", current.getDefaultValue(),
+                "absent on insert must mean zero, never null — the allocator adds a step to it");
+        assertEquals(Boolean.FALSE, byFieldName(fields, "lastResetKey").getRequired());
     }
 
     @Test
