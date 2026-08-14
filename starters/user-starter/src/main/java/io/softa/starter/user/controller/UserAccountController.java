@@ -479,9 +479,9 @@ public class UserAccountController extends EntityController<UserAccountService, 
                         null);
             }
             UserAccount account = accountOpt.get();
-            // Mask sensitive fields before returning
-            account.setPassword(null);
-            account.setPasswordSalt(null);
+            // No masking needed any more: the credential is not on this model. Keeping the old
+            // setPassword(null) calls would not compile, and re-adding them elsewhere would only
+            // re-create the leak this move removed.
             return ApiResponse.success(account);
         } catch (Exception e) {
             log.error("Error fetching current user account for ID: {}", userId, e);

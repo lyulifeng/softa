@@ -29,6 +29,7 @@ import io.softa.starter.user.enums.InvitationPurpose;
 import io.softa.starter.user.enums.InvitationStatus;
 import io.softa.starter.user.entity.UserInvitation;
 import io.softa.starter.user.service.UserAccountService;
+import io.softa.starter.user.service.UserCredentialService;
 import io.softa.starter.user.service.UserInvitationService;
 
 /**
@@ -52,13 +53,16 @@ public class UserInvitationServiceImpl extends EntityServiceImpl<UserInvitation,
     private static final String TEMPLATE_RESET = "user.password-reset";
 
     private final UserAccountService accountService;
+    private final UserCredentialService credentialService;
     private final ApplicationEventPublisher eventPublisher;
     private final String frontendBaseUrl;
 
     public UserInvitationServiceImpl(UserAccountService accountService,
+                                     UserCredentialService credentialService,
                                      ApplicationEventPublisher eventPublisher,
                                      @Value("${app.frontend-base-url:http://localhost:3000}") String frontendBaseUrl) {
         this.accountService = accountService;
+        this.credentialService = credentialService;
         this.eventPublisher = eventPublisher;
         this.frontendBaseUrl = frontendBaseUrl;
     }
@@ -75,7 +79,7 @@ public class UserInvitationServiceImpl extends EntityServiceImpl<UserInvitation,
         // A never-activated account (no password yet) is marked INVITED here so the set-password link
         // activates it (acceptToken flips INVITED→ACTIVE). An account that already has a password
         // (ACTIVE / LOCKED / …) is left untouched — re-inviting it just re-sends the link.
-        if (StringUtils.isBlank(account.getPassword())) {
+        if (StringUtils.isBlank(credentialService.requireProfile(account).getPassword())) {
             account.setStatus(AccountStatus.INVITED);
             accountService.updateOne(account);
         }
@@ -181,9 +185,10 @@ public class UserInvitationServiceImpl extends EntityServiceImpl<UserInvitation,
 
         UserAccount account = accountService.getById(invitation.getUserId())
                 .orElseThrow(() -> new BusinessException("Account not found."));
-        String salt = PasswordUtils.generateSalt();
-        account.setPasswordSalt(salt);
-        account.setPassword(PasswordUtils.hashPassword(newPassword, salt));
+        // The password goes on the PERSON, so accepting an invitation from company B when you
+        // already work at company A replaces one global credential rather than minting a second.
+        credentialService.setPassword(
+                credentialService.requireProfile(account).getId(), newPassword);
         if (account.getStatus() == AccountStatus.INVITED) {
             account.setStatus(AccountStatus.ACTIVE);
             account.setActivationTime(LocalDateTime.now());

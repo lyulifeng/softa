@@ -25,6 +25,7 @@ import io.softa.starter.user.enums.AccountStatus;
 import io.softa.starter.user.service.LoginService;
 import io.softa.starter.user.service.UserAccountService;
 import io.softa.starter.user.service.UserInvitationService;
+import io.softa.starter.user.service.UserCredentialService;
 import io.softa.starter.user.service.UserProfileService;
 
 /**
@@ -42,6 +43,9 @@ public class LoginServiceImpl implements LoginService {
 
     @Autowired
     private UserProfileService profileService;
+
+    @Autowired
+    private UserCredentialService credentialService;
 
     @Autowired(required = false)
     private TenantInfoService tenantInfoService;
@@ -202,8 +206,11 @@ public class LoginServiceImpl implements LoginService {
     public UserInfo loginByEmailAndPassword(String email, String password) {
         UserAccount userAccount = accountService.getUserByEmail(email).orElseThrow(
                 () -> new BusinessException("User or password is incorrect."));
-        String hashedPassword = PasswordUtils.hashPassword(password, userAccount.getPasswordSalt());
-        if (!Objects.equals(hashedPassword, userAccount.getPassword())) {
+        // The account still identifies WHO is signing in; only the credential moved. Verifying
+        // against the person means someone employed by two companies has one password to remember,
+        // and it is the same one whichever account they arrive through.
+        if (!credentialService.matchesPassword(
+                credentialService.requireProfile(userAccount), password)) {
             throw new BusinessException("User or password is incorrect.");
         }
         return profileService.getUserInfo(userAccount.getId());

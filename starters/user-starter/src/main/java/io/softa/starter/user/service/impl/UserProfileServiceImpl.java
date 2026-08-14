@@ -27,6 +27,7 @@ import io.softa.framework.orm.service.FileService;
 import io.softa.framework.orm.service.TenantInfoService;
 import io.softa.framework.orm.service.impl.EntityServiceImpl;
 import io.softa.starter.user.dto.UserProfileDTO;
+import io.softa.starter.user.entity.UserAccount;
 import io.softa.starter.user.entity.UserProfile;
 import io.softa.starter.user.enums.AccountStatus;
 import io.softa.starter.user.service.UserAccountService;
@@ -130,13 +131,15 @@ public class UserProfileServiceImpl extends EntityServiceImpl<UserProfile, Long>
         userInfo.setName(profile.getFullName());
         userInfo.setLanguage(profile.getLanguage());
         userInfo.setTimezone(profile.getTimezone());
-        userInfo.setTenantId(profile.getTenantId());
+        // The tenant now comes from the MEMBERSHIP, not the person: a person is global, and which
+        // company this session is in is exactly what the account represents. One lookup serves both
+        // this and the live-status check below.
+        Optional<UserAccount> account = accountService.getById(profile.getUserId());
+        userInfo.setTenantId(account.map(UserAccount::getTenantId).orElse(null));
         // Reflect the account's live status so ContextBuilder can force-logout a frozen
         // account. Absent account row → treat as active (don't gate on a data anomaly).
-        userInfo.setActive(accountService.getById(profile.getUserId())
-                .map(account -> AccountStatus.ACTIVE == account.getStatus())
-                .orElse(Boolean.TRUE));
-        this.validateTenantInfo(profile);
+        userInfo.setActive(account.map(a -> AccountStatus.ACTIVE == a.getStatus()).orElse(Boolean.TRUE));
+        this.validateTenantInfo(profile, userInfo.getTenantId());
         if (profile.getPhotoId() != null) {
             // The photo URL expires in one quarter (90 days), longer than the user info cache expiration time
             Optional<FileInfo> fileInfoOpt = fileService.getByFileId(profile.getPhotoId(), RedisConstant.ONE_QUARTER);
@@ -145,10 +148,12 @@ public class UserProfileServiceImpl extends EntityServiceImpl<UserProfile, Long>
         return userInfo;
     }
 
-    private void validateTenantInfo(UserProfile profile) {
+    private void validateTenantInfo(UserProfile profile, Long tenantId) {
         if (ModelManager.isMultiTenantControl()) {
-            Long tenantId = profile.getTenantId();
-            Assert.notNull(tenantId, "UserProfile(id = {0}) tenantID is required for multi-tenant model.", profile.getId());
+            Assert.notNull(tenantId,
+                    "UserProfile(id = {0}) has no membership to take a tenant from; "
+                            + "a person must belong to at least one company to sign in.",
+                    profile.getId());
             Assert.notNull(tenantInfoService,
                     "Multi-tenant control is enabled but no TenantInfoService is available; "
                             + "ensure tenant-starter is on the classpath.");
@@ -175,7 +180,8 @@ public class UserProfileServiceImpl extends EntityServiceImpl<UserProfile, Long>
         userProfile.setPhotoId(profileInfo.getPhotoId());
         userProfile.setLanguage(Optional.ofNullable(profileInfo.getLanguage()).orElse(context.getLanguage()));
         userProfile.setTimezone(Optional.ofNullable(profileInfo.getTimezone()).orElse(context.getTimezone()));
-        userProfile.setTenantId(context.getTenantId());
+        // No tenant stamped here any more: a person is global, and the tenant is held by the
+        // UserAccount that represents their membership.
         return userProfile;
     }
 
@@ -191,7 +197,29 @@ public class UserProfileServiceImpl extends EntityServiceImpl<UserProfile, Long>
         // Create user profile
         UserProfile userProfile = this.buildUserProfile(profileDTO);
         userProfile.setUserId(userId);
+
+        // Seed the LOGIN identifiers from the account's work contacts, before the insert.
+        //
+        // Not read by anything yet — login still resolves an account by its email, exactly as
+        // before. They are populated from day one so that the release which DOES resolve people by
+        // identifier needs no backfill: the expensive part of that change is the data, and this is
+        // the one moment where every new person passes through a single place.
+        UserAccount account = accountService.getById(userId).orElse(null);
+        if (account != null) {
+            userProfile.setLoginEmail(StringUtils.trimToNull(account.getEmail()));
+            userProfile.setLoginMobile(StringUtils.trimToNull(account.getMobile()));
+        }
         Long profileId = this.createOne(userProfile);
+        userProfile.setId(profileId);
+
+        // Point the membership at the person. UserAccount.profileId is the relation now
+        // (UserProfile.userId is the legacy back-reference kept for the migration); skipping this
+        // would leave an account whose credentials cannot be resolved at all — every password path
+        // fails with "not linked to a person".
+        if (account != null) {
+            account.setProfileId(profileId);
+            accountService.updateOne(account);
+        }
 
         // Build UserInfo and upload photo if photo is not empty
         UserInfo userInfo = this.buildUserInfo(userProfile);

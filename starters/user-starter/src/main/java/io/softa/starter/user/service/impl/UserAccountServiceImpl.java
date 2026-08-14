@@ -21,9 +21,11 @@ import io.softa.framework.orm.domain.Filters;
 import io.softa.framework.orm.service.impl.EntityServiceImpl;
 import io.softa.starter.user.dto.UserAccountDTO;
 import io.softa.starter.user.dto.UserProfileDTO;
+import io.softa.starter.user.entity.UserProfile;
 import io.softa.starter.user.entity.UserAccount;
 import io.softa.starter.user.enums.AccountStatus;
 import io.softa.starter.user.service.UserAccountService;
+import io.softa.starter.user.service.UserCredentialService;
 import io.softa.starter.user.service.UserProfileService;
 
 /**
@@ -35,6 +37,9 @@ public class UserAccountServiceImpl extends EntityServiceImpl<UserAccount, Long>
 
     @Autowired
     private UserProfileService profileService;
+
+    @Autowired
+    private UserCredentialService credentialService;
 
     /**
      * Every single-entity account write funnels through here, so this is the one place that has to
@@ -152,16 +157,19 @@ public class UserAccountServiceImpl extends EntityServiceImpl<UserAccount, Long>
 
         // Create user account
         UserAccount userAccount = this.buildUserAccount(accountInfo);
-        if (StringUtils.isNotBlank(password)) {
-            String salt = PasswordUtils.generateSalt();
-            String hashedPassword = PasswordUtils.hashPassword(password, salt);
-            userAccount.setPasswordSalt(salt);
-            userAccount.setPassword(hashedPassword);
-        }
         Long userId = this.createOne(userAccount);
 
-        // Create user profile and return UserInfo
-        return profileService.registerUserProfile(userId, profileInfo);
+        // Profile first, THEN the password: the credential lives on the person now, so there is
+        // nothing to write it to until the profile exists.
+        UserInfo userInfo = profileService.registerUserProfile(userId, profileInfo);
+        if (StringUtils.isNotBlank(password)) {
+            credentialService.setPassword(
+                    credentialService.requireProfile(
+                            this.getById(userId).orElseThrow(
+                                    () -> new BusinessException("User not found."))).getId(),
+                    password);
+        }
+        return userInfo;
     }
 
     @Override
@@ -211,24 +219,18 @@ public class UserAccountServiceImpl extends EntityServiceImpl<UserAccount, Long>
 
         UserAccount user = this.getById(userId).orElseThrow(() -> new BusinessException("Current user not found."));
 
-        // Verify old password using PasswordUtils and user's salt
-        String hashedOldPassword = PasswordUtils.hashPassword(currentPassword, user.getPasswordSalt());
-        if (!Objects.equals(hashedOldPassword, user.getPassword())) {
+        // The password is the PERSON's, so changing it here changes it for every company they
+        // belong to. That is the intended meaning of one global credential.
+        UserProfile profile = credentialService.requireProfile(user);
+        if (!credentialService.matchesPassword(profile, currentPassword)) {
             throw new BusinessException("Incorrect old password.");
         }
-
-        // Check if new password is the same as the old one
-        // Hash the new password with the *existing* salt for comparison
-        String hashedNewPassword = PasswordUtils.hashPassword(newPassword, user.getPasswordSalt());
-        if (Objects.equals(hashedNewPassword, user.getPassword())) {
+        if (credentialService.matchesPassword(profile, newPassword)) {
             throw new BusinessException("New password cannot be the same as the old password.");
         }
+        credentialService.setPassword(profile.getId(), newPassword);
 
-        // Update password using the *existing* salt
-        user.setPassword(hashedNewPassword);
-        this.updateOne(user);
-
-        log.info("User ID {} changed their password successfully.", userId);
+        log.info("User ID {} changed their password successfully (profile {}).", userId, profile.getId());
     }
 
     @Override
@@ -238,16 +240,10 @@ public class UserAccountServiceImpl extends EntityServiceImpl<UserAccount, Long>
         // TODO: Add password strength validation
 
         UserAccount user = this.getById(userId).orElseThrow(() -> new BusinessException("User not found."));
+        UserProfile profile = credentialService.requireProfile(user);
+        credentialService.setPassword(profile.getId(), newPassword);
 
-        // Generate new salt and hash the new password
-        String newSalt = PasswordUtils.generateSalt();
-        String hashedNewPassword = PasswordUtils.hashPassword(newPassword, newSalt);
-
-        user.setPasswordSalt(newSalt);
-        user.setPassword(hashedNewPassword);
-        this.updateOne(user);
-
-        log.info("User ID {} password was reset by admin.", userId);
+        log.info("User ID {} password was reset by admin (profile {}).", userId, profile.getId());
         return true;
     }
 
