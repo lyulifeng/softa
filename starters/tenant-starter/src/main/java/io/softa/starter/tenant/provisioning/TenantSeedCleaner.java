@@ -75,6 +75,28 @@ public class TenantSeedCleaner {
     }
 
     /**
+     * Delete the PROFILES of this tenant's accounts — resolved through the accounts, because a
+     * person is a global model with no tenant column of its own. Filtering {@code UserProfile} by
+     * {@code tenantId} does not merely return nothing, it throws: the field no longer exists.
+     *
+     * <p>Must run BEFORE the accounts are cleared — the accounts are the only route to these rows,
+     * and once they are gone the profiles are unreachable orphans.
+     */
+    public int clearProfilesOf(Long tenantId) {
+        List<Long> accountIds = modelService.getIds("UserAccount",
+                new Filters().eq(ModelConstant.TENANT_ID, tenantId));
+        if (accountIds.isEmpty()) {
+            return 0;
+        }
+        List<Long> profileIds = modelService.getIds("UserProfile",
+                new Filters().in("userId", accountIds));
+        if (!profileIds.isEmpty()) {
+            modelService.deleteByIds("UserProfile", profileIds);
+        }
+        return profileIds.size();
+    }
+
+    /**
      * Delete everything this tenant's predefined-data load created, then the bindings that recorded it.
      *
      * <p>Driven by the ledger rather than by the seed file list, which is what makes it exact: the loader

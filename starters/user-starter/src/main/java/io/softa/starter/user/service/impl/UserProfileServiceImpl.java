@@ -76,7 +76,15 @@ public class UserProfileServiceImpl extends EntityServiceImpl<UserProfile, Long>
         FlexQuery flexQuery = new FlexQuery(profileFilters);
         flexQuery.setConvertType(ConvertType.REFERENCE);
         Optional<Map<String, Object>> profileOpt = this.modelService.searchOne(this.modelName, flexQuery);
-        return profileOpt.orElseThrow(() -> new IllegalArgumentException("Current user profile not found."));
+        Map<String, Object> profile = profileOpt
+                .orElseThrow(() -> new IllegalArgumentException("Current user profile not found."));
+        // Never hand a browser a password hash — not even the caller's own. A hijacked session
+        // could otherwise read the hash and crack it offline, turning a temporary compromise into
+        // the durable credential. The person edits their profile, never their stored secret.
+        profile.remove("password");
+        profile.remove("passwordSalt");
+        profile.remove("passwordLockedUntil");
+        return profile;
     }
 
     /**
@@ -204,11 +212,15 @@ public class UserProfileServiceImpl extends EntityServiceImpl<UserProfile, Long>
         // before. They are populated from day one so that the release which DOES resolve people by
         // identifier needs no backfill: the expensive part of that change is the data, and this is
         // the one moment where every new person passes through a single place.
-        UserAccount account = accountService.getById(userId).orElse(null);
-        if (account != null) {
-            userProfile.setLoginEmail(StringUtils.trimToNull(account.getEmail()));
-            userProfile.setLoginMobile(StringUtils.trimToNull(account.getMobile()));
-        }
+        // Loudly, not orElse(null): silently skipping here would return success for a person
+        // who can never authenticate — no identifiers, and no profileId link below. The one
+        // caller that legitimately has no account does not exist; every path creates the
+        // account first.
+        UserAccount account = accountService.getById(userId).orElseThrow(
+                () -> new BusinessException(
+                        "Account " + userId + " not found — a profile cannot be registered before its account."));
+        userProfile.setLoginEmail(StringUtils.trimToNull(account.getEmail()));
+        userProfile.setLoginMobile(StringUtils.trimToNull(account.getMobile()));
         Long profileId = this.createOne(userProfile);
         userProfile.setId(profileId);
 
@@ -216,10 +228,8 @@ public class UserProfileServiceImpl extends EntityServiceImpl<UserProfile, Long>
         // (UserProfile.userId is the legacy back-reference kept for the migration); skipping this
         // would leave an account whose credentials cannot be resolved at all — every password path
         // fails with "not linked to a person".
-        if (account != null) {
-            account.setProfileId(profileId);
-            accountService.updateOne(account);
-        }
+        account.setProfileId(profileId);
+        accountService.updateOne(account);
 
         // Build UserInfo and upload photo if photo is not empty
         UserInfo userInfo = this.buildUserInfo(userProfile);

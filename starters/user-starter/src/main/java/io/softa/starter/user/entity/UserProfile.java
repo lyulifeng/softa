@@ -34,10 +34,11 @@ import io.softa.starter.user.enums.UserLayoutDensity;
         idStrategy = IdStrategy.DISTRIBUTED_LONG,
         searchName = {"fullName"}
 )
-@Index(indexName = "uk_user_profile_login_email", fields = {"loginEmail"}, unique = true,
-        message = "This email is already in use.")
-@Index(indexName = "uk_user_profile_login_mobile", fields = {"loginMobile"}, unique = true,
-        message = "This mobile number is already in use.")
+// No unique indexes on the login identifiers YET, deliberately. Nothing reads them this
+// release (login still resolves the account by its email), so an index could only hurt: today
+// an admin can clear a leaver's account email and reuse it for a new hire, and a unique index
+// here would make that hire's profile creation fail on the leaver's stale identifier. The
+// release that starts resolving people by identifier dedupes first, then adds the indexes.
 public class UserProfile extends AuditableModel {
 
     @Serial
@@ -74,9 +75,11 @@ public class UserProfile extends AuditableModel {
     private String passwordSalt;
 
     @Field(copyable = false,
-            description = "When set and in the future, PASSWORD login is refused until then. On the "
-                    + "person, so switching company buys no extra attempts; a verification code "
-                    + "stays available throughout — what is locked is the password, not the person")
+            description = "Reserved for the lockout feature: when set and in the future, PASSWORD "
+                    + "login will be refused until then. NOT ENFORCED YET — no code writes or reads "
+                    + "it in this release; the column exists so the lockout release ships without "
+                    + "another schema change. On the person, so switching company will buy no extra "
+                    + "attempts")
     private LocalDateTime passwordLockedUntil;
 
     @Field

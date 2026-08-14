@@ -21,6 +21,7 @@ import io.softa.framework.orm.service.CacheService;
 import io.softa.framework.orm.service.TenantInfoService;
 import io.softa.starter.user.dto.InvitationInfo;
 import io.softa.starter.user.entity.UserAccount;
+import io.softa.starter.user.entity.UserProfile;
 import io.softa.starter.user.enums.AccountStatus;
 import io.softa.starter.user.service.LoginService;
 import io.softa.starter.user.service.UserAccountService;
@@ -209,8 +210,20 @@ public class LoginServiceImpl implements LoginService {
         // The account still identifies WHO is signing in; only the credential moved. Verifying
         // against the person means someone employed by two companies has one password to remember,
         // and it is the same one whichever account they arrive through.
-        if (!credentialService.matchesPassword(
-                credentialService.requireProfile(userAccount), password)) {
+        //
+        // requireProfile's own error ("not linked to a person") must not escape here: this endpoint
+        // is anonymous, and a distinct message would tell a stranger which accounts exist but are
+        // broken — an account-existence oracle. Inside, it is a data fault; outside, it is just a
+        // failed login.
+        UserProfile profile;
+        try {
+            profile = credentialService.requireProfile(userAccount);
+        } catch (BusinessException e) {
+            log.error("Password login blocked: account {} has no linked person — run the "
+                    + "credentials migration. Reporting a plain failed login to the caller.", userAccount.getId());
+            throw new BusinessException("User or password is incorrect.");
+        }
+        if (!credentialService.matchesPassword(profile, password)) {
             throw new BusinessException("User or password is incorrect.");
         }
         return profileService.getUserInfo(userAccount.getId());

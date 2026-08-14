@@ -70,8 +70,12 @@ class TenantSeedPurgeServiceTest {
     void clearsOnlyItsOwnProvisioningState() {
         service.rebuild(TENANT);
 
+        // UserProfile is deliberately absent: a person is a global model now, reachable only
+        // through this tenant's accounts, so it is cleared via clearProfilesOf (asserted below)
+        // rather than by a tenantId filter that would throw on a field the model no longer has.
         assertThat(clearedModels()).containsExactly(
-                "UserRoleRel", "UserInvitation", "UserProfile", "UserAccount", "TenantSeedProgress");
+                "UserRoleRel", "UserInvitation", "UserAccount", "TenantSeedProgress");
+        verify(seedCleaner).clearProfilesOf(TENANT);
     }
 
     @Test

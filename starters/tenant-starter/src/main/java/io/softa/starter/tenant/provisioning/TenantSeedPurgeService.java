@@ -84,7 +84,7 @@ public class TenantSeedPurgeService {
      * so they are listed so the outcome does not depend on that gate holding.
      */
     private static final List<String> PROVISIONING_STATE = List.of(
-            "UserRoleRel", "UserInvitation", "UserProfile", "UserAccount", "TenantSeedProgress");
+            "UserRoleRel", "UserInvitation", "UserAccount", "TenantSeedProgress");
 
     private final TenantInfoServiceImpl tenantInfoService;
     private final TenantProvisioningStatusService statusService;
@@ -128,8 +128,16 @@ public class TenantSeedPurgeService {
                         + "own; one stuck in Initializing with nothing running (message lost, consumer down) has "
                         + "to be set to Draft by hand before it can be rebuilt.", tenantId, tenant.getStatus());
 
-        Map<String, Integer> cleared = inSystemContext(
-                () -> seedCleaner.clearModels(tenantId, PROVISIONING_STATE));
+        Map<String, Integer> cleared = inSystemContext(() -> {
+            // Profiles first: a person is global now and can only be found THROUGH this tenant's
+            // accounts, so they must be resolved and deleted while the accounts still exist.
+            int profiles = seedCleaner.clearProfilesOf(tenantId);
+            Map<String, Integer> byModel = seedCleaner.clearModels(tenantId, PROVISIONING_STATE);
+            if (profiles > 0) {
+                byModel.put("UserProfile", profiles);
+            }
+            return byModel;
+        });
         statusService.beginProvisioning(tenantId);
         eventPublisher.publishEvent(new TenantProvisionedEvent(tenantId, tenant.getCode(), tenant.getName(), true));
         log.warn("Tenant {} setup restarted — provisioning state cleared {}; each seeder discards its own "
