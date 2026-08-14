@@ -23,6 +23,11 @@ import java.util.concurrent.ConcurrentMap;
  *
  * <h3>Lookup strategy (deliberately narrow)</h3>
  * <ol>
+ *   <li><b>Self</b> — the queried model IS {@code Department}. Returns the empty path: the
+ *       department is the row, so the filter reads its own {@code idPath} with no hop. Without
+ *       this the tree model is the one thing a department scope cannot be written against —
+ *       an HRBP could be granted "departments I manage" over every model that merely
+ *       <i>references</i> a department, but not over the departments themselves.</li>
  *   <li><b>Direct anchor</b> — model has a ToOne field literally named
  *       {@code departmentId} whose {@code relatedModel == "Department"}.
  *       Returns {@code "departmentId"}, unless that field is a dynamic cascaded
@@ -51,6 +56,8 @@ public class DefaultDepartmentCascadePathResolver implements DepartmentCascadePa
     private static final String EMPLOYEE_MODEL = "Employee";
     private static final String DEPT_FIELD = "departmentId";
     private static final String EMPLOYEE_FIELD = "employeeId";
+    private static final String ID_PATH_FIELD = "idPath";
+    private static final String SELF_PATH = DepartmentCascadePathResolver.SELF_PATH;
 
     private final ConcurrentMap<String, Optional<String>> cache = new ConcurrentHashMap<>();
 
@@ -61,6 +68,14 @@ public class DefaultDepartmentCascadePathResolver implements DepartmentCascadePa
     }
 
     private Optional<String> compute(String modelName) {
+        // Self-reference: the department IS the row, so there is nothing to hop through and the
+        // prefix match runs against its own idPath. Gated on the field actually existing rather
+        // than on the name alone — the empty path is only meaningful for a model the subtree
+        // filter can be written against, and idPath is what makes that true.
+        if (DEPT_MODEL.equals(modelName)
+                && ModelManager.getModelFieldOrNull(modelName, ID_PATH_FIELD) != null) {
+            return Optional.of(SELF_PATH);
+        }
         MetaField dept = ModelManager.getModelFieldOrNull(modelName, DEPT_FIELD);
         if (dept != null
                 && FieldType.TO_ONE_TYPES.contains(dept.getFieldType())

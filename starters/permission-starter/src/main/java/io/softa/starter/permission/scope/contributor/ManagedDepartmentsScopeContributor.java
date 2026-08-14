@@ -33,7 +33,6 @@ import java.util.Set;
 public class ManagedDepartmentsScopeContributor implements ScopeContributor {
 
     private static final String DEPT_FIELD = "departmentId";
-    private static final String ID_PATH_SUFFIX = ".idPath";
     private static final String PATH_SEPARATOR = "/";
     private static final String SCOPE_EXPR_DEPT_IDS = "deptIds";
 
@@ -77,7 +76,7 @@ public class ManagedDepartmentsScopeContributor implements ScopeContributor {
         List<String> resolvedPaths = idPathResolver.idPathsOf(rootIds);
         if (resolvedPaths.isEmpty()) return new Filters();
 
-        String field = path.get() + ID_PATH_SUFFIX;
+        String field = DepartmentCascadePathResolver.idPathField(path.get());
         // For each idPath emit (field = path OR field CHILD_OF path + "/"),
         // then OR-merge across all managed depts. Two-branch avoids the
         // "1/12 matches 1/120" prefix collision idPath has because

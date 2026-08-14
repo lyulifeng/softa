@@ -66,4 +66,35 @@ class DepartmentScopeFilterPathTest {
 
         assertThat(filters.toString()).contains(EXPECTED_FIELD);
     }
+
+    /**
+     * Department scoped against itself: the field is a bare {@code idPath}, never {@code .idPath}.
+     * A leading dot reads as a well-formed cascade path and matches nothing, so the failure would
+     * be an empty department list rather than an error.
+     */
+    @Test
+    void departmentItself_filtersOnItsOwnIdPath() {
+        when(cascade.resolve("Department"))
+                .thenReturn(Optional.of(DepartmentCascadePathResolver.SELF_PATH));
+        when(idPath.idPathOf(5L)).thenReturn(Optional.of("1/5"));
+        when(idPath.idPathsOf(any())).thenReturn(List.of("1/5"));
+
+        ObjectNode subtreeExpr = JSON.objectNode();
+        subtreeExpr.put("deptId", "5");
+        ScopeRule subtreeRule = new ScopeRule();
+        subtreeRule.setScopeExpr(subtreeExpr);
+
+        ArrayNode deptIds = JSON.arrayNode();
+        deptIds.add("5");
+        ObjectNode managedExpr = JSON.objectNode();
+        managedExpr.set("deptIds", deptIds);
+        ScopeRule managedRule = new ScopeRule();
+        managedRule.setScopeExpr(managedExpr);
+
+        for (Filters filters : List.of(
+                new DepartmentSubtreeScopeContributor(cascade, idPath).compile(subtreeRule, "Department"),
+                new ManagedDepartmentsScopeContributor(cascade, idPath).compile(managedRule, "Department"))) {
+            assertThat(filters.toString()).contains("idPath").doesNotContain(".idPath");
+        }
+    }
 }
