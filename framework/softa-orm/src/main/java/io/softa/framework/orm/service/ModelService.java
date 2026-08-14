@@ -598,4 +598,20 @@ public interface ModelService<K extends Serializable> {
      * @return a map from business key (as a list of values) to the corresponding row ID
      */
     Map<List<Object>, K> getIdsByBusinessKeys(String modelName, List<String> uniqueFields, Collection<List<Object>> businessKeys);
+
+    /**
+     * Same lookup, restricted to a subset of the model's rows.
+     *
+     * <p>Exists because a business key is only unique <i>within its domain</i> for models that hold
+     * several. {@code TenantOptionItem} is the case that forced it: {@code itemCode} is unique per
+     * option set, not per table, so looking one up without naming the set can match a row from an
+     * unrelated set — or find several and fail the whole call as a duplicate key. The restriction is
+     * exactly what a relation field already declares in {@code MetaField.filters}
+     * (e.g. {@code ["optionSetCode", "=", "OrganizationType"]}), which until now only the frontend
+     * pickers applied.
+     *
+     * @param scopeFilters ANDed with the business-key condition; null / empty leaves the lookup open
+     */
+    Map<List<Object>, K> getIdsByBusinessKeys(String modelName, List<String> uniqueFields,
+                                              Collection<List<Object>> businessKeys, Filters scopeFilters);
 }

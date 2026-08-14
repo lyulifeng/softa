@@ -134,4 +134,24 @@ class ImportHandlersTest {
         return (Map<String, Map<String, MetaOptionItem>>) ReflectionTestUtils.getField(OptionManager.class,
                 "META_OPTION_SET_MAP");
     }
+
+    /**
+     * Yes / No are what the export writes and what a person types; true / false are what the
+     * option set stores. Both must come back in, in any casing — the handler used to lower-case
+     * the cell before matching it against the labels, which are `Yes` / `No`, so the label half
+     * of its advertised compatibility never matched and every exported boolean column failed.
+     */
+    @Test
+    void booleanHandler_takesLabelAndItemCodeInAnyCasing() {
+        registerOptionSet("BooleanValue", optionItem("true", "Yes"), optionItem("false", "No"));
+        BooleanHandler handler = new BooleanHandler(metaField(FieldType.BOOLEAN, "Active", "active", null), new ImportFieldDTO());
+
+        for (String yes : new String[] {"Yes", "yes", "YES", " Yes ", "true", "TRUE"}) {
+            assertEquals(Boolean.TRUE, handler.handleValue(yes), yes);
+        }
+        for (String no : new String[] {"No", "no", "false", "False"}) {
+            assertEquals(Boolean.FALSE, handler.handleValue(no), no);
+        }
+        assertThrows(ValidationException.class, () -> handler.handleValue("1"));
+    }
 }

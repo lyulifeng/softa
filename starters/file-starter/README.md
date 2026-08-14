@@ -263,6 +263,21 @@ curl -X POST http://localhost:8080/import/dynamicImport \
 - Failure is per row, not all-or-nothing: rows marked with `Failed Reason` are removed from the batch
   and the rest are written (`PARTIAL_FAILURE`). Only `skipException = false` makes the first bad row
   abort the whole import.
+- Every typed column is converted **before** the write, so a bad cell is reported with its column name
+  (`The Integer field 'Sequence' is incorrect 'abc'`). What reaches the ORM unconverted comes back as
+  the JDBC/JDK message instead — that was the case for numeric and FK columns until `NumberHandler` /
+  `RelationIdHandler` were added, and `For input string: "Branch / Branch"` named nothing at all.
+- A relation column mapped by its **bare field name** imports the related row's id. When that id is
+  numeric, a non-numeric cell is refused with the lookup path it should have used
+  (`… map this column to 'orgType.itemCode'`) — the mistake is easy to make because the value people
+  paste is what the detail page shows, and `displayName` joins fields with `" / "`. A code-as-id master
+  (`CountryRegion`, `Currency`) is exempt: its id IS the portable code, so a bare column is correct
+  there.
+- An **option** or **boolean** column takes either the stored code or the label a person sees, in any
+  casing — `Technology` or its label, `true` / `false` or `Yes` / `No`. This matters because an export
+  writes the label, and an exported file is what people re-import: a column that only accepted the
+  stored code would refuse the file the product just produced. Nothing else is accepted; `1` / `0` is
+  not a boolean spelling here.
 
 ### 4. Custom Import Handler
 You can register a Spring bean implementing `CustomImportHandler` and reference it by name in

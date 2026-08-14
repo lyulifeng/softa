@@ -1464,6 +1464,16 @@ public class ModelServiceImpl<K extends Serializable> implements ModelService<K>
      */
     @Override
     public Map<List<Object>, K> getIdsByBusinessKeys(String modelName, List<String> uniqueFields, Collection<List<Object>> businessKeys) {
+        return getIdsByBusinessKeys(modelName, uniqueFields, businessKeys, null);
+    }
+
+    /**
+     * Same lookup, narrowed to the rows {@code scopeFilters} selects — see the interface for why a
+     * business key can need a domain to be unique in.
+     */
+    @Override
+    public Map<List<Object>, K> getIdsByBusinessKeys(String modelName, List<String> uniqueFields,
+                                                     Collection<List<Object>> businessKeys, Filters scopeFilters) {
         Assert.notEmpty(uniqueFields, "The uniqueFields for model {0} cannot be empty.", modelName);
         if (CollectionUtils.isEmpty(businessKeys)) {
             return Collections.emptyMap();
@@ -1478,6 +1488,9 @@ public class ModelServiceImpl<K extends Serializable> implements ModelService<K>
                     return new UniqueKey(normalized);
                 }).toList();
         Filters filters = this.buildUniqueConstraintFilters(uniqueFields, normalizedKeys);
+        if (!Filters.isEmpty(scopeFilters)) {
+            filters = Filters.and(filters, scopeFilters);
+        }
         List<String> fields = new ArrayList<>(List.of(ModelConstant.ID));
         fields.addAll(uniqueFields);
         FlexQuery flexQuery = new FlexQuery(fields, filters);
