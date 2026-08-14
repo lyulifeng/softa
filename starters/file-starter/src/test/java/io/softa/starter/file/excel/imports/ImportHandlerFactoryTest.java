@@ -283,4 +283,47 @@ class ImportHandlerFactoryTest {
         Mockito.when(f.isRequired()).thenReturn(required);
         return f;
     }
+
+    /**
+     * A composite business key whose leading component the field pins is not a key the user can fill.
+     * TenantOptionItem is keyed by {optionSetCode, itemCode} and Department.orgType pins the set, so
+     * the suggestion must be orgType.itemCode — orgType.optionSetCode would have them restate a
+     * constant and name a column matching every item in the set.
+     */
+    @Test
+    void lookupHint_dropsTheKeyComponentTheFieldAlreadyPins() {
+        MetaField orgType = Mockito.mock(MetaField.class);
+        Mockito.when(orgType.getFieldName()).thenReturn("orgType");
+        Mockito.when(orgType.getRelatedModel()).thenReturn("TenantOptionItem");
+        Mockito.when(orgType.getFilters()).thenReturn("[\"optionSetCode\", \"=\", \"OrganizationType\"]");
+        MetaModel optionItem = Mockito.mock(MetaModel.class);
+        Mockito.when(optionItem.getBusinessKey()).thenReturn(List.of("optionSetCode", "itemCode"));
+
+        try (MockedStatic<ModelManager> mm = Mockito.mockStatic(ModelManager.class)) {
+            mm.when(() -> ModelManager.existModel("TenantOptionItem")).thenReturn(true);
+            mm.when(() -> ModelManager.getModel("TenantOptionItem")).thenReturn(optionItem);
+
+            assertEquals("orgType.itemCode", ReflectionTestUtils.invokeMethod(
+                    new ImportHandlerFactory(), "lookupHint", orgType));
+        }
+    }
+
+    /** No declared filters: the first business key stands, exactly as before. */
+    @Test
+    void lookupHint_withoutFilters_keepsTheFirstKey() {
+        MetaField picEmpId = Mockito.mock(MetaField.class);
+        Mockito.when(picEmpId.getFieldName()).thenReturn("picEmpId");
+        Mockito.when(picEmpId.getRelatedModel()).thenReturn("Employee");
+        Mockito.when(picEmpId.getFilters()).thenReturn(null);
+        MetaModel employee = Mockito.mock(MetaModel.class);
+        Mockito.when(employee.getBusinessKey()).thenReturn(List.of("code"));
+
+        try (MockedStatic<ModelManager> mm = Mockito.mockStatic(ModelManager.class)) {
+            mm.when(() -> ModelManager.existModel("Employee")).thenReturn(true);
+            mm.when(() -> ModelManager.getModel("Employee")).thenReturn(employee);
+
+            assertEquals("picEmpId.code", ReflectionTestUtils.invokeMethod(
+                    new ImportHandlerFactory(), "lookupHint", picEmpId));
+        }
+    }
 }
