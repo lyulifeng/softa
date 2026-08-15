@@ -144,9 +144,12 @@ public class UserProfileServiceImpl extends EntityServiceImpl<UserProfile, Long>
         // this and the live-status check below.
         Optional<UserAccount> account = accountService.getById(profile.getUserId());
         userInfo.setTenantId(account.map(UserAccount::getTenantId).orElse(null));
-        // Reflect the account's live status so ContextBuilder can force-logout a frozen
-        // account. Absent account row → treat as active (don't gate on a data anomaly).
-        userInfo.setActive(account.map(a -> AccountStatus.ACTIVE == a.getStatus()).orElse(Boolean.TRUE));
+        // Reflect the account's live status so ContextBuilder can force-logout a frozen account.
+        // No account row → NOT active: ContextBuilder reads this to decide force-logout, and a
+        // session whose account has vanished should be logged out, not waved through. (The old
+        // orElse(TRUE) here was also dead under multi-tenancy — validateTenantInfo below asserts a
+        // non-null tenantId first and would already have thrown.)
+        userInfo.setActive(account.map(a -> AccountStatus.ACTIVE == a.getStatus()).orElse(Boolean.FALSE));
         this.validateTenantInfo(profile, userInfo.getTenantId());
         if (profile.getPhotoId() != null) {
             // The photo URL expires in one quarter (90 days), longer than the user info cache expiration time

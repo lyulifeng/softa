@@ -83,13 +83,18 @@ public class TenantSeedCleaner {
      * and once they are gone the profiles are unreachable orphans.
      */
     public int clearProfilesOf(Long tenantId) {
-        List<Long> accountIds = modelService.getIds("UserAccount",
-                new Filters().eq(ModelConstant.TENANT_ID, tenantId));
-        if (accountIds.isEmpty()) {
-            return 0;
-        }
-        List<Long> profileIds = modelService.getIds("UserProfile",
-                new Filters().in("userId", accountIds));
+        // Resolve the profiles through the accounts' profileId — the relation of record. Not
+        // UserProfile.userId, which is the DEPRECATED back-reference: keying off it would miss any
+        // account whose back-ref was never backfilled and leave the profile as an unreachable
+        // orphan (a person is global, so nothing else can find it) while the account is deleted
+        // below. It also stays correct when one person holds several memberships in future.
+        List<Map<String, Object>> accounts = modelService.searchList("UserAccount", new FlexQuery(
+                new Filters().eq(ModelConstant.TENANT_ID, tenantId)));
+        List<Long> profileIds = accounts.stream()
+                .map(a -> a.get("profileId"))
+                .filter(java.util.Objects::nonNull)
+                .map(v -> Long.valueOf(v.toString()))
+                .distinct().toList();
         if (!profileIds.isEmpty()) {
             modelService.deleteByIds("UserProfile", profileIds);
         }

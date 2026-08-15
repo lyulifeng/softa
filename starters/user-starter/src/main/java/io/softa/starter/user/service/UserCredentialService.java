@@ -30,6 +30,13 @@ public interface UserCredentialService {
      * <p>Both are tried rather than guessing by shape ("@" or "+"): a caller that guesses wrong
      * would report "no such account" for an account that exists.
      */
+    /**
+     * ⚠️ NO CALLER THIS RELEASE — deliberately. Login still resolves the account by its email;
+     * this (and the loginEmail/loginMobile columns it queries, seeded but unread) is the seam the
+     * "resolve people by identifier" release will switch to. It ships now so that release needs no
+     * data backfill — the expensive half of that change is the data, and it is being populated
+     * from day one. Kept rather than deferred on purpose; do not delete as "dead code".
+     */
     Optional<UserProfile> findByLoginIdentifier(String identifier);
 
     /** False when the person has no stored password — that is not the same as "any password fits". */

@@ -79,7 +79,14 @@ public class UserInvitationServiceImpl extends EntityServiceImpl<UserInvitation,
         // A never-activated account (no password yet) is marked INVITED here so the set-password link
         // activates it (acceptToken flips INVITED→ACTIVE). An account that already has a password
         // (ACTIVE / LOCKED / …) is left untouched — re-inviting it just re-sends the link.
-        if (StringUtils.isBlank(credentialService.requireProfile(account).getPassword())) {
+        // "Has this person set a password yet?" — read from the profile when the account is linked.
+        // An account with no profile link is broken legacy/partial data (it already cannot log in);
+        // treat it as password-less so an invite still marks it INVITED and sends the set-password
+        // link, rather than throwing requireProfile's "not linked to a person" and dead-ending the
+        // one operation that could recover it.
+        boolean hasPassword = account.getProfileId() != null
+                && StringUtils.isNotBlank(credentialService.requireProfile(account).getPassword());
+        if (!hasPassword) {
             account.setStatus(AccountStatus.INVITED);
             accountService.updateOne(account);
         }
