@@ -83,6 +83,13 @@ public class UserIdentityServiceImpl extends EntityServiceImpl<UserIdentity, Lon
     @SkipPermissionCheck
     @CrossTenant
     @Override
+    public void setPassword(UserAccount account, String rawPassword) {
+        this.setPassword(requireIdentity(account).getId(), rawPassword);
+    }
+
+    @SkipPermissionCheck
+    @CrossTenant
+    @Override
     public void setPassword(Long identityId, String rawPassword) {
         UserIdentity identity = this.getById(identityId)
                 .orElseThrow(() -> new BusinessException("Credentials not found."));

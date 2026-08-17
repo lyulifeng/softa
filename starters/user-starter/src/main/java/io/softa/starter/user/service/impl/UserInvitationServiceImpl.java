@@ -194,8 +194,7 @@ public class UserInvitationServiceImpl extends EntityServiceImpl<UserInvitation,
                 .orElseThrow(() -> new BusinessException("Account not found."));
         // The password goes on the PERSON, so accepting an invitation from company B when you
         // already work at company A replaces one global credential rather than minting a second.
-        identityService.setPassword(
-                identityService.requireIdentity(account).getId(), newPassword);
+        identityService.setPassword(account, newPassword);
         if (account.getStatus() == AccountStatus.INVITED) {
             account.setStatus(AccountStatus.ACTIVE);
             account.setActivationTime(LocalDateTime.now());

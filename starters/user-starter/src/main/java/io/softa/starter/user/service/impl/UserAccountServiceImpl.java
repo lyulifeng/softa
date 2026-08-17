@@ -163,11 +163,12 @@ public class UserAccountServiceImpl extends EntityServiceImpl<UserAccount, Long>
         // identity now, so there is nothing to write it to until registration has created that row.
         UserInfo userInfo = profileService.registerUserProfile(userId, profileInfo);
         if (StringUtils.isNotBlank(password)) {
-            identityService.setPassword(
-                    identityService.requireIdentity(
-                            this.getById(userId).orElseThrow(
-                                    () -> new BusinessException("User not found."))).getId(),
-                    password);
+            // Re-read rather than reuse userAccount above: registerUserProfile linked the person on
+            // its OWN copy of the row, so this instance still has a null profileId and resolving the
+            // identity from it would fail with "not linked to a person".
+            UserAccount linked = this.getById(userId)
+                    .orElseThrow(() -> new BusinessException("User not found."));
+            identityService.setPassword(linked, password);
         }
         return userInfo;
     }
@@ -240,10 +241,9 @@ public class UserAccountServiceImpl extends EntityServiceImpl<UserAccount, Long>
         // TODO: Add password strength validation
 
         UserAccount user = this.getById(userId).orElseThrow(() -> new BusinessException("User not found."));
-        UserIdentity identity = identityService.requireIdentity(user);
-        identityService.setPassword(identity.getId(), newPassword);
+        identityService.setPassword(user, newPassword);
 
-        log.info("User ID {} password was reset by admin (identity {}).", userId, identity.getId());
+        log.info("User ID {} password was reset by admin.", userId);
         return true;
     }
 

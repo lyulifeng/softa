@@ -48,4 +48,13 @@ public interface UserIdentityService extends EntityService<UserIdentity, Long> {
 
     /** Hashes and stores a new password on the person's credentials, with a fresh salt. */
     void setPassword(Long identityId, String rawPassword);
+
+    /**
+     * Same, for the person behind a membership — the common case.
+     *
+     * <p>Exists because "resolve the identity, take its id, set the password" was written out at
+     * every call site, and nesting the three reads badly enough to hide the interesting part: which
+     * account the password lands on.
+     */
+    void setPassword(UserAccount account, String rawPassword);
 }
