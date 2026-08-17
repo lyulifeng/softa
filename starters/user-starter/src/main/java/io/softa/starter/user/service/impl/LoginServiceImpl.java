@@ -26,7 +26,7 @@ import io.softa.starter.user.enums.AccountStatus;
 import io.softa.starter.user.service.LoginService;
 import io.softa.starter.user.service.UserAccountService;
 import io.softa.starter.user.service.UserInvitationService;
-import io.softa.starter.user.service.UserCredentialService;
+import io.softa.starter.user.service.UserIdentityService;
 import io.softa.starter.user.service.UserProfileService;
 
 /**
@@ -46,7 +46,7 @@ public class LoginServiceImpl implements LoginService {
     private UserProfileService profileService;
 
     @Autowired
-    private UserCredentialService credentialService;
+    private UserIdentityService identityService;
 
     @Autowired(required = false)
     private TenantInfoService tenantInfoService;
@@ -217,13 +217,13 @@ public class LoginServiceImpl implements LoginService {
         // failed login.
         UserIdentity identity;
         try {
-            identity = credentialService.requireIdentity(userAccount);
+            identity = identityService.requireIdentity(userAccount);
         } catch (BusinessException e) {
             log.error("Password login blocked: account {} has no linked person — run the "
                     + "credentials migration. Reporting a plain failed login to the caller.", userAccount.getId());
             throw new BusinessException("User or password is incorrect.");
         }
-        if (!credentialService.matchesPassword(identity, password)) {
+        if (!identityService.matchesPassword(identity, password)) {
             throw new BusinessException("User or password is incorrect.");
         }
         return profileService.getUserInfo(userAccount.getId());

@@ -29,7 +29,7 @@ import io.softa.starter.user.enums.InvitationPurpose;
 import io.softa.starter.user.enums.InvitationStatus;
 import io.softa.starter.user.entity.UserInvitation;
 import io.softa.starter.user.service.UserAccountService;
-import io.softa.starter.user.service.UserCredentialService;
+import io.softa.starter.user.service.UserIdentityService;
 import io.softa.starter.user.service.UserInvitationService;
 
 /**
@@ -53,16 +53,16 @@ public class UserInvitationServiceImpl extends EntityServiceImpl<UserInvitation,
     private static final String TEMPLATE_RESET = "user.password-reset";
 
     private final UserAccountService accountService;
-    private final UserCredentialService credentialService;
+    private final UserIdentityService identityService;
     private final ApplicationEventPublisher eventPublisher;
     private final String frontendBaseUrl;
 
     public UserInvitationServiceImpl(UserAccountService accountService,
-                                     UserCredentialService credentialService,
+                                     UserIdentityService identityService,
                                      ApplicationEventPublisher eventPublisher,
                                      @Value("${app.frontend-base-url:http://localhost:3000}") String frontendBaseUrl) {
         this.accountService = accountService;
-        this.credentialService = credentialService;
+        this.identityService = identityService;
         this.eventPublisher = eventPublisher;
         this.frontendBaseUrl = frontendBaseUrl;
     }
@@ -85,7 +85,7 @@ public class UserInvitationServiceImpl extends EntityServiceImpl<UserInvitation,
         // link, rather than throwing requireIdentity's "not linked to a person" and dead-ending the
         // one operation that could recover it.
         boolean hasPassword = account.getProfileId() != null
-                && StringUtils.isNotBlank(credentialService.requireIdentity(account).getPassword());
+                && StringUtils.isNotBlank(identityService.requireIdentity(account).getPassword());
         if (!hasPassword) {
             account.setStatus(AccountStatus.INVITED);
             accountService.updateOne(account);
@@ -194,8 +194,8 @@ public class UserInvitationServiceImpl extends EntityServiceImpl<UserInvitation,
                 .orElseThrow(() -> new BusinessException("Account not found."));
         // The password goes on the PERSON, so accepting an invitation from company B when you
         // already work at company A replaces one global credential rather than minting a second.
-        credentialService.setPassword(
-                credentialService.requireIdentity(account).getId(), newPassword);
+        identityService.setPassword(
+                identityService.requireIdentity(account).getId(), newPassword);
         if (account.getStatus() == AccountStatus.INVITED) {
             account.setStatus(AccountStatus.ACTIVE);
             account.setActivationTime(LocalDateTime.now());

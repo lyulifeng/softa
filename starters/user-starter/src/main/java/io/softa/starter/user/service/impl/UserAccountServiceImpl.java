@@ -25,7 +25,7 @@ import io.softa.starter.user.entity.UserIdentity;
 import io.softa.starter.user.entity.UserAccount;
 import io.softa.starter.user.enums.AccountStatus;
 import io.softa.starter.user.service.UserAccountService;
-import io.softa.starter.user.service.UserCredentialService;
+import io.softa.starter.user.service.UserIdentityService;
 import io.softa.starter.user.service.UserProfileService;
 
 /**
@@ -39,7 +39,7 @@ public class UserAccountServiceImpl extends EntityServiceImpl<UserAccount, Long>
     private UserProfileService profileService;
 
     @Autowired
-    private UserCredentialService credentialService;
+    private UserIdentityService identityService;
 
     /**
      * Every single-entity account write funnels through here, so this is the one place that has to
@@ -163,8 +163,8 @@ public class UserAccountServiceImpl extends EntityServiceImpl<UserAccount, Long>
         // identity now, so there is nothing to write it to until registration has created that row.
         UserInfo userInfo = profileService.registerUserProfile(userId, profileInfo);
         if (StringUtils.isNotBlank(password)) {
-            credentialService.setPassword(
-                    credentialService.requireIdentity(
+            identityService.setPassword(
+                    identityService.requireIdentity(
                             this.getById(userId).orElseThrow(
                                     () -> new BusinessException("User not found."))).getId(),
                     password);
@@ -221,14 +221,14 @@ public class UserAccountServiceImpl extends EntityServiceImpl<UserAccount, Long>
 
         // The password is the PERSON's, so changing it here changes it for every company they
         // belong to. That is the intended meaning of one global credential.
-        UserIdentity identity = credentialService.requireIdentity(user);
-        if (!credentialService.matchesPassword(identity, currentPassword)) {
+        UserIdentity identity = identityService.requireIdentity(user);
+        if (!identityService.matchesPassword(identity, currentPassword)) {
             throw new BusinessException("Incorrect old password.");
         }
-        if (credentialService.matchesPassword(identity, newPassword)) {
+        if (identityService.matchesPassword(identity, newPassword)) {
             throw new BusinessException("New password cannot be the same as the old password.");
         }
-        credentialService.setPassword(identity.getId(), newPassword);
+        identityService.setPassword(identity.getId(), newPassword);
 
         log.info("User ID {} changed their password successfully (identity {}).", userId, identity.getId());
     }
@@ -240,8 +240,8 @@ public class UserAccountServiceImpl extends EntityServiceImpl<UserAccount, Long>
         // TODO: Add password strength validation
 
         UserAccount user = this.getById(userId).orElseThrow(() -> new BusinessException("User not found."));
-        UserIdentity identity = credentialService.requireIdentity(user);
-        credentialService.setPassword(identity.getId(), newPassword);
+        UserIdentity identity = identityService.requireIdentity(user);
+        identityService.setPassword(identity.getId(), newPassword);
 
         log.info("User ID {} password was reset by admin (identity {}).", userId, identity.getId());
         return true;

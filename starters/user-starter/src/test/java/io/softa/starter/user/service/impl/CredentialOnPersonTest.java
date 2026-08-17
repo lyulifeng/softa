@@ -74,7 +74,7 @@ class CredentialOnPersonTest {
     }
 
     /**
-     * Mirrors the guard clauses of {@code UserCredentialServiceImpl.requireIdentity} without a Spring
+     * Mirrors the guard clauses of {@code UserIdentityServiceImpl.requireIdentity} without a Spring
      * context: the branch under test is reached before any repository call, so wiring one would test
      * the framework rather than the rule.
      */

@@ -14,7 +14,7 @@ import io.softa.framework.base.exception.BusinessException;
  *
  * <p>The model holds the password hash, its salt and the login identifiers. Nothing outside the
  * server has any business reading or writing them: the credential paths reach it through
- * {@code UserCredentialService} in typed service code, and a person changes their password through
+ * {@code UserIdentityService} in typed service code, and a person changes their password through
  * the account endpoints, never by writing this row.
  *
  * <p>Registering a model is enough to expose it: {@code ModelController} maps
