@@ -85,9 +85,8 @@ public class UserProfileServiceImpl extends EntityServiceImpl<UserProfile, Long>
         Optional<Map<String, Object>> profileOpt = this.modelService.searchOne(this.modelName, flexQuery);
         Map<String, Object> profile = profileOpt
                 .orElseThrow(() -> new IllegalArgumentException("Current user profile not found."));
-        // No credential fields to strip any more: the password hash, salt and login identifiers
-        // moved to UserIdentity, which has no API surface at all. A profile map is now just the
-        // person's own display information, safe to hand back to their browser.
+        // No credential fields to strip any more: the password hash, salt and login identifiers moved
+        // to UserIdentity. A profile map is now just the person's own display information.
         return profile;
     }
 
