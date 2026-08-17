@@ -28,9 +28,11 @@ import io.softa.framework.orm.service.TenantInfoService;
 import io.softa.framework.orm.service.impl.EntityServiceImpl;
 import io.softa.starter.user.dto.UserProfileDTO;
 import io.softa.starter.user.entity.UserAccount;
+import io.softa.starter.user.entity.UserIdentity;
 import io.softa.starter.user.entity.UserProfile;
 import io.softa.starter.user.enums.AccountStatus;
 import io.softa.starter.user.service.UserAccountService;
+import io.softa.starter.user.service.UserIdentityService;
 import io.softa.starter.user.service.UserProfileService;
 
 /**
@@ -55,6 +57,11 @@ public class UserProfileServiceImpl extends EntityServiceImpl<UserProfile, Long>
     @Lazy
     private UserAccountService accountService;
 
+    /** Credentials live on UserIdentity, a 1:1 satellite created alongside the profile at
+     *  registration; this creates and seeds that row. */
+    @Autowired
+    private UserIdentityService identityService;
+
     /**
      * Get Current User Profile
      */
@@ -78,12 +85,9 @@ public class UserProfileServiceImpl extends EntityServiceImpl<UserProfile, Long>
         Optional<Map<String, Object>> profileOpt = this.modelService.searchOne(this.modelName, flexQuery);
         Map<String, Object> profile = profileOpt
                 .orElseThrow(() -> new IllegalArgumentException("Current user profile not found."));
-        // Never hand a browser a password hash — not even the caller's own. A hijacked session
-        // could otherwise read the hash and crack it offline, turning a temporary compromise into
-        // the durable credential. The person edits their profile, never their stored secret.
-        profile.remove("password");
-        profile.remove("passwordSalt");
-        profile.remove("passwordLockedUntil");
+        // No credential fields to strip any more: the password hash, salt and login identifiers
+        // moved to UserIdentity, which has no API surface at all. A profile map is now just the
+        // person's own display information, safe to hand back to their browser.
         return profile;
     }
 
@@ -209,21 +213,13 @@ public class UserProfileServiceImpl extends EntityServiceImpl<UserProfile, Long>
         UserProfile userProfile = this.buildUserProfile(profileDTO);
         userProfile.setUserId(userId);
 
-        // Seed the LOGIN identifiers from the account's work contacts, before the insert.
-        //
-        // Not read by anything yet — login still resolves an account by its email, exactly as
-        // before. They are populated from day one so that the release which DOES resolve people by
-        // identifier needs no backfill: the expensive part of that change is the data, and this is
-        // the one moment where every new person passes through a single place.
         // Loudly, not orElse(null): silently skipping here would return success for a person
-        // who can never authenticate — no identifiers, and no profileId link below. The one
+        // who can never authenticate — no identity row, and no profileId link below. The one
         // caller that legitimately has no account does not exist; every path creates the
         // account first.
         UserAccount account = accountService.getById(userId).orElseThrow(
                 () -> new BusinessException(
                         "Account " + userId + " not found — a profile cannot be registered before its account."));
-        userProfile.setLoginEmail(StringUtils.trimToNull(account.getEmail()));
-        userProfile.setLoginMobile(StringUtils.trimToNull(account.getMobile()));
         Long profileId = this.createOne(userProfile);
         userProfile.setId(profileId);
 
@@ -233,6 +229,20 @@ public class UserProfileServiceImpl extends EntityServiceImpl<UserProfile, Long>
         // fails with "not linked to a person".
         account.setProfileId(profileId);
         accountService.updateOne(account);
+
+        // Create the person's UserIdentity (1:1 satellite) and seed the LOGIN identifiers from the
+        // account's work contacts, in the same transaction — a person is not fully created until
+        // their credentials row exists, and requireIdentity resolves through it.
+        //
+        // The identifiers are not read by anything yet — login still resolves an account by its
+        // email, exactly as before. They are populated from day one so that the release which DOES
+        // resolve people by identifier needs no backfill: the expensive part of that change is the
+        // data, and this is the one moment where every new person passes through a single place.
+        UserIdentity identity = new UserIdentity();
+        identity.setProfileId(profileId);
+        identity.setLoginEmail(StringUtils.trimToNull(account.getEmail()));
+        identity.setLoginMobile(StringUtils.trimToNull(account.getMobile()));
+        identityService.createOne(identity);
 
         // Build UserInfo and upload photo if photo is not empty
         UserInfo userInfo = this.buildUserInfo(userProfile);

@@ -21,7 +21,7 @@ import io.softa.framework.orm.service.CacheService;
 import io.softa.framework.orm.service.TenantInfoService;
 import io.softa.starter.user.dto.InvitationInfo;
 import io.softa.starter.user.entity.UserAccount;
-import io.softa.starter.user.entity.UserProfile;
+import io.softa.starter.user.entity.UserIdentity;
 import io.softa.starter.user.enums.AccountStatus;
 import io.softa.starter.user.service.LoginService;
 import io.softa.starter.user.service.UserAccountService;
@@ -215,15 +215,15 @@ public class LoginServiceImpl implements LoginService {
         // is anonymous, and a distinct message would tell a stranger which accounts exist but are
         // broken — an account-existence oracle. Inside, it is a data fault; outside, it is just a
         // failed login.
-        UserProfile profile;
+        UserIdentity identity;
         try {
-            profile = credentialService.requireProfile(userAccount);
+            identity = credentialService.requireIdentity(userAccount);
         } catch (BusinessException e) {
             log.error("Password login blocked: account {} has no linked person — run the "
                     + "credentials migration. Reporting a plain failed login to the caller.", userAccount.getId());
             throw new BusinessException("User or password is incorrect.");
         }
-        if (!credentialService.matchesPassword(profile, password)) {
+        if (!credentialService.matchesPassword(identity, password)) {
             throw new BusinessException("User or password is incorrect.");
         }
         return profileService.getUserInfo(userAccount.getId());

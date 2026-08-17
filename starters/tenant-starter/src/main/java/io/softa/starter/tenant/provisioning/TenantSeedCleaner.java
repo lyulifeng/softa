@@ -96,6 +96,9 @@ public class TenantSeedCleaner {
                 .map(v -> Long.valueOf(v.toString()))
                 .distinct().toList();
         if (!profileIds.isEmpty()) {
+            // Deleting the person takes their UserIdentity with them: the credentials carry
+            // onDelete=CASCADE on their profileId, so there is no separate cleanup to keep in step
+            // here (and no orphaned credential row if one is ever added to the person).
             modelService.deleteByIds("UserProfile", profileIds);
         }
         return profileIds.size();

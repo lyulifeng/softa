@@ -25,12 +25,17 @@ import io.softa.starter.user.service.UserProfileService;
 /**
  * The ONLY API surface of {@code UserProfile}: three endpoints that touch the caller's own row.
  *
- * <p>Deliberately NOT an {@code EntityController}. The person now carries the login credentials,
- * and a person is global rather than tenant-scoped — so the generic CRUD surface would have been
- * both a credential leak (list reads return the hash and salt) and a takeover vector (updateOne
- * accepts a planted hash), reaching across every tenant. There is no list endpoint at all: nobody
- * browses people; a person is only ever reached from their own session, or internally from the
- * membership ({@code UserAccount}) in typed service code.
+ * <p>Deliberately NOT an {@code EntityController}. A person is global rather than tenant-scoped, so
+ * the generic CRUD surface would reach across every tenant: list reads would return every person in
+ * the system, and {@code updateOne} would let any caller rewrite anyone's details.
+ *
+ * <p>The credentials themselves are no longer here — they moved to {@code UserIdentity}, which is
+ * closed off the same way — so what this protects now is cross-tenant PII rather than a password
+ * hash. The surface stays shut regardless: this release ships no people-directory feature, and
+ * opening a browsable surface is a product decision with its own permission model, not a side
+ * effect of moving credential columns. There is no list endpoint at all: a person is only ever
+ * reached from their own session, or internally from the membership ({@code UserAccount}) in typed
+ * service code.
  *
  * <p>The three self endpoints keep their historical URLs so the frontend session bootstrap and the
  * personal-settings page need no change.
@@ -51,8 +56,8 @@ public class UserProfileController {
      * <p>This is what actually closes the surface. Not extending {@code EntityController} is not
      * enough on its own: {@code ModelController} maps {@code /{modelName}/createOne} etc. for EVERY
      * registered model, and a platform super-admin bypasses the permission gate — so the generic
-     * endpoints would still resolve and return the hash+salt of every person in every tenant, or
-     * accept a planted hash. Listing each path as a LITERAL first segment ({@code /UserProfile/...})
+     * endpoints would still resolve and return, or rewrite, every person in every tenant.
+     * Listing each path as a LITERAL first segment ({@code /UserProfile/...})
      * wins the route over {@code ModelController}'s variable first segment ({@code /{modelName}/...})
      * with no ambiguity, for every HTTP method, before the handler ever touches data.
      *

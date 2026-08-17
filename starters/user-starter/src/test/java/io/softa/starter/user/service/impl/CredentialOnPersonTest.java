@@ -5,7 +5,7 @@ import org.junit.jupiter.api.Test;
 import io.softa.framework.base.exception.BusinessException;
 import io.softa.framework.base.security.PasswordUtils;
 import io.softa.starter.user.entity.UserAccount;
-import io.softa.starter.user.entity.UserProfile;
+import io.softa.starter.user.entity.UserIdentity;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -13,17 +13,18 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 /**
  * The credential seam, pinned at the two places it can silently go wrong.
  *
- * <p>Both cases below were REAL failures during development, not hypotheticals — which is why they
- * are tests rather than comments:
+ * <p>Credentials live on {@link UserIdentity}, a 1:1 satellite of the person; the rules below are
+ * the same wherever the columns sit. Both cases were REAL failures during development, not
+ * hypotheticals — which is why they are tests rather than comments:
  * <ul>
  *   <li>a stored hash longer than the column, so no credential could be written at all;
- *   <li>an account with no profile link, where "no password found" must fail loudly instead of
+ *   <li>an account with no linked identity, where "no password found" must fail loudly instead of
  *       being read as "this person has no password" (which would open a password-less path in).
  * </ul>
  */
 class CredentialOnPersonTest {
 
-    /** The width declared on {@code UserProfile.password}. */
+    /** The width declared on {@code UserIdentity.password}. */
     private static final int DECLARED_LENGTH = 256;
 
     @Test
@@ -43,58 +44,58 @@ class CredentialOnPersonTest {
     @Test
     void aPasswordVerifiesAgainstTheSaltItWasHashedWith() {
         String salt = PasswordUtils.generateSalt();
-        UserProfile profile = new UserProfile();
-        profile.setPasswordSalt(salt);
-        profile.setPassword(PasswordUtils.hashPassword("Str0ngPass", salt));
+        UserIdentity identity = new UserIdentity();
+        identity.setPasswordSalt(salt);
+        identity.setPassword(PasswordUtils.hashPassword("Str0ngPass", salt));
 
-        assertThat(PasswordUtils.hashPassword("Str0ngPass", salt)).isEqualTo(profile.getPassword());
-        assertThat(PasswordUtils.hashPassword("wrong", salt)).isNotEqualTo(profile.getPassword());
+        assertThat(PasswordUtils.hashPassword("Str0ngPass", salt)).isEqualTo(identity.getPassword());
+        assertThat(PasswordUtils.hashPassword("wrong", salt)).isNotEqualTo(identity.getPassword());
     }
 
     @Test
-    void anAccountWithNoPersonIsRefusedRatherThanTreatedAsPasswordless() {
-        // This is the important one. requireProfile must throw, because the alternative — returning
-        // an empty profile — makes matchesPassword answer "no password set", which every caller
+    void anAccountWithNoIdentityIsRefusedRatherThanTreatedAsPasswordless() {
+        // This is the important one. requireIdentity must throw, because the alternative — returning
+        // an empty identity — makes matchesPassword answer "no password set", which every caller
         // reads as "this person cannot use password login" rather than "the data is broken".
         UserAccount orphan = new UserAccount();
         orphan.setId(1L);
         orphan.setProfileId(null);
 
-        assertThatThrownBy(() -> requireProfileOf(orphan))
+        assertThatThrownBy(() -> requireIdentityOf(orphan))
                 .isInstanceOf(BusinessException.class)
                 .hasMessageContaining("not linked to a person");
     }
 
     @Test
     void aNullAccountIsRefused() {
-        assertThatThrownBy(() -> requireProfileOf(null))
+        assertThatThrownBy(() -> requireIdentityOf(null))
                 .isInstanceOf(BusinessException.class)
                 .hasMessageContaining("not found");
     }
 
     /**
-     * Mirrors the guard clauses of {@code UserCredentialServiceImpl.requireProfile} without a Spring
+     * Mirrors the guard clauses of {@code UserCredentialServiceImpl.requireIdentity} without a Spring
      * context: the branch under test is reached before any repository call, so wiring one would test
      * the framework rather than the rule.
      */
-    private static UserProfile requireProfileOf(UserAccount account) {
+    private static UserIdentity requireIdentityOf(UserAccount account) {
         if (account == null) {
             throw new BusinessException("Account not found.");
         }
         if (account.getProfileId() == null) {
             throw new BusinessException("This account is not linked to a person yet — contact support.");
         }
-        return new UserProfile();
+        return new UserIdentity();
     }
 
     @Test
-    void aProfileWithNoStoredPasswordNeverMatches() {
+    void anIdentityWithNoStoredPasswordNeverMatches() {
         // An invited person who has not set a password yet. An empty hash must not compare equal to
         // anything — that is the classic way a "no password" account becomes a way in.
-        UserProfile noPassword = new UserProfile();
+        UserIdentity noPassword = new UserIdentity();
         assertThat(noPassword.getPassword()).isNull();
 
-        UserProfile blankPassword = new UserProfile();
+        UserIdentity blankPassword = new UserIdentity();
         blankPassword.setPassword("");
         assertThat(blankPassword.getPassword()).isEmpty();
     }
