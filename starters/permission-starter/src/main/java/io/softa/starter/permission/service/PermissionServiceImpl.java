@@ -33,6 +33,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
+import java.util.stream.Collectors;
 
 /**
  * Bridges the framework's {@link PermissionService} contract to the
@@ -124,32 +125,59 @@ public class PermissionServiceImpl implements PermissionService {
      *
      * <p>Fail-closed is the default, and every branch below is an argument against it:
      * <ol>
+     *   <li><b>Owned by a granted model</b> → follow that owner; see {@link #findReferencer} and
+     *       {@link #followOwner}.</li>
      *   <li><b>Has a forward anchor</b> → real business data, which someone was supposed to grant. Closed.</li>
      *   <li><b>A country value domain</b> → the rows are a dropdown's own domain; see
      *       {@link #isCountryValueDomain}. Readable.</li>
-     *   <li><b>Reachable from a granted model</b> → follow that owner; see {@link #findReferencer}.</li>
+     *   <li><b>A shared reference/config</b> → a ManyToOne target of a granted model. Readable.</li>
      *   <li><b>Otherwise</b> → nothing connects the caller to it. Closed.</li>
      * </ol>
+     *
+     * <p><b>The ownership edge is tested first, and the order is the whole point.</b> On a one-to-many
+     * child the two tests read the SAME column: {@code EmpAttachment.employeeId} is both what makes
+     * {@code SELF} applicable — so {@code hasForwardAnchor} answers true — and the back-reference
+     * {@link #followOwner} would follow. Asking about the anchor first therefore rejected every
+     * one-to-many child of a granted model as "business data nobody granted", and that is every such
+     * child there is: a parent cannot hold N ids, so the FK lives on the child by necessity. The
+     * follow-the-owner branch could only ever run for a one-to-one child, whose FK sits on the parent
+     * and which consequently has no such column — which is why it looked correct. The only shape that
+     * reached it was the only shape the fault could not affect.
+     *
+     * <p>{@code SHARED} deliberately stays behind the anchor test. Being referenced is not ownership,
+     * and letting it jump the queue would open a business table merely because something points at it.
+     * The two owned kinds are safe there precisely because they are bounded by the parent's own scope.
      *
      * <p>Cross-model display expansion never arrives here — it bypasses everything upstream via
      * {@code skipPermissionCheck}.
      */
     private Filters scopeWithoutGrant(String model, PermissionInfo pi, Filters originalFilters) {
+        Referencer ref = findReferencer(model, pi);
+        if (ref != null && ref.kind() != Kind.SHARED) {
+            return followOwner(ref, originalFilters);
+        }
         if (hasForwardAnchor(model)) {
             return combineAnd(originalFilters, ScopeRuleCompiler.matchNone());
         }
         if (isCountryValueDomain(model)) {
             return originalFilters;
         }
-        Referencer ref = findReferencer(model, pi);
-        if (ref == null) {
-            return combineAnd(originalFilters, ScopeRuleCompiler.matchNone()); // unreachable
-        }
-        // Both owned kinds re-enter scope for the parent, so the parent's own row-scope is
-        // applied (parent strict ⇒ child strict) — nothing is widened, the child simply
-        // inherits the visibility of the row that owns it.
+        // ref == null → nothing connects the caller to it; SHARED → shared reference/config, readable.
+        return ref == null
+                ? combineAnd(originalFilters, ScopeRuleCompiler.matchNone())
+                : originalFilters;
+    }
+
+    /**
+     * Row-scope for a child the caller reaches through a model they were granted.
+     *
+     * <p>Both owned kinds re-enter scope for the parent, so the parent's own row-scope is applied
+     * (parent strict ⇒ child strict) — nothing is widened, the child simply inherits the visibility
+     * of the row that owns it.
+     */
+    private Filters followOwner(Referencer ref, Filters originalFilters) {
         return switch (ref.kind()) {
-            // Shared reference/config (ManyToOne target) → readable.
+            // Filtered out by the caller — an ownership edge is what reaches this method.
             case SHARED -> originalFilters;
             // ONE_TO_ONE owned child → the FK sits on the OWNER and holds the child's id,
             // so the visible child ids are the FK values of in-scope owner rows.
@@ -309,31 +337,41 @@ public class PermissionServiceImpl implements PermissionService {
         if (ids == null || ids.isEmpty() || shouldBypass()) return;
         PermissionInfo pi = currentPi();
         if (PermissionInfo.isAdmin(pi)) return;
-        List<Serializable> idList = new ArrayList<>(ids);
+        // De-duplicated at the entry, because the comparison below is against a COUNT and SQL's IN
+        // de-duplicates: deleteByIds(model, [7, 7]) counted 1 against a size of 2 and threw on a
+        // legitimate call. RequirePermissionAspect already worked around this by de-duplicating
+        // before the call; doing it here is what makes that workaround unnecessary, and it keeps
+        // one yardstick for both comparisons — the owned branch below used a distinct() count while
+        // the generic one used the raw size.
+        List<Serializable> idList = ids.stream().distinct().collect(Collectors.toList());
 
-        // Anchorless config/extension model with no explicit grant carries no
-        // scope anchor of its own — verify it via metadata (follow the owner /
-        // allow shared config) instead of fail-closing to zero rows.
-        if (!hasExplicitRules(pi, model) && !hasForwardAnchor(model)) {
+        // A model with no explicit grant is verified via metadata (follow the owner / allow shared
+        // config) rather than fail-closing to zero rows.
+        if (!hasExplicitRules(pi, model)) {
             Referencer ref = findReferencer(model, pi);
-            if (ref == null) {
-                throw new PermissionException(
-                        "Some " + model + " ids are outside your " + accessType + " scope");
-            }
-            if (ref.kind() == Kind.SHARED) {
-                return; // shared reference/config (ManyToOne target) → readable, nothing to check
-            }
-            if (ref.kind() == Kind.OWNED_ONE_TO_ONE) {
+            Kind kind = ref == null ? null : ref.kind();
+
+            if (kind == Kind.OWNED_ONE_TO_ONE) {
                 // The FK is on the OWNER, so the child's own id column cannot be scoped
                 // directly — ask the owner instead: "are these ids all referenced by an owner
                 // row within my scope?" count() re-enters scope on the owner. Bounded by ids.
                 long ownedInScope = modelService.count(ref.parentModel(),
                         Filters.of(ref.fkField(), Operator.IN, idList));
-                if (ownedInScope != idList.stream().distinct().count()) {
+                if (ownedInScope != idList.size()) {
                     throw new PermissionException(
                             "Some " + model + " ids are outside your " + accessType + " scope");
                 }
                 return;
+            }
+            // Ownership edges are resolved ahead of the anchor test, mirroring scopeWithoutGrant —
+            // see its javadoc for why the order decides whether one-to-many children work at all.
+            // The two branches below are the ones that must still ask about the anchor.
+            if (kind == Kind.SHARED && !hasForwardAnchor(model)) {
+                return; // shared reference/config (ManyToOne target) → readable, nothing to check
+            }
+            if (kind == null && !hasForwardAnchor(model)) {
+                throw new PermissionException(
+                        "Some " + model + " ids are outside your " + accessType + " scope");
             }
             // CHILD_BY_BACKREF falls through to the generic check below: the FK is on the
             // child, so its own read scope already resolves to "back-reference lands on an

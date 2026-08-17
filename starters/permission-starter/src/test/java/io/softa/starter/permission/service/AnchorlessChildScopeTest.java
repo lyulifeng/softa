@@ -92,9 +92,25 @@ class AnchorlessChildScopeTest {
         return r;
     }
 
-    /** Declare the child anchorless and reachable from Employee through {@code relation}. */
-    private void employeeReferences(String child, FieldType relation, String fieldName, String relatedField) {
-        when(applicability.applicableFor(child)).thenReturn(UNIVERSAL_ONLY);
+    /**
+     * What a one-to-many child really resolves to. A child of that cardinality ALWAYS carries the
+     * parent's foreign key — that is what makes it one-to-many, the parent cannot hold N ids — and
+     * {@code SELF}'s filter is {@code ["employeeId", "=", "USER_EMP_ID"]}, so {@code SELF} is
+     * applicable to every one of them. {@link #UNIVERSAL_ONLY} is therefore a shape no such child
+     * can have, and stubbing it that way pinned a premise that does not occur in production.
+     *
+     * <p>A one-to-one child is the opposite case and keeps {@code UNIVERSAL_ONLY}: its FK lives on
+     * the parent ({@code employee.emp_time_profile_id}), so it has no back-reference column and no
+     * anchor of its own. That asymmetry is why the fallback looked correct — the only shape that
+     * ever reached it was the only shape the bug could not affect.
+     */
+    private static final java.util.Set<ScopeType> CARRIES_EMPLOYEE_ID =
+            java.util.Set.of(ScopeType.ALL, ScopeType.SELF, ScopeType.CREATED_BY_SELF);
+
+    /** Declare the child reachable from Employee through {@code relation}, with its real anchor set. */
+    private void employeeReferences(String child, FieldType relation, String fieldName,
+                                    String relatedField, java.util.Set<ScopeType> applicable) {
+        when(applicability.applicableFor(child)).thenReturn(applicable);
         MetaField f = mock(MetaField.class);
         when(f.getRelatedModel()).thenReturn(child);
         when(f.getFieldType()).thenReturn(relation);
@@ -117,7 +133,7 @@ class AnchorlessChildScopeTest {
     void oneToOneChildIsScopedByTheOwnersVisibleForeignKeys() {
         // Employee.empTimeProfileId -> EmpTimeProfile. The visible children are the FK values of
         // the owner rows the caller can see, so the filter lands on the child's own id.
-        employeeReferences("EmpTimeProfile", FieldType.ONE_TO_ONE, "empTimeProfileId", null);
+        employeeReferences("EmpTimeProfile", FieldType.ONE_TO_ONE, "empTimeProfileId", null, UNIVERSAL_ONLY);
         when(modelService.getRelatedIds(eq("Employee"), any(Filters.class), eq("empTimeProfileId")))
                 .thenReturn(List.of(7L, 8L));
 
@@ -126,7 +142,7 @@ class AnchorlessChildScopeTest {
 
     @Test
     void oneToOneChildIsDeniedWhenTheOwnerSeesNothing() {
-        employeeReferences("EmpTimeProfile", FieldType.ONE_TO_ONE, "empTimeProfileId", null);
+        employeeReferences("EmpTimeProfile", FieldType.ONE_TO_ONE, "empTimeProfileId", null, UNIVERSAL_ONLY);
         when(modelService.getRelatedIds(eq("Employee"), any(Filters.class), eq("empTimeProfileId")))
                 .thenReturn(List.of());
 
@@ -140,7 +156,7 @@ class AnchorlessChildScopeTest {
     void oneToManyChildIsScopedByItsBackReferenceToVisibleParents() {
         // Employee.empAddresses -> EmpAddress, back-referenced by EmpAddress.employeeId. Filtering
         // the child's id here would be wrong — the ids in hand are the PARENT's.
-        employeeReferences("EmpAddress", FieldType.ONE_TO_MANY, "empAddresses", "employeeId");
+        employeeReferences("EmpAddress", FieldType.ONE_TO_MANY, "empAddresses", "employeeId", CARRIES_EMPLOYEE_ID);
         when(modelService.getIds(eq("Employee"), any(Filters.class))).thenReturn(List.of(101L, 102L));
 
         assertThat(scopeOf("EmpAddress").toString()).contains("employeeId", "101", "102");
@@ -148,7 +164,7 @@ class AnchorlessChildScopeTest {
 
     @Test
     void oneToManyChildIsDeniedWhenNoParentIsVisible() {
-        employeeReferences("EmpAddress", FieldType.ONE_TO_MANY, "empAddresses", "employeeId");
+        employeeReferences("EmpAddress", FieldType.ONE_TO_MANY, "empAddresses", "employeeId", CARRIES_EMPLOYEE_ID);
         when(modelService.getIds(eq("Employee"), any(Filters.class))).thenReturn(List.of());
 
         assertThat(scopeOf("EmpAddress")).isEqualTo(matchNoneAnded());
@@ -158,9 +174,22 @@ class AnchorlessChildScopeTest {
     void oneToManyWithoutABackReferenceFieldStaysFailClosed() {
         // relatedField names the child's FK column; with nothing to filter on there is no safe
         // narrowing to apply, so the child must not become readable by default.
-        employeeReferences("EmpAddress", FieldType.ONE_TO_MANY, "empAddresses", null);
+        employeeReferences("EmpAddress", FieldType.ONE_TO_MANY, "empAddresses", null, CARRIES_EMPLOYEE_ID);
 
         assertThat(scopeOf("EmpAddress")).isEqualTo(matchNoneAnded());
+    }
+
+    @Test
+    void oneToOneChildCarryingARedundantEmployeeIdIsStillScopedByItsOwner() {
+        // EmpBankAccount is owned one-to-one (Employee.empBankAccountId) yet also carries a
+        // back-reference of its own, so it has an anchor without being anchored-by-design. The
+        // cardinality is what decides ownership, not whether the column happens to be there.
+        employeeReferences("EmpBankAccount", FieldType.ONE_TO_ONE, "empBankAccountId", null,
+                CARRIES_EMPLOYEE_ID);
+        when(modelService.getRelatedIds(eq("Employee"), any(Filters.class), eq("empBankAccountId")))
+                .thenReturn(List.of(9L));
+
+        assertThat(scopeOf("EmpBankAccount").toString()).contains("id", "9");
     }
 
     // ── shared master two hops out: granted → owned child → master ─────────────────────────
@@ -234,6 +263,23 @@ class AnchorlessChildScopeTest {
 
     // ── the anchored case is unchanged ─────────────────────────────────────────────────────
 
+    /**
+     * The guard on the reordering: only OWNERSHIP edges are resolved ahead of the anchor test.
+     * A model that a granted model merely REFERENCES stays behind it, so anchored business data
+     * cannot become readable just because something points at it — which is what would happen if
+     * SHARED jumped the queue along with the two owned kinds.
+     */
+    @Test
+    void aSharedReferenceDoesNotOvertakeTheAnchorTest() {
+        when(applicability.applicableFor("LeaveBalanceAccount"))
+                .thenReturn(java.util.Set.of(ScopeType.ALL, ScopeType.CREATED_BY_SELF,
+                        ScopeType.DEPT_SUBTREE));
+        modelFields("Employee",
+                relation("LeaveBalanceAccount", FieldType.MANY_TO_ONE, "leaveBalanceAccountId"));
+
+        assertThat(scopeOf("LeaveBalanceAccount")).isEqualTo(matchNoneAnded());
+    }
+
     @Test
     void aModelWithItsOwnAnchorStillFailsClosedWithoutAGrant() {
         // Real business data (it carries departmentId, so a scope rule could restrict it) is NOT
@@ -243,6 +289,28 @@ class AnchorlessChildScopeTest {
                         ScopeType.CREATED_BY_SELF, ScopeType.DEPT_SUBTREE));
 
         assertThat(scopeOf("LeaveBalanceAccount")).isEqualTo(matchNoneAnded());
+    }
+
+    // ── the id list is de-duplicated before it is counted ──────────────────────────────────
+
+    /**
+     * SQL's {@code IN} de-duplicates, so comparing a COUNT against the raw list size false-rejects
+     * a legitimate call: {@code deleteByIds(model, [7, 7])} counted 1 against a size of 2. The
+     * caller was expected to de-duplicate — {@code RequirePermissionAspect} does, and the owned
+     * branch of this very method used a {@code distinct()} count while the generic one did not.
+     * One yardstick, established at the entry.
+     */
+    @Test
+    void repeatedIdsAreNotMistakenForOutOfScopeOnes() {
+        // Employee carries an explicit grant in the fixture, so this goes straight to the generic
+        // count — the path where the two comparisons disagreed.
+        when(modelService.count(eq("Employee"), any(Filters.class))).thenReturn(1L);
+
+        Context ctx = new Context();
+        ctx.setTenantId(TENANT);
+        ctx.setUserId(USER);
+        ContextHolder.runWith(ctx, () -> service.checkIdsAccess(
+                "Employee", List.of(7L, 7L), io.softa.framework.orm.enums.AccessType.DELETE));
     }
 
     /** What {@code combineAnd(new Filters(), matchNone())} produces. */
