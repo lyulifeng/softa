@@ -366,9 +366,10 @@ class RequirePermissionAspectTest {
         PermissionService permissionService = mock(PermissionService.class);
         RequirePermissionAspect aspect = new RequirePermissionAspect(permissionService);
         Method m = method(SigningController.class, "initiate", InitiateReq.class);
-        // two documents for employee 7 + one for 9 — dedupe is correctness, not
-        // cosmetics: checkIdsAccess compares count against the RAW list size,
-        // so [7,7,9] would count 2 visible vs size 3 and false-reject.
+        // two documents for employee 7 + one for 9. checkIdsAccess now de-duplicates at its own
+        // entry, so this is no longer load-bearing — it stays because the verified argument is
+        // what documents the aspect's contract, and a caller reading it should see the set of
+        // employees being checked rather than one entry per document.
         InitiateReq req = new InitiateReq(List.of(
                 new SigningDoc(7L), new SigningDoc(7L), new SigningDoc(9L)));
         ProceedingJoinPoint jp = joinPoint(m, new Object[]{req}, args -> null);
