@@ -75,6 +75,36 @@ public class TenantSeedCleaner {
     }
 
     /**
+     * Delete the PROFILES of this tenant's accounts — resolved through the accounts, because a
+     * person is a global model with no tenant column of its own. Filtering {@code UserProfile} by
+     * {@code tenantId} does not merely return nothing, it throws: the field no longer exists.
+     *
+     * <p>Must run BEFORE the accounts are cleared — the accounts are the only route to these rows,
+     * and once they are gone the profiles are unreachable orphans.
+     */
+    public int clearProfilesOf(Long tenantId) {
+        // Resolve the profiles through the accounts' profileId — the relation of record. Not
+        // UserProfile.userId, which is the DEPRECATED back-reference: keying off it would miss any
+        // account whose back-ref was never backfilled and leave the profile as an unreachable
+        // orphan (a person is global, so nothing else can find it) while the account is deleted
+        // below. It also stays correct when one person holds several memberships in future.
+        List<Map<String, Object>> accounts = modelService.searchList("UserAccount", new FlexQuery(
+                new Filters().eq(ModelConstant.TENANT_ID, tenantId)));
+        List<Long> profileIds = accounts.stream()
+                .map(a -> a.get("profileId"))
+                .filter(java.util.Objects::nonNull)
+                .map(v -> Long.valueOf(v.toString()))
+                .distinct().toList();
+        if (!profileIds.isEmpty()) {
+            // Deleting the person takes their UserIdentity with them: the credentials carry
+            // onDelete=CASCADE on their profileId, so there is no separate cleanup to keep in step
+            // here (and no orphaned credential row if one is ever added to the person).
+            modelService.deleteByIds("UserProfile", profileIds);
+        }
+        return profileIds.size();
+    }
+
+    /**
      * Delete everything this tenant's predefined-data load created, then the bindings that recorded it.
      *
      * <p>Driven by the ledger rather than by the seed file list, which is what makes it exact: the loader

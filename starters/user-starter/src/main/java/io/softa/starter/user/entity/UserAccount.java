@@ -24,8 +24,18 @@ import io.softa.starter.user.enums.AccountStatus;
         multiTenant = true,
         searchName = {"nickname", "username"}
 )
+/**
+ * A MEMBERSHIP: one person's employment at one company. The person is {@link UserProfile}.
+ *
+ * <p>Email stays GLOBALLY unique here, exactly as before. Relaxing it to per-tenant is what
+ * enables one person to work for two companies, and that belongs to the release which adds that
+ * ability — not to this one, which only moves where credentials are stored. Login still resolves an
+ * account by its email, and a relaxed index would make that resolution ambiguous.
+ */
 @Index(indexName = "uk_user_account_email", fields = {"email"}, unique = true,
         message = "This email is already registered.")
+@Index(indexName = "uk_user_account_tenant_profile", fields = {"tenantId", "profileId"},
+        unique = true, message = "This person already has an account in this company.")
 public class UserAccount extends AuditableModel {
 
     @Serial
@@ -37,17 +47,22 @@ public class UserAccount extends AuditableModel {
     @Field(label = "Tenant ID")
     private Long tenantId;
 
+    @Field(fieldType = FieldType.MANY_TO_ONE, relatedModel = UserProfile.class,
+            description = "The person this membership belongs to. No delete cascade in either "
+                    + "direction: closing one company's account must not remove the person, and "
+                    + "deleting a person is not something a tenant-scoped action may do")
+    private Long profileId;
+
     @Field
     private String nickname;
 
     @Field
     private String username;
 
-    @Field(length = 256, copyable = false)
-    private String password;
-
-    @Field(copyable = false)
-    private String passwordSalt;
+    // password and passwordSalt moved to UserProfile — a credential belongs to the person, not to
+    // one employment. Both columns stay in the database but are no longer declared here: the
+    // scanner never auto-DROPs, so rolling the binary back still finds its credentials. Dropping
+    // them for real is a separate release step (user-02-drop-old-credential-columns.sql).
 
     @Field
     private String email;

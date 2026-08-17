@@ -21,10 +21,12 @@ import io.softa.framework.orm.service.CacheService;
 import io.softa.framework.orm.service.TenantInfoService;
 import io.softa.starter.user.dto.InvitationInfo;
 import io.softa.starter.user.entity.UserAccount;
+import io.softa.starter.user.entity.UserIdentity;
 import io.softa.starter.user.enums.AccountStatus;
 import io.softa.starter.user.service.LoginService;
 import io.softa.starter.user.service.UserAccountService;
 import io.softa.starter.user.service.UserInvitationService;
+import io.softa.starter.user.service.UserIdentityService;
 import io.softa.starter.user.service.UserProfileService;
 
 /**
@@ -42,6 +44,9 @@ public class LoginServiceImpl implements LoginService {
 
     @Autowired
     private UserProfileService profileService;
+
+    @Autowired
+    private UserIdentityService identityService;
 
     @Autowired(required = false)
     private TenantInfoService tenantInfoService;
@@ -202,8 +207,23 @@ public class LoginServiceImpl implements LoginService {
     public UserInfo loginByEmailAndPassword(String email, String password) {
         UserAccount userAccount = accountService.getUserByEmail(email).orElseThrow(
                 () -> new BusinessException("User or password is incorrect."));
-        String hashedPassword = PasswordUtils.hashPassword(password, userAccount.getPasswordSalt());
-        if (!Objects.equals(hashedPassword, userAccount.getPassword())) {
+        // The account still identifies WHO is signing in; only the credential moved. Verifying
+        // against the person means someone employed by two companies has one password to remember,
+        // and it is the same one whichever account they arrive through.
+        //
+        // requireProfile's own error ("not linked to a person") must not escape here: this endpoint
+        // is anonymous, and a distinct message would tell a stranger which accounts exist but are
+        // broken — an account-existence oracle. Inside, it is a data fault; outside, it is just a
+        // failed login.
+        UserIdentity identity;
+        try {
+            identity = identityService.requireIdentity(userAccount);
+        } catch (BusinessException e) {
+            log.error("Password login blocked: account {} has no linked person — run the "
+                    + "credentials migration. Reporting a plain failed login to the caller.", userAccount.getId());
+            throw new BusinessException("User or password is incorrect.");
+        }
+        if (!identityService.matchesPassword(identity, password)) {
             throw new BusinessException("User or password is incorrect.");
         }
         return profileService.getUserInfo(userAccount.getId());

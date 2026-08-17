@@ -9,6 +9,7 @@ import lombok.EqualsAndHashCode;
 import io.softa.framework.base.enums.Language;
 import io.softa.framework.base.enums.Timezone;
 import io.softa.framework.orm.annotation.Field;
+import io.softa.framework.orm.annotation.Index;
 import io.softa.framework.orm.annotation.Model;
 import io.softa.framework.orm.entity.AuditableModel;
 import io.softa.framework.orm.enums.FieldType;
@@ -21,9 +22,16 @@ import io.softa.starter.user.enums.UserLayoutDensity;
  */
 @Data
 @EqualsAndHashCode(callSuper = true)
+/**
+ * The PERSON. One row per human being, shared across every company they work for.
+ *
+ * <p>Deliberately NOT multi-tenant: a person is not owned by a company. {@link UserAccount} is the
+ * per-company membership; {@link UserIdentity} is the person's credentials (a 1:1 satellite),
+ * separated so this model can carry a browsable directory surface without dragging a password hash
+ * onto it.
+ */
 @Model(
         idStrategy = IdStrategy.DISTRIBUTED_LONG,
-        multiTenant = true,
         searchName = {"fullName"}
 )
 public class UserProfile extends AuditableModel {
@@ -34,11 +42,17 @@ public class UserProfile extends AuditableModel {
     @Field(label = "ID")
     private Long id;
 
-    @Field(label = "Tenant ID")
-    private Long tenantId;
-
-    @Field(label = "User ID", required = true)
+    /**
+     * DEPRECATED back-reference. {@link UserAccount#getProfileId()} is the relation now; this is
+     * kept only so the data migration can map the old 1:1 pairing, and so a rolled-back binary
+     * still finds its rows. Not required any more — a person may exist before any membership does.
+     */
+    @Field(label = "User ID")
     private Long userId;
+
+    // Login credentials — loginEmail / loginMobile / password / passwordSalt / passwordLockedUntil —
+    // now live on UserIdentity, a 1:1 satellite. Personal information stays here; a password hash
+    // must not ride along with a browsable directory of names and photos.
 
     @Field
     private String fullName;
