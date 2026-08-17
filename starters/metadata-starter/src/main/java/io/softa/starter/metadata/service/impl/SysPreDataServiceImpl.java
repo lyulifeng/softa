@@ -37,10 +37,11 @@ import static io.softa.framework.orm.constant.ModelConstant.ID;
  * data in the list does not need to declare the main model's preId but must declare the
  * relatedModel's preId.
  * <p>
- * Scopes never mix: a load writes, looks up, and resolves references strictly within its own
- * scope. Tenant seeds never reference shared data — cross-scope references are rejected
- * ({@link #validateReferenceScope}), as are seeds targeting models of the other scope's tenancy
- * ({@link #validateSeedScope}).
+ * Scope follows the model, not the file: a binding lives in the scope of the model it binds
+ * ({@link #bindingScopeOf}), and a reference resolves in the scope of the model it points AT
+ * ({@link #referenceScopeOf}), so references cross the tenancy boundary in either direction. What
+ * each file may WRITE is still bounded by its own tenancy ({@link #validateSeedScope}). Cross-scope
+ * references make load order load-bearing: system seeds before the tenant seeds referencing them.
  * <p>
  * File-format concerns (JSON / CSV / XML) are delegated to {@link PreDataFormatParser}; this service owns the
  * predefined-data domain logic only — preId binding, main/sub-model ordering, and create-or-update reconciliation.
@@ -327,8 +328,9 @@ public class SysPreDataServiceImpl extends EntityServiceImpl<SysPreData, Long> i
 
     /**
      * Get the SysPreData object by preID.
-     * Each tenant owns its own binding for a preId, so re-loading the same file under another
-     * tenant creates that tenant's rows instead of touching the first tenant's.
+     * Each tenant owns its own binding for a multi-tenant model's preId, so re-loading the same file
+     * under another tenant creates that tenant's rows instead of touching the first tenant's. A shared
+     * model's binding is written once, at system scope, whoever triggers the load.
      *
      * @param model Model name
      * @param row Predefined data record
@@ -338,15 +340,31 @@ public class SysPreDataServiceImpl extends EntityServiceImpl<SysPreData, Long> i
         Assert.isTrue(row.containsKey(ID), "Predefined data for model {0} must include the preID: {1}", model, row);
         Object preId = row.get(ID);
         Assert.isTrue(preId instanceof String, "Model {0} predefined data's preId must be of type String: {1}", model, preId);
-        Long tenantId = ContextHolder.getContext().getTenantId();
-        return getScopedBindings(model, List.of((String) preId), tenantId).stream().findFirst();
+        return getScopedBindings(model, List.of((String) preId), bindingScopeOf(model)).stream().findFirst();
+    }
+
+    /**
+     * The scope a model's bindings live in, derived from the model rather than from the load: a
+     * multi-tenant model's rows belong to the current tenant, a shared model's are the one globally
+     * visible copy and always bind at system scope. Deriving it from the model — rather than reading
+     * the ambient tenant — is what makes a cross-scope reference resolvable: a tenant load asking for
+     * a shared model's binding must look under {@code tenant_id IS NULL} despite carrying a tenant.
+     *
+     * <p>Package-private so the scope decision stays unit-testable without driving a whole file load.
+     *
+     * @param model Model name whose bindings are being addressed
+     * @return the scope's tenant id, null for the system scope
+     */
+    Long bindingScopeOf(String model) {
+        return ModelManager.isMultiTenantModel(model) ? ContextHolder.getContext().getTenantId() : null;
     }
 
     /**
      * Query the bindings of the given preIds within ONE scope: tenantId = T selects a tenant's
      * bindings, null selects the system bindings (tenant_id IS NULL). The single query primitive
      * behind the idempotency lookup and the reference resolution — every binding access is
-     * scope-exact.
+     * scope-exact, and the scope always comes from {@link #bindingScopeOf} for the model being
+     * addressed.
      *
      * @param model Model name
      * @param preIds Predefined IDs
@@ -379,7 +397,6 @@ public class SysPreDataServiceImpl extends EntityServiceImpl<SysPreData, Long> i
             }
             MetaField metaField = ModelManager.getModelField(model, entry.getKey());
             if (FieldType.TO_ONE_TYPES.contains(metaField.getFieldType())) {
-                validateReferenceScope(model, metaField);
                 if (!(entry.getValue() instanceof Long || entry.getValue() instanceof Integer)) {
                     Assert.isTrue(entry.getValue() instanceof String,
                             "Model {0} field {1}:{2} preID must be of type String: {3}",
@@ -388,7 +405,6 @@ public class SysPreDataServiceImpl extends EntityServiceImpl<SysPreData, Long> i
                     entry.setValue(rowId);
                 }
             } else if (FieldType.MANY_TO_MANY.equals(metaField.getFieldType())) {
-                validateReferenceScope(model, metaField);
                 Assert.isTrue(entry.getValue() instanceof Collection,
                         "Model {0} predefined data's {1} ManyToMany field value must be a list or empty",
                         model, entry.getKey());
@@ -403,25 +419,28 @@ public class SysPreDataServiceImpl extends EntityServiceImpl<SysPreData, Long> i
     }
 
     /**
-     * Seed references never cross scopes — the referenced-side mirror of {@link #validateSeedScope}:
-     * when multi-tenancy is enabled, a tenant seed may only reference multi-tenant models (its own
-     * tenant's rows) and a system seed only shared models. Checked on the reference field itself
-     * (covering preId and raw-id values alike), so a violation names the rule instead of failing
-     * later with a misleading "preID does not exist".
+     * The scope to resolve a reference's preId in: {@link #bindingScopeOf} for the referenced model,
+     * plus the one combination that has no answer — a multi-tenant model's bindings exist once per
+     * tenant, so resolving one of its preIds from a system-scope load would mean picking a tenant and
+     * there is none to pick. Reference such a row by its actual id instead; that path needs no binding
+     * and {@link #resolveReferencedPreIds} passes it straight through.
+     * <p>
+     * Direction across the tenancy boundary is deliberately NOT checked: {@code multiTenant} says
+     * whether the ORM narrows reads, not who a row belongs to, so a shared platform-side table
+     * legitimately points at a tenant's row — {@code SysPreData} itself is one.
      *
-     * @param model Model name being seeded
-     * @param reference the TO_ONE / MANY_TO_MANY field carrying the reference
+     * <p>Package-private so the rule stays unit-testable without driving a whole file load.
+     *
+     * @param model Model name being referenced
+     * @return the scope's tenant id to resolve in, null for the system scope
      */
-    private void validateReferenceScope(String model, MetaField reference) {
-        if (!SystemConfig.env.isEnableMultiTenancy()) {
-            return;
-        }
-        boolean tenantScope = ContextHolder.getContext().getTenantId() != null;
-        boolean tenantModel = ModelManager.getModel(reference.getRelatedModel()).isMultiTenant();
-        Assert.isTrue(tenantScope == tenantModel,
-                "Seed data of model {0} references {1} via field {2}, which crosses the loading scope: " +
-                "tenant seeds may only reference multi-tenant models, and system seeds only shared models.",
-                model, reference.getRelatedModel(), reference.getFieldName());
+    Long referenceScopeOf(String model) {
+        Long tenantId = bindingScopeOf(model);
+        Assert.notTrue(ModelManager.isMultiTenantModel(model) && tenantId == null,
+                "Predefined data references multi-tenant model {0} by preID from a system-scope load: its " +
+                "bindings exist once per tenant and this load has no tenant to resolve against. Reference " +
+                "the row by its actual id instead, or move this seed to data-tenant.", model);
+        return tenantId;
     }
 
     /**
@@ -436,21 +455,25 @@ public class SysPreDataServiceImpl extends EntityServiceImpl<SysPreData, Long> i
 
     /**
      * Get the model row IDs bound by preIds, in the order of the input preIds. Resolution is
-     * scope-exact like every binding lookup — references never cross scopes. Every preId must
-     * resolve; the missing ones are reported together.
+     * scope-exact like every binding lookup, in the scope of the model being referenced
+     * ({@link #referenceScopeOf}) rather than the scope of the load — a tenant seed resolves a shared
+     * model's binding at system scope. Every preId must resolve; the missing ones are reported
+     * together.
      *
-     * @param model Model name
+     * @param model Model name being referenced
      * @param preIds Predefined IDs
      * @return List of model row IDs
      */
     private List<Serializable> getOriginalRowIdsByPreIds(String model, List<String> preIds) {
-        Long tenantId = ContextHolder.getContext().getTenantId();
+        Long tenantId = referenceScopeOf(model);
         Map<String, Serializable> resolved = new HashMap<>();
         getScopedBindings(model, preIds, tenantId).forEach(binding ->
                 resolved.putIfAbsent(binding.getPreId(), IdUtils.formatId(model, binding.getRowId())));
         List<String> missing = preIds.stream().filter(preId -> !resolved.containsKey(preId)).toList();
         Assert.isTrue(missing.isEmpty(), "The preIDs of the predefined data for model {0}: {1} do not exist " +
-                "in the predefined data table and may not have been created yet!", model, missing);
+                "in the predefined data table and may not have been created yet! Referenced data must be " +
+                "loaded first — for a shared model that means loading the system seeds before this one.",
+                model, missing);
         return preIds.stream().map(resolved::get).toList();
     }
 
@@ -466,9 +489,9 @@ public class SysPreDataServiceImpl extends EntityServiceImpl<SysPreData, Long> i
         preData.setModel(model);
         preData.setPreId(preId);
         preData.setRowId(rowId.toString());
-        // Scope stamp from the same context tenant that fillTenantFieldForInsert stamped on the
-        // seeded rows themselves: null = system scope, non-null = that tenant's scope.
-        preData.setTenantId(ContextHolder.getContext().getTenantId());
+        // Stamp the scope of the model being bound — exactly what fillTenantFieldForInsert put on the
+        // seeded row itself, so the binding and the row it points at cannot land in different scopes.
+        preData.setTenantId(bindingScopeOf(model));
         this.createOne(preData);
     }
 }

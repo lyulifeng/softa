@@ -11,9 +11,20 @@ import io.softa.framework.orm.entity.AuditableModel;
 
 /**
  * SysPreData Model
- * A binding row is scoped by tenantId: null = system scope (data-system seeds),
- * non-null = that tenant's scope (data-tenant seeds). The model itself stays
- * non-multi-tenant so one table serves both scopes and stays globally visible.
+ * The seed ledger: one binding row per seeded business row, mapping (model, preId) to the row id the
+ * load created. A binding is scoped by tenantId, and the scope follows the SEEDED MODEL's tenancy
+ * rather than the file that carried it: a shared model binds once at system scope (null), a
+ * multiTenant model binds per tenant.
+ * <p>
+ * The ledger itself is deliberately not multiTenant. Not for storage — a multiTenant model is the
+ * same single table with a tenant_id column — but to stay out of the ORM's unconditional
+ * {@code tenant_id = context} read narrowing, which the ledger cannot live under: it is read across
+ * scopes (a tenant load resolving a shared model's binding) and addressed for another tenant during
+ * provisioning. Scope is an explicit per-lookup predicate in
+ * {@code SysPreDataServiceImpl#getScopedBindings}, never ambient.
+ * <p>
+ * Unpaid cost of that exemption: the generic {@code /SysPreData} endpoints carry no tenant predicate,
+ * so treat them as operator-only until the ledger gets a scope filter of its own.
  */
 @Data
 @EqualsAndHashCode(callSuper = true)
