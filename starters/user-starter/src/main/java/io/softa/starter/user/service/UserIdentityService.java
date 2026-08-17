@@ -20,6 +20,9 @@ import io.softa.starter.user.entity.UserIdentity;
  * identifier is possible, but only through the methods below: a bare finder returning an empty
  * Optional invites the caller to read "no credentials" as "this person has no password", which is
  * how a password-less path gets opened. {@link #requireIdentity} refuses loudly instead.
+ *
+ * <p>Scoped to callers of this service; the generic {@code ModelController} surface reaches the model
+ * directly.
  */
 public interface UserIdentityService extends EntityService<UserIdentity, Long> {
 

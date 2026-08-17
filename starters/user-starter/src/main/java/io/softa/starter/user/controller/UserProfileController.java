@@ -3,7 +3,6 @@ package io.softa.starter.user.controller;
 import java.util.Map;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
-import jakarta.servlet.http.HttpServletRequest;
 import jakarta.validation.Valid;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -15,29 +14,26 @@ import org.springframework.web.bind.annotation.RestController;
 
 import io.softa.framework.base.context.ContextHolder;
 import io.softa.framework.base.context.UserInfo;
-import io.softa.framework.base.enums.ResponseCode;
-import io.softa.framework.base.exception.BusinessException;
 import io.softa.framework.web.response.ApiResponse;
 import io.softa.starter.user.dto.UserProfileDTO;
 import io.softa.starter.user.entity.UserProfile;
 import io.softa.starter.user.service.UserProfileService;
 
 /**
- * The ONLY API surface of {@code UserProfile}: three endpoints that touch the caller's own row.
+ * The three self-service endpoints of {@code UserProfile} — the ones that act on the caller's own
+ * row and therefore cannot be expressed as generic CRUD.
  *
- * <p>Deliberately NOT an {@code EntityController}. A person is global rather than tenant-scoped, so
- * the generic CRUD surface would reach across every tenant: list reads would return every person in
- * the system, and {@code updateOne} would let any caller rewrite anyone's details.
+ * <p>Everything else about this model is served by {@code ModelController}'s generic surface
+ * ({@code /UserProfile/searchPage}, {@code updateOne}, …). Those paths used to be reclaimed here and
+ * answered with 404, from when the credentials still lived on this model and a list read would have
+ * returned every person's password hash. The credentials moved to {@code UserIdentity}, so what the
+ * generic surface exposes now is personal information, and it is gated the way every other model is:
+ * role grants plus the endpoint registry.
  *
- * <p>The credentials themselves are no longer here — they moved to {@code UserIdentity}, which is
- * closed off the same way — so what this protects now is cross-tenant PII rather than a password
- * hash. The surface stays shut regardless: this release ships no people-directory feature, and
- * opening a browsable surface is a product decision with its own permission model, not a side
- * effect of moving credential columns. There is no list endpoint at all: a person is only ever
- * reached from their own session, or internally from the membership ({@code UserAccount}) in typed
- * service code.
+ * <p>Note the model is global, not tenant-scoped: a granted caller reads across tenants, since there
+ * is no tenant column to narrow by.
  *
- * <p>The three self endpoints keep their historical URLs so the frontend session bootstrap and the
+ * <p>The three endpoints below keep their historical URLs so the frontend session bootstrap and the
  * personal-settings page need no change.
  */
 @Slf4j
@@ -48,41 +44,6 @@ public class UserProfileController {
 
     @Autowired
     private UserProfileService service;
-
-    /**
-     * Every generic CRUD path that {@code ModelController} would otherwise expose for this model,
-     * explicitly reclaimed here and answered with 404.
-     *
-     * <p>This is what actually closes the surface. Not extending {@code EntityController} is not
-     * enough on its own: {@code ModelController} maps {@code /{modelName}/createOne} etc. for EVERY
-     * registered model, and a platform super-admin bypasses the permission gate — so the generic
-     * endpoints would still resolve and return, or rewrite, every person in every tenant.
-     * Listing each path as a LITERAL first segment ({@code /UserProfile/...})
-     * wins the route over {@code ModelController}'s variable first segment ({@code /{modelName}/...})
-     * with no ambiguity, for every HTTP method, before the handler ever touches data.
-     *
-     * <p>Mirror of {@code ModelController}'s endpoint set — kept in lockstep with it. A path added
-     * there that is not added here would silently re-open a hole, which is why it is enumerated
-     * rather than pattern-matched: an explicit list breaks loudly when the two drift, a wildcard
-     * would not.
-     */
-    @RequestMapping({
-            "/createOne", "/createOneAndFetch", "/createList", "/createListAndFetch",
-            "/getById", "/getByIds", "/getCopyableFields", "/getDefaultValues",
-            "/getUnmaskedField", "/getUnmaskedFields",
-            "/updateOne", "/updateOneAndFetch", "/updateList", "/updateListAndFetch", "/updateByFilter",
-            "/deleteById", "/deleteByIds",
-            "/copyById", "/copyByIdAndFetch", "/copyByIds", "/copyByIdsAndFetch",
-            "/searchPage", "/searchList", "/searchName", "/searchSimpleAgg", "/searchPivot", "/count",
-            "/onChange/{fieldName}"
-    })
-    public void notExposed(HttpServletRequest request) {
-        // REQUEST_NOT_FOUND so the response is byte-for-byte what a genuinely unmapped path returns
-        // (code 404, "Resource not found") — a caller cannot tell "reclaimed and refused" from
-        // "never existed", which is the whole point: the model is not part of the API.
-        throw new BusinessException(ResponseCode.REQUEST_NOT_FOUND,
-                "No endpoint " + request.getMethod() + " " + request.getRequestURI());
-    }
 
     @Operation(summary = "Get Current User Info", description = "Retrieves the user info of the logged-in user.")
     @GetMapping("/getMyUserInfo")

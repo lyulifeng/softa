@@ -18,10 +18,13 @@ import io.softa.framework.orm.enums.OnDelete;
  *
  * <p>Why its own model rather than columns on the profile: credentials and personal information are
  * different concerns with opposite exposure. A directory of people's names and photos is ordinary
- * browsable data; a password hash must never leave the server. Keeping them on one model forced the
- * whole model off the generic API surface to protect the hash — dragging the harmless profile fields
- * down with it. Separated, {@code UserProfile} can carry a normal CRUD surface again, and this model —
- * which nothing ever browses, only login and the session reach it — is the only thing locked down.
+ * browsable data; a password hash is not. Keeping them on one model meant any decision about exposing
+ * one applied to the other as well. Separated, {@code UserProfile} carries a normal CRUD surface and
+ * this model is reached by the credential paths in typed service code.
+ *
+ * <p>Served by the generic {@code ModelController} surface like any other registered model, gated by
+ * role grants and the endpoint registry. A platform super-admin bypasses that gate, as it does
+ * everywhere.
  *
  * <p>Global, exactly like the profile: a person has ONE set of credentials no matter how many
  * companies employ them. One row per person, linked 1:1 to {@link UserProfile} via {@code profileId}
