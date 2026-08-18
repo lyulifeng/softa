@@ -383,7 +383,38 @@ public class FileServiceImpl extends EntityServiceImpl<FileRecord, Long> impleme
         // The row was just authorized; FileRecord's own scope would only deny what that authorization
         // already granted.
         List<FileRecord> fileRecords = bypassFileRecordScope(() -> this.searchList(filters));
-        return fileRecords.stream().map(this::convertToFileInfo).toList();
+        // Filtered before convertToFileInfo: that signs a presigned URL, and there is no reason to mint
+        // one for a file being withheld.
+        return readableFiles(modelName, fileRecords).stream().map(this::convertToFileInfo).toList();
+    }
+
+    /**
+     * Drop the files hanging on a field this caller may not read.
+     *
+     * <p>Row access is not field access. On the expansion path a masked column never gets this far —
+     * Layer C ({@code ModelServiceImpl.filterReadableFields}) drops it from the SELECT, so the id
+     * behind it is not even read. {@link #getRowFiles} fetches by ROW and skips that step entirely, so
+     * it applies the mask itself: two entry points guarding one asset must not disagree about it, and
+     * a sensitive field set that protects one of them while the other hands the document over is worse
+     * than none — it reads as configured.
+     *
+     * <p>Package-private so the rule can be tested without an OSS round-trip; {@code convertToFileInfo}
+     * signs a real presigned URL.
+     */
+    List<FileRecord> readableFiles(String modelName, List<FileRecord> fileRecords) {
+        // Resolved once rather than per record: it walks the permission snapshot, and the empty case
+        // (admins, and any model carrying no sensitive field set) short-circuits the whole thing.
+        Set<String> blocked = permissionService.getUserBlockedModelFields(modelName, AccessType.READ);
+        if (CollectionUtils.isEmpty(blocked)) {
+            return fileRecords;
+        }
+        return fileRecords.stream()
+                // A file recorded against no field belongs to the row itself (uploadFileToRow), so no
+                // column speaks for it. The blank check must come FIRST: the blocked set is immutable,
+                // and Set.of().contains(null) throws rather than answering false.
+                .filter(record -> StringUtils.isBlank(record.getFieldName())
+                        || !blocked.contains(record.getFieldName()))
+                .toList();
     }
 
     // ─────────────────────── ownership: written once, trusted everywhere ───────────────────────
