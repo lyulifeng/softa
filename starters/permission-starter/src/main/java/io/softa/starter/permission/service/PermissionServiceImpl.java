@@ -20,6 +20,7 @@ import io.softa.starter.permission.spi.PermissionInfo;
 import io.softa.starter.permission.spi.ScopeRule;
 import io.softa.starter.permission.spi.ScopeType;
 import io.softa.starter.permission.sensitive.SensitiveFieldSetCache;
+import io.softa.starter.permission.index.EndpointIndex;
 import io.softa.starter.permission.scope.ScopeApplicabilityResolver;
 import io.softa.starter.permission.scope.ScopeRuleCompiler;
 import io.softa.starter.permission.spi.PermissionSnapshotProvider;
@@ -81,17 +82,31 @@ public class PermissionServiceImpl implements PermissionService {
      *  merely has no grant yet. */
     private final ScopeApplicabilityResolver applicability;
 
-    public PermissionServiceImpl(
-            PermissionSnapshotProvider snapshotProvider,
+    /** The endpoint gate's own index, asked directly by {@link #hasModelActionGrant} for the endpoints
+     *  it cannot reach by URL. Nullable: a deployment with no index still answers "granted", which is
+     *  what an unregistered pair means anyway. */
+    private final EndpointIndex endpointIndex;
+
+    public PermissionServiceImpl(PermissionSnapshotProvider snapshotProvider,
             ScopeRuleCompiler scopeCompiler,
             SensitiveFieldSetCache sfsCache,
             ModelService<?> modelService,
             ScopeApplicabilityResolver applicability) {
+        this(snapshotProvider, scopeCompiler, sfsCache, modelService, applicability, null);
+    }
+
+    public PermissionServiceImpl(PermissionSnapshotProvider snapshotProvider,
+            ScopeRuleCompiler scopeCompiler,
+            SensitiveFieldSetCache sfsCache,
+            ModelService<?> modelService,
+            ScopeApplicabilityResolver applicability,
+            EndpointIndex endpointIndex) {
         this.snapshotProvider = snapshotProvider;
         this.scopeCompiler = scopeCompiler;
         this.sfsCache = sfsCache;
         this.modelService = modelService;
         this.applicability = applicability;
+        this.endpointIndex = endpointIndex;
     }
 
     // ─────────────────────── row-scope ───────────────────────
@@ -370,6 +385,28 @@ public class PermissionServiceImpl implements PermissionService {
                 return; // shared reference/config (ManyToOne target) → readable, nothing to check
             }
             if (kind == null && !hasForwardAnchor(model)) {
+                // Nothing names this model and nothing references it: bookkeeping the runtime writes as
+                // a side effect of work it already authorized — a file record, an import or export
+                // history row, a login entry, a cron log.
+                //
+                // On CREATE the question is unanswerable rather than unanswered. The ids were minted by
+                // this very call, so there is no pre-existing row to expose, and no rule can ever put
+                // them "in scope" — the check cannot pass for any non-admin, ever, which makes it a wall
+                // rather than a control. What authorized the write is the action that caused it, and
+                // that was checked where it happened: the endpoint gate, the owning row for an
+                // attachment, the template for an import.
+                //
+                // Reading, updating and deleting such a model by id still fail closed. Those touch rows
+                // the caller did not just create, and refusing there costs nothing a caller with a
+                // legitimate path cannot get another way.
+                //
+                // The cost, stated plainly: a standalone business table nothing references and no rule
+                // can name qualifies too, so creating rows in one is bounded by the endpoint gate alone.
+                // That is the layer that authorized the call in the first place; row scope was never
+                // answering for such a model anyway.
+                if (AccessType.CREATE.equals(accessType)) {
+                    return;
+                }
                 throw new PermissionException(
                         "Some " + model + " ids are outside your " + accessType + " scope");
             }
@@ -697,4 +734,33 @@ public class PermissionServiceImpl implements PermissionService {
     /** {@code fkField} is on the parent for {@link Kind#OWNED_ONE_TO_ONE} / {@link Kind#SHARED},
      *  and on the child for {@link Kind#CHILD_BY_BACKREF}. */
     private record Referencer(String parentModel, String fkField, Kind kind) {}
+
+    @Override
+    public boolean hasModelActionGrant(String model, AccessType accessType) {
+        if (shouldBypass() || endpointIndex == null || model == null || accessType == null) return true;
+        PermissionInfo pi = currentPi();
+        if (PermissionInfo.isAdmin(pi)) return true;
+        String uri = CANONICAL_ACTION_URI.get(accessType);
+        if (uri == null) return true;
+        Set<String> candidates = endpointIndex.lookup("/" + model + uri, "POST");
+        // Unregistered means granted — see the interface javadoc for why this default is the opposite
+        // of the interceptor's.
+        if (candidates.isEmpty()) return true;
+        Set<String> held = pi == null ? null : pi.getPermissions();
+        if (held == null || held.isEmpty()) return false;
+        for (String candidate : candidates) {
+            if (held.contains(candidate)) return true;
+        }
+        return false;
+    }
+
+    /**
+     * One endpoint per access type, chosen as the one {@code EndpointIndex} always derives for it — the
+     * lookup only needs a URL that resolves to the same permission set, not every URL of that action.
+     */
+    private static final Map<AccessType, String> CANONICAL_ACTION_URI = Map.of(
+            AccessType.CREATE, "/createOne",
+            AccessType.UPDATE, "/updateOne",
+            AccessType.DELETE, "/deleteById",
+            AccessType.READ, "/searchPage");
 }

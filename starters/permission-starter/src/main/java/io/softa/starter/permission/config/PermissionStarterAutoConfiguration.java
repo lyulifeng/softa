@@ -20,6 +20,7 @@ import io.softa.starter.permission.spi.SensitiveFieldSetSource;
 import io.softa.starter.permission.spi.support.DbPermissionEndpointSource;
 import io.softa.starter.permission.spi.support.DbSensitiveFieldSetSource;
 import io.softa.starter.permission.spi.support.DefaultPermissionSnapshotProvider;
+import io.softa.starter.permission.index.EndpointIndex;
 import io.softa.starter.permission.scope.ScopeApplicabilityResolver;
 import io.softa.starter.permission.scope.ScopeRuleCompiler;
 import io.softa.starter.permission.sensitive.SensitiveFieldSetCache;
@@ -64,8 +65,12 @@ public class PermissionStarterAutoConfiguration {
             ScopeRuleCompiler scopeCompiler,
             @Lazy SensitiveFieldSetCache sfsCache,
             @Lazy ModelService<?> modelService,
-            @Lazy ScopeApplicabilityResolver applicability) {
-        return new PermissionServiceImpl(snapshotProvider, scopeCompiler, sfsCache, modelService, applicability);
+            @Lazy ScopeApplicabilityResolver applicability,
+            // ObjectProvider, not @Lazy: the index is genuinely optional — a deployment without it
+            // answers "granted" for the file endpoints, which is what an unregistered pair means.
+            ObjectProvider<EndpointIndex> endpointIndex) {
+        return new PermissionServiceImpl(snapshotProvider, scopeCompiler, sfsCache, modelService, applicability,
+                endpointIndex.getIfAvailable());
     }
 
     /**
