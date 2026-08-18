@@ -90,11 +90,20 @@ public abstract class BaseImportHandler {
         Object value = row.get(rowKey);
         boolean isEmpty = valueIsEmpty(value);
         if (isEmpty) {
-            checkRequired();
+            // Default BEFORE required. A field with a template default can never be missing — the
+            // default is what a blank cell means — so requiredness is only ever a question for fields
+            // with no default. The old order raised on required-and-defaulted fields, and that pair is
+            // not a misconfiguration anyone has to write: the handler factory promotes the MODEL's
+            // required onto the template field, so a metadata-required column with a template default
+            // (the per-country Country column, stamped SG or NZ) rejected the very blank the default
+            // exists for.
             if (importFieldDTO.getDefaultValue() != null) {
                 row.put(rowKey, importFieldDTO.getDefaultValue());
-            } else if (Boolean.TRUE.equals(importFieldDTO.getIgnoreEmpty())) {
-                row.remove(rowKey);
+            } else {
+                checkRequired();
+                if (Boolean.TRUE.equals(importFieldDTO.getIgnoreEmpty())) {
+                    row.remove(rowKey);
+                }
             }
         } else {
             row.put(rowKey, handleValue(value));
