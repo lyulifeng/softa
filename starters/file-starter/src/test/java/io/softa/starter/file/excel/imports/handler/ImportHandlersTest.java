@@ -104,6 +104,52 @@ class ImportHandlersTest {
         assertThrows(ValidationException.class, () -> handler.handleValue("Missing"));
     }
 
+    @Test
+    void aBlankCellTakesTheTemplateDefaultRatherThanFailingRequired() {
+        // The per-country Country column: metadata-required, and given a template default (SG / NZ)
+        // precisely so the user leaves it blank. Default must win over the required check, or the
+        // blank the default exists for is rejected.
+        ImportFieldDTO dto = new ImportFieldDTO();
+        dto.setRequired(true);
+        dto.setDefaultValue("SG");
+        DefaultHandler handler = new DefaultHandler(
+                metaField(FieldType.MANY_TO_ONE, "Country", "country", null), dto);
+
+        Map<String, Object> row = new LinkedHashMap<>();
+        row.put("country", "");
+        handler.handleRow(row);
+
+        assertEquals("SG", row.get("country"));
+    }
+
+    @Test
+    void aBlankRequiredCellWithNoDefaultStillFails() {
+        // No default means the blank is genuinely missing — requiredness still bites.
+        ImportFieldDTO dto = new ImportFieldDTO();
+        dto.setRequired(true);
+        DefaultHandler handler = new DefaultHandler(
+                metaField(FieldType.STRING, "Code", "code", null), dto);
+
+        Map<String, Object> row = new LinkedHashMap<>();
+        row.put("code", "");
+        assertThrows(ValidationException.class, () -> handler.handleRow(row));
+    }
+
+    @Test
+    void aBlankOptionalCellWithNoDefaultIsDroppedWhenIgnoreEmpty() {
+        // Absent from the row so create applies the model's own default rather than an empty string.
+        ImportFieldDTO dto = new ImportFieldDTO();
+        dto.setIgnoreEmpty(true);
+        DefaultHandler handler = new DefaultHandler(
+                metaField(FieldType.STRING, "Remark", "remark", null), dto);
+
+        Map<String, Object> row = new LinkedHashMap<>();
+        row.put("remark", "");
+        handler.handleRow(row);
+
+        assertEquals(false, row.containsKey("remark"));
+    }
+
     private MetaField metaField(FieldType fieldType, String label, String fieldName, String optionSetCode) {
         MetaField metaField = new MetaField();
         ReflectionTestUtils.setField(metaField, "fieldType", fieldType);
