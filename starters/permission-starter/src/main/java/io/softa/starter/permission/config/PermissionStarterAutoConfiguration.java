@@ -66,11 +66,14 @@ public class PermissionStarterAutoConfiguration {
             @Lazy SensitiveFieldSetCache sfsCache,
             @Lazy ModelService<?> modelService,
             @Lazy ScopeApplicabilityResolver applicability,
-            // ObjectProvider, not @Lazy: the index is genuinely optional — a deployment without it
-            // answers "granted" for the file endpoints, which is what an unregistered pair means.
+            // ObjectProvider passed as a Supplier, resolved lazily: calling getIfAvailable() HERE
+            // would build EndpointIndex during this bean's construction — before AppStartup loads
+            // ModelManager — leaving the index empty. Deferring the resolve to first use keeps the
+            // index's construction after the catalog is ready. The index is genuinely optional; a
+            // deployment without it answers "granted" for the file endpoints.
             ObjectProvider<EndpointIndex> endpointIndex) {
         return new PermissionServiceImpl(snapshotProvider, scopeCompiler, sfsCache, modelService, applicability,
-                endpointIndex.getIfAvailable());
+                endpointIndex::getIfAvailable);
     }
 
     /**

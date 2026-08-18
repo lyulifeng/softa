@@ -34,6 +34,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
+import java.util.function.Supplier;
 import java.util.stream.Collectors;
 
 /**
@@ -83,16 +84,23 @@ public class PermissionServiceImpl implements PermissionService {
     private final ScopeApplicabilityResolver applicability;
 
     /** The endpoint gate's own index, asked directly by {@link #hasModelActionGrant} for the endpoints
-     *  it cannot reach by URL. Nullable: a deployment with no index still answers "granted", which is
-     *  what an unregistered pair means anyway. */
-    private final EndpointIndex endpointIndex;
+     *  it cannot reach by URL. Resolved through a supplier, not injected directly, and deliberately:
+     *  {@link EndpointIndex#init()} reads the permission table at {@code @PostConstruct}, which needs
+     *  {@code ModelManager} already loaded. Taking the index as a constructor argument made Spring
+     *  build it the moment THIS bean is built — before {@code AppStartup} runs {@code ModelManager.init()}
+     *  — so the index read an unloaded catalog and came back empty, and every endpoint answered
+     *  "Endpoint not registered". Deferring the lookup to first use (a request, long after startup)
+     *  keeps the index's construction where it was before file access started asking for it.
+     *  Supplier may yield null: a deployment with no index still answers "granted", which is what an
+     *  unregistered pair means anyway. */
+    private final Supplier<EndpointIndex> endpointIndexSupplier;
 
     public PermissionServiceImpl(PermissionSnapshotProvider snapshotProvider,
             ScopeRuleCompiler scopeCompiler,
             SensitiveFieldSetCache sfsCache,
             ModelService<?> modelService,
             ScopeApplicabilityResolver applicability) {
-        this(snapshotProvider, scopeCompiler, sfsCache, modelService, applicability, null);
+        this(snapshotProvider, scopeCompiler, sfsCache, modelService, applicability, () -> null);
     }
 
     public PermissionServiceImpl(PermissionSnapshotProvider snapshotProvider,
@@ -100,13 +108,13 @@ public class PermissionServiceImpl implements PermissionService {
             SensitiveFieldSetCache sfsCache,
             ModelService<?> modelService,
             ScopeApplicabilityResolver applicability,
-            EndpointIndex endpointIndex) {
+            Supplier<EndpointIndex> endpointIndexSupplier) {
         this.snapshotProvider = snapshotProvider;
         this.scopeCompiler = scopeCompiler;
         this.sfsCache = sfsCache;
         this.modelService = modelService;
         this.applicability = applicability;
-        this.endpointIndex = endpointIndex;
+        this.endpointIndexSupplier = endpointIndexSupplier == null ? () -> null : endpointIndexSupplier;
     }
 
     // ─────────────────────── row-scope ───────────────────────
@@ -737,7 +745,9 @@ public class PermissionServiceImpl implements PermissionService {
 
     @Override
     public boolean hasModelActionGrant(String model, AccessType accessType) {
-        if (shouldBypass() || endpointIndex == null || model == null || accessType == null) return true;
+        if (shouldBypass() || model == null || accessType == null) return true;
+        EndpointIndex endpointIndex = endpointIndexSupplier.get();
+        if (endpointIndex == null) return true;
         PermissionInfo pi = currentPi();
         if (PermissionInfo.isAdmin(pi)) return true;
         String uri = CANONICAL_ACTION_URI.get(accessType);
