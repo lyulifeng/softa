@@ -46,10 +46,15 @@ public class TenantInfo extends AuditableModel {
     @Field(label = "ID")
     private Long id;
 
-    @Field
+    // Required: both are natural keys people reach for when locating a tenant. Leaving code
+    // optional also let a blank form submit an empty string, and '' — unlike NULL — occupies
+    // uk_tenant_info_code, so the FIRST blank-code tenant silently reserved the slot and every
+    // later one failed with "A tenant with this code already exists" pointing at a row nobody
+    // could see. Making them required removes the empty-string path entirely.
+    @Field(required = true)
     private String name;
 
-    @Field
+    @Field(required = true)
     private String code;
 
     @Field
