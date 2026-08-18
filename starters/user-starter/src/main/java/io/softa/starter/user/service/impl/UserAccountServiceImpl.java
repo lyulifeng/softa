@@ -17,6 +17,7 @@ import io.softa.framework.base.exception.BusinessException;
 import io.softa.framework.base.security.PasswordUtils;
 import io.softa.framework.base.utils.Assert;
 import io.softa.framework.orm.annotation.CrossTenant;
+import io.softa.framework.orm.annotation.SkipPermissionCheck;
 import io.softa.framework.orm.domain.Filters;
 import io.softa.framework.orm.service.impl.EntityServiceImpl;
 import io.softa.starter.user.dto.UserAccountDTO;
@@ -110,6 +111,11 @@ public class UserAccountServiceImpl extends EntityServiceImpl<UserAccount, Long>
      * @param profileInfo User profile information
      * @return UserInfo
      */
+    // @SkipPermissionCheck: provisioning writes rows this call mints — the account, and through
+    // registerUserProfile the person and their credentials. Row scope has no answer for ids that do
+    // not exist yet, and fails closed on the anchorless ones. See registerUserProfile for the full
+    // argument; the waiver covers provisioning only, never the business entity that asked for it.
+    @SkipPermissionCheck
     @Override
     @Transactional
     public UserInfo registerNewUser(@NotNull UserAccountDTO accountInfo, @NotNull UserProfileDTO profileInfo) {
@@ -136,6 +142,8 @@ public class UserAccountServiceImpl extends EntityServiceImpl<UserAccount, Long>
      * @param password Password
      * @return UserInfo
      */
+    // @SkipPermissionCheck: see the overload above.
+    @SkipPermissionCheck
     @Override
     @Transactional
     public UserInfo registerNewUser(String email, String mobile, String password) {
@@ -173,6 +181,12 @@ public class UserAccountServiceImpl extends EntityServiceImpl<UserAccount, Long>
         return userInfo;
     }
 
+    // @SkipPermissionCheck: the path that pairs an employee with a login. Without it, a role granted
+    // "create employee" — and nothing on the user models, which the role wizard does not require it
+    // to hold — creates the Employee row and then fails on the person behind it, leaving the caller
+    // with a rolled-back create and an error naming a model they never asked to touch. See
+    // registerUserProfile.
+    @SkipPermissionCheck
     @Override
     @Transactional
     public UserInfo registerInvitedUser(String email, String mobile, String fullName) {

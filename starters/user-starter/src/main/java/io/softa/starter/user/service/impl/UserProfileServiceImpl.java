@@ -17,6 +17,7 @@ import io.softa.framework.base.exception.BusinessException;
 import io.softa.framework.base.exception.IllegalArgumentException;
 import io.softa.framework.base.utils.Assert;
 import io.softa.framework.base.utils.LambdaUtils;
+import io.softa.framework.orm.annotation.SkipPermissionCheck;
 import io.softa.framework.orm.domain.Filters;
 import io.softa.framework.orm.domain.FlexQuery;
 import io.softa.framework.orm.dto.FileInfo;
@@ -206,6 +207,26 @@ public class UserProfileServiceImpl extends EntityServiceImpl<UserProfile, Long>
      * @param profileDTO User profile DTO
      * @return UserInfo object
      */
+    /**
+     * <p><b>Why {@code @SkipPermissionCheck}</b>: everything written below is bookkeeping this call
+     * mints for itself — the person, the membership's link to them, and their credentials row. Row
+     * scope answers "which existing rows may this caller reach", and none of these existed a moment
+     * ago, so for them the question is not unanswered but unanswerable: no rule can put an id in
+     * scope that the same call is about to generate. Left checked, {@code checkIdsFieldsAccess}
+     * fails closed on {@code UserProfile} and {@code UserIdentity} — nothing a role holds references
+     * either — so a role that may legitimately create an employee ("create employee" is the granted
+     * action) is stopped halfway through provisioning that employee's login.
+     *
+     * <p>What actually authorized this is the action that led here, checked where it happened: the
+     * endpoint gate on {@code /Employee/createOne}, on {@code /UserAccount/create}, on the OAuth
+     * callback. This method is never an entry point of its own.
+     *
+     * <p>The waiver stops at this method. The business entity that caused the provisioning — the
+     * Employee row — is created by the caller and keeps its own CREATE scope check, so a role scoped
+     * to one department subtree still cannot place an employee outside it. Same reasoning, and same
+     * annotation, as {@code UserIdentityServiceImpl.requireIdentity}.
+     */
+    @SkipPermissionCheck
     @Override
     public UserInfo registerUserProfile(Long userId, UserProfileDTO profileDTO) {
         // Create user profile
