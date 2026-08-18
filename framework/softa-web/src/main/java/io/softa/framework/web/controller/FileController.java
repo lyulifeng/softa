@@ -52,42 +52,12 @@ public class FileController {
         permissionService.checkIdAccess(modelName, IdUtils.formatId(modelName, rowId), AccessType.UPDATE);
     }
 
-    /**
-     * Get the fileInfo by fileId
-     */
-    @Operation(description = "Get the fileInfo by fileId")
-    @GetMapping(value = "/getByFileId")
-    @Parameter(name = "fileId", description = "The id of the file object.")
-    public ApiResponse<FileInfo> getByFileId(@RequestParam Long fileId) {
-        // NOT FOR EXTERNAL USE — this endpoint must not be whitelisted.
-        //
-        // It is the one place a caller names a FileRecord by its own primary key, which is exactly the
-        // question this design does not answer: access to a file derives from access to the row holding
-        // it, and a bare id says nothing about any row. Reachable, it would be a direct object
-        // reference over every file in the deployment. Business callers get their URLs from expanding
-        // the File field on a row they already read; there is nothing here they need.
-        //
-        // Left in place for internal service callers and for administrators, who bypass the data plane
-        // regardless. Whitelisting it re-opens the hole the expansion path was designed to avoid.
-        Assert.notNull(fileId, "fileId cannot be empty.");
-        return ApiResponse.success(service.getByFileId(fileId).orElse(null));
-    }
-
-    /**
-     * Get the fileInfo by modelName and rowId
-     */
-    @Operation(description = "Get the fileInfos by modelName and rowId")
-    @GetMapping(value = "/getRowFiles")
-    @Parameters({
-            @Parameter(name = "modelName", description = "The model name of the file belongs to"),
-            @Parameter(name = "rowId", description = "The row ID of the file belongs to"),
-    })
-    public ApiResponse<List<FileInfo>> getRowFiles(@RequestParam String modelName,
-                                                   @RequestParam Serializable rowId) {
-        Assert.notBlank(modelName, "modelName cannot be empty.");
-        Assert.notNull(rowId, "rowId cannot be null.");
-        return ApiResponse.success(service.getRowFiles(modelName, rowId));
-    }
+    // No read endpoint by design. A file is never fetched by its own id or by (model, row) over HTTP —
+    // both would be a direct object reference the row-derived model cannot authorize (a bare id names
+    // no row; a row id an admin passes skips the tenant predicate). Business callers read the owning
+    // row through ModelService, and the framework expands its File / MultiFile fields into FileInfo
+    // with a presigned URL, under the row's own scope and tenant. The only writes below are uploads,
+    // which authorize against the row they attach to.
 
     /**
      * Upload a file to the specified model and rowId, and return the fileInfo.

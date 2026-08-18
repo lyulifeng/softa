@@ -89,14 +89,6 @@ public interface FileService {
      */
     List<FileInfo> getByFileIds(List<Long> fileIds);
 
-    /**
-     * Get the FileInfo object by modelName and rowId
-     *
-     * @param modelName the name of the corresponding business model
-     * @param rowId the ID of the corresponding business row data
-     * @return fileInfo object with download URL
-     */
-    List<FileInfo> getRowFiles(String modelName, Serializable rowId);
 
     /**
      * Reject a write that points a File field at a record it does not own.
