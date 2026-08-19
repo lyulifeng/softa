@@ -17,7 +17,7 @@ annotation scanner itself works — `scanner-scope`, the DDL auto-execute policy
 
 ```bash
 cd deploy/demo-app
-docker-compose up -d mysql redis
+docker compose up -d mysql redis
 ```
 
 `docker-compose.yml` provides **MySQL and Redis only**. The `es` / `file` /

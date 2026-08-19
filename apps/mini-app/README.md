@@ -27,7 +27,7 @@ handshake — those require the metadata starter (see demo-app).
 ```bash
 cd deploy/mini-app
 docker network create shared-net 2>/dev/null || true
-docker-compose up -d mysql redis
+docker compose up -d mysql redis
 ```
 
 The compose file seeds `deploy/mini-app/init_mysql/` into the `mini` database.

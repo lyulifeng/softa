@@ -188,6 +188,38 @@ Rationale: additive DDL doesn't lose data; `DROP` operations are destructive
 and may take minutes on large tables. Even in dev, you should consciously
 choose to drop schema.
 
+### Catalog self-bootstrap (the `sys_*` tables' own schema)
+
+The five boot-read catalog tables (`sys_model`, `sys_field`, `sys_option_set`,
+`sys_option_item`, `sys_model_index` — `SysCatalog.BOOT_READ_ENTITIES`) have no
+row-level "last applied state": the rows that record every other model's state
+live *inside* them. Their only baseline is the physical schema, so on every
+boot with a non-empty `scanner-scope` the scanner reconciles them **physically,
+from their own annotations, before the strict catalog read**
+(`DdlOrchestrator.reconcilePhysical`, log tag `[catalog]`):
+
+| Annotation vs physical | Action |
+|---|---|
+| table missing | `CREATE TABLE` from the code definition (a fresh database bootstraps with **no baseline DDL**) |
+| column missing | `ADD COLUMN` (a catalog-column addition no longer needs a migration — the old chicken-and-egg) |
+| column missing, field declares `renamedFrom`, prior column present | `CHANGE COLUMN` — data carried |
+| prior **and** new columns both present under a declared rename | boot fails with instructions (half-applied rename; never guessed) |
+| column physically narrower than declared (bounded widths only) | `MODIFY COLUMN` widen. Declared-unbounded columns (TEXT/JSON/DTO) never trigger on width — engines report their width inconsistently and the same MODIFY would re-plan every boot |
+| column wider / incomparable, undeclared physical columns | untouched — the physical drift audit (which includes the catalog tables) is the reporting channel |
+| declared index missing | `ADD INDEX` |
+
+After the reconcile the strict read is structurally guaranteed to succeed
+(its SELECT set ⊆ physical columns). What still needs a migration: **backfill
+`UPDATE`s** that give an added column real values on rows the scanner does not
+manage (narrow scopes), any DROP, and environments running the empty-scope
+checker posture — there nothing auto-applies, catalog included.
+
+The whole boot DDL window (catalog reconcile → strict read → diff → DDL → row
+writes) is serialized across instances by a database session lock
+(`BootDdlLock`: MySQL `GET_LOCK` / PostgreSQL advisory lock on a dedicated
+connection, 60s wait budget; a timeout fails the boot rather than queueing
+instances behind a wedged sibling).
+
 ### Physical recovery
 
 The diff is computed against `sys_*`, which a hand-touched database can leave

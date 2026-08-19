@@ -48,8 +48,9 @@ I have a code change to land
   │         If SQL is needed: deploy/migrations/<db>/V<N>__<slug>.sql —
   │         the next free number is the registration; put context, variants
   │         and ordering contract in the header comment (copy V34's shape)
-  │         AND mirror the end state into deploy/{demo,mini}-app/init_mysql/
-  │         1.Metadata.ddl.sql (seed DML 2./3. files are retired — skip)
+  │         There is no tracked DDL baseline to mirror any more — fresh
+  │         databases self-bootstrap (catalog reconcile + ["*"] scanner), and a
+  │         reference DDL is generated on demand (MetadataBaselineDdlGenerator)
   │
   ├── AI agent will be operating in this area
   │       → downstream-app guidance: docs/ai/authoring/ ; framework-internal:

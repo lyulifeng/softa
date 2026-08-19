@@ -58,6 +58,23 @@ public final class SysCatalog {
 
     private static final Map<Class<?>, SysTable<?>> CACHE = new ConcurrentHashMap<>();
 
+    /**
+     * The catalog entities the boot pipeline must be able to read <b>before</b> any
+     * catalog-row diff can run — exactly the tables {@code SysJdbcLoader.doLoad()}
+     * SELECTs. The scanner physically reconciles these tables from their own
+     * annotations first ({@code DdlOrchestrator.reconcilePhysical}), which is what
+     * lets a fresh database bootstrap itself and an existing one absorb additive
+     * catalog-schema changes without a hand-written migration. Keep the two lists
+     * in lockstep: a new entity in the loader's read set MUST be added here, or
+     * its table won't exist when the loader first reads it.
+     */
+    public static final List<Class<?>> BOOT_READ_ENTITIES = List.of(
+            io.softa.starter.metadata.entity.SysModel.class,
+            io.softa.starter.metadata.entity.SysField.class,
+            io.softa.starter.metadata.entity.SysOptionSet.class,
+            io.softa.starter.metadata.entity.SysOptionItem.class,
+            io.softa.starter.metadata.entity.SysModelIndex.class);
+
     @SuppressWarnings("unchecked")
     public static <E> SysTable<E> of(Class<E> entity) {
         return (SysTable<E>) CACHE.computeIfAbsent(entity, SysCatalog::describe);

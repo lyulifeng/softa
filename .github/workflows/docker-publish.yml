@@ -11,7 +11,7 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: "Semver version, e.g. 1.2.3 (optional; used when no tag)"
+        description: "Version, e.g. 1.2.3 (optional; used when no tag)"
         required: true
         type: string
 

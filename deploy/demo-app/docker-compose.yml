@@ -39,9 +39,12 @@ services:
       - MYSQL_USER=admin
       - MYSQL_PASSWORD=admin
     volumes:
+      # No initdb seed on purpose: a fresh boot self-creates everything — the
+      # boot reconciler bootstraps the sys_* catalog tables from their own
+      # annotations, and the ["*"] scanner then creates all business tables.
+      # Need a reference DDL? REGEN_BASELINE=true mvn test -pl apps/demo-app \
+      #   -Dtest=MetadataBaselineDdlGenerator
       - ~/data/mysql/demo:/var/lib/mysql
-      # Specify the directory containing the initial SQL scripts
-      - ./init_mysql:/docker-entrypoint-initdb.d
 
 #  demo-app:
 #    image: ghcr.io/softa-io/demo-app:1.0.3

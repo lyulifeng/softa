@@ -41,8 +41,6 @@ services:
       - MYSQL_PASSWORD=admin
     volumes:
       - ~/data/mysql/mini:/var/lib/mysql
-      # Specify the directory containing the initial SQL scripts
-      - ./init_mysql:/docker-entrypoint-initdb.d
 
   mini-app:
     image: softa/mini-app:1.0.3
