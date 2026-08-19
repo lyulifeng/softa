@@ -40,8 +40,9 @@ services:
       - MYSQL_PASSWORD=admin
     volumes:
       - ~/data/mysql/demo:/var/lib/mysql
-      # Specify the directory containing the initial SQL scripts
-      - ./init_mysql:/docker-entrypoint-initdb.d
+      # Framework system-table baseline (sys_* catalog etc.) — demo-app has no
+      # baseline of its own; business tables are auto-DDL'd by the scanner.
+      - ../init_mysql:/docker-entrypoint-initdb.d
 
 #  demo-app:
 #    image: ghcr.io/softa-io/demo-app:1.0.3

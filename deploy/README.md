@@ -47,7 +47,7 @@ sh deploy/install-font.sh /path/to/fonts
 
 # 3. Start EFK by Docker Compose (Optional)
 ```bash
-docker-compose -f deploy/efk/docker-compose.yml up -d
+docker compose -f deploy/efk/docker-compose.yml up -d
 ```
 Access the Kibana console at http://localhost:5601
 
@@ -57,7 +57,7 @@ Then create index using `demo-app/init_es/create_index`.
 
 # 4. Start Pulsar by Docker Compose (Optional)
 ```bash
-docker-compose -f deploy/pulsar/docker-compose.yml up -d
+docker compose -f deploy/pulsar/docker-compose.yml up -d
 ```
 Access the Pulsar console at http://localhost:8080
 
@@ -70,7 +70,7 @@ or comment out the `mq.topics.xxx` topics to avoid the issue of being unable to 
 
 # 5. Start Minio by Docker Compose (Optional)
 ```bash
-docker-compose -f deploy/minio/docker-compose.yml up -d
+docker compose -f deploy/minio/docker-compose.yml up -d
 ```
 ### Minio API Endpoints
 http://localhost:9000
@@ -82,7 +82,7 @@ Password: minioadmin
 
 # 6. Start the demo application by Docker Compose
 ```bash
-docker-compose -f ./deploy/demo-app/docker-compose.yml up -d
+docker compose -f ./deploy/demo-app/docker-compose.yml up -d
 ```
 Create a database instance and execute the SQL scripts in `deploy/demo-app/init_mysql`.
 
