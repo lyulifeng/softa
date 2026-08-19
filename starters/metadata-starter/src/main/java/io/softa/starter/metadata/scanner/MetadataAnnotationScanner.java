@@ -3,6 +3,7 @@ package io.softa.starter.metadata.scanner;
 import java.time.LocalDateTime;
 import java.util.*;
 import java.util.stream.Collectors;
+import javax.sql.DataSource;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
@@ -11,8 +12,10 @@ import org.springframework.stereotype.Component;
 
 import io.softa.framework.base.config.SystemConfig;
 import io.softa.framework.orm.meta.MetadataInitializer;
+import io.softa.starter.metadata.catalog.SysCatalog;
 import io.softa.starter.metadata.checksum.CatalogFingerprint;
 import io.softa.starter.metadata.config.MetadataProperties;
+import io.softa.starter.metadata.ddl.BootDdlLock;
 import io.softa.starter.metadata.ddl.DdlOrchestrator;
 import io.softa.starter.metadata.ddl.ReferenceColumnResolver;
 import io.softa.starter.metadata.ddl.introspect.PhysicalDriftAuditor;
@@ -21,6 +24,7 @@ import io.softa.starter.metadata.ddl.introspect.PhysicalSchema;
 import io.softa.starter.metadata.ddl.spi.BuiltinDdlMetadataResolver;
 import io.softa.starter.metadata.entity.SysField;
 import io.softa.starter.metadata.entity.SysModel;
+import io.softa.starter.metadata.entity.SysModelIndex;
 import io.softa.starter.metadata.entity.SysOptionSet;
 import io.softa.starter.metadata.scanner.annotation.AnnotationScanResult;
 import io.softa.starter.metadata.scanner.checker.MetadataAnnotationChecker;
@@ -84,6 +88,9 @@ public class MetadataAnnotationScanner implements MetadataInitializer {
     private final String appCode;
     private final SysJdbcWriter writer;
     private final DdlOrchestrator ddlOrchestrator;
+    /** For {@link BootDdlLock} only; {@code null} in the test seam ⇒ lockless. */
+    private final DataSource lockDataSource;
+    private final String datasourceUrl;
 
     @Autowired
     public MetadataAnnotationScanner(
@@ -94,13 +101,14 @@ public class MetadataAnnotationScanner implements MetadataInitializer {
             @Value("${spring.datasource.url:}") String datasourceUrl) {
         this(pipeline, properties, systemConfig.getAppCode(),
                 new SysJdbcWriter(jdbcTemplate, systemConfig.getAppCode(), datasourceUrl),
-                new DdlOrchestrator(jdbcTemplate, BuiltinDdlMetadataResolver.INSTANCE, datasourceUrl));
+                new DdlOrchestrator(jdbcTemplate, BuiltinDdlMetadataResolver.INSTANCE, datasourceUrl),
+                jdbcTemplate.getDataSource(), datasourceUrl);
     }
 
     /**
      * Test seam: inject pre-built write-side collaborators directly, so the
      * DDL-before-rows ordering of {@link #initialize()} can be asserted with
-     * mocks.
+     * mocks. Lockless (no {@link DataSource}).
      */
     MetadataAnnotationScanner(
             MetadataReadPipeline pipeline,
@@ -108,11 +116,24 @@ public class MetadataAnnotationScanner implements MetadataInitializer {
             String appCode,
             SysJdbcWriter writer,
             DdlOrchestrator ddlOrchestrator) {
+        this(pipeline, properties, appCode, writer, ddlOrchestrator, null, null);
+    }
+
+    MetadataAnnotationScanner(
+            MetadataReadPipeline pipeline,
+            MetadataProperties properties,
+            String appCode,
+            SysJdbcWriter writer,
+            DdlOrchestrator ddlOrchestrator,
+            DataSource lockDataSource,
+            String datasourceUrl) {
         this.pipeline = pipeline;
         this.properties = properties;
         this.appCode = appCode;
         this.writer = writer;
         this.ddlOrchestrator = ddlOrchestrator;
+        this.lockDataSource = lockDataSource;
+        this.datasourceUrl = datasourceUrl;
     }
 
     @Override
@@ -135,6 +156,47 @@ public class MetadataAnnotationScanner implements MetadataInitializer {
             log.info("MetadataAnnotationScanner: scanner-scope empty; reconciler disabled (manage nothing)");
             return;
         }
+        // Everything past this point may execute DDL and write sys_* rows — one boot at a
+        // time across instances (BootDdlLock; null = lockless: test seam, or a dialect
+        // without session locks).
+        try (BootDdlLock ignored = BootDdlLock.acquire(lockDataSource, datasourceUrl)) {
+            // Stage A: the catalog tables themselves, physically converged from their own
+            // annotations BEFORE the strict catalog read below — this is what lets a fresh
+            // database bootstrap without baseline DDL and an existing one absorb additive
+            // catalog-schema changes without a hand-written migration (the old
+            // chicken-and-egg: the read SELECTs every entity column and used to run before
+            // any DDL could help).
+            AnnotationScanResult catalogFromCode = parseCatalogEntities();
+            reconcileCatalogTables(catalogFromCode);
+            reconcileInScope(scope, catalogFromCode);
+        }
+    }
+
+    private AnnotationScanResult parseCatalogEntities() {
+        AnnotationScanResult catalog = pipeline.parse(SysCatalog.BOOT_READ_ENTITIES, List.of());
+        // TO_ONE FKs among the catalog entities resolve within the set itself.
+        ReferenceColumnResolver.stampSysFields(catalog.fields(), catalog.fields());
+        return catalog;
+    }
+
+    /**
+     * Stage A. Introspection failure skips the reconcile rather than failing the boot —
+     * on a healthy schema nothing is lost, and on a broken one the strict read below
+     * remains the gate (with the drift audit reporting what it can).
+     */
+    private void reconcileCatalogTables(AnnotationScanResult catalogFromCode) {
+        PhysicalSchema facts = ddlOrchestrator.introspect(catalogFromCode.models());
+        if (facts == null) {
+            log.warn("MetadataAnnotationScanner: catalog physical reconcile skipped — introspection "
+                    + "unavailable; the strict catalog read remains the gate");
+            return;
+        }
+        ddlOrchestrator.reconcilePhysical(catalogFromCode.models(), catalogFromCode.fields(),
+                catalogFromCode.modelIndexes(), facts);
+    }
+
+    /** The diff-driven reconciliation of in-scope business models (the pre-existing lane). */
+    private void reconcileInScope(ScannerScope scope, AnnotationScanResult catalogFromCode) {
         log.info("MetadataAnnotationScanner: scanner-scope active (matchAll={}), scanning classpath...",
                 scope.matchesAll());
 
@@ -213,14 +275,20 @@ public class MetadataAnnotationScanner implements MetadataInitializer {
         // planning below (null when introspection failed — recovery then degrades to plain
         // diff planning). The audit runs on every boot — an idempotent diff can still hide
         // hand-made physical drift, and this consolidated report surfaces all of it at once.
-        PhysicalSchema facts = ddlOrchestrator.introspect(fromCode.models());
+        // The catalog tables audit alongside the in-scope business tables: under a narrow
+        // scope they are not in fromCode, yet their drift (undeclared columns left by a
+        // pending column-drop migration, narrower-than-declared types) belongs in the same
+        // report — Stage A deliberately emits no warn-units of its own for those states.
+        // Under ["*"] they are already in fromCode; the merge dedups by model name.
+        AnnotationScanResult audited = withCatalogEntities(fromCode, catalogFromCode);
+        PhysicalSchema facts = ddlOrchestrator.introspect(audited.models());
         log.info("MetadataAnnotationScanner: physical snapshot = {}",
                 facts == null ? "unavailable (recovery planning disabled)"
                         : facts.tables().size() + " managed table(s)");
         PhysicalDriftReport physicalDrift = null;
         if (facts != null) {
             physicalDrift = PhysicalDriftAuditor.audit(
-                    fromCode.models(), fromCode.fields(), fromCode.modelIndexes(), facts);
+                    audited.models(), audited.fields(), audited.modelIndexes(), facts);
             PhysicalDriftAuditor.warn(physicalDrift, "MetadataAnnotationScanner");
         }
 
@@ -266,6 +334,33 @@ public class MetadataAnnotationScanner implements MetadataInitializer {
                 fromCode.modelIndexes(), fromCode.optionSets(), fromCode.optionItems());
         MetadataStatus.record(new MetadataStatus("scanner", fingerprint, fingerprint,
                 true, diff.totalCount(), physicalDrift, LocalDateTime.now()));
+    }
+
+    /**
+     * The in-scope result plus any catalog entity models not already in it (with their
+     * fields and indexes), for the physical snapshot + drift audit. Row-side artifacts
+     * (option sets / items) are irrelevant to physical auditing and are not merged.
+     */
+    private static AnnotationScanResult withCatalogEntities(AnnotationScanResult fromCode,
+                                                            AnnotationScanResult catalogFromCode) {
+        Set<String> inCode = fromCode.models().stream()
+                .map(SysModel::getModelName).collect(Collectors.toSet());
+        List<SysModel> missing = catalogFromCode.models().stream()
+                .filter(m -> !inCode.contains(m.getModelName())).toList();
+        if (missing.isEmpty()) {
+            return fromCode;
+        }
+        Set<String> missingNames = missing.stream().map(SysModel::getModelName).collect(Collectors.toSet());
+        List<SysModel> models = new ArrayList<>(fromCode.models());
+        models.addAll(missing);
+        List<SysField> fields = new ArrayList<>(fromCode.fields());
+        catalogFromCode.fields().stream()
+                .filter(f -> missingNames.contains(f.getModelName())).forEach(fields::add);
+        List<SysModelIndex> indexes = new ArrayList<>(fromCode.modelIndexes());
+        catalogFromCode.modelIndexes().stream()
+                .filter(i -> missingNames.contains(i.getModelName())).forEach(indexes::add);
+        return new AnnotationScanResult(models, fields,
+                fromCode.optionSets(), fromCode.optionItems(), indexes);
     }
 
     /**

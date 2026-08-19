@@ -375,13 +375,21 @@ skipped-version chain).
 
 **When is manual DDL/DML needed at all?** Additive structure (new
 model/field/index/option, attribute widening) is annotation-only and
-self-applies — **except new columns on the `sys_*` / `design_*` catalog
-tables themselves**: the scanner's strict catalog read SELECTs every entity
-column and runs *before* any auto-DDL, so a catalog-table column added in
-code crashes the boot of every existing environment until its migration has
-run (chicken-and-egg; fresh installs are unaffected — the baseline DDL
-already carries it). Hand-written SQL is therefore reserved for catalog-table
-columns, data transformation, destructive cleanup, and business-data DML.
+self-applies. That now **includes the `sys_*` catalog tables themselves**: on
+every boot with a non-empty `scanner-scope`, the scanner first physically
+reconciles the five boot-read catalog tables from their own annotations
+(`DdlOrchestrator.reconcilePhysical`, before the strict catalog read) — a
+fresh database bootstraps its catalog with no baseline DDL, and a
+catalog-column addition (the old V34/V37 chicken-and-egg) converges without a
+migration. The whole boot DDL window is serialized across instances by a
+database session lock (`BootDdlLock`, 60s wait budget). Hand-written SQL is
+therefore reserved for: **data-carrying transitions** (a catalog column whose
+addition needs a backfill `UPDATE` for out-of-scope rows — the auto-ADD only
+supplies the column default), destructive cleanup (any DROP), renames not
+expressible as single-step `renamedFrom`, business-data DML, and any change
+on an environment that runs with an empty `scanner-scope` (checker-only —
+nothing auto-applies there, catalog included; `design_*` studio tables are
+also not covered by the boot reconcile).
 Migrations live in `deploy/migrations/<db>/V<N>__<slug>.sql` — the next free
 number is the registration, and the header comment carries the context,
 variants, and run-before-boot ordering contract (copy the structure of

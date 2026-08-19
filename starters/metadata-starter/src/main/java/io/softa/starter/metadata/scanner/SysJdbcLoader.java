@@ -74,9 +74,10 @@ public final class SysJdbcLoader {
         try {
             return doLoad();
         } catch (BadSqlGrammarException e) {
-            log.warn("SysJdbcLoader: SELECT failed—are the app_code migrations "
-                    + "(deploy/migrations/mysql/V8__app_code_identity.sql) applied? "
-                    + "Treating from-db state as empty.", e);
+            log.warn("SysJdbcLoader: SELECT failed — the sys_* catalog schema is behind the "
+                    + "entities on this classpath. A boot with a non-empty scanner-scope converges "
+                    + "it automatically (catalog reconcile); in checker-only environments apply the "
+                    + "pending deploy/migrations scripts. Treating from-db state as empty.", e);
             return AnnotationScanResult.empty();
         }
     }

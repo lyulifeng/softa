@@ -9,11 +9,13 @@ import java.util.function.Function;
 import java.util.stream.Collectors;
 import javax.sql.DataSource;
 import lombok.extern.slf4j.Slf4j;
+import org.apache.commons.lang3.StringUtils;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.dao.DataAccessException;
 import org.springframework.jdbc.BadSqlGrammarException;
 import org.springframework.jdbc.core.JdbcTemplate;
 
+import io.softa.framework.base.utils.StringTools;
 import io.softa.framework.orm.enums.DatabaseType;
 import io.softa.framework.orm.jdbc.database.DBUtil;
 import io.softa.starter.metadata.ddl.DdlPolicy.ModelOps;
@@ -154,6 +156,23 @@ public class DdlOrchestrator {
             log.warn("DdlOrchestrator: physical schema drift detected — {} additive recovery unit(s) "
                     + "prepended (see the {} labels below)", recovered, RECOVERY_TAG);
         }
+        ExecResult result = executeAll(rendered);
+        warnDeferred(result.deferred());
+        log.info("DdlOrchestrator: executed {} DDL statement(s), skipped {} already applied; "
+                        + "{} drop/rename/narrowing operation(s) deferred to manual SQL",
+                result.executed(), result.skipped(), result.deferred().size());
+    }
+
+    /** Outcome of one execution pass over rendered units. */
+    private record ExecResult(int executed, int skipped, List<RenderedDdl> deferred) {
+    }
+
+    /**
+     * Execute the auto kinds statement by statement, collecting warn-only units. Shared by the
+     * diff-driven {@link #apply} and the snapshot-driven {@link #reconcilePhysical} so both
+     * paths get the same already-applied degradation and CREATE-degrade short-circuit.
+     */
+    private ExecResult executeAll(List<RenderedDdl> rendered) {
         int executed = 0;
         int skipped = 0;
         List<RenderedDdl> deferred = new ArrayList<>();
@@ -181,10 +200,7 @@ public class DdlOrchestrator {
                 firstStatement = false;
             }
         }
-        warnDeferred(deferred);
-        log.info("DdlOrchestrator: executed {} DDL statement(s), skipped {} already applied; "
-                        + "{} drop/rename/narrowing operation(s) deferred to manual SQL",
-                executed, skipped, deferred.size());
+        return new ExecResult(executed, skipped, deferred);
     }
 
     /**
@@ -205,6 +221,178 @@ public class DdlOrchestrator {
                     + "disabled for this run: {}", e.getMessage());
             return null;
         }
+    }
+
+    /** Label marker on units planned by {@link #reconcilePhysical} (the catalog-table boot path). */
+    static final String CATALOG_TAG = "[catalog]";
+
+    /**
+     * Converge the given models' physical tables <b>directly from their from-code
+     * definitions</b> against the introspected facts — no catalog-row diff involved.
+     *
+     * <p>This is the boot path for the {@code sys_*} catalog tables themselves, whose
+     * "last applied state" is recorded nowhere but the physical schema (the rows that
+     * record every other model's state live <i>inside</i> these tables — the
+     * chicken-and-egg that used to require a hand-written migration for every
+     * catalog-table column, and a baseline SQL file for a fresh database). It runs
+     * <b>before</b> {@code SysJdbcLoader}'s strict read, so after it returns the read
+     * set is structurally guaranteed to be ⊆ the physical column set.
+     *
+     * <p>Same policy vocabulary as the diff-driven lane, applied to the
+     * annotation-vs-physical set difference:
+     * <ul>
+     *   <li>table missing → {@code CREATE TABLE} from the full code definition (genesis);</li>
+     *   <li>column missing → {@code ADD COLUMN}; if the field declares
+     *       {@code renamedFrom} and the prior column physically exists →
+     *       {@code CHANGE COLUMN} instead (data carried, not divorced);</li>
+     *   <li>column present but physically narrower than declared
+     *       ({@link PhysicalTypeCompat.Verdict#WIDEN}) → {@code MODIFY COLUMN}
+     *       (widen freely);</li>
+     *   <li>column present and EQUAL → silence; NARROW / INCOMPARABLE → <b>no unit at
+     *       all</b> — with no planned change there is nothing to defer, and the
+     *       consolidated physical drift audit is the reporting channel;</li>
+     *   <li>undeclared physical columns → never dropped, never touched (the drift
+     *       audit names them);</li>
+     *   <li>declared index missing → {@code ADD INDEX}.</li>
+     * </ul>
+     *
+     * <p>Fail-fast: a declared rename whose old <b>and</b> new columns both physically
+     * exist is a half-applied rename this planner must not guess about — boot fails
+     * with instructions. Genuine DDL errors propagate exactly like {@link #apply}
+     * (rows are never involved here, so a retry on next boot converges naturally).
+     *
+     * @return whether any statement was actually executed (callers refresh their
+     *         snapshot only then)
+     */
+    public boolean reconcilePhysical(List<SysModel> models, List<SysField> fields,
+                                     List<SysModelIndex> indexes, PhysicalSchema facts) {
+        DdlDialect dialect = resolveDialect();
+        List<RenderedDdl> out = new ArrayList<>();
+        for (SysModel model : models) {
+            List<SysField> modelFields = fields.stream()
+                    .filter(f -> model.getModelName().equals(f.getModelName())).toList();
+            List<SysModelIndex> modelIndexes = indexes.stream()
+                    .filter(i -> model.getModelName().equals(i.getModelName())).toList();
+            planPhysicalConvergence(dialect, model, modelFields, modelIndexes, facts, out);
+        }
+        if (out.isEmpty()) {
+            log.info("DdlOrchestrator: {} {} table(s) physically in sync", CATALOG_TAG, models.size());
+            return false;
+        }
+        ExecResult result = executeAll(out);
+        warnDeferred(result.deferred());
+        log.info("DdlOrchestrator: {} reconciled {} table(s) — executed {} DDL statement(s), "
+                        + "skipped {} already applied",
+                CATALOG_TAG, models.size(), result.executed(), result.skipped());
+        return result.executed() > 0;
+    }
+
+    private void planPhysicalConvergence(DdlDialect dialect, SysModel model,
+                                         List<SysField> modelFields, List<SysModelIndex> modelIndexes,
+                                         PhysicalSchema facts, List<RenderedDdl> out) {
+        String table = effectiveTableName(model);
+        if (!facts.tableExists(table)) {
+            ModelDdlCtx ctx = SysDdlContextBuilder.forCreate(model, modelFields, modelIndexes);
+            if (ctx.getCreatedFields().isEmpty()) {
+                log.warn("DdlOrchestrator: {} table {} is missing but the code definition has no stored "
+                        + "fields to create it from", CATALOG_TAG, table);
+                return;
+            }
+            out.add(RenderedDdl.of(RenderedDdl.Kind.CREATE_TABLE,
+                    "CREATE TABLE " + ctx.getTableName() + " " + CATALOG_TAG + " genesis",
+                    dialect.createTableDDL(ctx).toString()));
+            return;
+        }
+        for (SysField field : modelFields) {
+            if (!SysDdlContextBuilder.isStored(field)) {
+                continue;
+            }
+            String column = effectiveColumnName(field);
+            boolean columnExists = facts.columnExists(table, column);
+            // renamedFrom names the prior FIELD name; catalog entity fields never declare a
+            // custom columnName, so the prior column is its snake_case derivation.
+            String oldColumn = StringUtils.isBlank(field.getRenamedFrom())
+                    ? null : StringTools.toUnderscoreCase(field.getRenamedFrom());
+            boolean oldExists = oldColumn != null && facts.columnExists(table, oldColumn);
+            if (columnExists && oldExists) {
+                throw new IllegalStateException(String.format(
+                        "Half-applied catalog column rename on %s: both '%s' (declared renamedFrom) and "
+                                + "'%s' physically exist. Resolve manually — carry the data into '%s', then "
+                                + "DROP COLUMN %s — and boot again.",
+                        table, oldColumn, column, column, oldColumn));
+            }
+            if (!columnExists) {
+                if (oldExists) {
+                    addIfRendered(out, renderedFieldChange(dialect,
+                            SysDdlContextBuilder.forAlter(model, List.of(), List.of(),
+                                    List.of(new DdlPolicy.FieldRename(field, oldColumn)), List.of()),
+                            RenderedDdl.Kind.DECLARED_COLUMN_RENAME,
+                            "CHANGE COLUMN " + oldColumn + " -> " + columnLabel(model, field)
+                                    + " " + CATALOG_TAG + " declared renamedFrom"));
+                } else {
+                    addIfRendered(out, renderedFieldChange(dialect,
+                            SysDdlContextBuilder.forAlter(model, List.of(field), List.of(), List.of(), List.of()),
+                            RenderedDdl.Kind.ALTER_TABLE,
+                            "ADD COLUMN " + columnLabel(model, field) + " " + CATALOG_TAG));
+                }
+                continue;
+            }
+            PhysicalSchema.PhysicalColumn observed = facts.column(table, column);
+            // WIDEN as a positive TRIGGER (stricter than the diff lane, where the verdict only
+            // vetoes an already-planned MODIFY): plan one only when executing it observably
+            // changes the physical shape. A declared-unbounded column (TEXT/JSON/DTO) is
+            // excluded — engines report its width inconsistently (H2-MySQL: VARCHAR(1e9)),
+            // so a width-based trigger there would re-plan the same MODIFY on every boot.
+            if (isBoundedDeclaredWidth(field)
+                    && PhysicalTypeCompat.compare(field, observed) == PhysicalTypeCompat.Verdict.WIDEN) {
+                addIfRendered(out, renderedFieldChange(dialect,
+                        SysDdlContextBuilder.forAlter(model, List.of(), List.of(field), List.of(), List.of()),
+                        RenderedDdl.Kind.ALTER_TABLE,
+                        "MODIFY COLUMN " + columnLabel(model, field) + " " + CATALOG_TAG + " widen: "
+                                + PhysicalTypeCompat.describe(field, observed)));
+            }
+        }
+        Map<String, String> fieldToColumn = new HashMap<>();
+        for (SysField field : modelFields) {
+            fieldToColumn.put(field.getFieldName(), effectiveColumnName(field));
+        }
+        for (SysModelIndex index : modelIndexes) {
+            if (!facts.indexExists(table, index.getIndexName())) {
+                ModelDdlCtx ctx = SysDdlContextBuilder.forIndexChanges(model, fieldToColumn,
+                        List.of(index), List.of(), List.of());
+                if (ctx.isHasIndexChanges()) {
+                    String sql = dialect.alterIndexDDL(ctx).toString().trim();
+                    if (!sql.isEmpty()) {
+                        out.add(RenderedDdl.of(RenderedDdl.Kind.ALTER_INDEX,
+                                "ADD INDEX " + index.getIndexName() + " " + CATALOG_TAG, sql));
+                    }
+                }
+            }
+        }
+    }
+
+    /** Render one field-change unit, or {@code null} when the ctx carries no stored change. */
+    private RenderedDdl renderedFieldChange(DdlDialect dialect, ModelDdlCtx ctx,
+                                            RenderedDdl.Kind kind, String label) {
+        if (!ctx.isHasAlterTableChanges()) {
+            return null;
+        }
+        String sql = dialect.alterTableDDL(ctx).toString().trim();
+        return sql.isEmpty() ? null : RenderedDdl.of(kind, label, sql);
+    }
+
+    private static void addIfRendered(List<RenderedDdl> out, RenderedDdl unit) {
+        if (unit != null) {
+            out.add(unit);
+        }
+    }
+
+    /** Whether the declared physical shape carries a real width bound (see the WIDEN trigger note). */
+    private static boolean isBoundedDeclaredWidth(SysField field) {
+        var physical = SysDdlContextBuilder.resolvePhysicalFieldType(field);
+        return physical != io.softa.framework.orm.enums.FieldType.TEXT
+                && physical != io.softa.framework.orm.enums.FieldType.JSON
+                && physical != io.softa.framework.orm.enums.FieldType.DTO;
     }
 
     /**

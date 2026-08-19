@@ -84,7 +84,7 @@ Password: minioadmin
 ```bash
 docker compose -f ./deploy/demo-app/docker-compose.yml up -d
 ```
-Create a database instance and execute the SQL scripts in `deploy/demo-app/init_mysql`.
+No SQL seeding is required: on an empty database the boot reconciler first creates the `sys_*` catalog tables from their own annotations, then the `["*"]`-scope scanner creates every business table. For a reviewable reference DDL (DB-first workflows, DBA review), generate one on demand: `REGEN_BASELINE=true mvn test -pl apps/demo-app -Dtest=MetadataBaselineDdlGenerator` (writes `deploy/init_mysql/1.Metadata.ddl.sql`, intentionally untracked).
 
 # 7. Production Environment
 It is highly recommended that the production environment be deployed using a pipeline and Kubernetes for containerization.
