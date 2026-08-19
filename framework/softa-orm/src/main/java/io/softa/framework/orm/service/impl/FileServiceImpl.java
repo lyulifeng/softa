@@ -517,6 +517,34 @@ public class FileServiceImpl extends EntityServiceImpl<FileRecord, Long> impleme
         return bypassFileRecordScope(() -> this.createOne(fileRecord));
     }
 
+    @Override
+    @Transactional(rollbackFor = Exception.class)
+    public Optional<Long> copyFileTo(Long fileId, String modelName, Serializable rowId, String fieldName) {
+        if (fileId == null) {
+            return Optional.empty();
+        }
+        // Read past FileRecord's own scope for the same reason every other read here does: the caller
+        // authorized the two business rows, and FileRecord's matchNone would refuse before we get to
+        // copy anything. FileRecord is NOT multi-tenant — this read carries no tenant predicate, so a
+        // cross-tenant fileId would resolve and be copied. Same-tenant is the caller's guarantee, not
+        // this method's: the only caller (confirmHire) obtained the source id by reading a row under
+        // its own tenant scope. Keep it that way — do not expose copyFileTo to a caller that hands it
+        // a fileId it did not first resolve through a tenant-scoped business read.
+        return bypassFileRecordScope(() -> this.getById(fileId)).map(source -> {
+            FileRecord copy = new FileRecord();
+            // The stored object is shared — same ossKey, same checksum. Only the ownership differs.
+            copy.setOssKey(source.getOssKey());
+            copy.setFileName(source.getFileName());
+            copy.setFileType(source.getFileType());
+            copy.setChecksum(source.getChecksum());
+            copy.setFileSize(source.getFileSize());
+            copy.setModelName(modelName);
+            copy.setRowId(rowId == null ? null : rowId.toString());
+            copy.setFieldName(fieldName);
+            return persistFileRecord(copy);
+        });
+    }
+
     /**
      * Run a FileRecord read or write with FileRecord's own row-scope waived — and only its own.
      *
