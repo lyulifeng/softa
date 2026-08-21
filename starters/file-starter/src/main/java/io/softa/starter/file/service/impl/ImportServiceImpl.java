@@ -53,6 +53,8 @@ import io.softa.starter.file.enums.ImportStatus;
 import io.softa.starter.file.enums.ImportType;
 import io.softa.starter.file.excel.export.ExcelSheetData;
 import io.softa.starter.file.excel.export.support.ExcelUploadService;
+import io.softa.starter.file.excel.export.support.OptionDropdownHandler;
+import io.softa.starter.file.excel.export.support.OptionDropdownResolver;
 import io.softa.starter.file.excel.imports.ImportRowPipeline;
 import io.softa.starter.file.excel.style.CustomHeadStyleHandler;
 import io.softa.starter.file.message.AsyncImportProducer;
@@ -87,6 +89,9 @@ public class ImportServiceImpl implements ImportService {
     @Autowired
     private AsyncImportProducer asyncImportProducer;
 
+    @Autowired
+    private OptionDropdownResolver optionDropdownResolver;
+
     public void validateImportTemplate(ImportTemplate importTemplate) {
         Assert.notBlank(importTemplate.getModelName(),
                 "Import template `{0}` modelName cannot be empty.", importTemplate.getName());
@@ -117,10 +122,18 @@ public class ImportServiceImpl implements ImportService {
         List<String> requiredHeaderList = importFields.stream()
                 .filter(ImportFieldDTO::getRequired).map(ImportFieldDTO::getHeader).toList();
 
-        // 1) Main sheet: header row only (existing behavior)
+        // 1) Main sheet: header row, plus a dropdown on every column whose values are a fixed list.
+        // Resolved here rather than inside the handler so the query happens before the workbook is
+        // serialised — a write handler runs during serialisation and should not be holding a
+        // connection. An empty map simply means no column qualified.
         CustomHeadStyleHandler headStyleHandler = new CustomHeadStyleHandler(requiredHeaderList);
+        Map<Integer, List<String>> dropdownOptions =
+                optionDropdownResolver.resolve(importTemplate.getModelName(), importFields);
         ExcelSheetData mainSheetData = new ExcelSheetData(importTemplate.getName(), headers, Collections.emptyList(),
-                new CustomHeadStyleHandler[]{headStyleHandler});
+                new WriteHandler[]{
+                        headStyleHandler,
+                        new OptionDropdownHandler(importTemplate.getName(), dropdownOptions)
+                });
         List<ExcelSheetData> sheetDataList = new ArrayList<>();
         sheetDataList.add(mainSheetData);
         if (Boolean.TRUE.equals(importTemplate.getIncludeDescription())) {
