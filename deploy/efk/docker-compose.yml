@@ -1,3 +1,12 @@
+# Data lives in NAMED VOLUMES on purpose: this image runs as a non-root user
+# (UID 1000, elasticsearch), and a root-created bind-mount dir is unwritable to it on any real
+# Linux host (macOS Docker Desktop skips UID mapping, which is why dev never
+# saw it). Docker initializes a named volume with the image's own ownership —
+# no pre-created dir, no chown. Note for existing dev machines: data previously
+# under ~/data/elasticsearch is NOT carried over.
+volumes:
+  es_data:
+
 services:
 
   elasticsearch:
@@ -11,10 +20,11 @@ services:
       xpack.ml.enabled: false
       ES_JAVA_OPTS: -Xms768m -Xmx768m
     volumes:
-      - ~/data/elasticsearch:/usr/share/elasticsearch/data
+      - es_data:/usr/share/elasticsearch/data
     ports:
-      - 9200:9200
-      - 9300:9300
+      # Loopback-only. 9300 (inter-node transport) is not published at all —
+      # nothing uses it on a single-node setup.
+      - 127.0.0.1:9200:9200
 
   kibana:
     image: kibana:9.3.1
@@ -24,7 +34,8 @@ services:
     depends_on:
       - elasticsearch
     ports:
-      - 5601:5601
+      # Kibana has no built-in auth — never expose it; local access only.
+      - 127.0.0.1:5601:5601
     environment:
       # Kibana connects to ES address
       ELASTICSEARCH_HOSTS: http://elasticsearch:9200

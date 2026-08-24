@@ -90,7 +90,14 @@ public final class BootDdlLock implements AutoCloseable {
             connection = null;   // ownership transferred
             return lock;
         } catch (SQLException e) {
-            throw new IllegalStateException("Failed to acquire the boot DDL lock", e);
+            // Distinguish "database unreachable" from genuine lock trouble: this is the
+            // FIRST JDBC touch of the boot sequence, so a network/credential failure
+            // surfaces here and a message that only says "lock" reads as contention.
+            throw new IllegalStateException(connection == null
+                    ? "Could not obtain a JDBC connection to acquire the boot DDL lock — the database "
+                            + "is unreachable or the credentials are wrong (check endpoint, security "
+                            + "group, and datasource settings); this is not lock contention"
+                    : "Failed to acquire the boot DDL lock", e);
         } finally {
             closeQuietly(connection);
         }
