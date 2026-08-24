@@ -1,3 +1,13 @@
+# Data lives in NAMED VOLUMES on purpose: this image runs as a non-root user
+# (UID 10000), and a root-created bind-mount dir is unwritable to it on any real
+# Linux host (macOS Docker Desktop skips UID mapping, which is why dev never
+# saw it). Docker initializes a named volume with the image's own ownership —
+# no pre-created dir, no chown. Note for existing dev machines: data previously
+# under ~/data/pulsar is NOT carried over.
+volumes:
+  pulsar_zookeeper_data:
+  pulsar_bookkeeper_data:
+
 # bash: docker network create shared-net
 networks:
   shared-net:
@@ -16,7 +26,12 @@ services:
     networks:
       - shared-net
     volumes:
-      - ~/data/pulsar/zookeeper:/pulsar/data/zookeeper
+      # Mounted at /pulsar/data, which EXISTS in the image (owned by UID 10000):
+      # a named volume only inherits ownership from paths the image actually
+      # carries. Mounting a nonexistent subdir makes docker create the mountpoint
+      # root-owned, and UID 10000 then fails with "Unable to create data
+      # directory". zk creates its zookeeper/ subdir inside by itself.
+      - pulsar_zookeeper_data:/pulsar/data
     environment:
       - metadataStoreUrl=zk:zookeeper:2181
       - PULSAR_MEM=-Xms256m -Xmx256m -XX:MaxDirectMemorySize=256m
@@ -90,7 +105,9 @@ services:
         condition: service_completed_successfully
     # Map the local directory to the container to avoid bookie startup failure due to insufficient container disks.
     volumes:
-      - ~/data/pulsar/bookkeeper:/pulsar/data/bookkeeper
+      # Same rationale as the zookeeper mount: mount the image-existing parent
+      # dir; bookie creates its bookkeeper/ subdir by itself.
+      - pulsar_bookkeeper_data:/pulsar/data
     command: bash -c "bin/apply-config-from-env.py conf/bookkeeper.conf && exec bin/pulsar bookie"
 
   # Start broker
@@ -113,6 +130,12 @@ services:
       - managedLedgerDefaultWriteQuorum=1
       - managedLedgerDefaultAckQuorum=1
       - advertisedAddress=broker
+      # Dev-only: the app runs in the IDE (a host process) and connects via
+      # 127.0.0.1:6650, so lookups MUST advertise localhost. Containerized
+      # deployments (e.g. hcm UAT) must NOT carry this line — advertisedListeners
+      # supersedes advertisedAddress, and container clients would then get
+      # "localhost" from every lookup and refuse to connect. That topology
+      # advertises `broker` instead (see zingkey-hcm/deploy/docker-compose.pulsar.yml).
       - advertisedListeners=external:pulsar://localhost:6650
       - PULSAR_MEM=-Xms768m -Xmx768m -XX:MaxDirectMemorySize=384m
       - PULSAR_GC=${PULSAR_GC:--XX:+UseZGC -XX:+ZGenerational -XX:+PerfDisableSharedMem -XX:+AlwaysPreTouch}
@@ -124,6 +147,9 @@ services:
       bookie:
         condition: service_started
     ports:
-      - "6650:6650"
-      - "8080:8080"
+      # Loopback-only: the IDE-hosted app reaches the broker via localhost:6650,
+      # and the admin REST (8080) is for troubleshooting — both belong to this
+      # machine only, never published externally.
+      - "127.0.0.1:6650:6650"
+      - "127.0.0.1:8080:8080"
     command: bash -c "bin/apply-config-from-env.py conf/broker.conf && exec bin/pulsar broker"

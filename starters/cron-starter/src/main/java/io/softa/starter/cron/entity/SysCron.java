@@ -65,7 +65,7 @@ public class SysCron extends AuditableModel {
     @Field
     private TenantJobMode tenantJobMode;
 
-    @Field(length = 256)
+    @Field(length = 512)
     private String description;
 
     @Field
