@@ -124,15 +124,6 @@ class OptionDropdownHandlerTest {
     }
 
     @Test
-    void theDropdownArrowIsLeftVisible() {
-        // Suppressing it keeps the validation but hides the list, which removes the only reason to put
-        // the values in the file.
-        Sheet sheet = writeWith(Map.of(0, List.of("OT_COMPANY", "OT_DEPT")));
-
-        assertThat(sheet.getDataValidations().get(0).getSuppressDropDownArrow()).isFalse();
-    }
-
-    @Test
     void oneUnattachableColumnDoesNotStopTheOthers() {
         Map<Integer, List<String>> options = new LinkedHashMap<>();
         // A code containing a comma cannot be expressed inline: Excel reads it as two values. It is

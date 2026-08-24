@@ -126,9 +126,14 @@ public class OptionDropdownHandler implements SheetWriteHandler {
                 // Reject anything not on the list, and say why. Without this Excel accepts a typo
                 // silently and the row only fails later, during the import itself.
                 validation.setShowErrorBox(true);
-                // Keep the arrow. Suppressing it leaves the validation in force but gives the reader no
-                // way to see the values, which is the entire point of putting them in the file.
-                validation.setSuppressDropDownArrow(false);
+                // Reads backwards, and has to. POI writes this straight through to the file's
+                // showDropDown attribute, inverted: setSuppressDropDownArrow(true) produces
+                // showDropDown="false". And Excel reads that attribute inverted from its own name —
+                // showDropDown="true" is what it writes when you UNCHECK "In-cell dropdown". The two
+                // inversions do not cancel: passing false here hides the arrow, which is how this
+                // shipped once, with the validations all present and no way to see them. Verified
+                // against the generated XML, not against POI's getter, which reports its own naming.
+                validation.setSuppressDropDownArrow(true);
                 sheet.addValidationData(validation);
             } catch (RuntimeException e) {
                 // One column's dropdown is not worth the whole template. Logged rather than swallowed
