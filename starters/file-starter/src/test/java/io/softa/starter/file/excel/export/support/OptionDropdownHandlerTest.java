@@ -7,6 +7,7 @@ import java.util.stream.IntStream;
 
 import org.apache.poi.ss.usermodel.DataValidation;
 import org.apache.poi.ss.usermodel.Sheet;
+import org.apache.poi.ss.util.WorkbookUtil;
 import org.apache.poi.xssf.usermodel.XSSFWorkbook;
 import org.junit.jupiter.api.Test;
 
@@ -24,7 +25,12 @@ import static org.assertj.core.api.Assertions.assertThatCode;
  */
 class OptionDropdownHandlerTest {
 
-    private static final String MAIN_SHEET = "Template";
+    /**
+     * Deliberately longer than Excel's 31-character sheet-name cap, and taken from a real template
+     * ("Employee Identity & Work Pass (Singapore)"). A sheet created under this name comes back
+     * truncated, which is what made an earlier name-based match find nothing at all.
+     */
+    private static final String LONG_TEMPLATE_NAME = "Employee Identity & Work Pass (Singapore)";
 
     /** Values whose comma-joined length lands just under / just over the cap. */
     private static List<String> codesOfJoinedLength(int target) {
@@ -36,11 +42,15 @@ class OptionDropdownHandlerTest {
     }
 
     private Sheet writeWith(Map<Integer, List<String>> options) {
+        return writeWith(options, "Template");
+    }
+
+    private Sheet writeWith(Map<Integer, List<String>> options, String sheetName) {
         XSSFWorkbook workbook = new XSSFWorkbook();
-        Sheet sheet = workbook.createSheet(MAIN_SHEET);
+        Sheet sheet = workbook.createSheet(WorkbookUtil.createSafeSheetName(sheetName));
         // Exercise the attachment directly: the fesod context only supplies the sheet, and building a
         // whole write pipeline here would test the library rather than this decision.
-        new TestableHandler(MAIN_SHEET, options).attach(sheet);
+        new TestableHandler(options).attach(sheet);
         return sheet;
     }
 
@@ -93,13 +103,33 @@ class OptionDropdownHandlerTest {
     }
 
     @Test
-    void aSheetOtherThanTheTargetIsUntouched() {
+    void aTemplateNameTooLongForASheetStillGetsItsDropdowns() {
+        // Excel truncates the name to 31 characters, so anything that compares the template's name with
+        // the sheet's finds no match and attaches nothing — silently, on most of the real templates.
+        Sheet sheet = writeWith(Map.of(0, List.of("OT_COMPANY", "OT_DEPT")), LONG_TEMPLATE_NAME);
+
+        assertThat(sheet.getSheetName()).isNotEqualTo(LONG_TEMPLATE_NAME);
+        assertThat(sheet.getDataValidations()).hasSize(1);
+    }
+
+    @Test
+    void aSheetAfterTheFirstIsUntouched() {
         XSSFWorkbook workbook = new XSSFWorkbook();
-        Sheet other = workbook.createSheet("Import instructions");
-        new TestableHandler(MAIN_SHEET, Map.of(0, List.of("A", "B"))).attach(other);
+        workbook.createSheet("Template");
+        Sheet instructions = workbook.createSheet("Import instructions");
+        new TestableHandler(Map.of(0, List.of("A", "B"))).attach(instructions);
 
         // The instruction sheet is prose, not input — a dropdown there would be noise.
-        assertThat(other.getDataValidations()).isEmpty();
+        assertThat(instructions.getDataValidations()).isEmpty();
+    }
+
+    @Test
+    void theDropdownArrowIsLeftVisible() {
+        // Suppressing it keeps the validation but hides the list, which removes the only reason to put
+        // the values in the file.
+        Sheet sheet = writeWith(Map.of(0, List.of("OT_COMPANY", "OT_DEPT")));
+
+        assertThat(sheet.getDataValidations().get(0).getSuppressDropDownArrow()).isFalse();
     }
 
     @Test
@@ -117,8 +147,8 @@ class OptionDropdownHandlerTest {
 
     /** Exposes the attachment step without needing a fesod write context. */
     private static final class TestableHandler extends OptionDropdownHandler {
-        private TestableHandler(String targetSheetName, Map<Integer, List<String>> optionsByColumn) {
-            super(targetSheetName, optionsByColumn);
+        private TestableHandler(Map<Integer, List<String>> optionsByColumn) {
+            super(optionsByColumn);
         }
     }
 }

@@ -13,6 +13,7 @@ import org.springframework.stereotype.Component;
 import io.softa.framework.orm.domain.FilterUnit;
 import io.softa.framework.orm.domain.Filters;
 import io.softa.framework.orm.domain.FlexQuery;
+import io.softa.framework.orm.domain.Orders;
 import io.softa.framework.orm.enums.FieldType;
 import io.softa.framework.orm.meta.MetaField;
 import io.softa.framework.orm.meta.MetaOptionItem;
@@ -50,6 +51,7 @@ public class OptionDropdownResolver {
 
     private static final String ITEM_CODE = "itemCode";
     private static final String OPTION_SET_CODE = "optionSetCode";
+    private static final String SEQUENCE = "sequence";
 
     @Autowired
     private ModelService<?> modelService;
@@ -168,9 +170,13 @@ public class OptionDropdownResolver {
         optionSetCodes.forEach(codes::add);
         Map<String, List<String>> result = new LinkedHashMap<>();
         try {
+            // Ordered by the sequence the set itself defines, so the dropdown reads in the same order
+            // as the field's picker elsewhere in the product. Unordered it would follow whatever the
+            // database happened to return.
             FlexQuery flexQuery = new FlexQuery(
                     List.of(OPTION_SET_CODE, ITEM_CODE),
-                    new Filters().in(OPTION_SET_CODE, codes));
+                    new Filters().in(OPTION_SET_CODE, codes),
+                    Orders.ofAsc(OPTION_SET_CODE).addAsc(SEQUENCE));
             List<Map<String, Object>> rows = modelService.searchList(TENANT_OPTION_ITEM, flexQuery);
             for (Map<String, Object> row : rows) {
                 Object setCode = row.get(OPTION_SET_CODE);

@@ -132,7 +132,7 @@ public class ImportServiceImpl implements ImportService {
         ExcelSheetData mainSheetData = new ExcelSheetData(importTemplate.getName(), headers, Collections.emptyList(),
                 new WriteHandler[]{
                         headStyleHandler,
-                        new OptionDropdownHandler(importTemplate.getName(), dropdownOptions)
+                        new OptionDropdownHandler(dropdownOptions)
                 });
         List<ExcelSheetData> sheetDataList = new ArrayList<>();
         sheetDataList.add(mainSheetData);

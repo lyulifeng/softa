@@ -42,6 +42,9 @@ import org.apache.poi.ss.util.CellRangeAddressList;
  * <p>A column with no resolvable options is skipped rather than failing the download. Missing option
  * data is a reason to hand back a template without one dropdown; it is not a reason to hand back
  * nothing.
+ *
+ * <p>Only the workbook's first sheet is touched — the template's own, the one people type into. The
+ * instruction sheet beside it is prose.
  */
 @Slf4j
 public class OptionDropdownHandler implements SheetWriteHandler {
@@ -49,8 +52,15 @@ public class OptionDropdownHandler implements SheetWriteHandler {
     /** Excel's limit on a data-validation formula, which an inline list has to fit inside. */
     private static final int INLINE_FORMULA_LIMIT = 255;
 
-    /** Rows below the header that the dropdown covers. Excel needs a bounded range. */
-    private static final int DROPDOWN_ROWS = 500;
+    /**
+     * Rows below the header the dropdown covers. Excel wants a bounded range, and a row past the end
+     * gets neither the list nor the validation — so this is also where a very large paste stops being
+     * checked. Set well above any import anyone hand-fills.
+     */
+    private static final int DROPDOWN_ROWS = 5000;
+
+    /** The sheet these columns belong to: the template's first, which is the one people type into. */
+    private static final int MAIN_SHEET_INDEX = 0;
 
     /** Name of the sheet holding the values that do not fit inline. */
     static final String OPTIONS_SHEET_NAME = "_options";
@@ -58,11 +68,7 @@ public class OptionDropdownHandler implements SheetWriteHandler {
     /** Column index (0-based, on the main sheet) → the item codes allowed in it. */
     private final Map<Integer, List<String>> optionsByColumn;
 
-    /** Only the first sheet gets dropdowns; the instruction sheet is prose, not input. */
-    private final String targetSheetName;
-
-    public OptionDropdownHandler(String targetSheetName, Map<Integer, List<String>> optionsByColumn) {
-        this.targetSheetName = targetSheetName;
+    public OptionDropdownHandler(Map<Integer, List<String>> optionsByColumn) {
         this.optionsByColumn = optionsByColumn == null ? Map.of() : new LinkedHashMap<>(optionsByColumn);
     }
 
@@ -85,10 +91,13 @@ public class OptionDropdownHandler implements SheetWriteHandler {
         if (optionsByColumn.isEmpty()) {
             return;
         }
-        if (!targetSheetName.equals(sheet.getSheetName())) {
+        Workbook workbook = sheet.getWorkbook();
+        // Identified by position, not by name. Excel caps a sheet name at 31 characters and truncates
+        // silently past it, and most template names are longer than that — matching on the name meant
+        // no sheet ever matched and the whole feature did nothing, with no error to show for it.
+        if (workbook.getSheetIndex(sheet) != MAIN_SHEET_INDEX) {
             return;
         }
-        Workbook workbook = sheet.getWorkbook();
         DataValidationHelper helper = sheet.getDataValidationHelper();
         Sheet optionsSheet = null;
         int nextOptionsColumn = 0;
@@ -117,13 +126,15 @@ public class OptionDropdownHandler implements SheetWriteHandler {
                 // Reject anything not on the list, and say why. Without this Excel accepts a typo
                 // silently and the row only fails later, during the import itself.
                 validation.setShowErrorBox(true);
-                validation.setSuppressDropDownArrow(true);
+                // Keep the arrow. Suppressing it leaves the validation in force but gives the reader no
+                // way to see the values, which is the entire point of putting them in the file.
+                validation.setSuppressDropDownArrow(false);
                 sheet.addValidationData(validation);
             } catch (RuntimeException e) {
                 // One column's dropdown is not worth the whole template. Logged rather than swallowed
                 // so "why is this column missing its dropdown" is answerable without a debugger.
                 log.warn("Skipped the dropdown on column {} of sheet '{}': {}",
-                        columnIndex, targetSheetName, e.getMessage());
+                        columnIndex, sheet.getSheetName(), e.getMessage());
             }
         }
     }
