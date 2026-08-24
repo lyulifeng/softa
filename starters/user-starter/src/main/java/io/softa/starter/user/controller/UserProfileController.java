@@ -48,9 +48,9 @@ public class UserProfileController {
     @Operation(summary = "Get Current User Info", description = "Retrieves the user info of the logged-in user.")
     @GetMapping("/getMyUserInfo")
     public ApiResponse<UserInfo> getMyUserInfo() {
-        Long userId = ContextHolder.getContext().getUserId();
-        UserInfo userInfo = service.getUserInfo(userId);
-        return ApiResponse.success(userInfo);
+        // getMyUserInfo(), not getUserInfo(contextUserId): the self-service overload is the one that
+        // waives row scope, and reading it off the context here would leave that waiver unreachable.
+        return ApiResponse.success(service.getMyUserInfo());
     }
 
     @Operation(summary = "Get Current User Profile", description = "Retrieves the profile details of the logged-in user.")

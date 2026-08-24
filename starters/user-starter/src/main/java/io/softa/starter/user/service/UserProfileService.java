@@ -32,6 +32,17 @@ public interface UserProfileService extends EntityService<UserProfile, Long> {
     UserInfo getUserInfo(Long userId);
 
     /**
+     * The caller's own {@link UserInfo}.
+     *
+     * <p>Exists so the self-service read can waive row scope without widening
+     * {@link #getUserInfo(Long)}, which takes the id as an argument. Every current caller of that
+     * method happens to pass the caller's own id, but nothing in its signature says so — waiving it
+     * would make "any person's UserInfo" readable the moment someone writes an admin-facing lookup
+     * and reuses it, and the result is cached for a month, so the leak would outlive the request.
+     */
+    UserInfo getMyUserInfo();
+
+    /**
      * Drop a user's cached {@code UserInfo} so the next read rebuilds it from the database.
      *
      * <p>Must be called whenever something the snapshot carries changes — above all
