@@ -1,6 +1,7 @@
 package io.softa.starter.studio.meta.entity;
 
 import java.io.Serial;
+import java.util.List;
 import lombok.Data;
 import lombok.EqualsAndHashCode;
 
@@ -142,6 +143,13 @@ public class DesignField extends AuditableModel {
     // the cross-lane checksum requires design_* and sys_* to match field-for-field.
     @Field(label = "Auto Sequence")
     private Boolean autoSequence;
+
+    // Structural mirror of sys_field.countries (the countries a field applies in; empty means all);
+    // the cross-lane checksum requires design_* and sys_* to match field-for-field. Without the twin
+    // the runtime row carries a value the design row cannot hold at all, and every deploy after that
+    // reports drift on this attribute forever.
+    @Field
+    private List<String> countries;
 
     @Field
     private MaskingType maskingType;
