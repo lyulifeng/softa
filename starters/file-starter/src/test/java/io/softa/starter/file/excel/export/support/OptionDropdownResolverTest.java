@@ -266,6 +266,65 @@ class OptionDropdownResolverTest {
         });
     }
 
+    // ---------------------------------------------------------------- cascade
+
+    @Test
+    void spotsThatOneColumnNarrowsAnother() {
+        // A track names the level it belongs to, so the tracks worth offering are the ones for the
+        // level already chosen. Both sides are code-as-id, so the track's foreign key holds exactly
+        // the value the level column offers and the grouping needs no translation.
+        withMetadata(mm -> {
+            field("EmployeeProfile", "highestEducationLevel", FieldType.MANY_TO_ONE,
+                    "HighestEducationLevel", null, null);
+            field("EmployeeProfile", "highestEducationTrack", FieldType.MANY_TO_ONE,
+                    "HighestEducationTrack", null, null);
+            field("HighestEducationTrack", "level", FieldType.MANY_TO_ONE, "HighestEducationLevel", null, null);
+            model("HighestEducationLevel", false, IdStrategy.EXTERNAL_ID);
+            model("HighestEducationTrack", false, IdStrategy.EXTERNAL_ID);
+            stubRows("HighestEducationLevel", "id", List.of("SG_Bachelor", "SG_Master"));
+            stubGroupedRows("HighestEducationTrack",
+                    List.of(Map.of("id", "SG_BEng", "level", "SG_Bachelor"),
+                            Map.of("id", "SG_MEng", "level", "SG_Master")));
+
+            var resolution = resolveAll("EmployeeProfile", null,
+                    "highestEducationLevel", "highestEducationTrack");
+
+            assertThat(resolution.cascadesByColumn()).containsOnlyKeys(1);
+            var cascade = resolution.cascadesByColumn().get(1);
+            assertThat(cascade.parentColumn()).isEqualTo(0);
+            assertThat(cascade.valuesByParentValue())
+                    .containsEntry("SG_Bachelor", List.of("SG_BEng"))
+                    .containsEntry("SG_Master", List.of("SG_MEng"));
+        });
+    }
+
+    @Test
+    void leavesTwoUnrelatedColumnsAlone() {
+        // Neither model points at the other, so there is nothing to narrow by. Reading a cascade into
+        // any two code-as-id columns that happen to share a sheet would offer the wrong values with
+        // full confidence.
+        withMetadata(mm -> {
+            field("EmployeeProfile", "idType", FieldType.MANY_TO_ONE, "IdType", null, null);
+            field("EmployeeProfile", "passType", FieldType.MANY_TO_ONE, "PassType", null, null);
+            // Both carry a many-to-one of their own — onto the country, as the country data models all
+            // do. Neither points at the other, which is the only thing that makes a pair.
+            field("IdType", "country", FieldType.MANY_TO_ONE, "CountryRegion", null, null);
+            field("PassType", "country", FieldType.MANY_TO_ONE, "CountryRegion", null, null);
+            model("IdType", false, IdStrategy.EXTERNAL_ID);
+            model("PassType", false, IdStrategy.EXTERNAL_ID);
+            stubRows("IdType", "id", List.of("SG_NRIC"));
+            stubRows("PassType", "id", List.of("SG_EP"));
+
+            assertThat(resolveAll("EmployeeProfile", null, "idType", "passType").cascadesByColumn())
+                    .isEmpty();
+            // And no grouping query was even attempted. Asserting only on the empty result would pass
+            // just as well if a bogus pair had been formed and then produced nothing.
+            assertThat(capturedQuery("IdType").getFields())
+                    .as("only the flat list of ids was asked for").containsExactly("id");
+            assertThat(capturedQuery("PassType").getFields()).containsExactly("id");
+        });
+    }
+
     // ---------------------------------------------------------------- harness
 
     private final ModelService<?> modelService = mock(ModelService.class);
@@ -290,6 +349,10 @@ class OptionDropdownResolverTest {
                 MetaModel metaModel = models.get(inv.getArgument(0));
                 return metaModel == null ? null : metaModel.getIdStrategy();
             });
+            mm.when(() -> ModelManager.getModelFields(any())).thenAnswer(inv -> fields.entrySet().stream()
+                    .filter(e -> e.getKey().startsWith(inv.getArgument(0) + "."))
+                    .map(Map.Entry::getValue)
+                    .toList());
             mm.when(() -> ModelManager.existField(any(), any()))
                     .thenAnswer(inv -> extraFields.contains(inv.getArgument(0) + "." + inv.getArgument(1))
                             || fields.containsKey(inv.getArgument(0) + "." + inv.getArgument(1)));
@@ -302,6 +365,10 @@ class OptionDropdownResolverTest {
     }
 
     private Map<Integer, List<String>> resolve(String modelName, String country, String... columns) {
+        return resolveAll(modelName, country, columns).optionsByColumn();
+    }
+
+    private OptionDropdownResolver.Resolution resolveAll(String modelName, String country, String... columns) {
         OptionDropdownResolver resolver = new OptionDropdownResolver();
         ReflectionTestUtils.setField(resolver, "modelService", modelService);
         List<ImportFieldDTO> importFields = new ArrayList<>();
@@ -310,7 +377,17 @@ class OptionDropdownResolverTest {
             dto.setFieldName(column);
             importFields.add(dto);
         }
-        return resolver.resolve(modelName, importFields, country);
+        return resolver.resolveAll(modelName, importFields, country);
+    }
+
+    /** Rows carrying more than one column, for the grouping query a cascade issues. */
+    @SuppressWarnings("unchecked")
+    private void stubGroupedRows(String modelName, List<Map<String, Object>> rows) {
+        when(((ModelService<Long>) modelService).searchList(eq(modelName), any(FlexQuery.class)))
+                .thenAnswer(inv -> {
+                    queriesByModel.put(inv.getArgument(0), inv.getArgument(1));
+                    return rows;
+                });
     }
 
     /**

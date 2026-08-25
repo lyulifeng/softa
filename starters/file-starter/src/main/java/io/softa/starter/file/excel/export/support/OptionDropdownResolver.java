@@ -104,6 +104,16 @@ public class OptionDropdownResolver {
     }
 
     /**
+     * A column whose values are narrowed by another column of the same sheet.
+     *
+     * @param parentColumn          the column index the reader picks first
+     * @param valuesByParentValue   parent value → the values this column may then offer, in the order
+     *                              the flat list had them; a parent with no children is absent
+     */
+    public record Cascade(int parentColumn, Map<String, List<String>> valuesByParentValue) {
+    }
+
+    /**
      * @param modelName    the model the template imports into
      * @param importFields the template's columns, in the order they appear on the sheet
      * @param country      the country the template is for, or blank for a template that applies
@@ -111,7 +121,22 @@ public class OptionDropdownResolver {
      * @return column index (0-based) → allowed values; columns with no fixed list are absent
      */
     public Map<Integer, List<String>> resolve(String modelName, List<ImportFieldDTO> importFields, String country) {
+        return resolveAll(modelName, importFields, country).optionsByColumn();
+    }
+
+    /**
+     * Everything the sheet needs: the values per column, and which of those columns are narrowed by
+     * another column of the same sheet.
+     *
+     * @param modelName    the model the template imports into
+     * @param importFields the template's columns, in the order they appear on the sheet
+     * @param country      the country the template is for, or blank for a template that applies
+     *                     everywhere
+     */
+    public Resolution resolveAll(String modelName, List<ImportFieldDTO> importFields, String country) {
         Map<Integer, List<String>> optionsByColumn = new LinkedHashMap<>();
+        // what each column's values were asked for, so a parent/child pair can be spotted afterwards
+        Map<Integer, ValueRequest> requestByColumn = new LinkedHashMap<>();
         // optionSetCode → the columns waiting on it, so one query serves however many columns share a set
         Map<String, List<Integer>> tenantSetToColumns = new LinkedHashMap<>();
         // and the same idea for ordinary models, keyed by the whole request
@@ -146,9 +171,101 @@ public class OptionDropdownResolver {
             tenantSetToColumns.forEach((optionSetCode, columns) ->
                     assign(optionsByColumn, columns, codesBySet.get(optionSetCode)));
         }
-        entityRequestToColumns.forEach((request, columns) ->
-                assign(optionsByColumn, columns, queryEntityValues(request)));
-        return optionsByColumn;
+        entityRequestToColumns.forEach((request, columns) -> {
+            assign(optionsByColumn, columns, queryEntityValues(request));
+            columns.forEach(columnIndex -> requestByColumn.put(columnIndex, request));
+        });
+        return new Resolution(optionsByColumn, resolveCascades(requestByColumn, country));
+    }
+
+    /**
+     * Everything resolved for one sheet.
+     *
+     * @param optionsByColumn   column index → the values it may offer
+     * @param cascadesByColumn  column index → the column it is narrowed by, for the few that are
+     */
+    public record Resolution(Map<Integer, List<String>> optionsByColumn, Map<Integer, Cascade> cascadesByColumn) {
+    }
+
+    /**
+     * Finds the columns of a sheet that narrow one another.
+     *
+     * <p>Two columns form a pair when the child's model carries a many-to-one onto the parent's model:
+     * an education track names the level it belongs to, so the tracks worth offering are the ones for
+     * the level already chosen rather than every track in the country.
+     *
+     * <p><b>Only between two code-as-id columns.</b> Both then offer ids, and the child's foreign key
+     * holds exactly the value the parent column offers — so the grouping is one query and no
+     * translation. A pair where either side is addressed by name would need the parent's ids and names
+     * matched up as well; that is a further step, and no template asks for it yet.
+     */
+    private Map<Integer, Cascade> resolveCascades(Map<Integer, ValueRequest> requestByColumn, String country) {
+        Map<Integer, Cascade> cascades = new LinkedHashMap<>();
+        requestByColumn.forEach((columnIndex, request) -> {
+            if (!ModelConstant.ID.equals(request.fieldName())) {
+                return;
+            }
+            for (Map.Entry<Integer, ValueRequest> candidate : requestByColumn.entrySet()) {
+                if (candidate.getKey().equals(columnIndex)
+                        || !ModelConstant.ID.equals(candidate.getValue().fieldName())) {
+                    continue;
+                }
+                MetaField link = linkFieldOnto(request.modelName(), candidate.getValue().modelName());
+                if (link == null) {
+                    continue;
+                }
+                Map<String, List<String>> grouped = queryGroupedByParent(request, link.getFieldName(), country);
+                if (!grouped.isEmpty()) {
+                    cascades.put(columnIndex, new Cascade(candidate.getKey(), grouped));
+                }
+                return;
+            }
+        });
+        return cascades;
+    }
+
+    /** The many-to-one on {@code childModel} that points at {@code parentModel}, or null when none does. */
+    private MetaField linkFieldOnto(String childModel, String parentModel) {
+        if (!ModelManager.existModel(childModel)) {
+            return null;
+        }
+        return ModelManager.getModelFields(childModel).stream()
+                .filter(f -> f.getFieldType() == FieldType.MANY_TO_ONE)
+                .filter(f -> parentModel.equals(f.getRelatedModel()))
+                .findFirst()
+                .orElse(null);
+    }
+
+    /** The child model's ids, grouped under the parent id each one names. */
+    private Map<String, List<String>> queryGroupedByParent(ValueRequest request, String linkField, String country) {
+        Map<String, List<String>> grouped = new LinkedHashMap<>();
+        try {
+            Filters filters = new Filters();
+            Filters declared = Filters.of(request.filters());
+            if (!Filters.isEmpty(declared)) {
+                filters.and(declared);
+            }
+            if (narrowingCountryFor(request.modelName(), country) != null) {
+                filters.and(COUNTRY, Operator.EQUAL, country);
+            }
+            FlexQuery flexQuery = new FlexQuery(List.of(ModelConstant.ID, linkField), filters,
+                    Orders.ofAsc(ModelConstant.ID));
+            flexQuery.setLimitSize(MAX_VALUES_PER_COLUMN + 1);
+            for (Map<String, Object> row : modelService.searchList(request.modelName(), flexQuery)) {
+                Object id = row.get(ModelConstant.ID);
+                Object parent = row.get(linkField);
+                if (id == null || parent == null) {
+                    continue;
+                }
+                grouped.computeIfAbsent(String.valueOf(parent), k -> new ArrayList<>()).add(String.valueOf(id));
+            }
+        } catch (RuntimeException e) {
+            // Losing the grouping costs the narrowing, not the column: it keeps the flat list it
+            // already resolved to.
+            log.warn("Could not group {} by {}, that column stays a flat list: {}",
+                    request.modelName(), linkField, e.getMessage());
+        }
+        return grouped;
     }
 
     /** Gives every column of a batch the values that batch resolved to, if it resolved to any. */
