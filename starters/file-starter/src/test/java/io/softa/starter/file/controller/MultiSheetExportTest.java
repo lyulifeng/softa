@@ -1,5 +1,6 @@
 package io.softa.starter.file.controller;
 
+import java.time.LocalDate;
 import java.util.List;
 
 import io.softa.framework.orm.domain.Filters;
@@ -66,6 +67,21 @@ class MultiSheetExportTest {
                 .startsWith("code");
         assertThat(params.getSheets().get(1).getExportParams().getFields())
                 .containsExactly("code", "relationship", "name");
+    }
+
+    @Test
+    void theEffectiveDateSitsOnTheWorkbookBecauseItCannotSitOnASheet() {
+        // It travels on the request context, not on the query, and every sheet is converted before any
+        // of them is read. A per-sheet value would therefore be overwritten by the next sheet and only
+        // the last one would take effect — for all of them. Worse in practice than in theory: a caller
+        // that sets a date on the first sheet and none on the rest ends up with it cleared.
+        MultiSheetExportParams params = new MultiSheetExportParams();
+        params.setEffectiveDate(LocalDate.of(2026, 8, 25));
+
+        assertThat(params.getEffectiveDate()).isEqualTo(LocalDate.of(2026, 8, 25));
+        assertThat(MultiSheetExportParams.Sheet.class.getDeclaredFields())
+                .as("a sheet carries no date of its own to be confused with the workbook's")
+                .noneMatch(field -> "effectiveDate".equals(field.getName()));
     }
 
     private static MultiSheetExportParams.Sheet sheet(String modelName, List<String> fields) {

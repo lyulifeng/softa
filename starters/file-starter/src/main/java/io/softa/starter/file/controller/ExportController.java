@@ -9,6 +9,8 @@ import org.springframework.web.bind.annotation.*;
 import java.util.ArrayList;
 import java.util.List;
 
+import io.softa.framework.base.context.ContextHolder;
+import io.softa.framework.base.utils.Assert;
 import io.softa.framework.orm.domain.FlexQuery;
 import io.softa.framework.orm.dto.FileInfo;
 import io.softa.framework.web.response.ApiResponse;
@@ -81,14 +83,26 @@ public class ExportController {
     @PostMapping(value = "/dynamicExportMultiSheet")
     public ApiResponse<FileInfo> dynamicExportMultiSheet(
             @RequestBody MultiSheetExportParams multiSheetExportParams) {
+        Assert.notEmpty(multiSheetExportParams.getSheets(),
+                "A multi-sheet export needs at least one sheet.");
         List<SheetInfo> sheetInfoList = new ArrayList<>();
         for (MultiSheetExportParams.Sheet sheet : multiSheetExportParams.getSheets()) {
+            // The effective date belongs to the workbook. Left on a sheet it would be written to the
+            // request context here and overwritten by the next sheet, so only the last one would take
+            // effect — for every sheet. Said plainly rather than quietly ignored.
+            Assert.isTrue(sheet.getExportParams() == null
+                            || sheet.getExportParams().getEffectiveDate() == null,
+                    "Set effectiveDate on the request, not on a sheet: it applies to the whole "
+                            + "workbook and a per-sheet value cannot be honoured.");
             SheetInfo sheetInfo = new SheetInfo();
             sheetInfo.setModelName(sheet.getModelName());
             sheetInfo.setSheetName(sheet.getSheetName());
             sheetInfo.setFlexQuery(ExportParams.convertParamsToFlexQuery(sheet.getExportParams()));
             sheetInfoList.add(sheetInfo);
         }
+        // After the conversions, each of which cleared it: the queries all run later, so this is the
+        // value they will see.
+        ContextHolder.getContext().setEffectiveDate(multiSheetExportParams.getEffectiveDate());
         return ApiResponse.success(exportService.dynamicExportMultiSheet(
                 multiSheetExportParams.getFileName(), sheetInfoList));
     }

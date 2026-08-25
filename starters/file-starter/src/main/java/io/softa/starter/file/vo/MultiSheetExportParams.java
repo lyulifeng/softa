@@ -1,6 +1,7 @@
 package io.softa.starter.file.vo;
 
 import java.io.Serial;
+import java.time.LocalDate;
 import java.io.Serializable;
 import java.util.List;
 
@@ -30,6 +31,17 @@ public class MultiSheetExportParams implements Serializable {
 
     @Schema(description = "One entry per object; each becomes a sheet.")
     private List<Sheet> sheets;
+
+    /**
+     * The point in time every sheet is read at.
+     *
+     * <p>On the workbook rather than on each sheet, because it is not a per-sheet quantity: a record
+     * and the objects under it read at different dates is not a picture of anything. It also cannot be
+     * one — the effective date travels on the request context, not on the query, so several sheets
+     * setting their own would leave whichever ran last in force for all of them.
+     */
+    @Schema(description = "Point in time all sheets are read at; applies to the whole workbook.")
+    private LocalDate effectiveDate;
 
     /** One object's slice of the workbook. */
     @Data
