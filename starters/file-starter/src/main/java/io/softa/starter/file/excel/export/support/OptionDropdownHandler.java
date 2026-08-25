@@ -129,9 +129,10 @@ public class OptionDropdownHandler implements SheetWriteHandler {
                         optionsSheet = createHiddenOptionsSheet(workbook);
                     }
                     int parentValuesColumn = nextOptionsColumn;
-                    nextOptionsColumn = writeCascade(workbook, optionsSheet, nextOptionsColumn, cascade);
+                    nextOptionsColumn = writeCascade(workbook, optionsSheet, nextOptionsColumn,
+                            cascade, columnIndex);
                     constraint = helper.createFormulaListConstraint(
-                            cascadeFormula(cascade, parentValuesColumn));
+                            cascadeFormula(cascade, parentValuesColumn, columnIndex));
                 } else if (fitsInline(codes)) {
                     constraint = helper.createExplicitListConstraint(codes.toArray(new String[0]));
                 } else {
@@ -180,7 +181,7 @@ public class OptionDropdownHandler implements SheetWriteHandler {
      * @return the next free column on the hidden sheet
      */
     private static int writeCascade(Workbook workbook, Sheet optionsSheet, int firstColumn,
-                                    OptionDropdownResolver.Cascade cascade) {
+                                    OptionDropdownResolver.Cascade cascade, int columnIndex) {
         List<String> parents = List.copyOf(cascade.valuesByParentValue().keySet());
         writeOptionsColumn(optionsSheet, firstColumn, parents);
         int column = firstColumn + 1;
@@ -188,9 +189,9 @@ public class OptionDropdownHandler implements SheetWriteHandler {
             List<String> children = cascade.valuesByParentValue().get(parents.get(i));
             writeOptionsColumn(optionsSheet, column, children);
             Name name = workbook.createName();
-            // Positions are 1-based in the formula, so the first parent is _c1 and _c0 stays free to
-            // mean "no parent chosen yet".
-            name.setNameName(CASCADE_NAME_PREFIX + (i + 1));
+            // Positions are 1-based in the formula, so the first parent is _c<col>_1 and _c<col>_0
+            // stays free to mean "no parent chosen yet".
+            name.setNameName(cascadeNamePrefix(columnIndex) + (i + 1));
             name.setRefersToFormula(rangeReference(column, children.size()));
             column++;
         }
@@ -198,7 +199,7 @@ public class OptionDropdownHandler implements SheetWriteHandler {
         // pointing at a name that does not exist makes Excel treat the whole validation as broken and
         // drop the dropdown, blank parent or not.
         Name blank = workbook.createName();
-        blank.setNameName(CASCADE_NAME_PREFIX + "0");
+        blank.setNameName(cascadeNamePrefix(columnIndex) + "0");
         blank.setRefersToFormula(rangeReference(column, 1));
         writeOptionsColumn(optionsSheet, column, List.of(""));
         return column + 1;
@@ -211,12 +212,26 @@ public class OptionDropdownHandler implements SheetWriteHandler {
      * it keeps pointing at the parent. IFERROR covers the cell whose parent is still blank, which
      * would otherwise leave MATCH returning #N/A and the name unresolvable.
      */
-    private static String cascadeFormula(OptionDropdownResolver.Cascade cascade, int parentValuesColumn) {
+    private static String cascadeFormula(OptionDropdownResolver.Cascade cascade, int parentValuesColumn,
+                                         int columnIndex) {
         int parentCount = cascade.valuesByParentValue().size();
         String parentCell = "$" + columnLetter(cascade.parentColumn()) + "2";
         String parentRange = rangeReference(parentValuesColumn, parentCount);
         return String.format("INDIRECT(\"%s\"&IFERROR(MATCH(%s,%s,0),0))",
-                CASCADE_NAME_PREFIX, parentCell, parentRange);
+                cascadeNamePrefix(columnIndex), parentCell, parentRange);
+    }
+
+    /**
+     * The defined-name prefix for one cascaded column, e.g. {@code _c4_}.
+     *
+     * <p><b>Carries the column, because a defined name belongs to the workbook and not to a sheet or
+     * a column.</b> Numbering each cascade from one would have the second column claim names the
+     * first already holds — and a template with two cascaded columns is not hypothetical, it is what
+     * the employee template asks for. The parents differ between the two, so the collision would not
+     * even fail loudly: it would offer one column the other's values.
+     */
+    private static String cascadeNamePrefix(int columnIndex) {
+        return CASCADE_NAME_PREFIX + columnIndex + "_";
     }
 
     /**

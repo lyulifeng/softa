@@ -53,7 +53,7 @@ class OptionDropdownCascadeTest {
         // `&` arrives XML-escaped; asserting on the raw text is the point — POI's own getter would
         // hand back its idea of the formula rather than what the file carries.
         assertThat(xml)
-                .contains("INDIRECT(\"_c\"&amp;IFERROR(MATCH($D2,_options!$A$1:$A$2,0),0))")
+                .contains("INDIRECT(\"_c4_\"&amp;IFERROR(MATCH($D2,_options!$A$1:$A$2,0),0))")
                 .as("the arrow has to be on, and POI writes this attribute inverted")
                 .contains("showDropDown=\"false\"");
     }
@@ -63,10 +63,12 @@ class OptionDropdownCascadeTest {
         Sheet sheet = write();
         XSSFWorkbook workbook = (XSSFWorkbook) sheet.getWorkbook();
 
-        // _c1 is the first parent's children, _c2 the second's — numbered by position, never derived
-        // from the parent's text, which Excel would reject as a defined name.
-        Name first = workbook.getName("_c1");
-        Name second = workbook.getName("_c2");
+        // _c4_1 is the first parent's children, _c4_2 the second's — numbered by position, never
+        // derived from the parent's text, which Excel would reject as a defined name. The 4 is the
+        // column: a defined name belongs to the workbook, so two cascaded columns would otherwise
+        // fight over the same names.
+        Name first = workbook.getName("_c4_1");
+        Name second = workbook.getName("_c4_2");
         assertThat(first).isNotNull();
         assertThat(second).isNotNull();
         assertThat(first.getRefersToFormula()).isNotEqualTo(second.getRefersToFormula());
@@ -86,7 +88,7 @@ class OptionDropdownCascadeTest {
     void aBlankParentResolvesToANameThatExists() {
         // Without _c0 the formula would build a name nothing defines, and Excel drops a validation it
         // cannot resolve — taking the dropdown away from every row, not just the empty ones.
-        assertThat(((XSSFWorkbook) write().getWorkbook()).getName("_c0"))
+        assertThat(((XSSFWorkbook) write().getWorkbook()).getName("_c4_0"))
                 .as("the fallback the IFERROR branch names").isNotNull();
     }
 
@@ -99,6 +101,42 @@ class OptionDropdownCascadeTest {
         assertThat(sheet.getDataValidations().stream()
                 .anyMatch(v -> v.getValidationConstraint().getExplicitListValues() != null))
                 .as("the level column is still a plain list").isTrue();
+    }
+
+    @Test
+    void twoCascadedColumnsDoNotFightOverTheSameNames() {
+        // A defined name belongs to the workbook, not to a sheet or a column. Numbering each cascade
+        // from one would have the second column claim names the first already holds — and the parents
+        // differ between the two, so it would not fail loudly: it would quietly offer one column the
+        // other's values. Two cascaded columns is what the employee template asks for.
+        XSSFWorkbook workbook = new XSSFWorkbook();
+        Sheet sheet = workbook.createSheet("Template");
+
+        Map<String, List<String>> banksByMethod = new LinkedHashMap<>();
+        banksByMethod.put("BankTransfer", List.of("DBS", "OCBC"));
+        banksByMethod.put("Cheque", List.of("UOB"));
+
+        Map<Integer, List<String>> options = new LinkedHashMap<>();
+        options.put(3, List.of("SG_Bachelor", "SG_Master"));
+        options.put(4, List.of("SG_BEng", "SG_BSc", "SG_MEng"));
+        options.put(7, List.of("BankTransfer", "Cheque"));
+        options.put(8, List.of("DBS", "OCBC", "UOB"));
+
+        Map<Integer, OptionDropdownResolver.Cascade> cascades = new LinkedHashMap<>();
+        cascades.put(4, new OptionDropdownResolver.Cascade(3, TRACKS_BY_LEVEL));
+        cascades.put(8, new OptionDropdownResolver.Cascade(7, banksByMethod));
+
+        new TestableCascadeHandler(options, cascades).attach(sheet);
+
+        assertThat(workbook.getAllNames().stream().map(Name::getNameName))
+                .as("every name distinct, and each says which column it belongs to")
+                .containsExactlyInAnyOrder("_c4_1", "_c4_2", "_c4_0", "_c8_1", "_c8_2", "_c8_0");
+        assertThat(workbook.getName("_c4_1").getRefersToFormula())
+                .isNotEqualTo(workbook.getName("_c8_1").getRefersToFormula());
+
+        String xml = ((XSSFSheet) sheet).getCTWorksheet().toString();
+        assertThat(xml).contains("INDIRECT(\"_c4_\"&amp;IFERROR(MATCH($D2,");
+        assertThat(xml).contains("INDIRECT(\"_c8_\"&amp;IFERROR(MATCH($H2,");
     }
 
     /** Exposes {@code attach}, which is protected so the fesod callback stays the only public way in. */
