@@ -87,6 +87,7 @@ class FieldAnnotationCustomizerTest {
             @Override public String description() { return description; }
             @Override public FieldType[] fieldType() { return new FieldType[0]; }
             @Override public String renamedFrom() { return ""; }
+            @Override public String[] countries() { return new String[0]; }
             @Override public String columnName() { return ""; }
             @Override public int length() { return length; }
             @Override public int scale() { return 0; }

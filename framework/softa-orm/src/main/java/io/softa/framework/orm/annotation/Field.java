@@ -186,4 +186,24 @@ public @interface Field {
      * single value directly — Java auto-wraps it into a single-element array.
      */
     WidgetType[] widgetType() default {};
+
+    /**
+     * Countries this field applies to, as ISO 3166-1 alpha-2 codes (e.g. {@code {"NZ"}}).
+     *
+     * <p><b>Empty = applies everywhere.</b> That default is what makes the attribute cheap: a product
+     * with fifty shared fields and a handful of country-specific ones writes the attribute only on the
+     * handful. It is also the safe default — a field nobody thought about stays visible, and a country
+     * nobody has onboarded yet gets the shared set rather than another country's specifics.
+     *
+     * <p>Declared positively — which countries HAVE the field — never negatively. The fields that carry
+     * this today each belong to exactly one country, so the positive form is one value where an
+     * exclusion list would be every country minus one, rewritten on every onboarding. The failure
+     * directions differ too: a forgotten declaration hides a field someone will ask about, where a
+     * forgotten exclusion shows a field they will fill in, and nobody notices until the data is wrong.
+     *
+     * <p>Carries only whether the field exists in a country. How a country labels it, orders it, or
+     * requires it is presentation, and belongs in per-country data rather than here — one column can
+     * hold a set of country codes, but not a value per country.
+     */
+    String[] countries() default {};
 }
