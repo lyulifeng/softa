@@ -251,7 +251,16 @@ public class OptionDropdownResolver {
             FlexQuery flexQuery = new FlexQuery(List.of(ModelConstant.ID, linkField), filters,
                     Orders.ofAsc(ModelConstant.ID));
             flexQuery.setLimitSize(MAX_VALUES_PER_COLUMN + 1);
-            for (Map<String, Object> row : modelService.searchList(request.modelName(), flexQuery)) {
+            List<Map<String, Object>> rows = modelService.searchList(request.modelName(), flexQuery);
+            if (rows.size() > MAX_VALUES_PER_COLUMN) {
+                // Said out loud, as the flat list does. The cut falls at the end of the ordering, so
+                // the parents that lose their children are whichever sort last — and on the sheet that
+                // looks like a level with no tracks rather than like a list that was truncated.
+                log.warn("{} has more than {} rows to group by {}; the later parents will offer nothing.",
+                        request.modelName(), MAX_VALUES_PER_COLUMN, linkField);
+                rows = rows.subList(0, MAX_VALUES_PER_COLUMN);
+            }
+            for (Map<String, Object> row : rows) {
                 Object id = row.get(ModelConstant.ID);
                 Object parent = row.get(linkField);
                 if (id == null || parent == null) {
