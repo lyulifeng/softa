@@ -17,9 +17,11 @@ import org.springframework.context.ApplicationEventPublisher;
 
 import java.util.List;
 import java.util.Optional;
+import java.util.concurrent.atomic.AtomicReference;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.doReturn;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.spy;
@@ -48,6 +50,8 @@ class UserInvitationTenantScopeTest {
     private UserIdentityService identityService;
     private ApplicationEventPublisher eventPublisher;
     private UserInvitationServiceImpl service;
+    /** Null when the insert ran cross-tenant — i.e. when the ORM skipped stamping entirely. */
+    private AtomicReference<Long> tenantSeenByRowInsert;
 
     @BeforeEach
     void setUp() {
@@ -60,7 +64,15 @@ class UserInvitationTenantScopeTest {
         // Stub the inherited ORM surface: this test is about which tier reaches the mail, not about
         // how the invitation row is stored.
         doReturn(List.<UserInvitation>of()).when(service).searchList(any(Filters.class));
-        doReturn(1L).when(service).createOne(any(UserInvitation.class));
+        tenantSeenByRowInsert = new AtomicReference<>();
+        doAnswer(inv -> {
+            // The ORM stamps tenant_id from the ambient context at insert time, so what that context says
+            // HERE is the tenant the row lands in. Asserting on the entity would prove nothing: tenant_id
+            // is readonly and never set on it. Cross-tenant means no stamp at all, recorded as null.
+            Context ctx = ContextHolder.getContext();
+            tenantSeenByRowInsert.set(ctx.isCrossTenant() ? null : ctx.getTenantId());
+            return 1L;
+        }).when(service).createOne(any(UserInvitation.class));
 
         UserIdentity identity = new UserIdentity();
         identity.setPassword("already-set");
@@ -130,6 +142,40 @@ class UserInvitationTenantScopeTest {
         MailRequestMessage mail = captureMail();
         assertThat(mail.tenantId()).isNull();
         assertThat(mail.scope()).isEqualTo(MessageScope.PLATFORM);
+    }
+
+    @Test
+    void theRowLandsInTheInviteesTenantEvenWhenTheCallerIsCrossTenant() {
+        // UserAccountController.invite wraps the call in a cross-tenant window so a platform super-admin
+        // can reach a roster spanning tenants. That window also switches off tenant stamping, so the
+        // invitation row used to land unstamped — invisible on the User Invitations page of the very
+        // tenant whose member it is about, which is the one case where someone acts on their behalf.
+        when(accountService.getById(USER_ID)).thenReturn(Optional.of(account()));
+
+        Context crossTenant = new Context();
+        crossTenant.setTenantId(OPERATOR_TENANT);
+        crossTenant.setCrossTenant(true);
+        ContextHolder.runWith(crossTenant, () -> service.invite(USER_ID, null));
+
+        assertThat(tenantSeenByRowInsert.get())
+                .as("row must be filed under the invitee's tenant, not left unstamped")
+                .isEqualTo(ACCOUNT_TENANT);
+    }
+
+    @Test
+    void theRowIsOwnedEvenWhenTheMailIsRenderedPlatformTier() {
+        // Ownership and render tier answer different questions, and the public reset path is where
+        // they part: no context to trust, so the mail renders platform-tier — but the invitation is
+        // still a record of THIS person's account at THEIR company, and belongs to that tenant. An
+        // earlier revision asserted the two were always equal, which this path disproves.
+        when(accountService.getUserByEmail("invitee@example.test")).thenReturn(Optional.of(account()));
+
+        service.forgotPassword("invitee@example.test");
+
+        assertThat(tenantSeenByRowInsert.get())
+                .as("the row belongs to the account's tenant regardless of which tier renders the mail")
+                .isEqualTo(ACCOUNT_TENANT);
+        assertThat(captureMail().tenantId()).isNull();
     }
 
     @Test
