@@ -21,6 +21,7 @@ import io.softa.starter.file.dto.SheetInfo;
 import io.softa.starter.file.entity.ExportHistory;
 import io.softa.starter.file.entity.ExportTemplate;
 import io.softa.starter.file.excel.export.strategy.ExportByDynamic;
+import io.softa.starter.file.excel.export.support.ExcelUploadService;
 import io.softa.starter.file.excel.export.strategy.ExportByFieldTemplate;
 import io.softa.starter.file.excel.export.strategy.ExportContext;
 import io.softa.starter.file.excel.export.strategy.ExportStrategyFactory;
@@ -85,12 +86,20 @@ public class ExportServiceImpl implements ExportService {
     public FileInfo dynamicExportMultiSheet(String fileName, List<SheetInfo> sheetInfoList) {
         Assert.notBlank(fileName, "The file name cannot be empty.");
         Assert.notEmpty(sheetInfoList, "The sheetInfo List cannot be empty.");
-        // Validate the sheetInfoList, sheetNames must be unique
+        // Sheet names must be unique — as Excel will store them, not as they were handed in. A name
+        // over 31 characters or carrying []:*?/\\ is altered on the way into the workbook, so two
+        // that differ only past that point would pass a check on the raw text and then collide.
+        //
+        // Checked on the effective name too: a blank one falls back to the model name, which is the
+        // natural way to ask for one sheet per object. Comparing the blanks themselves made two such
+        // sheets look like a conflict with each other.
         List<String> sheetNames = new ArrayList<>();
         sheetInfoList.forEach(sheetInfo -> {
             Assert.isTrue(StringUtils.isNotBlank(sheetInfo.getModelName()),
                     "The model name cannot be empty in the sheetInfo of `{0}`", fileName);
-            sheetNames.add(sheetInfo.getSheetName());
+            sheetNames.add(ExcelUploadService.safeSheetName(
+                    StringUtils.isNotBlank(sheetInfo.getSheetName())
+                            ? sheetInfo.getSheetName() : sheetInfo.getModelName()));
         });
         Assert.isTrue(sheetNames.size() == new HashSet<>(sheetNames).size(),
                 "Sheet names in the sheetInfoList must be unique. The sheet names are: {0}", sheetNames);

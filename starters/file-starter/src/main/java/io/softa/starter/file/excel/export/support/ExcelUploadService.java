@@ -7,9 +7,11 @@ import java.io.InputStream;
 import java.util.Collections;
 import java.util.List;
 
+import org.apache.commons.lang3.StringUtils;
 import org.apache.fesod.sheet.ExcelWriter;
 import org.apache.fesod.sheet.FesodSheet;
 import org.apache.fesod.sheet.write.metadata.WriteSheet;
+import org.apache.poi.ss.util.WorkbookUtil;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 
@@ -45,7 +47,8 @@ public class ExcelUploadService {
                 List<List<String>> headersList = sheetData.getHeaders().stream()
                         .map(Collections::singletonList).toList();
                 WriteSheet writeSheet = excelWriterFactory
-                        .createSheetBuilder(i, sheetData.getSheetName(), headersList, sheetData.getWriteHandlers())
+                        .createSheetBuilder(i, safeSheetName(sheetData.getSheetName()), headersList,
+                                sheetData.getWriteHandlers())
                         .build();
                 excelWriter.write(sheetData.getRowsTable(), writeSheet);
             }
@@ -54,6 +57,19 @@ public class ExcelUploadService {
         } catch (Exception e) {
             throw new BusinessException("Error generating Excel {0} with the provided data.", fileName, e);
         }
+    }
+
+    /**
+     * The name Excel will actually store for a sheet.
+     *
+     * <p>Excel caps a sheet name at 31 characters and rejects {@code []:*?/\\}, so a longer or
+     * dirtier name is not kept as written — it is silently altered on the way in. Anything that later
+     * looks a sheet up by the name it asked for then misses, which is how a workbook ends up with the
+     * data written but nothing attached to it. Every writer funnels through here, so the name is made
+     * safe once, in the one place that knows a workbook is being built.
+     */
+    public static String safeSheetName(String sheetName) {
+        return StringUtils.isBlank(sheetName) ? sheetName : WorkbookUtil.createSafeSheetName(sheetName);
     }
 
     /**

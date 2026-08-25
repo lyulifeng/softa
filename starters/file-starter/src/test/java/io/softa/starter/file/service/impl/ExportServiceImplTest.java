@@ -104,6 +104,48 @@ class ExportServiceImplTest {
     }
 
     @Test
+    void twoSheetsMayBothLeaveTheirNameToTheirModel() {
+        // "One sheet per object" is asked for by naming the models and nothing else — the writer fills
+        // each tab from its model name. The uniqueness check used to compare the names as handed in,
+        // so two blanks looked like two sheets fighting over the same name and the export was refused
+        // for the most ordinary way of calling it.
+        StubExportByDynamic exportByDynamic = new StubExportByDynamic();
+        exportByDynamic.multiResult = new FileInfo();
+        ExportServiceImpl exportService = createService(exportByDynamic, new StubExportByFieldTemplate(),
+                new StubExportByFileTemplate(), templateService(Map.of(), Map.of()),
+                new RecordingExportHistoryService().proxy());
+
+        assertDoesNotThrow(() -> exportService.dynamicExportMultiSheet("Employee 360",
+                List.of(unnamedSheet("EmpAddress"), unnamedSheet("EmpFamilyMember"))));
+    }
+
+    @Test
+    void twoSheetsDifferingOnlyPastExcelsLimitAreRefused() {
+        // Excel keeps the first 31 characters, so these two would land on one tab and the second would
+        // overwrite the first — silently, with the export reporting success.
+        StubExportByDynamic exportByDynamic = new StubExportByDynamic();
+        exportByDynamic.multiResult = new FileInfo();
+        ExportServiceImpl exportService = createService(exportByDynamic, new StubExportByFieldTemplate(),
+                new StubExportByFileTemplate(), templateService(Map.of(), Map.of()),
+                new RecordingExportHistoryService().proxy());
+
+        SheetInfo first = unnamedSheet("a.model");
+        first.setSheetName("Employee Professional Qualification (SG)");
+        SheetInfo second = unnamedSheet("b.model");
+        second.setSheetName("Employee Professional Qualification (NZ)");
+
+        assertThrows(RuntimeException.class,
+                () -> exportService.dynamicExportMultiSheet("report", List.of(first, second)));
+    }
+
+    private static SheetInfo unnamedSheet(String modelName) {
+        SheetInfo sheetInfo = new SheetInfo();
+        sheetInfo.setModelName(modelName);
+        sheetInfo.setFlexQuery(new FlexQuery());
+        return sheetInfo;
+    }
+
+    @Test
     void exportByMultiTemplateDoesNotCreateHistory() {
         RecordingExportHistoryService historyService = new RecordingExportHistoryService();
         StubExportByFieldTemplate exportByTemplate = new StubExportByFieldTemplate();
