@@ -1,0 +1,146 @@
+package io.softa.starter.user.service.impl;
+
+import io.softa.framework.base.context.Context;
+import io.softa.framework.base.context.ContextHolder;
+import io.softa.framework.base.message.MailRequestMessage;
+import io.softa.framework.base.message.MessageScope;
+import io.softa.framework.orm.domain.Filters;
+import io.softa.starter.user.entity.UserAccount;
+import io.softa.starter.user.entity.UserIdentity;
+import io.softa.starter.user.entity.UserInvitation;
+import io.softa.starter.user.service.UserAccountService;
+import io.softa.starter.user.service.UserIdentityService;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
+import org.mockito.ArgumentCaptor;
+import org.springframework.context.ApplicationEventPublisher;
+
+import java.util.List;
+import java.util.Optional;
+
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.doReturn;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.spy;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.when;
+
+/**
+ * Which tenant the set-password mail is rendered under.
+ *
+ * <p>The MQ hop drops the thread context, so whatever this side publishes IS the tier the consumer
+ * renders from — and since template resolution no longer falls back across tiers, publishing the
+ * wrong one is not a degraded render but a different company's wording and mail server, or an
+ * outright "No mail template found".
+ *
+ * <p>The two entry points reach the tier differently and both have to hold: {@code invite} is authed
+ * and renders under the invitee's tenant, while {@code forgotPassword} is anonymous with no context
+ * at all and deliberately renders platform-tier.
+ */
+class UserInvitationTenantScopeTest {
+
+    private static final Long OPERATOR_TENANT = 100L;
+    private static final Long ACCOUNT_TENANT = 200L;
+    private static final Long USER_ID = 9001L;
+
+    private UserAccountService accountService;
+    private UserIdentityService identityService;
+    private ApplicationEventPublisher eventPublisher;
+    private UserInvitationServiceImpl service;
+
+    @BeforeEach
+    void setUp() {
+        accountService = mock(UserAccountService.class);
+        identityService = mock(UserIdentityService.class);
+        eventPublisher = mock(ApplicationEventPublisher.class);
+
+        service = spy(new UserInvitationServiceImpl(accountService, identityService, eventPublisher,
+                "https://app.example.test/"));
+        // Stub the inherited ORM surface: this test is about which tier reaches the mail, not about
+        // how the invitation row is stored.
+        doReturn(List.<UserInvitation>of()).when(service).searchList(any(Filters.class));
+        doReturn(1L).when(service).createOne(any(UserInvitation.class));
+
+        UserIdentity identity = new UserIdentity();
+        identity.setPassword("already-set");
+        when(identityService.requireIdentity(any(UserAccount.class))).thenReturn(identity);
+    }
+
+    private UserAccount account() {
+        UserAccount account = new UserAccount();
+        account.setId(USER_ID);
+        account.setEmail("invitee@example.test");
+        account.setProfileId(7L);
+        account.setTenantId(ACCOUNT_TENANT);
+        return account;
+    }
+
+    private MailRequestMessage captureMail() {
+        ArgumentCaptor<MailRequestMessage> captor = ArgumentCaptor.forClass(MailRequestMessage.class);
+        verify(eventPublisher).publishEvent(captor.capture());
+        return captor.getValue();
+    }
+
+    /** Run as an operator sitting in a tenant of their own, the way the authed invite path does. */
+    private void inviteAsOperatorFrom(Long operatorTenant) {
+        Context ctx = new Context();
+        ctx.setTenantId(operatorTenant);
+        ContextHolder.runWith(ctx, () -> service.invite(USER_ID, null));
+    }
+
+    @Test
+    void inviteRendersUnderTheInviteesTenantNotTheOperators() {
+        // The case that separates the two: an operator who can see accounts across tenants clicks
+        // Invite. Sourcing the tier from the ambient context puts THEIR company's template and SMTP
+        // in front of another company's member — and with no cross-tier fallback left, a template
+        // the operator's tenant happens not to have is an outright failure instead of a wrong logo.
+        when(accountService.getById(USER_ID)).thenReturn(Optional.of(account()));
+
+        inviteAsOperatorFrom(OPERATOR_TENANT);
+
+        MailRequestMessage mail = captureMail();
+        assertThat(mail.tenantId()).isEqualTo(ACCOUNT_TENANT);
+        assertThat(mail.tenantId()).isNotEqualTo(OPERATOR_TENANT);
+        assertThat(mail.scope()).isEqualTo(MessageScope.TENANT);
+    }
+
+    @Test
+    void provisioningPathIsUnaffected() {
+        // Provisioning invites inside inTenantContext(newTenantId), where the account was just
+        // created, so ambient and account agree. Pinned so the fix above cannot regress the path
+        // that already worked.
+        when(accountService.getById(USER_ID)).thenReturn(Optional.of(account()));
+
+        inviteAsOperatorFrom(ACCOUNT_TENANT);
+
+        assertThat(captureMail().tenantId()).isEqualTo(ACCOUNT_TENANT);
+    }
+
+    @Test
+    void forgotPasswordStaysPlatformTier() {
+        // /login/forgetPassword is in public-uri-patterns: no session, no tenant context. It stays
+        // platform-tier deliberately — template resolution has no fallback across tiers, so reaching
+        // for the account's tenant would turn a missing or disabled tenant copy into "No mail
+        // template found" on a path with no operator around to see it.
+        when(accountService.getUserByEmail("invitee@example.test")).thenReturn(Optional.of(account()));
+
+        service.forgotPassword("invitee@example.test");
+
+        MailRequestMessage mail = captureMail();
+        assertThat(mail.tenantId()).isNull();
+        assertThat(mail.scope()).isEqualTo(MessageScope.PLATFORM);
+    }
+
+    @Test
+    void theLinkIsStillTheSetPasswordUrlWithASingleSlash() {
+        // The trailing slash on the configured base url is trimmed; a doubled slash would 404 on
+        // some proxies and is invisible in a passing "mail was published" assertion.
+        when(accountService.getUserByEmail("invitee@example.test")).thenReturn(Optional.of(account()));
+
+        service.forgotPassword("invitee@example.test");
+
+        assertThat((String) captureMail().variables().get("link"))
+                .startsWith("https://app.example.test/set-password?token=");
+    }
+}

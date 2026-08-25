@@ -145,11 +145,23 @@ public class UserInvitationServiceImpl extends EntityServiceImpl<UserInvitation,
         // once this invitation has committed; if no message-starter is present it is a graceful no-op.
         String link = frontendBaseUrl.replaceAll("/+$", "") + "/set-password?token=" + rawToken;
         String template = purpose == InvitationPurpose.PASSWORD_RESET ? TEMPLATE_RESET : TEMPLATE_INVITE;
-        // Tier of the render: with a tenant context (invite / authed reset) the
-        // tenant's own template + wording; the public forgotPassword path has no
-        // tenant context, so it renders the platform-tier template — the platform
-        // row doubles as the copy source for tenants AND the platform's own sender.
-        Long tenantId = ContextHolder.getContext().getTenantId();
+        // Tier of the render: with a tenant context (invite / authed reset) the tenant's own template
+        // + wording; the public forgotPassword path has no tenant context, so it renders the
+        // platform-tier template — the platform row doubles as the copy source for tenants AND the
+        // platform's own sender.
+        //
+        // WHICH tenant, though, is the account's — not the ambient one. They differ exactly when an
+        // operator who can see across tenants clicks Invite: the ambient context is then the
+        // OPERATOR's company, and sourcing the tier from it renders another company's template and
+        // routes through another company's mail server for a mail about this person's account at
+        // theirs. On every other path the two already agree, since provisioning creates the account
+        // inside inTenantContext(newTenantId) before inviting.
+        //
+        // The no-context path deliberately stays platform-tier rather than reaching for the
+        // account's tenant: template resolution has no fallback across tiers any more, so a tenant
+        // whose copy of this template is missing or disabled would get an exception where the
+        // platform row always resolves.
+        Long tenantId = ContextHolder.getContext().getTenantId() != null ? account.getTenantId() : null;
         MessageScope scope = tenantId != null ? MessageScope.TENANT : MessageScope.PLATFORM;
         eventPublisher.publishEvent(new MailRequestMessage(
                 List.of(account.getEmail()), template, Map.of("link", link, "expiryDays", EXPIRY_DAYS),
