@@ -6,11 +6,22 @@ import java.util.List;
 import java.util.Map;
 
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.EnumSource;
+import org.springframework.test.util.ReflectionTestUtils;
 
 import io.softa.framework.base.exception.IllegalArgumentException;
+import io.softa.framework.orm.constant.FileConstant;
+import io.softa.framework.orm.service.ModelService;
+import io.softa.starter.file.dto.ImportDataDTO;
+import io.softa.starter.file.dto.ImportTemplateDTO;
+import io.softa.starter.file.enums.ImportRule;
 
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.when;
 
 class ImportRowPipelineTest {
 
@@ -53,5 +64,65 @@ class ImportRowPipelineTest {
 
         assertThrows(IllegalArgumentException.class,
                 () -> importRowPipeline.validateCustomHandlerContract("handler", rows, 1, snapshot));
+    }
+
+    @ParameterizedTest
+    @EnumSource(ImportRule.class)
+    void everyRuleDropsAllButTheFirstRowSharingAKey(ImportRule importRule) {
+        // The database pre-check only runs for ONLY_CREATE, and it was the only thing standing between
+        // a repeated key and the database — so this had to be wired in outside that branch. Any rule
+        // can be handed the same row twice, and under CREATE_OR_UPDATE the second one silently
+        // overwrites the first rather than being rejected.
+        ImportRowPipeline pipeline = wiredPipeline();
+
+        ImportTemplateDTO template = new ImportTemplateDTO();
+        template.setModelName("EmpAddress");
+        template.setImportRule(importRule);
+        template.setUniqueConstraints(List.of("code"));
+        template.setSkipException(true);
+
+        ImportDataDTO data = new ImportDataDTO();
+        data.setRows(new ArrayList<>(List.of(
+                new LinkedHashMap<>(Map.of("code", "ADR001", "line1", "first")),
+                new LinkedHashMap<>(Map.of("code", "ADR001", "line1", "second")))));
+        data.setOriginalRows(new ArrayList<>(List.of(
+                new LinkedHashMap<>(Map.of("Code", "ADR001", "Address Line1", "first")),
+                new LinkedHashMap<>(Map.of("Code", "ADR001", "Address Line1", "second")))));
+
+        pipeline.importData(template, data);
+
+        assertThat(data.getRows()).as("only the first row reaches persistence under %s", importRule)
+                .hasSize(1);
+        assertThat(data.getRows().getFirst()).containsEntry("line1", "first");
+        assertThat(data.getFailedRows()).as("and the other comes back with a reason").hasSize(1);
+        assertThat(data.getFailedRows().getFirst().get(FileConstant.FAILED_REASON).toString())
+                .contains("An earlier row in this file already has code=ADR001");
+    }
+
+    /**
+     * The pipeline with its collaborators stubbed out to no-ops, except the two under test: the
+     * in-file duplicate pass and the failure collector that acts on what it marks.
+     */
+    private static ImportRowPipeline wiredPipeline() {
+        ImportRowPipeline pipeline = new ImportRowPipeline();
+        ImportHandlerFactory handlerFactory = mock(ImportHandlerFactory.class);
+        when(handlerFactory.createHandlers(org.mockito.ArgumentMatchers.any())).thenReturn(List.of());
+        RelationLookupResolver lookupResolver = mock(RelationLookupResolver.class);
+        when(lookupResolver.detectLookupGroups(org.mockito.ArgumentMatchers.any(),
+                org.mockito.ArgumentMatchers.any())).thenReturn(List.of());
+
+        ReflectionTestUtils.setField(pipeline, "importHandlerFactory", handlerFactory);
+        ReflectionTestUtils.setField(pipeline, "relationLookupResolver", lookupResolver);
+        // The database pre-check (ONLY_CREATE only) is not what this exercises; it needs a service,
+        // and an empty answer means "nothing already exists" so it stays out of the way.
+        UniqueConstraintValidator validator = new UniqueConstraintValidator();
+        ModelService<?> modelService = mock(ModelService.class);
+        when(modelService.searchList(org.mockito.ArgumentMatchers.anyString(),
+                org.mockito.ArgumentMatchers.any())).thenReturn(List.of());
+        ReflectionTestUtils.setField(validator, "modelService", modelService);
+        ReflectionTestUtils.setField(pipeline, "uniqueConstraintValidator", validator);
+        ReflectionTestUtils.setField(pipeline, "importFailureCollector", new ImportFailureCollector());
+        ReflectionTestUtils.setField(pipeline, "importPersistenceService", mock(ImportPersistenceService.class));
+        return pipeline;
     }
 }

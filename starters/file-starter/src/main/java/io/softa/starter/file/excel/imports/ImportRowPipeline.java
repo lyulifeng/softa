@@ -39,9 +39,11 @@ public class ImportRowPipeline {
      * Run the full import row pipeline:
      * 1. Standard field handlers (type conversion, validation, etc.)
      * 2. Relation lookup resolution (dotted-path fields -> FK ids)
-     * 3. Custom handler
-     * 4. Failure collection (when skipException=true) or fail-fast (when skipException=false)
-     * 5. Persistence
+     * 3. In-file duplicate suppression (first row with a given unique key wins)
+     * 4. Unique constraint pre-check against the database (for ONLY_CREATE rule)
+     * 5. Custom handler
+     * 6. Failure collection (when skipException=true) or fail-fast (when skipException=false)
+     * 7. Persistence
      */
     public void importData(ImportTemplateDTO importTemplateDTO, ImportDataDTO importDataDTO) {
         processRows(importTemplateDTO, importDataDTO, ImportMode.IMPORT);
@@ -54,9 +56,10 @@ public class ImportRowPipeline {
      *
      * 1. Standard field handlers (type conversion, validation, etc.)
      * 2. Relation lookup resolution (dotted-path fields -> FK ids)
-     * 3. Unique constraint pre-check against the database (for ONLY_CREATE rule)
-     * 4. Custom handler
-     * 5. Failure collection
+     * 3. In-file duplicate suppression (first row with a given unique key wins)
+     * 4. Unique constraint pre-check against the database (for ONLY_CREATE rule)
+     * 5. Custom handler
+     * 6. Failure collection
      */
     public void validateData(ImportTemplateDTO importTemplateDTO, ImportDataDTO importDataDTO) {
         // Force skipException=true in validation mode to collect all errors
@@ -73,9 +76,10 @@ public class ImportRowPipeline {
      * Common row processing pipeline shared by importData and validateData:
      * 1. Standard field handlers (type conversion, validation, etc.)
      * 2. Relation lookup resolution (dotted-path fields -> FK ids)
-     * 3. Unique constraint pre-check against the database (for ONLY_CREATE rule)
-     * 4. Custom handler
-     * 5. Failure collection
+     * 3. In-file duplicate suppression (first row with a given unique key wins)
+     * 4. Unique constraint pre-check against the database (for ONLY_CREATE rule)
+     * 5. Custom handler
+     * 6. Failure collection
      *
      * <p>Every step above runs in BOTH modes — the mode reaches only the custom handler, which is the
      * one step that can have side effects the pipeline cannot withhold on its behalf.
@@ -93,6 +97,12 @@ public class ImportRowPipeline {
         if (!lookupGroups.isEmpty()) {
             relationLookupResolver.resolveRows(importDataDTO.getRows(), lookupGroups, skipException);
         }
+        // Keep only the first of any rows in this file sharing a unique key. Before the database
+        // check, so that only sees first occurrences; after the lookup resolution, because a unique
+        // key can be a foreign key that step is what produces. Runs for every rule — any of them can
+        // be handed the same row twice.
+        uniqueConstraintValidator.markInFileDuplicates(importTemplateDTO.getUniqueConstraints(),
+                importDataDTO.getRows(), skipException);
         // Pre-check unique constraints against the database for ONLY_CREATE rule
         if (ImportRule.ONLY_CREATE.equals(importTemplateDTO.getImportRule())) {
             uniqueConstraintValidator.validate(importTemplateDTO.getModelName(),
