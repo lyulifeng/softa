@@ -389,7 +389,15 @@ public class OptionDropdownResolver {
         if (fieldType != FieldType.OPTION && fieldType != FieldType.MULTI_OPTION) {
             return List.of();
         }
-        return optionCodes(metaField.getOptionSetCode());
+        // The labels, not the item codes. Every template's spec asks for the name, and the name is
+        // what the reader is choosing between — `SG_PR` next to `SG_CITIZEN` asks someone to know the
+        // codes before they can fill the sheet in.
+        //
+        // Safe on the way back in for two reasons that had to both be true. The import handler takes
+        // either — it tries the value as an item code first and falls back to reading it as a label.
+        // And labels are unique within their set, which is what the new index on sys_option_item
+        // guarantees; without it two items could share a label and the lookup would be a coin toss.
+        return optionLabels(metaField.getOptionSetCode());
     }
 
     /** Item codes of a platform option set, empty when the set is unknown. */

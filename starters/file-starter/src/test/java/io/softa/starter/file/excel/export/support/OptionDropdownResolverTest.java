@@ -105,8 +105,10 @@ class OptionDropdownResolverTest {
             field("EmployeeProfile", "gender", FieldType.OPTION, null, "Gender", null);
             optionSet("Gender", List.of(item("male", "Male"), item("female", "Female")));
 
+            // Labels, not item codes: the templates all ask for the name, and `male` next to
+            // `female` is not what the reader is choosing between. The import handler takes either.
             assertThat(resolve("Employee", null, "employeeProfileId.gender"))
-                    .containsEntry(0, List.of("male", "female"));
+                    .containsEntry(0, List.of("Male", "Female"));
             verifyNoInteractions(modelService);
         });
     }
