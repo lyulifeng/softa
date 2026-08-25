@@ -110,7 +110,7 @@ public class OptionDropdownHandler implements SheetWriteHandler {
             }
             try {
                 DataValidationConstraint constraint;
-                if (inlineLength(codes) <= INLINE_FORMULA_LIMIT) {
+                if (fitsInline(codes)) {
                     constraint = helper.createExplicitListConstraint(codes.toArray(new String[0]));
                 } else {
                     if (optionsSheet == null) {
@@ -142,6 +142,30 @@ public class OptionDropdownHandler implements SheetWriteHandler {
                         columnIndex, sheet.getSheetName(), e.getMessage());
             }
         }
+    }
+
+    /**
+     * Whether the values can go into the validation formula itself rather than onto the hidden sheet.
+     *
+     * <p>Two things disqualify them. The obvious one is length, which Excel caps and POI enforces by
+     * throwing. The other is the separator: an inline list is comma-separated with no escaping, so a
+     * value containing a comma silently becomes two entries — {@code JPMORGAN CHASE BANK, N.A.} offers
+     * itself as {@code JPMORGAN CHASE BANK} and {@code N.A.}, neither of which imports. A double quote
+     * breaks the formula in the same way.
+     *
+     * <p>Length alone was the whole test while the only inline candidates were option sets of short
+     * codes. Relation columns brought in names people wrote, and punctuation with them.
+     */
+    private static boolean fitsInline(List<String> codes) {
+        if (inlineLength(codes) > INLINE_FORMULA_LIMIT) {
+            return false;
+        }
+        for (String code : codes) {
+            if (code.indexOf(',') >= 0 || code.indexOf('"') >= 0) {
+                return false;
+            }
+        }
+        return true;
     }
 
     /** Length of the values as Excel stores them inline: comma-separated, no quotes. */

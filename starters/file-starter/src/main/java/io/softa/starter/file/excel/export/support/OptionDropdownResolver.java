@@ -10,12 +10,15 @@ import org.apache.commons.lang3.StringUtils;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 
+import io.softa.framework.base.constant.BaseConstant;
+import io.softa.framework.base.enums.Operator;
 import io.softa.framework.orm.domain.FilterUnit;
 import io.softa.framework.orm.domain.Filters;
 import io.softa.framework.orm.domain.FlexQuery;
 import io.softa.framework.orm.domain.Orders;
 import io.softa.framework.orm.enums.FieldType;
 import io.softa.framework.orm.meta.MetaField;
+import io.softa.framework.orm.meta.MetaModel;
 import io.softa.framework.orm.meta.MetaOptionItem;
 import io.softa.framework.orm.meta.ModelManager;
 import io.softa.framework.orm.meta.OptionManager;
@@ -25,22 +28,39 @@ import io.softa.starter.file.dto.ImportFieldDTO;
 /**
  * Works out which template columns can offer a fixed list of values, and what those values are.
  *
- * <p>Two kinds of column qualify, and they are answered from different places:
+ * <p>A column qualifies when its value comes from a set someone could have picked from in the product.
+ * Four shapes of column do, and they are answered from different places:
  *
  * <ul>
- *   <li>an {@code OPTION} / {@code MULTI_OPTION} field, whose set is platform metadata — read from
- *       {@link OptionManager}, which is an in-memory cache, so this costs nothing;
- *   <li>a relation onto {@code TenantOptionItem} addressed as {@code someField.itemCode}, whose items
- *       are tenant data and have to be queried. All such sets are fetched in one query rather than one
- *       per column.
+ *   <li><b>An option field</b> ({@code OPTION} / {@code MULTI_OPTION}) — its set is platform metadata,
+ *       read from {@link OptionManager}, an in-memory cache, so this costs nothing.
+ *   <li><b>A boolean field</b> — the same two labels the export writes, taken from the platform's own
+ *       boolean option set rather than spelled out here, so the two sides cannot drift apart.
+ *   <li><b>{@code someRelation.itemCode}</b> onto {@code TenantOptionItem} — tenant data, so it has to
+ *       be queried. Every such set the template needs is fetched in one query, not one per column.
+ *   <li><b>{@code someRelation.someField}</b> onto any other model — the values are that model's own
+ *       {@code someField} column. This is the general case and by far the largest: a template that
+ *       picks a bank, a job grade, a pass type or a country addresses it this way.
  * </ul>
  *
- * <p>Values are item codes, matching what the import side resolves a {@code .itemCode} column by, so a
- * template filled from its own dropdown imports without translation.
+ * <p>Under the last shape the relation's target may itself be an option or boolean field rather than a
+ * stored scalar — {@code employeeProfileId.gender} reaches through a one-to-one into an enum. Those are
+ * answered from metadata without a query, the same as if the field had been addressed directly. Not
+ * reaching through was why templates built on a one-to-one sub-record carried no dropdowns at all.
  *
- * <p>The tenant-option query is narrowed by the field's own {@code filters}, which is where a relation
- * onto {@code TenantOptionItem} names its set ({@code ["optionSetCode","=","OrganizationType"]}).
- * Without that narrowing the list would be every option item the tenant owns, across every set.
+ * <p><b>Values match what the import side accepts back.</b> An option column offers item codes, which
+ * {@code OptionHandler} resolves; a relation column offers the very field the column names, which
+ * {@code RelationLookupResolver} reverse-looks-up to an id. So a template filled from its own dropdown
+ * imports without translation.
+ *
+ * <p><b>A bare relation column gets no dropdown.</b> Addressed without a dotted path, the cell holds a
+ * raw foreign key, and a list of ids is not something anyone can pick from. Such a column is left
+ * alone rather than offered a list of the target's labels, which would look right and fail on import.
+ *
+ * <p><b>The country is passed in, not inferred.</b> Models that vary by country are narrowed by the
+ * request's own country everywhere else in the product — but a template declares the country it is
+ * for, and an administrator of a Singapore company may quite legitimately download the New Zealand
+ * template. Inferring it there would fill an NZ template with SG values.
  */
 @Slf4j
 @Component
@@ -53,18 +73,47 @@ public class OptionDropdownResolver {
     private static final String OPTION_SET_CODE = "optionSetCode";
     private static final String SEQUENCE = "sequence";
 
+    /** The field a country-scoped model is narrowed by. Fixed platform-wide, the same one the ORM uses. */
+    private static final String COUNTRY = "country";
+
+    /**
+     * Most values a single column will offer. A dropdown longer than this has stopped being a way to
+     * choose and become a way to scroll, and the hidden sheet backing it grows a row per value. The
+     * largest set any template points at today is the country list, at roughly 250.
+     */
+    private static final int MAX_VALUES_PER_COLUMN = 1000;
+
     @Autowired
     private ModelService<?> modelService;
 
     /**
+     * One batch of values to fetch from an ordinary model.
+     *
+     * <p>A record so that columns asking for the same thing — two project-team columns, say — collapse
+     * to a single query by map key rather than by any comparison written out here.
+     *
+     * @param modelName the model holding the values
+     * @param fieldName the field whose values the column offers
+     * @param filters   the root field's own {@code filters}, verbatim, so two columns onto the same
+     *                  model narrowed differently stay separate requests
+     * @param country   the country to narrow by, or null when the model does not vary by country
+     */
+    private record ValueRequest(String modelName, String fieldName, String filters, String country) {
+    }
+
+    /**
      * @param modelName    the model the template imports into
      * @param importFields the template's columns, in the order they appear on the sheet
-     * @return column index (0-based) → allowed item codes; columns with no fixed list are absent
+     * @param country      the country the template is for, or blank for a template that applies
+     *                     everywhere; narrows the country-scoped models a column may point at
+     * @return column index (0-based) → allowed values; columns with no fixed list are absent
      */
-    public Map<Integer, List<String>> resolve(String modelName, List<ImportFieldDTO> importFields) {
+    public Map<Integer, List<String>> resolve(String modelName, List<ImportFieldDTO> importFields, String country) {
         Map<Integer, List<String>> optionsByColumn = new LinkedHashMap<>();
         // optionSetCode → the columns waiting on it, so one query serves however many columns share a set
         Map<String, List<Integer>> tenantSetToColumns = new LinkedHashMap<>();
+        // and the same idea for ordinary models, keyed by the whole request
+        Map<ValueRequest, List<Integer>> entityRequestToColumns = new LinkedHashMap<>();
 
         for (int columnIndex = 0; columnIndex < importFields.size(); columnIndex++) {
             String fieldName = importFields.get(columnIndex).getFieldName();
@@ -73,14 +122,12 @@ public class OptionDropdownResolver {
             }
             try {
                 if (fieldName.contains(".")) {
-                    String tenantOptionSet = tenantOptionSetOf(modelName, fieldName);
-                    if (tenantOptionSet != null) {
-                        tenantSetToColumns.computeIfAbsent(tenantOptionSet, k -> new ArrayList<>()).add(columnIndex);
-                    }
+                    resolveDottedColumn(modelName, fieldName, country, columnIndex,
+                            optionsByColumn, tenantSetToColumns, entityRequestToColumns);
                 } else {
-                    List<String> codes = platformOptionCodesOf(modelName, fieldName);
-                    if (!codes.isEmpty()) {
-                        optionsByColumn.put(columnIndex, codes);
+                    List<String> values = metadataValuesOf(modelName, fieldName);
+                    if (!values.isEmpty()) {
+                        optionsByColumn.put(columnIndex, values);
                     }
                 }
             } catch (RuntimeException e) {
@@ -91,27 +138,94 @@ public class OptionDropdownResolver {
         }
         if (!tenantSetToColumns.isEmpty()) {
             Map<String, List<String>> codesBySet = queryTenantOptionCodes(tenantSetToColumns.keySet());
-            tenantSetToColumns.forEach((optionSetCode, columns) -> {
-                List<String> codes = codesBySet.get(optionSetCode);
-                if (codes != null && !codes.isEmpty()) {
-                    columns.forEach(columnIndex -> optionsByColumn.put(columnIndex, codes));
-                }
-            });
+            tenantSetToColumns.forEach((optionSetCode, columns) ->
+                    assign(optionsByColumn, columns, codesBySet.get(optionSetCode)));
         }
+        entityRequestToColumns.forEach((request, columns) ->
+                assign(optionsByColumn, columns, queryEntityValues(request)));
         return optionsByColumn;
     }
 
-    /** Item codes of a platform option set, or empty when the field is not option-backed. */
-    private List<String> platformOptionCodesOf(String modelName, String fieldName) {
+    /** Gives every column of a batch the values that batch resolved to, if it resolved to any. */
+    private static void assign(Map<Integer, List<String>> optionsByColumn, List<Integer> columns, List<String> values) {
+        if (values != null && !values.isEmpty()) {
+            columns.forEach(columnIndex -> optionsByColumn.put(columnIndex, values));
+        }
+    }
+
+    /**
+     * Places a {@code root.leaf} column into whichever bucket answers it.
+     *
+     * <p>Only one level of cascade is considered, matching what the import side accepts: a path with a
+     * second dot is rejected there outright, so offering it a dropdown would be offering values for a
+     * column that cannot import.
+     */
+    private void resolveDottedColumn(String modelName, String dottedFieldName, String country, int columnIndex,
+                                     Map<Integer, List<String>> optionsByColumn,
+                                     Map<String, List<Integer>> tenantSetToColumns,
+                                     Map<ValueRequest, List<Integer>> entityRequestToColumns) {
+        String[] parts = dottedFieldName.split("\\.");
+        if (parts.length != 2) {
+            return;
+        }
+        MetaField rootField = ModelManager.getModelFieldOrNull(modelName, parts[0]);
+        if (rootField == null
+                || !FieldType.RELATED_TYPES.contains(rootField.getFieldType())
+                || StringUtils.isBlank(rootField.getRelatedModel())) {
+            return;
+        }
+        String relatedModel = rootField.getRelatedModel();
+        String leafField = parts[1];
+
+        if (TENANT_OPTION_ITEM.equals(relatedModel) && ITEM_CODE.equals(leafField)) {
+            // The set is named in the field's own filters; without it the list would span every set.
+            String optionSetCode = optionSetCodeIn(Filters.of(rootField.getFilters()));
+            if (optionSetCode != null) {
+                tenantSetToColumns.computeIfAbsent(optionSetCode, k -> new ArrayList<>()).add(columnIndex);
+            }
+            return;
+        }
+        // The leaf may be option- or boolean-backed in its own right — reaching through a one-to-one
+        // into an enum. Answerable from metadata, so it never becomes a query.
+        List<String> fromMetadata = metadataValuesOf(relatedModel, leafField);
+        if (!fromMetadata.isEmpty()) {
+            optionsByColumn.put(columnIndex, fromMetadata);
+            return;
+        }
+        MetaField leafMetaField = ModelManager.getModelFieldOrNull(relatedModel, leafField);
+        if (leafMetaField == null || FieldType.RELATED_TYPES.contains(leafMetaField.getFieldType())) {
+            // Not a field, or a relation of its own — which would be a second hop the import side will
+            // not follow.
+            return;
+        }
+        ValueRequest request = new ValueRequest(relatedModel, leafField, rootField.getFilters(),
+                narrowingCountryFor(relatedModel, country));
+        entityRequestToColumns.computeIfAbsent(request, k -> new ArrayList<>()).add(columnIndex);
+    }
+
+    /**
+     * Values a field carries by virtue of its type alone, with no query: an option set's item codes, or
+     * a boolean's two labels. Empty for every other field type.
+     */
+    private List<String> metadataValuesOf(String modelName, String fieldName) {
         MetaField metaField = ModelManager.getModelFieldOrNull(modelName, fieldName);
         if (metaField == null) {
             return List.of();
         }
         FieldType fieldType = metaField.getFieldType();
+        if (fieldType == FieldType.BOOLEAN) {
+            // The labels, not `true` / `false`: they are what the export writes and what a person
+            // reading the sheet expects. The import handler takes either.
+            return optionLabels(BaseConstant.BOOLEAN_OPTION_SET_CODE);
+        }
         if (fieldType != FieldType.OPTION && fieldType != FieldType.MULTI_OPTION) {
             return List.of();
         }
-        String optionSetCode = metaField.getOptionSetCode();
+        return optionCodes(metaField.getOptionSetCode());
+    }
+
+    /** Item codes of a platform option set, empty when the set is unknown. */
+    private List<String> optionCodes(String optionSetCode) {
         if (StringUtils.isBlank(optionSetCode) || !OptionManager.existsOptionSetCode(optionSetCode)) {
             return List.of();
         }
@@ -121,21 +235,31 @@ public class OptionDropdownResolver {
                 .toList();
     }
 
+    /** Labels of a platform option set, empty when the set is unknown. */
+    private List<String> optionLabels(String optionSetCode) {
+        if (StringUtils.isBlank(optionSetCode) || !OptionManager.existsOptionSetCode(optionSetCode)) {
+            return List.of();
+        }
+        return OptionManager.getMetaOptionItems(optionSetCode).stream()
+                .map(MetaOptionItem::getLabel)
+                .filter(StringUtils::isNotBlank)
+                .toList();
+    }
+
     /**
-     * The option set behind a {@code someField.itemCode} column, or null when the column is not a
-     * TenantOptionItem lookup addressed by item code.
+     * The country to narrow a model by, or null when narrowing does not apply — either nothing was
+     * passed in, or the model does not vary by country and filtering it on a column it lacks would
+     * fail the query rather than the dropdown.
      */
-    private String tenantOptionSetOf(String modelName, String dottedFieldName) {
-        String[] parts = dottedFieldName.split("\\.");
-        if (parts.length != 2 || !ITEM_CODE.equals(parts[1])) {
+    private String narrowingCountryFor(String modelName, String country) {
+        if (StringUtils.isBlank(country)) {
             return null;
         }
-        MetaField rootField = ModelManager.getModelFieldOrNull(modelName, parts[0]);
-        if (rootField == null || !TENANT_OPTION_ITEM.equals(rootField.getRelatedModel())) {
+        MetaModel metaModel = ModelManager.existModel(modelName) ? ModelManager.getModel(modelName) : null;
+        if (metaModel == null || !metaModel.isMultiCountry() || !ModelManager.existField(modelName, COUNTRY)) {
             return null;
         }
-        // The set is named in the field's own filters; without it the list would span every set.
-        return optionSetCodeIn(Filters.of(rootField.getFilters()));
+        return country;
     }
 
     /**
@@ -193,5 +317,48 @@ public class OptionDropdownResolver {
                     codes, e.getMessage());
         }
         return result;
+    }
+
+    /**
+     * The values behind one relation column: distinct, ordered, and narrowed by both the field's own
+     * filters and the template's country.
+     */
+    private List<String> queryEntityValues(ValueRequest request) {
+        try {
+            Filters filters = new Filters();
+            Filters declared = Filters.of(request.filters());
+            if (!Filters.isEmpty(declared)) {
+                filters.and(declared);
+            }
+            if (request.country() != null) {
+                filters.and(COUNTRY, Operator.EQUAL, request.country());
+            }
+            FlexQuery flexQuery = new FlexQuery(List.of(request.fieldName()), filters,
+                    Orders.ofAsc(request.fieldName()));
+            flexQuery.setDistinct(true);
+            // One over the cap, so a set that is too long can be reported rather than silently cut.
+            flexQuery.setLimitSize(MAX_VALUES_PER_COLUMN + 1);
+            List<Map<String, Object>> rows = modelService.searchList(request.modelName(), flexQuery);
+            List<String> values = new ArrayList<>();
+            for (Map<String, Object> row : rows) {
+                Object value = row.get(request.fieldName());
+                if (value != null && StringUtils.isNotBlank(String.valueOf(value))) {
+                    values.add(String.valueOf(value));
+                }
+            }
+            if (values.size() > MAX_VALUES_PER_COLUMN) {
+                log.warn("{}.{} has more than {} values; the column offers the first {} and is no longer "
+                                + "a complete list.", request.modelName(), request.fieldName(),
+                        MAX_VALUES_PER_COLUMN, MAX_VALUES_PER_COLUMN);
+                return values.subList(0, MAX_VALUES_PER_COLUMN);
+            }
+            return values;
+        } catch (RuntimeException e) {
+            // The same bargain as the tenant options: a column loses its dropdown, the template still
+            // downloads.
+            log.warn("Could not read {}.{} for a dropdown: {}",
+                    request.modelName(), request.fieldName(), e.getMessage());
+            return List.of();
+        }
     }
 }

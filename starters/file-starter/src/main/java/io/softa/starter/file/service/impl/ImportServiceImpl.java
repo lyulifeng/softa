@@ -127,8 +127,11 @@ public class ImportServiceImpl implements ImportService {
         // serialised — a write handler runs during serialisation and should not be holding a
         // connection. An empty map simply means no column qualified.
         CustomHeadStyleHandler headStyleHandler = new CustomHeadStyleHandler(requiredHeaderList);
-        Map<Integer, List<String>> dropdownOptions =
-                optionDropdownResolver.resolve(importTemplate.getModelName(), importFields);
+        // The template's own country, not the request's: an administrator of a company in one country
+        // may download another country's template, and inferring it from the request would fill that
+        // template with the wrong country's values.
+        Map<Integer, List<String>> dropdownOptions = optionDropdownResolver.resolve(
+                importTemplate.getModelName(), importFields, importTemplate.getCountry());
         ExcelSheetData mainSheetData = new ExcelSheetData(importTemplate.getName(), headers, Collections.emptyList(),
                 new WriteHandler[]{
                         headStyleHandler,

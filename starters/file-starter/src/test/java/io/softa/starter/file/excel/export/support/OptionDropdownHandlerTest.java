@@ -7,6 +7,7 @@ import java.util.stream.IntStream;
 
 import org.apache.poi.ss.usermodel.DataValidation;
 import org.apache.poi.ss.usermodel.Sheet;
+import org.apache.poi.ss.usermodel.Workbook;
 import org.apache.poi.ss.util.WorkbookUtil;
 import org.apache.poi.xssf.usermodel.XSSFWorkbook;
 import org.junit.jupiter.api.Test;
@@ -94,6 +95,32 @@ class OptionDropdownHandlerTest {
                         .map(v -> v.getValidationConstraint().getFormula1()))
                 .anyMatch(f -> f.startsWith("_options!$A$"))
                 .anyMatch(f -> f.startsWith("_options!$B$"));
+    }
+
+    @Test
+    void aValueContainingACommaGoesToTheHiddenSheetEvenThoughItWouldFit() {
+        // An inline list is comma-separated with no escaping, so `JPMORGAN CHASE BANK, N.A.` would
+        // arrive in Excel as two entries, neither of which is a bank. Short enough to fit is not the
+        // same as safe to inline — which only started mattering once columns began offering names
+        // people wrote rather than option codes.
+        List<String> names = List.of("DBS BANK LTD", "JPMORGAN CHASE BANK, N.A.");
+        Sheet sheet = writeWith(Map.of(0, names));
+
+        Workbook workbook = sheet.getWorkbook();
+        Sheet options = workbook.getSheet(OptionDropdownHandler.OPTIONS_SHEET_NAME);
+        assertThat(options).as("a comma-bearing value cannot be offered inline").isNotNull();
+        assertThat(options.getRow(1).getCell(0).getStringCellValue())
+                .as("and it reaches the sheet whole, not split at the comma")
+                .isEqualTo("JPMORGAN CHASE BANK, N.A.");
+        assertThat(sheet.getDataValidations().get(0).getValidationConstraint().getExplicitListValues())
+                .as("nothing is left inline").isNull();
+    }
+
+    @Test
+    void aDoubleQuoteAlsoForcesTheHiddenSheet() {
+        Sheet sheet = writeWith(Map.of(0, List.of("Plain", "The \"Quoted\" One")));
+
+        assertThat(sheet.getWorkbook().getSheet(OptionDropdownHandler.OPTIONS_SHEET_NAME)).isNotNull();
     }
 
     @Test
