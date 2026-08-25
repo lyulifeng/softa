@@ -16,7 +16,9 @@ import io.softa.framework.orm.domain.FilterUnit;
 import io.softa.framework.orm.domain.Filters;
 import io.softa.framework.orm.domain.FlexQuery;
 import io.softa.framework.orm.domain.Orders;
+import io.softa.framework.orm.constant.ModelConstant;
 import io.softa.framework.orm.enums.FieldType;
+import io.softa.framework.orm.enums.IdStrategy;
 import io.softa.framework.orm.meta.MetaField;
 import io.softa.framework.orm.meta.MetaModel;
 import io.softa.framework.orm.meta.MetaOptionItem;
@@ -128,6 +130,9 @@ public class OptionDropdownResolver {
                     List<String> values = metadataValuesOf(modelName, fieldName);
                     if (!values.isEmpty()) {
                         optionsByColumn.put(columnIndex, values);
+                    } else {
+                        queueCodeAsIdRequest(ModelManager.getModelFieldOrNull(modelName, fieldName),
+                                country, columnIndex, entityRequestToColumns);
                     }
                 }
             } catch (RuntimeException e) {
@@ -193,12 +198,49 @@ public class OptionDropdownResolver {
             return;
         }
         MetaField leafMetaField = ModelManager.getModelFieldOrNull(relatedModel, leafField);
-        if (leafMetaField == null || FieldType.RELATED_TYPES.contains(leafMetaField.getFieldType())) {
-            // Not a field, or a relation of its own — which would be a second hop the import side will
-            // not follow.
+        if (leafMetaField == null) {
+            return;
+        }
+        if (FieldType.RELATED_TYPES.contains(leafMetaField.getFieldType())) {
+            // The leaf is a relation of its own. Addressing through it would be a second hop the import
+            // side will not follow — but the cell does not have to hold a name to be useful: it holds
+            // the foreign key, and for a code-as-id model that key is the code itself.
+            queueCodeAsIdRequest(leafMetaField, country, columnIndex, entityRequestToColumns);
             return;
         }
         ValueRequest request = new ValueRequest(relatedModel, leafField, rootField.getFilters(),
+                narrowingCountryFor(relatedModel, country));
+        entityRequestToColumns.computeIfAbsent(request, k -> new ArrayList<>()).add(columnIndex);
+    }
+
+    /**
+     * Offers the ids of a relation's target when those ids are codes people can read.
+     *
+     * <p>A relation cell holds a foreign key. Usually that is a generated number and a list of them is
+     * useless — which is why a relation column normally gets nothing. But a model whose id strategy is
+     * {@code EXTERNAL_ID} carries its code as its id ({@code SG_Bachelor}, {@code SG_NRIC}), so the key
+     * in the cell already is the value a person would pick. Those columns are exactly the ones the
+     * country data models use, and on the employee template they are most of the ones that reach
+     * through a one-to-one into the profile.
+     *
+     * <p>Only many-to-one and many-to-many qualify. Those point at a row that exists already and is
+     * shared, so choosing one is what the column is for. A one-to-one is the row's own sub-record and a
+     * one-to-many its children; neither is picked from a list.
+     */
+    private void queueCodeAsIdRequest(MetaField metaField, String country, int columnIndex,
+                                      Map<ValueRequest, List<Integer>> entityRequestToColumns) {
+        if (metaField == null
+                || (metaField.getFieldType() != FieldType.MANY_TO_ONE
+                        && metaField.getFieldType() != FieldType.MANY_TO_MANY)) {
+            return;
+        }
+        String relatedModel = metaField.getRelatedModel();
+        if (StringUtils.isBlank(relatedModel)
+                || !ModelManager.existModel(relatedModel)
+                || IdStrategy.EXTERNAL_ID != ModelManager.getIdStrategy(relatedModel)) {
+            return;
+        }
+        ValueRequest request = new ValueRequest(relatedModel, ModelConstant.ID, metaField.getFilters(),
                 narrowingCountryFor(relatedModel, country));
         entityRequestToColumns.computeIfAbsent(request, k -> new ArrayList<>()).add(columnIndex);
     }

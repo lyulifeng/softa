@@ -11,6 +11,7 @@ import io.softa.framework.base.enums.Operator;
 import io.softa.framework.orm.domain.Filters;
 import io.softa.framework.orm.domain.FlexQuery;
 import io.softa.framework.orm.enums.FieldType;
+import io.softa.framework.orm.enums.IdStrategy;
 import io.softa.framework.orm.meta.MetaField;
 import io.softa.framework.orm.meta.MetaModel;
 import io.softa.framework.orm.meta.MetaOptionItem;
@@ -204,6 +205,67 @@ class OptionDropdownResolverTest {
         });
     }
 
+    @Test
+    void offersTheIdsOfACodeAsIdRelation() {
+        // `IdType` carries its code as its id (SG_NRIC), so the foreign key in the cell already is the
+        // value a person would pick. Nothing has to be translated on the way back in either.
+        withMetadata(mm -> {
+            field("EmployeeProfile", "idType", FieldType.MANY_TO_ONE, "IdType", null, null);
+            model("IdType", false, IdStrategy.EXTERNAL_ID);
+            stubRows("IdType", "id", List.of("SG_NRIC", "SG_FIN"));
+
+            assertThat(resolve("EmployeeProfile", null, "idType"))
+                    .containsEntry(0, List.of("SG_NRIC", "SG_FIN"));
+            assertThat(capturedQuery("IdType").getFields()).containsExactly("id");
+        });
+    }
+
+    @Test
+    void reachesThroughAOneToOneOntoACodeAsIdRelation() {
+        // The employee template addresses most of the profile's country data this way. The leaf is a
+        // relation, so nothing can be read *through* it — but the key it holds is the code.
+        withMetadata(mm -> {
+            field("Employee", "employeeProfileId", FieldType.ONE_TO_ONE, "EmployeeProfile", null, null);
+            field("EmployeeProfile", "passType", FieldType.MANY_TO_ONE, "PassType", null, null);
+            model("PassType", true, IdStrategy.EXTERNAL_ID);
+            fieldExists("PassType", "country");
+            stubRows("PassType", "id", List.of("SG_EP"));
+
+            assertThat(resolve("Employee", "SG", "employeeProfileId.passType"))
+                    .containsEntry(0, List.of("SG_EP"));
+            assertThat(capturedQuery("PassType").getFilters()).hasToString("[\"country\",\"=\",\"SG\"]");
+        });
+    }
+
+    @Test
+    void stillOffersNothingForARelationWhoseIdIsGenerated() {
+        // A bank id is a distributed long. A list of those is not something anyone can pick from, and
+        // a list of names would look right and fail on import — such a column has to be addressed as
+        // `bankId.name` instead.
+        withMetadata(mm -> {
+            field("Employee", "bankId", FieldType.MANY_TO_ONE, "Bank", null, null);
+            model("Bank", false, IdStrategy.DISTRIBUTED_LONG);
+
+            assertThat(resolve("Employee", null, "bankId")).isEmpty();
+            verifyNoInteractions(modelService);
+        });
+    }
+
+    @Test
+    void doesNotOfferIdsForASubRecordOrAChildCollection() {
+        // A one-to-one is the row's own sub-record and a one-to-many its children. Neither is chosen
+        // from a list, whatever the target's id strategy happens to be.
+        withMetadata(mm -> {
+            field("Employee", "employeeProfileId", FieldType.ONE_TO_ONE, "EmployeeProfile", null, null);
+            field("Employee", "addressIds", FieldType.ONE_TO_MANY, "EmployeeAddress", null, null);
+            model("EmployeeProfile", false, IdStrategy.EXTERNAL_ID);
+            model("EmployeeAddress", false, IdStrategy.EXTERNAL_ID);
+
+            assertThat(resolve("Employee", null, "employeeProfileId", "addressIds")).isEmpty();
+            verifyNoInteractions(modelService);
+        });
+    }
+
     // ---------------------------------------------------------------- harness
 
     private final ModelService<?> modelService = mock(ModelService.class);
@@ -224,6 +286,10 @@ class OptionDropdownResolverTest {
                     .thenAnswer(inv -> fields.get(inv.getArgument(0) + "." + inv.getArgument(1)));
             mm.when(() -> ModelManager.existModel(any())).thenAnswer(inv -> models.containsKey(inv.getArgument(0)));
             mm.when(() -> ModelManager.getModel(any())).thenAnswer(inv -> models.get(inv.getArgument(0)));
+            mm.when(() -> ModelManager.getIdStrategy(any())).thenAnswer(inv -> {
+                MetaModel metaModel = models.get(inv.getArgument(0));
+                return metaModel == null ? null : metaModel.getIdStrategy();
+            });
             mm.when(() -> ModelManager.existField(any(), any()))
                     .thenAnswer(inv -> extraFields.contains(inv.getArgument(0) + "." + inv.getArgument(1))
                             || fields.containsKey(inv.getArgument(0) + "." + inv.getArgument(1)));
@@ -267,9 +333,14 @@ class OptionDropdownResolverTest {
     }
 
     private void model(String modelName, boolean multiCountry) {
+        model(modelName, multiCountry, IdStrategy.DISTRIBUTED_LONG);
+    }
+
+    private void model(String modelName, boolean multiCountry, IdStrategy idStrategy) {
         MetaModel metaModel = new MetaModel();
         ReflectionTestUtils.setField(metaModel, "modelName", modelName);
         ReflectionTestUtils.setField(metaModel, "multiCountry", multiCountry);
+        ReflectionTestUtils.setField(metaModel, "idStrategy", idStrategy);
         models.put(modelName, metaModel);
     }
 
