@@ -7,6 +7,10 @@ import io.swagger.v3.oas.annotations.tags.Tag;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.web.bind.annotation.*;
 
+import org.apache.commons.lang3.StringUtils;
+
+import io.softa.framework.base.context.ContextHolder;
+import io.softa.framework.base.enums.Operator;
 import io.softa.framework.orm.domain.Filters;
 import io.softa.framework.orm.domain.FlexQuery;
 import io.softa.framework.orm.dto.FileInfo;
@@ -40,9 +44,37 @@ public class ImportTemplateController extends EntityController<ImportTemplateSer
         Set<String> modelNames = ModelManager.getChildModels(modelName);
         modelNames.add(modelName);
         Filters filters = new Filters().in(ImportTemplate::getModelName, modelNames);
+        Filters countryScope = countryScope();
+        if (countryScope != null) {
+            filters.and(countryScope);
+        }
         FlexQuery flexQuery = new FlexQuery(filters).expandSubQuery(ImportTemplate::getImportFields);
         List<ImportTemplate> templates = service.searchList(flexQuery);
         return ApiResponse.success(templates);
+    }
+
+    /**
+     * Narrows the listing to the country in play, or returns null to leave it alone.
+     *
+     * <p>Written as <b>country is null OR country = selected</b>, never a bare equality: a template
+     * with no country applies to all of them, and that is the overwhelming majority — the ones with a
+     * country are the exception (employee and legal-entity templates), and every row holds null on the
+     * release that adds the column. A bare equality would empty the dialog for every tenant.
+     *
+     * <p>When nothing is selected the filter is skipped rather than tightened. The country comes from
+     * whichever company the request is acting for; before one is chosen there is no country to narrow
+     * by, and showing every template beats showing none.
+     *
+     * <p>The country is resolved server-side from the request context and never read off the payload,
+     * matching how the company axis is already handled.
+     */
+    Filters countryScope() {
+        String country = ContextHolder.getContext().getCompanyCountry();
+        if (StringUtils.isBlank(country)) {
+            return null;
+        }
+        return new Filters().add(ImportTemplate::getCountry, Operator.IS_NOT_SET, null)
+                .or(new Filters().eq(ImportTemplate::getCountry, country));
     }
 
     /**
