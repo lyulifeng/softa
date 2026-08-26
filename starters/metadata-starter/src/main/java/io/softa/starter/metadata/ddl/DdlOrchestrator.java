@@ -711,6 +711,11 @@ public class DdlOrchestrator {
      */
     private void renderTableRenames(SchemaDiff diff, List<RenderedDdl> out) {
         for (SchemaDiff.Modification<SysModel> mod : diff.models().modified()) {
+            if (Boolean.TRUE.equals(mod.fromCode().getProjection())) {
+                // A projection owns no table: a tableName change repoints it at a different
+                // owner's table (row-only), it does not rename the physical table.
+                continue;
+            }
             String oldTable = effectiveTableName(mod.fromDb());
             String newTable = effectiveTableName(mod.fromCode());
             if (oldTable.equals(newTable)) {

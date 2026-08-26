@@ -118,7 +118,8 @@ rows by business key. Per-tenant metadata customization is **not supported**.
     storageType = StorageType.RDBMS,
     softDelete = false, activeControl = false, timeline = false,
     versionLock = false,
-    copyable = true                             // default true; false = copy APIs reject + UI hides Duplicate (runtime/log models)
+    copyable = true,                            // default true; false = copy APIs reject + UI hides Duplicate (runtime/log models)
+    projection = false                          // default false; true = read-only model over a table it does NOT own: no DDL ever, writes rejected, @Index rejected
 )
 @Index(fields = {"status", "createdTime"})            // @Repeatable; index names are GLOBALLY unique (≤60 chars, boot-enforced)
 @Index(indexName = "uk_customer_email", fields = {"email"}, unique = true,
@@ -267,6 +268,20 @@ public enum CustomerTier {
   narrows *within* a role's grant, whereas wrapping the output would make a multi-company grant look
   like a caller that already chose one and the selection would skip. Full reference:
   [`framework/softa-orm/README.md`](framework/softa-orm/README.md) §Request-scoped narrowing.
+
+- `projection` (**shared / external tables**): `@Model(projection = true)` marks a read-only model
+  over a table it does **not** own — another model's table (a report exposing a column subset plus
+  `dynamic` computed fields) or one created externally (e.g. a BI pipeline). The scanner reconciles
+  its `sys_*` rows but generates **no DDL** for it (no CREATE/ALTER/RENAME; removal hints no DROP);
+  the write APIs reject it (`MetaModelDTO.projection` hides the UI actions); `@Index` on it and a
+  non-RDBMS `storageType` are parse-rejected. Every **non**-projection RDBMS model owns its resolved
+  table exclusively — two owners on one `tableName` fail at parse, which both makes a fresh-database
+  bootstrap deterministic (one CREATE per table) and turns accidental table-name collisions into a
+  boot error instead of a silent table merge. The drift audit checks a projection one-way (its
+  declared columns must exist; the owner's other columns/indexes are never "undeclared" noise), and
+  a physically missing projection table logs an **ERROR** — never a boot failure, never auto-created.
+  Convention for in-app sharing: repeat the owner's column declarations verbatim, everything else
+  `dynamic`. Details: [metadata-starter README](starters/metadata-starter/README.md) §Projection models.
 
 **Omit redundant attributes** (an explicit value that equals what the parser
 would derive is noise — a present attribute should signal a real override): omit

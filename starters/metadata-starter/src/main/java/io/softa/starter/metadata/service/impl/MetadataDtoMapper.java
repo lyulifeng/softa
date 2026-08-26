@@ -63,6 +63,7 @@ public final class MetadataDtoMapper {
         dto.setTimeline(metaModel.isTimeline());
         dto.setVersionLock(metaModel.isVersionLock());
         dto.setCopyable(metaModel.isCopyable());
+        dto.setProjection(metaModel.isProjection());
         List<MetaField> fields = ModelManager.getModelFields(modelName);
         Map<String, MetaFieldDTO> fieldMap = fields.stream()
                 .collect(Collectors.toMap(MetaField::getFieldName, MetadataDtoMapper::toFieldDTO));

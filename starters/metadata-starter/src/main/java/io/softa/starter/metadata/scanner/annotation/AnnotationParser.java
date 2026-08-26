@@ -14,6 +14,7 @@ import io.softa.framework.orm.annotation.Model;
 import io.softa.framework.orm.constant.ModelConstant;
 import io.softa.framework.orm.domain.Orders;
 import io.softa.framework.orm.enums.FieldType;
+import io.softa.framework.orm.enums.StorageType;
 import io.softa.starter.metadata.ddl.SqlReservedWords;
 import io.softa.starter.metadata.ddl.spi.BuiltinDdlMetadataResolver;
 import io.softa.starter.metadata.ddl.spi.FieldDdlDefault;
@@ -115,9 +116,11 @@ public final class AnnotationParser {
             models.add(sysModel);
             List<SysField> classFields = parseFields(clazz, model);
             fields.addAll(classFields);
+            guardProjectionDeclaresNoIndexes(clazz, model);
             modelIndexes.addAll(parseIndexes(clazz, sysModel.getTableName(), classFields));
             validateModelFieldRefs(clazz, model, classFields);
         }
+        guardSingleTableOwner(models);
 
         for (Class<?> enumClass : optionSetEnums) {
             if (!enumClass.isEnum()) {
@@ -136,6 +139,44 @@ public final class AnnotationParser {
 
         RenameDeclarations renames = collectRenames(modelClasses);
         return new AnnotationScanResult(models, fields, optionSets, optionItems, modelIndexes, renames);
+    }
+
+    /**
+     * One table, one DDL owner: every non-projection RDBMS model claims exclusive DDL
+     * ownership of its resolved table. Two owners would race their CREATEs on a fresh
+     * database — the scan order decides the table's shape and the loser's own columns are
+     * silently skipped as "already applied" — and fight over MODIFYs afterwards; an
+     * accidental {@code tableName} collision between unrelated models would silently merge
+     * their tables. Projections ({@code @Model(projection = true)}) are exempt — they
+     * generate no DDL at all.
+     */
+    private static void guardSingleTableOwner(List<SysModel> models) {
+        Map<String, SysModel> ownerByTable = new HashMap<>();
+        for (SysModel model : models) {
+            if (Boolean.TRUE.equals(model.getProjection()) || model.getStorageType() != StorageType.RDBMS) {
+                continue;
+            }
+            SysModel prev = ownerByTable.putIfAbsent(model.getTableName(), model);
+            if (prev != null) {
+                throw new IllegalStateException("Models " + prev.getModelName() + " and " + model.getModelName()
+                        + " both own table '" + model.getTableName() + "' — one physical table has ONE DDL owner."
+                        + " Mark the non-owning read model(s) with @Model(projection = true),"
+                        + " or give one of them its own tableName.");
+            }
+        }
+    }
+
+    /**
+     * A projection owns no DDL, so an {@code @Index} on it would never be created —
+     * misleading metadata at best, a name collision with the owner's indexes at worst.
+     * Indexes belong to the table's owner; fail at parse.
+     */
+    private static void guardProjectionDeclaresNoIndexes(Class<?> clazz, Model anno) {
+        if (anno.projection() && clazz.getAnnotationsByType(Index.class).length > 0) {
+            throw new IllegalStateException("Model " + clazz.getSimpleName()
+                    + " declares projection = true together with @Index — a projection generates no DDL,"
+                    + " so its indexes would never be created. Declare them on the table's owning model.");
+        }
     }
 
     /**
@@ -308,6 +349,12 @@ public final class AnnotationParser {
         m.setMultiCountry(anno.multiCountry());
         m.setMultiCompany(anno.multiCompany());
         m.setCopyable(anno.copyable());
+        if (anno.projection() && anno.storageType() != StorageType.RDBMS) {
+            throw new IllegalStateException("Model " + modelName + " declares projection = true with storageType "
+                    + anno.storageType() + " — a projection reads a physical table it does not own,"
+                    + " so it is RDBMS-only.");
+        }
+        m.setProjection(anno.projection());
         m.setDataSource(blankToNull(anno.dataSource()));
         m.setBusinessKey(toList(anno.businessKey()));
         m.setPartitionField(blankToNull(anno.partitionField()));

@@ -52,6 +52,7 @@ public final class PhysicalDriftAuditor {
                 .collect(Collectors.groupingBy(SysModelIndex::getModelName));
 
         List<String> missingTables = new ArrayList<>();
+        List<String> missingProjectionTables = new ArrayList<>();
         List<String> missingColumns = new ArrayList<>();
         List<String> missingIndexes = new ArrayList<>();
         List<String> undeclaredColumns = new ArrayList<>();
@@ -59,9 +60,15 @@ public final class PhysicalDriftAuditor {
         List<String> typeMismatches = new ArrayList<>();
 
         for (SysModel model : models) {
+            // A projection audits one-way only: what it declares must exist (missing columns /
+            // type mismatches still matter for its reads), but the table's other columns and
+            // indexes belong to the owner — reporting them as undeclared would flood every boot
+            // with false positives, one copy per projection.
+            boolean projection = Boolean.TRUE.equals(model.getProjection());
             String table = SysDdlContextBuilder.resolveTableName(model);
             if (!facts.tableExists(table)) {
-                missingTables.add(table + " (model " + model.getModelName() + ")");
+                (projection ? missingProjectionTables : missingTables)
+                        .add(table + " (model " + model.getModelName() + ")");
                 continue;
             }
             PhysicalTable physical = facts.tables().get(lower(table));
@@ -87,9 +94,11 @@ public final class PhysicalDriftAuditor {
                             + " [" + verdict.name().toLowerCase(Locale.ROOT) + "]");
                 }
             }
-            for (PhysicalColumn column : physical.columns().values()) {
-                if (!declaredColumns.contains(lower(column.name()))) {
-                    undeclaredColumns.add(table + "." + column.name());
+            if (!projection) {
+                for (PhysicalColumn column : physical.columns().values()) {
+                    if (!declaredColumns.contains(lower(column.name()))) {
+                        undeclaredColumns.add(table + "." + column.name());
+                    }
                 }
             }
             List<SysModelIndex> declaredIndexes = indexesByModel.getOrDefault(model.getModelName(), List.of());
@@ -101,13 +110,15 @@ public final class PhysicalDriftAuditor {
                     missingIndexes.add(table + "." + index.getIndexName());
                 }
             }
-            for (String indexName : physical.indexNames()) {
-                if (!declaredIndexNames.contains(indexName) && !isPrimaryKeyIndex(indexName)) {
-                    undeclaredIndexes.add(table + "." + indexName);
+            if (!projection) {
+                for (String indexName : physical.indexNames()) {
+                    if (!declaredIndexNames.contains(indexName) && !isPrimaryKeyIndex(indexName)) {
+                        undeclaredIndexes.add(table + "." + indexName);
+                    }
                 }
             }
         }
-        return new PhysicalDriftReport(missingTables, missingColumns, missingIndexes,
+        return new PhysicalDriftReport(missingTables, missingProjectionTables, missingColumns, missingIndexes,
                 undeclaredColumns, undeclaredIndexes, typeMismatches);
     }
 
@@ -117,6 +128,18 @@ public final class PhysicalDriftAuditor {
      * managed set in one place.
      */
     public static void warn(PhysicalDriftReport report, String context) {
+        // Projection tables are the one ERROR-level finding: the model's queries WILL fail until
+        // the owner (another model, or an external process such as a BI pipeline) creates the
+        // table — but that creation is deliberately outside this model's control, so it is a
+        // loud log, never a boot failure and never a recovery CREATE.
+        if (!report.missingProjectionTables().isEmpty()) {
+            StringBuilder entries = new StringBuilder();
+            report.missingProjectionTables().forEach(entry -> entries.append("  - ").append(entry).append('\n'));
+            log.error("""
+                    {}: {} projection model(s) point at a physically MISSING table — every query on them \
+                    will fail until the owning model or external process creates it:
+                    {}""", context, report.missingProjectionTables().size(), entries.toString().stripTrailing());
+        }
         if (report.isEmpty()) {
             log.info("{}: physical schema is consistent with the audited metadata", context);
             return;
@@ -132,9 +155,13 @@ public final class PhysicalDriftAuditor {
         section(body, "TYPE MISMATCH between the declared and physical shape (a narrowing MODIFY is "
                 + "never auto-executed — resolve with the deferred SQL or by widening the declaration)",
                 report.typeMismatches());
+        if (body.isEmpty()) {
+            return;   // only projection-table findings — already reported at ERROR above
+        }
         log.warn("""
                 {}: physical schema drift — {} finding(s) between the audited metadata and the database:
-                {}""", context, report.total(), body.toString().stripTrailing());
+                {}""", context, report.total() - report.missingProjectionTables().size(),
+                body.toString().stripTrailing());
     }
 
     private static void section(StringBuilder body, String title, List<String> entries) {

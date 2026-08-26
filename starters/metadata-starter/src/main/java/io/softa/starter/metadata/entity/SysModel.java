@@ -106,6 +106,14 @@ public class SysModel extends AuditableModel {
     @Field(defaultValue = "true")
     private Boolean copyable = Boolean.TRUE;
 
+    /**
+     * Read-only projection over a table this model does not own — another model's table, or
+     * one created externally (e.g. by a BI pipeline). The scanner generates no DDL for it and
+     * the write APIs reject it. Mirrors {@code @Model.projection}.
+     */
+    @Field(label = "Is Projection", defaultValue = "false")
+    private Boolean projection = Boolean.FALSE;
+
     @Field
     private String dataSource;
 

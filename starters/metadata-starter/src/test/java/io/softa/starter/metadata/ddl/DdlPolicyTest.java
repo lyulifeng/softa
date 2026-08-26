@@ -158,4 +158,59 @@ class DdlPolicyTest {
         assertEquals(1, ops.size());
         assertEquals(List.of(code), ops.get(0).fields().updated());
     }
+
+    // ---- projection models own no DDL ----------------------------------
+
+    private static SysModel projectionModel() {
+        SysModel m = new SysModel();
+        m.setModelName("Customer");
+        m.setTableName("customer");
+        m.setProjection(Boolean.TRUE);
+        return m;
+    }
+
+    @Test
+    void addedProjectionModelProducesNoDdl() {
+        SysModel projection = projectionModel();
+        SysField added = field("email");
+        SysModelIndex idx = index(List.of("email"), false, null);
+        SchemaDiff diff = new SchemaDiff(
+                new EntityDiff<>(List.of(projection), List.of(), List.of()),
+                new EntityDiff<>(List.of(added), List.of(), List.of()),
+                EntityDiff.empty(), EntityDiff.empty(),
+                new EntityDiff<>(List.of(idx), List.of(), List.of()));
+
+        List<DdlPolicy.ModelOps> ops = DdlPolicy.classify(diff, Map.of("Customer", projection));
+
+        assertTrue(ops.isEmpty(), "a projection owns no DDL — no CREATE, and its field/index"
+                + " buckets must not resurface as ALTERs");
+    }
+
+    @Test
+    void removedProjectionModelProducesNoDropHint() {
+        SysModel projection = projectionModel();
+        SysField removed = field("email");
+        SchemaDiff diff = new SchemaDiff(
+                new EntityDiff<>(List.of(), List.of(projection), List.of()),
+                new EntityDiff<>(List.of(), List.of(removed), List.of()),
+                EntityDiff.empty(), EntityDiff.empty(), EntityDiff.empty());
+
+        List<DdlPolicy.ModelOps> ops = DdlPolicy.classify(diff, Map.of());
+
+        assertTrue(ops.isEmpty(), "removing a projection must not hint DROP TABLE — the table"
+                + " belongs to its owner and must survive");
+    }
+
+    @Test
+    void fieldChangeOnProjectionModelProducesNoDdl() {
+        SysField db = field("email");
+        SysField code = field("email");
+        code.setLength(256);   // DDL-relevant on an owner; row-only on a projection
+
+        List<DdlPolicy.ModelOps> ops = DdlPolicy.classify(
+                fieldModification(code, db), Map.of("Customer", projectionModel()));
+
+        assertTrue(ops.isEmpty(), "field changes on a projection are row-only — the owner"
+                + " model carries the physical MODIFY");
+    }
 }

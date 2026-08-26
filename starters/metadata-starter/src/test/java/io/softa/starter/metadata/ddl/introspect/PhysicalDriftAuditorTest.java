@@ -168,6 +168,67 @@ class PhysicalDriftAuditorTest {
         assertTrue(entry.endsWith("[widen]"), entry);
     }
 
+    // ---- projection models: one-way audit ---------------------------------
+
+    private static SysModel projection(String name, String tableName) {
+        SysModel m = model(name, tableName);
+        m.setProjection(Boolean.TRUE);
+        return m;
+    }
+
+    @Test
+    void projectionNeverReportsTheOwnersColumnsOrIndexesAsUndeclared() {
+        // The projection exposes id + email of a table that physically carries the owner's
+        // full shape. Its unexposed columns/indexes belong to the owner — no undeclared
+        // noise; but a column the projection DOES declare must still exist (email is
+        // missing → reported), and its type still compares (name is narrower → mismatch).
+        SysModel report = projection("CustomerReport", "customer");
+        SysField name = field("CustomerReport", "name", FieldType.STRING);
+        name.setLength(128);
+        List<SysField> fields = List.of(
+                field("CustomerReport", "id", FieldType.LONG),
+                name,
+                field("CustomerReport", "email", FieldType.STRING));   // physically missing
+
+        PhysicalSchema facts = schema(
+                table("customer", Set.of("uk_customer_code", "primary"),
+                        bigintColumn("id"), varcharColumn("name", 64),
+                        varcharColumn("code", 32), varcharColumn("status", 64)));
+
+        PhysicalDriftReport reportOut = PhysicalDriftAuditor.audit(
+                List.of(report), fields, List.of(), facts);
+
+        assertTrue(reportOut.undeclaredColumns().isEmpty(),
+                "the owner's columns are not the projection's undeclared drift");
+        assertTrue(reportOut.undeclaredIndexes().isEmpty(),
+                "the owner's indexes are not the projection's undeclared drift");
+        assertEquals(List.of("customer.email (CustomerReport.email)"), reportOut.missingColumns());
+        assertEquals(1, reportOut.typeMismatches().size());
+    }
+
+    @Test
+    void missingProjectionTableIsItsOwnBucket() {
+        // The projection's table does not exist yet (owner not deployed / external BI table
+        // pending) — routed to missingProjectionTables (ERROR log), never to missingTables
+        // (whose WARN wording promises a recovery CREATE that must not happen here).
+        SysModel owner = model("Customer", "customer");
+        SysModel report = projection("BiRevenueDaily", "bi_revenue_daily");
+
+        PhysicalSchema facts = schema(
+                table("customer", Set.of(), bigintColumn("id")));
+
+        PhysicalDriftReport reportOut = PhysicalDriftAuditor.audit(
+                List.of(owner, report),
+                List.of(field("Customer", "id", FieldType.LONG)),
+                List.of(), facts);
+
+        assertEquals(List.of("bi_revenue_daily (model BiRevenueDaily)"),
+                reportOut.missingProjectionTables());
+        assertTrue(reportOut.missingTables().isEmpty());
+        assertFalse(reportOut.isEmpty());
+        assertEquals(1, reportOut.total());
+    }
+
     @Test
     void derivedNamesResolveLikeTheDdlLayer() {
         // No explicit tableName / columnName: snake_case derivation must match what the DDL

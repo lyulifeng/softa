@@ -91,6 +91,14 @@ MODIFY), run the printed SQL by hand after confirming intent. A deferred
 narrowing also re-surfaces in the physical drift audit's TYPE MISMATCH section
 on every boot until resolved.
 
+**Projection models are outside this table entirely**: a model declared
+`@Model(projection = true)` (read-only over a table it does not own) generates
+**no DDL for any change** — its `sys_*` rows still reconcile, but the table's
+shape belongs to its owning model (or an external process). One table has ONE
+non-projection owner; a second owner fails at parse. A physically missing
+projection table logs an ERROR (never auto-created, never a boot failure). See
+the metadata-starter README §Projection models.
+
 ## Verification recipe (in-repo)
 
 ```bash
