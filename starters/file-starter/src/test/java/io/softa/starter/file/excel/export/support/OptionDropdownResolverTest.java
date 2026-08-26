@@ -114,6 +114,40 @@ class OptionDropdownResolverTest {
     }
 
     @Test
+    void aPlainFieldInsideTheRowsOwnSubRecordIsNotAValueSet() {
+        // `employeeProfileId.personalEmail` is not a list to pick from. A one-to-one target holds one
+        // row per parent row, so the "values" of a field on it are simply what other people happen to
+        // have — and offering them writes those people's data into a file anyone who can download a
+        // template receives. On the employee template that reached personal email, personal phone, and
+        // the ID number.
+        //
+        // It is also useless as a dropdown: nobody picks their own email off a list of other people's.
+        withMetadata(mm -> {
+            field("Employee", "employeeProfileId", FieldType.ONE_TO_ONE, "EmployeeProfile", null, null);
+            field("EmployeeProfile", "personalEmail", FieldType.STRING, null, null, null);
+            model("EmployeeProfile", false);
+
+            assertThat(resolve("Employee", null, "employeeProfileId.personalEmail")).isEmpty();
+            verifyNoInteractions(modelService);
+        });
+    }
+
+    @Test
+    void butAOneToOneStillReachesTheThingsThatAreValueSets() {
+        // The rule is about the shape of the target, not about one-to-ones. An option field on the
+        // sub-record still answers from metadata, and a relation on it still offers its code-as-ids —
+        // both are sets that exist independently of any employee.
+        withMetadata(mm -> {
+            field("Employee", "employeeProfileId", FieldType.ONE_TO_ONE, "EmployeeProfile", null, null);
+            field("EmployeeProfile", "gender", FieldType.OPTION, null, "Gender", null);
+            optionSet("Gender", List.of(item("male", "Male")));
+
+            assertThat(resolve("Employee", null, "employeeProfileId.gender"))
+                    .containsEntry(0, List.of("Male"));
+        });
+    }
+
+    @Test
     void aRelationColumnAsksTheTargetModelForTheFieldTheColumnNames() {
         // `bankId.name` offers Bank.name — the very value RelationLookupResolver reverse-looks-up on
         // the way back in, so a sheet filled from its own dropdown imports without translation.

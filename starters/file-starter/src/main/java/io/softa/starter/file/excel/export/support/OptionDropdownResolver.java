@@ -334,6 +334,19 @@ public class OptionDropdownResolver {
             queueCodeAsIdRequest(leafMetaField, country, columnIndex, entityRequestToColumns);
             return;
         }
+        if (rootField.getFieldType() == FieldType.ONE_TO_ONE) {
+            // Asking the target for the values of this field would be asking every OTHER employee what
+            // theirs is. A one-to-one target holds one row per parent row, so its columns are not a set
+            // anyone chooses from — they are individual people's data, and a template is a file handed
+            // to whoever may download one. On the employee template this branch reached personal email,
+            // personal phone and the ID number.
+            //
+            // The same rule the code-as-id path already states, applied to plain leaves too: a
+            // one-to-one is the row's own sub-record, and a sub-record is not picked from a list. What
+            // IS a set still comes through above — an option field answers from metadata, a relation
+            // offers its target's code-as-ids — because those exist independently of any employee.
+            return;
+        }
         ValueRequest request = new ValueRequest(relatedModel, leafField, rootField.getFilters(),
                 narrowingCountryFor(relatedModel, country));
         entityRequestToColumns.computeIfAbsent(request, k -> new ArrayList<>()).add(columnIndex);
