@@ -139,6 +139,35 @@ class OptionDropdownCascadeTest {
         assertThat(xml).contains("INDIRECT(\"_c8_\"&amp;IFERROR(MATCH($H2,");
     }
 
+    @Test
+    void aParentWithNothingToOfferStillGetsAName() {
+        // Not hypothetical: the bank column is meant to offer nothing when the payment method is cash
+        // or cheque. Empty, the range comes out as $B$1:$B$0 — an invalid reference, not an empty
+        // one, and Excel drops the entire validation rather than just that branch. So every other
+        // payment method would lose its dropdown too.
+        XSSFWorkbook workbook = new XSSFWorkbook();
+        Sheet sheet = workbook.createSheet("Template");
+
+        Map<String, List<String>> banksByMethod = new LinkedHashMap<>();
+        banksByMethod.put("BankTransfer", List.of("DBS", "OCBC"));
+        banksByMethod.put("Cash", List.of());
+        banksByMethod.put("Cheque", List.of());
+
+        Map<Integer, List<String>> options = new LinkedHashMap<>();
+        options.put(3, List.of("BankTransfer", "Cash", "Cheque"));
+        options.put(4, List.of("DBS", "OCBC"));
+
+        new TestableCascadeHandler(options,
+                Map.of(4, new OptionDropdownResolver.Cascade(3, banksByMethod))).attach(sheet);
+
+        assertThat(workbook.getName("_c4_2")).as("cash still needs a name to point at").isNotNull();
+        assertThat(workbook.getName("_c4_2").getRefersToFormula())
+                .as("one blank cell, never a zero-height range").endsWith("$1");
+        assertThat(workbook.getName("_c4_1").getRefersToFormula())
+                .as("and the method that does offer banks is unaffected").endsWith("$2");
+        assertThat(sheet.getDataValidations()).hasSize(2);
+    }
+
     /** Exposes {@code attach}, which is protected so the fesod callback stays the only public way in. */
     private static final class TestableCascadeHandler extends OptionDropdownHandler {
         private TestableCascadeHandler(Map<Integer, List<String>> options,

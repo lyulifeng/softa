@@ -187,12 +187,17 @@ public class OptionDropdownHandler implements SheetWriteHandler {
         int column = firstColumn + 1;
         for (int i = 0; i < parents.size(); i++) {
             List<String> children = cascade.valuesByParentValue().get(parents.get(i));
-            writeOptionsColumn(optionsSheet, column, children);
+            // A parent with nothing to offer still needs a name and a cell behind it. Empty, the range
+            // would come out as $B$1:$B$0 — not an empty range but an invalid reference, which takes
+            // the whole validation down rather than just this branch of it. One blank cell instead:
+            // the reader picks that parent and the list is empty, which is the answer.
+            List<String> cells = children.isEmpty() ? List.of("") : children;
+            writeOptionsColumn(optionsSheet, column, cells);
             Name name = workbook.createName();
             // Positions are 1-based in the formula, so the first parent is _c<col>_1 and _c<col>_0
             // stays free to mean "no parent chosen yet".
             name.setNameName(cascadeNamePrefix(columnIndex) + (i + 1));
-            name.setRefersToFormula(rangeReference(column, children.size()));
+            name.setRefersToFormula(rangeReference(column, cells.size()));
             column++;
         }
         // _c0: a single blank cell. A child cell whose parent is still empty has to point somewhere —
