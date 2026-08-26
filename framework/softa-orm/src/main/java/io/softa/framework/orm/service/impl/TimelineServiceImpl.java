@@ -21,6 +21,7 @@ import io.softa.framework.orm.domain.Orders;
 import io.softa.framework.orm.entity.TimelineSlice;
 import io.softa.framework.orm.enums.IdStrategy;
 import io.softa.framework.orm.jdbc.JdbcService;
+import io.softa.framework.orm.meta.MetaModel;
 import io.softa.framework.orm.meta.ModelManager;
 import io.softa.framework.orm.service.TimelineService;
 import io.softa.framework.orm.utils.BeanTool;
@@ -186,6 +187,21 @@ public class TimelineServiceImpl<K extends Serializable> implements TimelineServ
             row.computeIfPresent(ModelConstant.EFFECTIVE_END_DATE, (k, v) -> DateUtils.dateToLocalDate(v));
             row.putIfAbsent(ModelConstant.EFFECTIVE_START_DATE, effectiveDate);
             Serializable id = (Serializable) row.get(ModelConstant.ID);
+            if (id == null) {
+                // No id is not the same as no identity. A slice belongs to an ENTITY, and a model
+                // that declares a businessKey has said what identifies one — so a row arriving
+                // without an id may still be a new VERSION of something already stored.
+                //
+                // Without this, every id-less row minted a fresh entity. Importing two effective
+                // dates of one pay item for one employee produced two entities rather than two
+                // versions, both left open-ended, and payroll reads both as current: the same
+                // amount paid twice. The rows cannot carry the id themselves — the first one's
+                // entity does not exist until it is written, which happens here, row by row.
+                id = findEntityByBusinessKey(modelName, row);
+                if (id != null) {
+                    row.put(ModelConstant.ID, id);
+                }
+            }
             if (id != null && jdbcService.exist(modelName, id)) {
                 // id already exists, copy adjacent slice to insert a new one.
                 createSlice(modelName, row);
@@ -207,6 +223,37 @@ public class TimelineServiceImpl<K extends Serializable> implements TimelineServ
             }
         });
         return rows;
+    }
+
+    /**
+     * The id of the entity this row belongs to, read from the model's declared businessKey.
+     *
+     * <p>Returns null unless the model declares one — which is every timeline model today, so this
+     * changes nothing until a model opts in by naming what identifies its entity.
+     *
+     * <p>The key must be stable across versions to mean anything here: it identifies the entity, not
+     * the slice. A key on a field that changes from one version to the next would split one entity in
+     * two, which is the same fault this method exists to prevent.
+     */
+    private Serializable findEntityByBusinessKey(String modelName, Map<String, Object> row) {
+        MetaModel metaModel = ModelManager.getModel(modelName);
+        if (metaModel == null || CollectionUtils.isEmpty(metaModel.getBusinessKey())) {
+            return null;
+        }
+        List<String> businessKey = metaModel.getBusinessKey();
+        Filters filters = new Filters();
+        for (String field : businessKey) {
+            Object value = row.get(field);
+            if (value == null) {
+                // An incomplete key identifies nothing; fall back to creating a new entity.
+                return null;
+            }
+            filters.eq(field, value);
+        }
+        FlexQuery flexQuery = new FlexQuery(Set.of(ModelConstant.ID), filters).acrossTimelineData();
+        flexQuery.setLimitSize(1);
+        List<Map<String, Object>> rows = jdbcService.selectByFilter(modelName, flexQuery);
+        return rows.isEmpty() ? null : (Serializable) rows.getFirst().get(ModelConstant.ID);
     }
 
     /**
