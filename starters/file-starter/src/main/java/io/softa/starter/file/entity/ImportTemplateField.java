@@ -49,4 +49,20 @@ public class ImportTemplateField extends AuditableModel {
 
     @Field(length = 256)
     private String description;
+
+    /**
+     * Suppress the dropdown this column would otherwise be given.
+     *
+     * <p>Whether a column offers a list is a product decision — the specification says so per column
+     * ("非下拉值，填写员工code"). The resolver infers it from metadata instead, and metadata cannot tell a
+     * dictionary from a data table: a bank and an employee are both a many-to-one carrying a name. So
+     * the columns that point at people and departments were offering the entire staff list, which is
+     * both what the spec forbids there and a page of other people's data in a downloadable file.
+     *
+     * <p>Opt-out, not opt-in: a column that says nothing keeps inferring, or every dropdown in every
+     * template would go dark at once. Import is unaffected — the cell is validated the same way
+     * whether or not it was picked from a list.
+     */
+    @Field(label = "No Dropdown", description = "Do not offer a dropdown on this column")
+    private Boolean noDropdown;
 }

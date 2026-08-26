@@ -148,6 +148,40 @@ class OptionDropdownResolverTest {
     }
 
     @Test
+    void aColumnTheTemplateDeclaresFreeTextGetsNoDropdown() {
+        // Which columns offer a list is a product decision, written per column in the specification
+        // ("非下拉值，填写员工code"). Everything else here infers it from metadata, and metadata cannot
+        // tell a dictionary from a data table — Bank and Employee are both a many-to-one carrying a
+        // name. So the templates pointing at people and departments offered the whole staff list, in
+        // the columns whose specification says to type the code.
+        //
+        // Inference stays the default; this is the way to overrule it where the spec has spoken.
+        withMetadata(mm -> {
+            field("EmpAddress", "employeeId", FieldType.MANY_TO_ONE, "Employee", null, null);
+            field("Employee", "fullName", FieldType.STRING, null, null, null);
+            model("Employee", false);
+
+            assertThat(resolveDeclared("EmpAddress", "employeeId.fullName", true)).isEmpty();
+            verifyNoInteractions(modelService);
+        });
+    }
+
+    @Test
+    void andWithoutThatDeclarationTheSameColumnStillInfers() {
+        // The flag is opt-out, not a new requirement: everything that is not marked keeps working the
+        // way it did, or every dropdown in every other template would go dark at once.
+        withMetadata(mm -> {
+            field("Employee", "bankId", FieldType.MANY_TO_ONE, "Bank", null, null);
+            field("Bank", "name", FieldType.STRING, null, null, null);
+            model("Bank", false);
+            stubRows("Bank", "name", List.of("DBS BANK LTD"));
+
+            assertThat(resolveDeclared("Employee", "bankId.name", false))
+                    .containsEntry(0, List.of("DBS BANK LTD"));
+        });
+    }
+
+    @Test
     void aRelationColumnAsksTheTargetModelForTheFieldTheColumnNames() {
         // `bankId.name` offers Bank.name — the very value RelationLookupResolver reverse-looks-up on
         // the way back in, so a sheet filled from its own dropdown imports without translation.
@@ -398,6 +432,16 @@ class OptionDropdownResolverTest {
                     .thenAnswer(inv -> optionSets.getOrDefault(inv.getArgument(0), List.of()));
             body.accept(mm);
         }
+    }
+
+    /** Resolve one column, saying whether the template declared it free text. */
+    private Map<Integer, List<String>> resolveDeclared(String modelName, String fieldName, boolean noDropdown) {
+        OptionDropdownResolver resolver = new OptionDropdownResolver();
+        ReflectionTestUtils.setField(resolver, "modelService", modelService);
+        ImportFieldDTO field = new ImportFieldDTO();
+        field.setFieldName(fieldName);
+        field.setNoDropdown(noDropdown);
+        return resolver.resolveAll(modelName, List.of(field), null).optionsByColumn();
     }
 
     private Map<Integer, List<String>> resolve(String modelName, String country, String... columns) {

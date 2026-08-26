@@ -533,6 +533,7 @@ public class ImportServiceImpl implements ImportService {
         importFieldDTO.setRequired(importTemplateField.getRequired());
         importFieldDTO.setIgnoreEmpty(importTemplateDTO.getIgnoreEmpty());
         importFieldDTO.setDescription(importTemplateField.getDescription());
+        importFieldDTO.setNoDropdown(importTemplateField.getNoDropdown());
         // Get the metaField object of the last field in cascading `fieldName`.
         MetaField lastField = resolveLastImportField(importTemplateDTO.getModelName(), importTemplateField.getFieldName());
         // Set the default value of the imported field

@@ -25,4 +25,7 @@ public class ImportFieldDTO {
     @Schema(hidden = true)
     private Boolean ignoreEmpty;
 
+    /** The template declares this column free text: infer no dropdown for it. */
+    private Boolean noDropdown;
+
 }

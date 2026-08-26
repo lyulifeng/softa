@@ -143,8 +143,14 @@ public class OptionDropdownResolver {
         Map<ValueRequest, List<Integer>> entityRequestToColumns = new LinkedHashMap<>();
 
         for (int columnIndex = 0; columnIndex < importFields.size(); columnIndex++) {
-            String fieldName = importFields.get(columnIndex).getFieldName();
+            ImportFieldDTO importField = importFields.get(columnIndex);
+            String fieldName = importField.getFieldName();
             if (StringUtils.isBlank(fieldName)) {
+                continue;
+            }
+            if (Boolean.TRUE.equals(importField.getNoDropdown())) {
+                // The template says this column is typed, not picked. Inference would say otherwise —
+                // it reads metadata, which cannot tell a dictionary from a table of people.
                 continue;
             }
             try {
