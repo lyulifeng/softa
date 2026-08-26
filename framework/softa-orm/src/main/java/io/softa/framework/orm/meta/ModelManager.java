@@ -1054,6 +1054,18 @@ public class ModelManager {
     }
 
     /**
+     * Check whether the model is a read-only projection over a table it does not
+     * own ({@code @Model(projection = ...)}) — the write APIs are disabled for it.
+     *
+     * @param modelName model name
+     * @return true if the model is a projection
+     */
+    public static boolean isProjectionModel(String modelName) {
+        validateModel(modelName);
+        return modelMap().get(modelName).isProjection();
+    }
+
+    /**
      * Get the copyable fields of the specified model.
      * <p>Excludes fields marked {@code copyable = false}, audit fields, dynamic fields
      * (OneToMany / ManyToMany / computed / cascaded — they are derived, not stored),

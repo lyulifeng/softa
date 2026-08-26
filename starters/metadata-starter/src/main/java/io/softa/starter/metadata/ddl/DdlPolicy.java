@@ -156,6 +156,14 @@ public final class DdlPolicy {
         // Models added → CREATE TABLE (all-added fields + indexes for this model)
         Map<String, ModelOps> ops = new LinkedHashMap<>();
         for (SysModel added : diff.models().added()) {
+            if (isProjection(added)) {
+                // A projection owns no DDL — its table belongs to another model or an external
+                // process. Consume its buckets so the ALTER aggregation below cannot resurrect
+                // them as ADD COLUMN / ADD INDEX units; the sys_* rows are still written.
+                fieldsAddedByModel.remove(added.getModelName());
+                idxAddedByModel.remove(added.getModelName());
+                continue;
+            }
             List<SysField> modelFields = fieldsAddedByModel.getOrDefault(added.getModelName(), List.of());
             List<SysModelIndex> modelIndexes = idxAddedByModel.getOrDefault(added.getModelName(), List.of());
             ops.put(added.getModelName(), new ModelOps(
@@ -169,6 +177,13 @@ public final class DdlPolicy {
 
         // Models removed → DROP TABLE WARNING (orchestrator logs only)
         for (SysModel removed : diff.models().removed()) {
+            if (isProjection(removed)) {
+                // No DROP TABLE hint: the table belongs to its owner and must survive the
+                // projection's removal — hinting a DROP here would invite deleting it.
+                fieldsRemovedByModel.remove(removed.getModelName());
+                idxRemovedByModel.remove(removed.getModelName());
+                continue;
+            }
             ops.put(removed.getModelName(), new ModelOps(
                     removed, Operation.DROP_TABLE_WARNING,
                     new FieldOps(List.of(), List.of(), List.of(),
@@ -217,6 +232,9 @@ public final class DdlPolicy {
                 modelRef = new SysModel();
                 modelRef.setModelName(modelName);
             }
+            if (isProjection(modelRef)) {
+                continue;   // field / index changes on a projection are row-only — never DDL
+            }
             boolean hasDrops = !removedFields.isEmpty() || !idxRemoved.isEmpty();
             Operation op = hasDrops ? Operation.ALTER_TABLE_WITH_DROP_WARNING : Operation.ALTER_TABLE;
             ops.put(modelName, new ModelOps(modelRef, op,
@@ -226,6 +244,14 @@ public final class DdlPolicy {
         }
 
         return new ArrayList<>(ops.values());
+    }
+
+    /**
+     * A projection model owns no DDL — its table belongs to another model or an
+     * external process ({@code @Model(projection = true)}).
+     */
+    private static boolean isProjection(SysModel model) {
+        return model != null && Boolean.TRUE.equals(model.getProjection());
     }
 
     // ---- DDL-relevant projection ---------------------------------------

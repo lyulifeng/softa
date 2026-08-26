@@ -122,6 +122,27 @@ public @interface Model {
      */
     boolean copyable() default true;
 
+    /**
+     * Marks a read-only model over a table it does NOT own — the table belongs to
+     * another model in this app (e.g. a report projecting {@code Employee}'s table)
+     * or to an external process (e.g. a BI pipeline). Effects:
+     * <ul>
+     *   <li>the scanner never generates DDL for this model (no CREATE / ALTER /
+     *       RENAME / DROP) — its {@code sys_*} metadata rows are still reconciled;</li>
+     *   <li>the write APIs (create / update / delete / copy) reject the model;</li>
+     *   <li>{@code @Index} declarations are rejected at boot — indexes belong to the
+     *       table's owner;</li>
+     *   <li>the physical drift audit still checks the declared columns exist, but never
+     *       reports the table's other columns / indexes as undeclared (they belong to
+     *       the owner), and a physically missing table logs an ERROR instead of failing
+     *       the boot (the owner or the external process may simply not have created it
+     *       yet).</li>
+     * </ul>
+     * Every non-projection RDBMS model claims exclusive DDL ownership of its resolved
+     * table: two owners on one {@code tableName} fail at boot. RDBMS storage only.
+     */
+    boolean projection() default false;
+
     /** Override default data source; empty = primary data source. */
     String dataSource() default "";
 

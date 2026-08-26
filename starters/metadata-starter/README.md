@@ -117,6 +117,41 @@ need to specify):
   `StringTools.isTableOrColumn` and must not be SQL reserved words because DDL
   renders identifiers unquoted.
 
+### Projection models (shared / external tables)
+
+`@Model(projection = true)` marks a **read-only model over a table it does not
+own** — either another model's table (a report exposing a slice of `Employee`'s
+columns plus its own `dynamic` computed fields) or a table created outside the
+scanner entirely (e.g. by a BI pipeline). Its metadata is independent: declare
+the fields it exposes exactly like any model (`tableName` optional — derived as
+usual when omitted). What changes is ownership:
+
+- **No DDL, ever.** The scanner writes / updates its `sys_*` rows but renders no
+  CREATE / ALTER / RENAME for it; removing the model hints no DROP TABLE (the
+  table must survive), and a `tableName` change is a re-point, not a rename.
+- **One table, one owner.** Every non-projection RDBMS model claims exclusive
+  DDL ownership of its resolved table; two owners on one `tableName` fail at
+  parse. This is what makes a fresh-database bootstrap deterministic (exactly
+  one CREATE per table) and turns an accidental table-name collision between
+  unrelated models — previously a silent table merge — into a boot error.
+- **Read-only.** The write APIs (create / update / delete / copy) reject a
+  projection; `MetaModelDTO.projection` lets the UI hide the actions. Writing
+  through a subset model would bypass the owner's required-field validation.
+- **No `@Index`.** Indexes belong to the table's owner; declaring one on a
+  projection is boot-rejected. RDBMS storage only.
+- **One-way physical audit.** The drift audit still checks that the columns a
+  projection declares physically exist (missing column / type mismatch stay
+  reported), but the table's other columns and indexes are the owner's business —
+  never "undeclared" noise. A physically **missing table** logs an **ERROR**
+  (queries on the model will fail) but never fails the boot and is never
+  auto-created: its creation deliberately belongs to the owner model or the
+  external process.
+
+Convention for in-app sharing: keep a projection's stored-field declarations
+byte-identical to the owner's columns it exposes (type / length / required),
+and make everything else `dynamic` — the shared table then has exactly one
+source of physical truth.
+
 ## Runtime catalog identity (`app_code`)
 
 The runtime `sys_model` / `sys_field` / `sys_option_set` /
@@ -152,8 +187,10 @@ empty / unset = manage nothing.
 On a **shared dev database**, give each developer a narrow scope (their own
 packages) so the scanner only reconciles the Java packages they are actively
 changing. Scope is per-package, not per-class, and it is not an ownership
-barrier; app identity is still `app_code`, and physical table-name collisions
-remain a database-level concern.
+barrier; app identity is still `app_code`. Table-name collisions between two
+models parsed **together** fail at boot (see Projection models — one table, one
+owner); collisions across separately-scoped parses or separate apps remain a
+database-level concern.
 
 ### Catalog row policy (what the scanner writes to `sys_*`)
 

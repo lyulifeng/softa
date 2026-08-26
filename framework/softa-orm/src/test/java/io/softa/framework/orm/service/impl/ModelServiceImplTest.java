@@ -394,7 +394,13 @@ class ModelServiceImplTest {
         when(fixture.strategy().versionSlice(SCOPED_MODEL, 11L)).thenReturn(slice);
         when(fixture.strategy().deleteVersion(SCOPED_MODEL, slice)).thenReturn(true);
 
-        boolean deleted = fixture.service().deleteBySliceId(SCOPED_MODEL, 11L);
+        boolean deleted;
+        // The projection write-guard consults ModelManager (a static registry the fixture
+        // model is not loaded into) — mock it like the sibling write-root tests do;
+        // unstubbed isProjectionModel defaults to false = writable.
+        try (MockedStatic<ModelManager> modelManager = Mockito.mockStatic(ModelManager.class)) {
+            deleted = fixture.service().deleteBySliceId(SCOPED_MODEL, 11L);
+        }
 
         Assertions.assertTrue(deleted);
         // Permission runs against the slice's owning logical id, before the delete.

@@ -105,6 +105,12 @@ public class DesignModel extends AuditableModel {
     @Field(defaultValue = "true")
     private Boolean copyable = Boolean.TRUE;
 
+    // Structural mirror of sys_model.projection (read-only model over a table it does not own);
+    // required for the cross-lane checksum. Studio does not support AUTHORING projections yet —
+    // DesignModelController rejects a true value, so this stays false until that lane is designed.
+    @Field(label = "Is Projection", defaultValue = "false")
+    private Boolean projection = Boolean.FALSE;
+
     @Field
     private String dataSource;
 

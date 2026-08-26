@@ -833,6 +833,59 @@ abstract class AbstractDdlOrchestratorTest {
         assertColumnExists("customer", "account_number");
     }
 
+    // ---- projection models: one table, one owner, no DDL from the projection ----
+
+    /** A read-only projection over the customer table ({@code @Model(projection = true)}). */
+    private static SysModel customerReport() {
+        SysModel m = new SysModel();
+        m.setModelName("CustomerReport");
+        m.setLabel("Customer Report");
+        m.setTableName("customer");
+        m.setIdStrategy(IdStrategy.DB_AUTO_ID);
+        m.setStorageType(StorageType.RDBMS);
+        m.setProjection(Boolean.TRUE);
+        return m;
+    }
+
+    @Test
+    void sharedTable_projectionEmitsNoDdl_ownerAloneShapesTheTable() {
+        // Owner + projection over the same table, both added in ONE diff — the fresh
+        // bootstrap that used to render two racing CREATEs. Only the owner may CREATE;
+        // the projection emits no DDL at all, so a column only IT declares must not appear.
+        SysModel owner = customer();
+        SysField ownerId = idField("Customer");
+        SysField name = field("Customer", "name", FieldType.STRING, 100, true);
+
+        SysModel report = customerReport();
+        SysField reportId = idField("CustomerReport");
+        SysField vipFlag = field("CustomerReport", "vip_flag", FieldType.BOOLEAN, null, false);
+
+        SchemaDiff diff = diffOf(
+                List.of(owner, report),
+                List.of(ownerId, name, reportId, vipFlag),
+                List.of(), List.of(), List.of());
+        applyDiff(diff, codeModels(diff), codeFields(diff));
+
+        assertTableExists("customer");
+        assertColumnExists("customer", "name");
+        assertColumnNotExists("customer", "vip_flag");
+    }
+
+    @Test
+    void projectionFieldAdd_onExistingTable_emitsNoAlter() {
+        // Incremental lane: the owner's table already exists; a stored field added on the
+        // projection is row-only metadata — no ADD COLUMN may reach the shared table.
+        jdbcTemplate.execute("CREATE TABLE customer (id BIGINT NOT NULL PRIMARY KEY)");
+
+        SysField score = field("CustomerReport", "score", FieldType.INTEGER, null, false);
+        SchemaDiff diff = diffOf(
+                List.of(), List.of(score),
+                List.of(), List.of(), List.of());
+        applyDiff(diff, codeModels(diff, customerReport()), codeFields(diff));
+
+        assertColumnNotExists("customer", "score");
+    }
+
     // ---- regression: string defaultValue rendered as quoted literal -------
 
     @Test
@@ -886,6 +939,15 @@ abstract class AbstractDdlOrchestratorTest {
                 Integer.class, table, column);
         assertNotNull(count);
         assertTrue(count >= 1, "column " + table + "." + column + " should exist");
+    }
+
+    private void assertColumnNotExists(String table, String column) {
+        Integer count = jdbcTemplate.queryForObject(
+                "SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS "
+                        + "WHERE LOWER(TABLE_NAME) = LOWER(?) AND LOWER(COLUMN_NAME) = LOWER(?)",
+                Integer.class, table, column);
+        assertNotNull(count);
+        assertEquals(0, count, "column " + table + "." + column + " must NOT exist");
     }
 
     private String queryColumnType(String table, String column) {

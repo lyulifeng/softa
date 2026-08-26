@@ -66,6 +66,18 @@ public class ModelServiceImpl<K extends Serializable> implements ModelService<K>
     @Autowired
     private RelationDeleteHandler relationDeleteHandler;
 
+    /**
+     * Reject writes on a projection model ({@code @Model(projection = true)}): its rows live
+     * in a table owned by another model or an external process, so they are read-only through
+     * this model. Guarded at the write roots — {@code createList}, {@code updateList},
+     * {@code deleteByIds}, {@code deleteBySliceId}, {@code setEndDate} — which every other
+     * create / update / delete / copy API funnels into.
+     */
+    private void checkWritableModel(String modelName) {
+        Assert.notTrue(ModelManager.isProjectionModel(modelName),
+                "Model {0} is a read-only projection, the write APIs are disabled for it!", modelName);
+    }
+
     private void checkTenantId(String modelName, List<Map<String, Object>> rows) {
         if (ModelManager.isMultiTenantControl(modelName)) {
             rows.forEach(row -> {
@@ -121,6 +133,7 @@ public class ModelServiceImpl<K extends Serializable> implements ModelService<K>
     @Transactional(rollbackFor = Exception.class)
     public List<K> createList(String modelName, List<Map<String, Object>> rows) {
         Assert.allNotNull(rows, "The creation data for model {0} must not be empty: {1}", modelName, rows);
+        this.checkWritableModel(modelName);
         // Layer D — reject writes touching blocked-for-write fields.
         // Runs before any DB work; PermissionException aborts the whole batch.
         for (Map<String, Object> row : rows) {
@@ -826,6 +839,7 @@ public class ModelServiceImpl<K extends Serializable> implements ModelService<K>
     @Override
     @Transactional(rollbackFor = Exception.class)
     public boolean updateList(String modelName, List<Map<String, Object>> rows) {
+        this.checkWritableModel(modelName);
         // Layer D — reject writes touching blocked-for-write fields.
         for (Map<String, Object> row : rows) {
             permissionService.checkWritePayload(modelName, row);
@@ -978,6 +992,7 @@ public class ModelServiceImpl<K extends Serializable> implements ModelService<K>
     @Override
     @Transactional(rollbackFor = Exception.class)
     public boolean deleteBySliceId(String modelName, Serializable sliceId) {
+        this.checkWritableModel(modelName);
         VersioningStrategy strategy = versioning.of(modelName);
         // Rejects non-timeline models (no version slices to delete).
         TimelineSlice timelineSlice = strategy.versionSlice(modelName, sliceId);
@@ -1042,6 +1057,7 @@ public class ModelServiceImpl<K extends Serializable> implements ModelService<K>
     @Override
     @Transactional(rollbackFor = Exception.class)
     public boolean setEndDate(String modelName, Serializable id, LocalDate endDate) {
+        this.checkWritableModel(modelName);
         permissionService.checkIdsAccess(modelName, Collections.singletonList(id), AccessType.UPDATE);
         // Rejects non-timeline models; validates tail-ness and the endDate lower bound.
         return versioning.of(modelName).setEndDate(modelName, id, endDate);
@@ -1058,6 +1074,7 @@ public class ModelServiceImpl<K extends Serializable> implements ModelService<K>
     @Transactional(rollbackFor = Exception.class)
     public boolean deleteByIds(String modelName, List<K> ids) {
         Assert.allNotNull(ids, "The ids to be deleted cannot be empty! {0}", ids);
+        this.checkWritableModel(modelName);
         // Chunk large id lists to bound the SELECT / DELETE statement + IN-clause size (Tier 3a). Each
         // batch runs in THIS same @Transactional (REQUIRED), so all batches commit/roll back together —
         // chunking bounds statement size, not lock duration / transaction scope.

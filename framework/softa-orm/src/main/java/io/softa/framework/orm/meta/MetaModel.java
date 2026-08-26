@@ -68,6 +68,9 @@ public class MetaModel implements Serializable {
     // covers programmatically constructed instances (tests, in-memory models).
     private boolean copyable = true;
 
+    /** Read-only projection over a table another model (or an external process) owns; writes are rejected. */
+    private boolean projection;
+
     private String dataSource;
 
     // Owning app identity, projected from sys_model.app_code by the generic
