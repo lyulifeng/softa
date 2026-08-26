@@ -29,7 +29,22 @@ public class MultiOptionHandler extends BaseImportHandler {
             String optionSetCode = metaField.getOptionSetCode();
             String[] optionList = StringUtils.split(multiOptionStr.trim(), ",");
             List<String> codeList = new ArrayList<>();
-            for (String optionStr : optionList) {
+            for (String rawOption : optionList) {
+                // Trim each segment, not only the whole string. People write a list as "A, B", and
+                // the space that separator leaves on the front of every value but the first makes
+                // both lookups below miss. The single-option handler has always trimmed; this one
+                // reads the same values out of the same sets and did not.
+                //
+                // The failure was worse than a rejection: the message named the item with its
+                // leading space still attached — `does not exist item ` B`` — and a leading space is
+                // invisible in a terminal and a browser alike. So it read as "B does not exist"
+                // while B was sitting in the dropdown, with nothing pointing at the space.
+                String optionStr = rawOption.trim();
+                if (optionStr.isEmpty()) {
+                    // "A, , B" — spacing between separators, naming no item. Rejecting it would be
+                    // rejecting the whitespace itself.
+                    continue;
+                }
                 if (OptionManager.existsItemCode(optionSetCode, optionStr)) {
                     codeList.add(optionStr);
                 } else {

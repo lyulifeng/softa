@@ -95,6 +95,34 @@ class ImportHandlersTest {
         assertEquals(List.of("ACTIVE", "PENDING"), handler.handleValue("ACTIVE,Pending"));
     }
 
+    /**
+     * {@code "Active, Pending"} — a comma AND a space, which is how people write a list.
+     *
+     * <p>Splitting on the comma alone leaves the space on the front of every value after the first,
+     * and neither the code nor the label lookup matches it. What made this worth a test is the error
+     * it produced: {@code does not exist item ` Pending`}, whose leading space is invisible in a
+     * terminal and a browser alike — so it reads as "Pending does not exist" while Pending is sitting
+     * right there in the dropdown, and nothing points at the space.
+     */
+    @Test
+    void multiOptionHandlerAcceptsTheSpaceAfterTheComma() {
+        registerOptionSet("tag_set", optionItem("ACTIVE", "Active"), optionItem("PENDING", "Pending"));
+        MultiOptionHandler handler = new MultiOptionHandler(metaField(FieldType.MULTI_OPTION, "Tags", "tags", "tag_set"),
+                new ImportFieldDTO());
+
+        assertEquals(List.of("ACTIVE", "PENDING"), handler.handleValue("Active, Pending"));
+    }
+
+    /** A gap between two commas is spacing, not an item — and there is no item it could name. */
+    @Test
+    void multiOptionHandlerSkipsASegmentThatIsOnlySpacing() {
+        registerOptionSet("tag_set", optionItem("ACTIVE", "Active"), optionItem("PENDING", "Pending"));
+        MultiOptionHandler handler = new MultiOptionHandler(metaField(FieldType.MULTI_OPTION, "Tags", "tags", "tag_set"),
+                new ImportFieldDTO());
+
+        assertEquals(List.of("ACTIVE", "PENDING"), handler.handleValue("Active , , Pending"));
+    }
+
     @Test
     void multiOptionHandlerRejectsUnknownOption() {
         registerOptionSet("tag_set", optionItem("ACTIVE", "Active"));
