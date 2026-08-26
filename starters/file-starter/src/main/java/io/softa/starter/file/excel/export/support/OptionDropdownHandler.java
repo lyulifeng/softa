@@ -14,6 +14,7 @@ import org.apache.poi.ss.usermodel.Name;
 import org.apache.poi.ss.usermodel.Row;
 import org.apache.poi.ss.usermodel.Sheet;
 import org.apache.poi.ss.usermodel.Workbook;
+import org.apache.poi.xssf.streaming.SXSSFSheet;
 import org.apache.poi.ss.util.CellRangeAddressList;
 
 /**
@@ -279,6 +280,19 @@ public class OptionDropdownHandler implements SheetWriteHandler {
         }
         Sheet sheet = workbook.createSheet(OPTIONS_SHEET_NAME);
         workbook.setSheetHidden(workbook.getSheetIndex(sheet), true);
+        if (sheet instanceof SXSSFSheet streamed) {
+            // The export writes a streaming workbook, which keeps a window of rows in memory and
+            // flushes the rest to disk — and a flushed row can never be written again. This sheet is
+            // filled one COLUMN at a time, so every column after the first starts back at row 0, which
+            // by then is gone. POI answers "Attempting to write a row[0] in the range [0,148] that is
+            // already written to disk", the column loses its dropdown, and the download still succeeds:
+            // a template that quietly has dropdowns on its first columns and none after, with which
+            // ones survive decided by how long the earlier lists happened to be.
+            //
+            // -1 keeps every row of THIS sheet addressable until the workbook is written. It is bounded
+            // by MAX_VALUES_PER_COLUMN rows and applies only here; the data sheets keep streaming.
+            streamed.setRandomAccessWindowSize(-1);
+        }
         return sheet;
     }
 

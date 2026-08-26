@@ -9,6 +9,7 @@ import org.apache.poi.ss.usermodel.DataValidation;
 import org.apache.poi.ss.usermodel.Sheet;
 import org.apache.poi.ss.usermodel.Workbook;
 import org.apache.poi.ss.util.WorkbookUtil;
+import org.apache.poi.xssf.streaming.SXSSFWorkbook;
 import org.apache.poi.xssf.usermodel.XSSFWorkbook;
 import org.junit.jupiter.api.Test;
 
@@ -164,6 +165,38 @@ class OptionDropdownHandlerTest {
     }
 
     /** Exposes the attachment step without needing a fesod write context. */
+    /**
+     * Several long columns on the hidden sheet, written into a STREAMING workbook.
+     *
+     * <p>This is the workbook the export actually produces. A streaming sheet keeps only a window of
+     * rows in memory and flushes the rest to disk, and a flushed row can never be touched again. The
+     * options sheet is filled one COLUMN at a time, so the second column starts again at row 0 — which
+     * by then is gone, and POI answers "Attempting to write a row[0] in the range [0,148] that is
+     * already written to disk".
+     *
+     * <p>The handler catches that and drops the column's dropdown, so the download succeeds and the
+     * template quietly comes out with dropdowns on its first columns and none after. Which ones
+     * survive depends on how long the earlier lists were — nothing about the column itself.
+     */
+    @Test
+    void everyLongColumnGetsItsValuesEvenWhenTheSheetIsStreamed() {
+        Map<Integer, List<String>> options = new LinkedHashMap<>();
+        options.put(0, codesOfJoinedLength(600));
+        options.put(1, codesOfJoinedLength(600));
+        options.put(2, codesOfJoinedLength(600));
+
+        try (SXSSFWorkbook workbook = new SXSSFWorkbook(10)) {
+            Sheet sheet = workbook.createSheet("Template");
+            new TestableHandler(options).attach(sheet);
+
+            assertThat(sheet.getDataValidations())
+                    .as("one per column, or a template silently loses the later ones")
+                    .hasSize(3);
+        } catch (java.io.IOException e) {
+            throw new AssertionError(e);
+        }
+    }
+
     private static final class TestableHandler extends OptionDropdownHandler {
         private TestableHandler(Map<Integer, List<String>> optionsByColumn) {
             super(optionsByColumn);
