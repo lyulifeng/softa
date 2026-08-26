@@ -197,6 +197,33 @@ class OptionDropdownHandlerTest {
         }
     }
 
+    /**
+     * "模板中所有的下拉值禁止修改" — a spec line, currently resting on a POI default.
+     *
+     * <p>A list that merely suggests is not what the spec asked for: the value has to be one of the
+     * offered ones. That takes both an error box AND the STOP style — POI defaults the style to STOP,
+     * so this works today by inheritance rather than by statement, and a POI upgrade or a refactor
+     * that builds the validation differently would loosen it with nothing to show for it.
+     */
+    @Test
+    void aValueOffTheListIsRejectedRatherThanMerelyFlagged() {
+        Map<Integer, List<String>> options = new LinkedHashMap<>();
+        options.put(0, List.of("Active", "Inactive"));
+
+        try (XSSFWorkbook workbook = new XSSFWorkbook()) {
+            Sheet sheet = workbook.createSheet("Template");
+            new TestableHandler(options).attach(sheet);
+
+            DataValidation validation = sheet.getDataValidations().getFirst();
+            assertThat(validation.getShowErrorBox()).isTrue();
+            assertThat(validation.getErrorStyle())
+                    .as("STOP — anything else lets the reader keep a value the import will reject")
+                    .isEqualTo(DataValidation.ErrorStyle.STOP);
+        } catch (java.io.IOException e) {
+            throw new AssertionError(e);
+        }
+    }
+
     private static final class TestableHandler extends OptionDropdownHandler {
         private TestableHandler(Map<Integer, List<String>> optionsByColumn) {
             super(optionsByColumn);
