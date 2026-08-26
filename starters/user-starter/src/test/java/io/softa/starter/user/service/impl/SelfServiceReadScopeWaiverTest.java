@@ -6,6 +6,7 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
 import io.softa.framework.orm.annotation.SkipPermissionCheck;
+import io.softa.starter.user.dto.UserProfileDTO;
 
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
@@ -47,6 +48,21 @@ class SelfServiceReadScopeWaiverTest {
                             + "anchorless, so row scope fails closed and the caller loses their own "
                             + "profile. See the method's javadoc.");
         }
+    }
+
+    /**
+     * The write is a separate assertion because it failed separately: the waiver aspect restores the
+     * flag when the annotated method returns, so a controller that fetched through the waived read
+     * and then called a bare updateOne had only the fetch covered — the dialog opened and the save
+     * bounced. The whole read-modify-write must sit inside one annotated service method.
+     */
+    @Test
+    @DisplayName("the self-service write runs inside one waived span")
+    void selfServiceWriteWaivesRowScope() throws Exception {
+        assertNotNull(method("saveMyProfile", UserProfileDTO.class).getAnnotation(SkipPermissionCheck.class),
+                "UserProfileServiceImpl.saveMyProfile owns the caller's read-modify-write and must carry "
+                        + "@SkipPermissionCheck — waiving only the fetch leaves updateOne to fail closed "
+                        + "on the same anchorless model, for the same caller-pinned row.");
     }
 
     @Test

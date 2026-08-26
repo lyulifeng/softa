@@ -24,6 +24,18 @@ public interface UserProfileService extends EntityService<UserProfile, Long> {
     Map<String, Object> getCurrentUserProfileMap();
 
     /**
+     * Update the caller's own profile from the self-service DTO.
+     *
+     * <p>Lives on the service so the read-modify-write runs inside ONE row-scope waiver: the
+     * controller used to fetch via {@code getCurrentUserProfile()} and then call a bare
+     * {@code updateOne}, and since the waiver aspect restores the flag when the fetch returns, the
+     * write half still failed closed on this anchorless model — the dialog opened and the save
+     * bounced. The DTO is the write boundary: only the person's own display fields exist on it, so
+     * nothing tenant- or credential-shaped can arrive however the payload is crafted.
+     */
+    void saveMyProfile(UserProfileDTO myProfileDTO);
+
+    /**
      * Get UserInfo from cache or database
      *
      * @param userId User ID

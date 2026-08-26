@@ -79,6 +79,9 @@ public class UserProfileServiceImpl extends EntityServiceImpl<UserProfile, Long>
      * <p>The waiver is safe because it cannot be widened by input: the id comes from the request
      * context, never from a parameter. Contrast {@link #getUserInfo(Long)}, which takes the id as an
      * argument and therefore stays checked — see {@link #getMyUserInfo()}.
+     *
+     * <p>Note this is also the fetch step of {@link #saveMyProfile}, which carries its own waiver —
+     * the flag does not survive this method's return, so the write path cannot borrow this one.
      */
     @SkipPermissionCheck
     @Override
@@ -110,6 +113,38 @@ public class UserProfileServiceImpl extends EntityServiceImpl<UserProfile, Long>
         // No credential fields to strip any more: the password hash, salt and login identifiers moved
         // to UserIdentity. A profile map is now just the person's own display information.
         return profile;
+    }
+
+    /**
+     * <p><b>Why {@code @SkipPermissionCheck}, and why the write moved here</b>: the waiver aspect
+     * restores the flag when the annotated method returns, so a controller that fetched through the
+     * waived {@link #getCurrentUserProfile()} and then called a bare {@code updateOne} had only half
+     * its work covered — the fetch succeeded and the save failed closed, on the same anchorless
+     * model, for the same caller-pinned row. One service method makes the read-modify-write a single
+     * waived span.
+     *
+     * <p>The waiver is bounded on both sides: the row is fetched by {@code Context.getUserId()}
+     * (never a parameter), and the field-copy below is the write whitelist — the DTO carries only
+     * the person's own display fields, so no tenant, membership or credential value can arrive
+     * through this endpoint however the payload is crafted. Credentials live on {@code UserIdentity}
+     * and are changed via {@code changeMyPassword}, which verifies the current password first.
+     */
+    @SkipPermissionCheck
+    @Override
+    public void saveMyProfile(UserProfileDTO myProfileDTO) {
+        UserProfile profile = getCurrentUserProfile();
+        profile.setFullName(myProfileDTO.getFullName());
+        profile.setChineseName(myProfileDTO.getChineseName());
+        profile.setBirthDate(myProfileDTO.getBirthDate());
+        profile.setBirthTime(myProfileDTO.getBirthTime());
+        profile.setBirthCity(myProfileDTO.getBirthCity());
+        profile.setGender(myProfileDTO.getGender());
+        profile.setPhotoId(myProfileDTO.getPhotoId());
+        profile.setLanguage(myProfileDTO.getLanguage());
+        profile.setTimezone(myProfileDTO.getTimezone());
+        this.updateOne(profile);
+        // The cached UserInfo carries name / language / timezone / photo — all editable here.
+        this.evictUserInfo(profile.getUserId());
     }
 
     /**

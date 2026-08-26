@@ -12,11 +12,9 @@ import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
-import io.softa.framework.base.context.ContextHolder;
 import io.softa.framework.base.context.UserInfo;
 import io.softa.framework.web.response.ApiResponse;
 import io.softa.starter.user.dto.UserProfileDTO;
-import io.softa.starter.user.entity.UserProfile;
 import io.softa.starter.user.service.UserProfileService;
 
 /**
@@ -60,29 +58,15 @@ public class UserProfileController {
         return ApiResponse.success(profileMap);
     }
 
-    @Operation(summary = "Update or Create Current User Profile")
+    // The summary used to say "Update or Create"; the service fetches the caller's existing profile
+    // and throws when there is none, so this has always been update-only.
+    @Operation(summary = "Update Current User Profile")
     @PostMapping("/saveMyProfile")
     public ApiResponse<Void> saveMyProfile(@RequestBody @Valid UserProfileDTO myProfileDTO) {
-        UserProfile profile = service.getCurrentUserProfile();
-        mapDtoToProfile(myProfileDTO, profile);
-        service.updateOne(profile);
+        // One service call, not fetch-then-update: the row-scope waiver lives on the service method,
+        // and assembling the write here would leave updateOne outside the waived span — the dialog
+        // would open and the save would bounce, which is exactly the bug this replaced.
+        service.saveMyProfile(myProfileDTO);
         return ApiResponse.success();
-    }
-
-    /**
-     * The write whitelist. Only what a person may change about themselves is copied — the DTO is
-     * the boundary, so credential fields cannot arrive through this endpoint no matter what the
-     * payload carries.
-     */
-    private void mapDtoToProfile(UserProfileDTO dto, UserProfile profile) {
-        profile.setFullName(dto.getFullName());
-        profile.setChineseName(dto.getChineseName());
-        profile.setBirthDate(dto.getBirthDate());
-        profile.setBirthTime(dto.getBirthTime());
-        profile.setBirthCity(dto.getBirthCity());
-        profile.setGender(dto.getGender());
-        profile.setPhotoId(dto.getPhotoId());
-        profile.setLanguage(dto.getLanguage());
-        profile.setTimezone(dto.getTimezone());
     }
 }
