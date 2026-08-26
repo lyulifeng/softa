@@ -33,7 +33,12 @@ public abstract class BaseImportHandler {
         this.metaField = metaField;
         this.modelName = metaField.getModelName();
         this.fieldName = metaField.getFieldName();
-        this.label = metaField.getLabel();
+        // The column's own header, not the field's label. They differ exactly where it matters most:
+        // a dotted column is handled by its ROOT field's metadata, so every required cell under one
+        // sub-record reported the same name — five blank columns, five times "The field `Employee
+        // Profile` is required", and nothing saying which five. The header is the text in the
+        // spreadsheet the reader is looking at.
+        this.label = StringUtils.defaultIfBlank(importFieldDTO.getHeader(), metaField.getLabel());
         this.importFieldDTO = importFieldDTO;
         this.rowKey = metaField.getFieldName();
     }
