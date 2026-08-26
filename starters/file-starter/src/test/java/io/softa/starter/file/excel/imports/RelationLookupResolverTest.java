@@ -68,6 +68,39 @@ class RelationLookupResolverTest {
         assertFalse(row.containsKey("deptId.code"));
     }
 
+    /**
+     * A cell with a stray space still names the row it names.
+     *
+     * <p>Spreadsheet cells carry them constantly — pasted from another sheet, typed with a trailing
+     * space, copied out of a UI. The lookup matched the raw cell, so " E1000100" found nothing and the
+     * row was rejected with a message that printed the value back WITH the space in it: invisible in
+     * Excel, invisible in a terminal, invisible in a browser. The reader sees the code they typed,
+     * sees it in the employee list, and has no way to tell the two apart.
+     *
+     * <p>The to-many path in this same class has trimmed all along, which is what made the difference
+     * so hard to see: the same file could resolve a multi-value column and fail a single-value one.
+     */
+    @Test
+    @SuppressWarnings("unchecked")
+    void resolveRowsToOneTrimsTheCellBeforeMatching() {
+        RelationLookupResolver resolver = createResolver();
+        var group = new RelationLookupResolver.LookupGroup(
+                "employeeId", "Employee", List.of("code", "fullName"),
+                List.of("employeeId.code", "employeeId.fullName"), true, false, false, null);
+        Map<String, Object> row = new LinkedHashMap<>();
+        row.put("employeeId.code", " E1000100");
+        row.put("employeeId.fullName", "Chan Wei Lun ");
+
+        ModelService<Long> typedService = (ModelService<Long>) getModelService(resolver);
+        when(typedService.getIdsByBusinessKeys(eq("Employee"), eq(List.of("code", "fullName")), anyCollection(), any()))
+                .thenReturn(Map.of(List.of("E1000100", "Chan Wei Lun"), 900L));
+
+        resolver.resolveRows(new ArrayList<>(List.of(row)), List.of(group), true);
+
+        assertEquals(900L, row.get("employeeId"));
+        assertNull(row.get(FileConstant.FAILED_REASON));
+    }
+
     @Test
     @SuppressWarnings("unchecked")
     void resolveRowsOneToOneFoldsIntoNestedValueObject() {

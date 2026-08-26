@@ -366,6 +366,15 @@ public class RelationLookupResolver {
         boolean allEmpty = true;
         for (String dottedPath : group.dottedPaths()) {
             Object val = row.get(dottedPath);
+            if (val instanceof String text) {
+                // Spreadsheet cells carry stray spaces constantly — pasted, typed, copied out of a
+                // UI. Matched raw, " E1000100" finds nothing and the row is rejected with a message
+                // that prints the value back WITH the space in it: invisible in Excel, in a terminal
+                // and in a browser alike, so the reader sees the code they typed and the code in the
+                // list and cannot tell them apart. The to-many path in this class has trimmed all
+                // along, which is what made the difference so hard to see.
+                val = text.trim();
+            }
             if (val != null && (!(val instanceof String s) || !s.isBlank())) {
                 allEmpty = false;
             }
@@ -446,7 +455,7 @@ public class RelationLookupResolver {
             }
             return collection.stream().map(value -> value == null ? "" : value.toString().trim()).toList();
         }
-        return List.of(rawValue.toString());
+        return List.of(rawValue.toString().trim());
     }
 
     /**
