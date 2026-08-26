@@ -1,6 +1,8 @@
 package io.softa.starter.user.service.impl;
 
 import java.lang.reflect.Method;
+import java.nio.file.Files;
+import java.nio.file.Path;
 
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -10,6 +12,7 @@ import io.softa.starter.user.dto.UserProfileDTO;
 
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
  * Reading your own profile must not be subject to row scope.
@@ -33,6 +36,31 @@ import static org.junit.jupiter.api.Assertions.assertNull;
  * long after the change, as a login failure rather than a profile failure.
  */
 class SelfServiceReadScopeWaiverTest {
+
+    /**
+     * The overload, not just the call. {@code updateOne(entity)} silently drops null fields, so the
+     * save would return success while the cleared value stayed in the database — a green test that
+     * asserted "updateOne was called" would prove nothing. This reads the source instead, because
+     * which overload was chosen is the whole behaviour here.
+     */
+    @Test
+    @DisplayName("the profile save overwrites nulls, so cleared fields are actually cleared")
+    void profileSaveOverwritesNulls() throws Exception {
+        Path source = Path.of("src/main/java/io/softa/starter/user/service/impl/UserProfileServiceImpl.java");
+        String body = Files.readString(source);
+        int start = body.indexOf("public void saveMyProfile(");
+        assertTrue(start > 0, "saveMyProfile not found — this test pins its update overload");
+        String method = body.substring(start, body.indexOf("\n    }", start));
+        // Comments are stripped first, and this is not fussiness: the call site explains itself by
+        // naming the overload, so a check that merely searched the method text would keep passing
+        // after someone reverted the call and left the paragraph above it — the exact false green
+        // this assertion exists to prevent. Caught by A/B on the first attempt at this test.
+        String code = method.replaceAll("(?m)^\\s*//.*$", "");
+        assertTrue(code.contains("this.updateOne(profile, false);"),
+                "saveMyProfile must call updateOne(profile, false): the one-arg overload ignores nulls, "
+                        + "so clearing the avatar or the birth details would report success and change "
+                        + "nothing. See the comment at the call site.");
+    }
 
     private static Method method(String name, Class<?>... params) throws Exception {
         return UserProfileServiceImpl.class.getDeclaredMethod(name, params);

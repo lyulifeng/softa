@@ -142,7 +142,18 @@ public class UserProfileServiceImpl extends EntityServiceImpl<UserProfile, Long>
         profile.setPhotoId(myProfileDTO.getPhotoId());
         profile.setLanguage(myProfileDTO.getLanguage());
         profile.setTimezone(myProfileDTO.getTimezone());
-        this.updateOne(profile);
+        // updateOne(profile, false) — nulls overwrite. The one-arg overload drops null keys before
+        // they reach the update (BeanTool.objectToMap(entity, true)), which is the right default when
+        // an entity is only partially populated: a Java object cannot tell "not supplied" from
+        // "clear this". Here it is wrong, because the entity above IS fully populated — every column
+        // is either the value just read or the value the caller sent — so a null can only mean the
+        // caller cleared the field. With the default, clearing silently does nothing: the avatar the
+        // helper text says appears "in the workspace header, comments, approvals, and people
+        // directories" cannot be removed, and the optional birth details cannot be taken back. Free
+        // text escaped it only by accident — the form sends "" for a cleared string, and "" is not
+        // null. Safe because the fetch selects every column: the three fields the DTO does not carry
+        // (id, userId, density) are written back exactly as read.
+        this.updateOne(profile, false);
         // The cached UserInfo carries name / language / timezone / photo — all editable here.
         this.evictUserInfo(profile.getUserId());
     }
