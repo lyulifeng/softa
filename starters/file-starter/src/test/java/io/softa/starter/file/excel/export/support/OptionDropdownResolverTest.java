@@ -336,6 +336,40 @@ class OptionDropdownResolverTest {
         });
     }
 
+    @Test
+    void reachesThroughAOneToOneOntoARelationAddressedByName() {
+        // employeeProfileId.idType.name — the import side now resolves the name back to the id, so
+        // the dropdown offers names. Narrowed by the template's country like any entity column:
+        // "Passport" names a different row in every country that has one.
+        withMetadata(mm -> {
+            field("Employee", "employeeProfileId", FieldType.ONE_TO_ONE, "EmployeeProfile", null, null);
+            field("EmployeeProfile", "idType", FieldType.MANY_TO_ONE, "IdType", null, null);
+            fieldExists("IdType", "name");
+            field("IdType", "name", FieldType.STRING, null, null, null);
+            model("IdType", true, IdStrategy.EXTERNAL_ID);
+            fieldExists("IdType", "country");
+            stubRows("IdType", "name", List.of("NRIC", "FIN", "Passport"));
+
+            assertThat(resolve("Employee", "SG", "employeeProfileId.idType.name"))
+                    .containsEntry(0, List.of("NRIC", "FIN", "Passport"));
+            assertThat(capturedQuery("IdType").getFilters()).hasToString("[\"country\",\"=\",\"SG\"]");
+        });
+    }
+
+    @Test
+    void offersNothingForThreeSegmentsThroughAManyToOne() {
+        // The import side rejects this shape outright, so a dropdown would offer values for a column
+        // that can never be imported.
+        withMetadata(mm -> {
+            field("Employee", "deptId", FieldType.MANY_TO_ONE, "Department", null, null);
+            field("Department", "companyId", FieldType.MANY_TO_ONE, "LegalEntity", null, null);
+            fieldExists("LegalEntity", "name");
+
+            assertThat(resolve("Employee", null, "deptId.companyId.name")).isEmpty();
+            verifyNoInteractions(modelService);
+        });
+    }
+
     // ---------------------------------------------------------------- cascade
 
     @Test
