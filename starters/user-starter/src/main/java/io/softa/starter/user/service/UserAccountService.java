@@ -160,14 +160,48 @@ public interface UserAccountService extends EntityService<UserAccount, Long> {
     boolean forceResetPassword(Long userId, String newPassword);
 
     /**
-     * Lock a user account
+     * Suspend a membership: the person keeps their credentials, this company keeps their record,
+     * and they cannot get in until it is lifted (D21 / U7).
+     *
+     * <p>Replaces Lock: a MANUAL lock and the automatic password lockout (A8) were two mechanisms
+     * for two different things wearing one name. The lockout is a reaction to guessing, lives on
+     * the credential, and expires by itself; freezing is an administrator's decision about this
+     * membership, and only an administrator lifts it.
+     *
+     * <p>Freezing a LOCKED account clears the password lock on the way through. Otherwise lifting
+     * the freeze would hand back an account the lockout still refuses, and the administrator who
+     * lifted it has no way to see why.
+     *
+     * <p>Idempotent: freezing an already-frozen membership changes nothing.
      */
-    void lockAccount(Long userId);
+    void freezeAccount(Long userId, String reason);
 
     /**
-     * Unlock a user account
+     * Lift a suspension, returning the membership to ACTIVE.
+     *
+     * <p>Only from FROZEN. Refusing on anything else is deliberate: silently "unfreezing" an
+     * INVITED or DEACTIVATED account would drag it into a state its own flow never reaches.
      */
-    void unlockAccount(Long userId, String reason);
+    void unfreezeAccount(Long userId, String reason);
 
-    void unlockAccounts(List<Long> userIds, String reason);
+    void unfreezeAccounts(List<Long> userIds, String reason);
+
+    /**
+     * Reset a membership's work contacts, keeping the person (W9 / U6).
+     *
+     * <p>The everyday case Unbind & Re-invite is too big a hammer for: the RIGHT person holds this
+     * membership, their email or phone simply changed. So the person stays attached, their password
+     * is untouched, and no invitation is issued — they keep signing in exactly as before.
+     *
+     * <p>What has to move with the contact is the LOGIN identifier. It was seeded from the work
+     * contact, so leaving it behind means the person keeps signing in with an address this company
+     * no longer recognises, while the recycled one becomes a route into their account for whoever
+     * receives it next. Only the identifier THIS company issued is rewritten — a personal login
+     * email is not ours to change, which is why it compares before writing.
+     *
+     * <p>The OLD address is notified, not the new one: if this reset was not the person's own doing,
+     * the message reaches where they can still read it. Telling only the new address would inform
+     * whoever now holds it.
+     */
+    void resetWorkContacts(Long userId, String newEmail, String newMobile, String reason);
 }

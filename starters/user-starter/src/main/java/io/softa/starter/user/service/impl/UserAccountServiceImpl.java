@@ -1,12 +1,14 @@
 package io.softa.starter.user.service.impl;
 
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import jakarta.validation.constraints.NotNull;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.lang3.StringUtils;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -14,6 +16,8 @@ import io.softa.framework.base.config.SystemConfig;
 import io.softa.framework.base.context.ContextHolder;
 import io.softa.framework.base.context.UserInfo;
 import io.softa.framework.base.exception.BusinessException;
+import io.softa.framework.base.message.MailRequestMessage;
+import io.softa.framework.base.message.MessageScope;
 import io.softa.framework.base.security.PasswordUtils;
 import io.softa.framework.base.utils.Assert;
 import io.softa.framework.orm.annotation.CrossTenant;
@@ -46,6 +50,10 @@ public class UserAccountServiceImpl extends EntityServiceImpl<UserAccount, Long>
     /** Role grants are cleared on off-boarding and on reviving a membership. */
     @Autowired
     private UserRoleRelService roleRelService;
+
+    /** Notifies the OLD address when work contacts are reset — see resetWorkContacts. */
+    @Autowired
+    private ApplicationEventPublisher eventPublisher;
 
     /**
      * Every single-entity account write funnels through here, so this is the one place that has to
@@ -243,6 +251,77 @@ public class UserAccountServiceImpl extends EntityServiceImpl<UserAccount, Long>
         return true;
     }
 
+    /** Notifies the person that their sign-in contact changed. */
+    private static final String TEMPLATE_CONTACT_RESET = "user.contact-reset";
+
+    @SkipPermissionCheck
+    @CrossTenant
+    @Override
+    @Transactional
+    public void resetWorkContacts(Long userId, String newEmail, String newMobile, String reason) {
+        Assert.notNull(userId, "userId is required");
+        String email = StringUtils.trimToNull(newEmail);
+        String mobile = StringUtils.trimToNull(newMobile);
+        if (email == null && mobile == null) {
+            throw new BusinessException("An account needs a work email or a work mobile.");
+        }
+
+        UserAccount account = this.getById(userId)
+                .orElseThrow(() -> new BusinessException("User not found."));
+        // The right person holds this membership — that is what separates this from unbinding. So
+        // there is nothing to do on an account nobody holds yet.
+        if (account.getProfileId() == null) {
+            throw new BusinessException(
+                    "This account is not linked to a person yet — invite it instead.");
+        }
+        this.getUserByEmail(email).filter(other -> !other.getId().equals(userId))
+                .ifPresent(other -> {
+                    throw new BusinessException("That work email already belongs to another account.");
+                });
+
+        String previousEmail = account.getEmail();
+        String previousMobile = account.getMobile();
+
+        // Move the LOGIN identifier with the contact, but only the value this company issued: a
+        // personal login email is not ours to rewrite, so it compares before writing. Leaving it
+        // behind would mean the person signs in with an address this company no longer knows, while
+        // the recycled one becomes a route into their account for whoever receives it next.
+        identityService.findByProfile(account.getProfileId()).ifPresent(identity -> {
+            boolean moved = false;
+            if (previousEmail != null && previousEmail.equalsIgnoreCase(identity.getLoginEmail())) {
+                identity.setLoginEmail(email);
+                moved = true;
+            }
+            if (previousMobile != null && previousMobile.equals(identity.getLoginMobile())) {
+                identity.setLoginMobile(mobile);
+                moved = true;
+            }
+            if (moved) {
+                // updateOne(entity, false): clearing one channel means writing a null, which the
+                // default overload drops — the old identifier would stay a live login route.
+                identityService.updateOne(identity, false);
+            }
+        });
+
+        account.setEmail(email);
+        account.setMobile(mobile);
+        this.updateOne(account, false);
+
+        // The OLD address, not the new one. If this was not the person's own doing, the message has
+        // to reach somewhere they can still read; telling only the new address informs whoever now
+        // holds it. Password and profileId are untouched, so there is nothing to re-accept — this
+        // is a notification, not an invitation.
+        if (StringUtils.isNotBlank(previousEmail)) {
+            Long tenantId = ContextHolder.getContext().getTenantId();
+            eventPublisher.publishEvent(new MailRequestMessage(
+                    List.of(previousEmail), TEMPLATE_CONTACT_RESET,
+                    Map.of("email", email == null ? "" : email,
+                            "mobile", mobile == null ? "" : mobile),
+                    tenantId, tenantId != null ? MessageScope.TENANT : MessageScope.PLATFORM));
+        }
+        log.info("Work contacts of account {} reset. Reason: {}", userId, reason);
+    }
+
     @SkipPermissionCheck
     @CrossTenant
     @Override
@@ -405,25 +484,54 @@ public class UserAccountServiceImpl extends EntityServiceImpl<UserAccount, Long>
 
     @Override
     @Transactional
-    public void lockAccount(Long userId) {
+    public void freezeAccount(Long userId, String reason) {
         UserAccount user = this.getById(userId).orElseThrow(() -> new BusinessException("User not found."));
-        user.setStatus(AccountStatus.LOCKED);
+        if (user.getStatus() == AccountStatus.FROZEN) {
+            return;   // idempotent: an HR workflow may legitimately fire twice
+        }
+        if (user.getStatus() != AccountStatus.ACTIVE && user.getStatus() != AccountStatus.LOCKED) {
+            throw new BusinessException("Only an active account can be frozen.");
+        }
+        // Clear the password lock on the way through (§2.3 "Freeze on Locked — clear the lock
+        // first"). Leaving it would mean that lifting the freeze hands back an account the lockout
+        // still refuses, and the administrator who lifted it cannot see why.
+        identityService.findByProfile(user.getProfileId()).ifPresent(identity -> {
+            if (identity.getPasswordLockedUntil() != null) {
+                identity.setPasswordLockedUntil(null);
+                // updateOne(entity, false): clearing the lock means writing a null, which the
+                // default overload drops.
+                identityService.updateOne(identity, false);
+            }
+            identityService.clearPasswordFailures(identity.getId());
+        });
+        user.setStatus(AccountStatus.FROZEN);
         this.updateOne(user);
+        log.info("Account {} frozen. Reason: {}", userId, reason);
     }
 
     @Override
     @Transactional
-    public void unlockAccount(Long userId, String reason) {
-        // TODO: Log the unlock reason for auditing purposes
+    public void unfreezeAccount(Long userId, String reason) {
         UserAccount user = this.getById(userId).orElseThrow(() -> new BusinessException("User not found."));
+        if (user.getStatus() != AccountStatus.FROZEN) {
+            // Not idempotent-by-silence on purpose: an INVITED or DEACTIVATED account flipped to
+            // ACTIVE here would land in a state its own flow never reaches — invited-but-active,
+            // or off-boarded-but-active.
+            throw new BusinessException("Only a frozen account can be unfrozen.");
+        }
         user.setStatus(AccountStatus.ACTIVE);
         this.updateOne(user);
+        log.info("Account {} unfrozen. Reason: {}", userId, reason);
     }
 
     @Override
     @Transactional
-    public void unlockAccounts(List<Long> userIds, String reason) {
-        Filters filters = new Filters().in(UserAccount::getId, userIds);
+    public void unfreezeAccounts(List<Long> userIds, String reason) {
+        Filters filters = new Filters().in(UserAccount::getId, userIds)
+                // Bulk path, so the per-row guard above cannot run — the filter carries it instead.
+                // Without this a bulk "unfreeze everything selected" would activate invited and
+                // off-boarded rows caught in the selection.
+                .eq(UserAccount::getStatus, AccountStatus.FROZEN);
         UserAccount updateEntity = new UserAccount();
         updateEntity.setStatus(AccountStatus.ACTIVE);
         this.updateByFilter(filters, updateEntity);
