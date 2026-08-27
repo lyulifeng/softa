@@ -45,6 +45,9 @@ import io.softa.starter.user.service.UserProfileService;
 @Service
 public class LoginServiceImpl implements LoginService {
 
+    /** Mirrors UserIdentityServiceImpl's window, for the message the locked-out person sees. */
+    private static final int LOCK_MINUTES = 30;
+
     @Autowired
     private CacheService cacheService;
 
@@ -190,9 +193,20 @@ public class LoginServiceImpl implements LoginService {
         // Same message for "no such identifier" and "wrong password": splitting them turns the
         // login form into an account-existence oracle.
         UserIdentity identity = this.resolveIdentity(identifier, "Incorrect account or password.");
+
+        // Lock checked BEFORE the password, so "locked" versus "incorrect" cannot confirm a guess.
+        // Only the password path is locked — code login stays open, because what is under attack
+        // is the password and locking the person out entirely would complete the attack for it.
+        if (identityService.isPasswordLocked(identity)) {
+            throw new BusinessException("Too many failed attempts. Password login is locked for "
+                    + LOCK_MINUTES + " minutes. You can still log in with a verification code.");
+        }
         if (!identityService.matchesPassword(identity, password)) {
+            // Counted per PERSON, so switching company buys no extra tries.
+            identityService.recordPasswordFailure(identity);
             throw new BusinessException("Incorrect account or password.");
         }
+        identityService.clearPasswordFailures(identity.getId());
         return this.afterAuthentication(identity);
     }
 

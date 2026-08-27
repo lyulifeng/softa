@@ -69,6 +69,32 @@ public interface UserIdentityService extends EntityService<UserIdentity, Long> {
     /** False when the person has no stored password — that is not the same as "any password fits". */
     boolean matchesPassword(UserIdentity identity, String rawPassword);
 
+    /**
+     * Whether PASSWORD login is currently locked for this person (PRD D5 / A8).
+     *
+     * <p>The lock is a property of the PERSON, so it covers every company they belong to at once —
+     * that is the "linked lockout across tenants" requirement, and it falls out of the credential
+     * being global rather than needing coordination. Switching company buys no extra attempts.
+     *
+     * <p>Only the PASSWORD path is locked. Code login stays available throughout: what was under
+     * attack is the password, and locking someone out of their own account entirely would turn a
+     * guessing attempt against them into a denial of service.
+     */
+    boolean isPasswordLocked(UserIdentity identity);
+
+    /**
+     * Count one wrong password, locking the person out once too many land in a row.
+     *
+     * <p>Counted in the cache rather than on the row: the counter is worthless after the window
+     * and writing the row on every wrong guess would let anyone generate write load at will. Only
+     * the lock itself is persisted, because it must survive a cache flush — otherwise clearing the
+     * cache would be an unlock.
+     */
+    void recordPasswordFailure(UserIdentity identity);
+
+    /** Forget the failure count — a successful login, or a new password, ends the window. */
+    void clearPasswordFailures(Long identityId);
+
     /** Hashes and stores a new password on the person's credentials, with a fresh salt. */
     void setPassword(Long identityId, String rawPassword);
 

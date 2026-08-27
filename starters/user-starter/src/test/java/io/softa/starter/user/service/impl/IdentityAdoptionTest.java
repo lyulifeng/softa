@@ -6,12 +6,14 @@ import org.junit.jupiter.api.Test;
 
 import io.softa.framework.base.exception.BusinessException;
 import io.softa.framework.orm.domain.Filters;
+import io.softa.framework.orm.service.CacheService;
 import io.softa.starter.user.entity.UserIdentity;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.doReturn;
+import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.spy;
@@ -30,7 +32,9 @@ import static org.mockito.Mockito.verify;
  */
 class IdentityAdoptionTest {
 
-    private final UserIdentityServiceImpl identityService = spy(new UserIdentityServiceImpl());
+    private final CacheService cacheService = mock(CacheService.class);
+    private final UserIdentityServiceImpl identityService =
+            spy(new UserIdentityServiceImpl(cacheService));
 
     private static UserIdentity identity(String loginEmail, String loginMobile) {
         UserIdentity identity = new UserIdentity();

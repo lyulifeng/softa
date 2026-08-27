@@ -1,9 +1,11 @@
 package io.softa.starter.user.service.impl;
 
+import java.time.LocalDateTime;
 import java.util.Optional;
 
 import org.apache.commons.lang3.StringUtils;
 import org.springframework.stereotype.Service;
+import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 
 import io.softa.framework.base.exception.BusinessException;
@@ -11,6 +13,7 @@ import io.softa.framework.base.security.PasswordUtils;
 import io.softa.framework.orm.annotation.CrossTenant;
 import io.softa.framework.orm.annotation.SkipPermissionCheck;
 import io.softa.framework.orm.domain.Filters;
+import io.softa.framework.orm.service.CacheService;
 import io.softa.framework.orm.service.impl.EntityServiceImpl;
 import io.softa.starter.user.entity.UserAccount;
 import io.softa.starter.user.entity.UserIdentity;
@@ -24,14 +27,27 @@ import io.softa.starter.user.service.UserIdentityService;
  * make "who is this?" answerable only once you already knew. The annotation is entered through the
  * proxy on the public method, so the nested query below is covered by it too.
  *
- * <p>Injects nothing. The persistence comes from {@code EntityServiceImpl}, and
- * {@code requireIdentity} takes the account object rather than looking it up — see the interface for
- * why that matters (a bean cycle with {@code UserAccountService}).
+ * <p>Injects only the cache, for the password-failure counter. The persistence comes from
+ * {@code EntityServiceImpl}, and {@code requireIdentity} takes the account object rather than
+ * looking it up — see the interface for why that matters (a bean cycle with
+ * {@code UserAccountService}).
  */
 @Slf4j
 @Service
+@RequiredArgsConstructor
 public class UserIdentityServiceImpl extends EntityServiceImpl<UserIdentity, Long>
         implements UserIdentityService {
+
+    /** Consecutive wrong passwords that lock the password path (PRD D5). */
+    private static final int FAILURES_BEFORE_LOCK = 10;
+    /** How long it stays locked. */
+    private static final int LOCK_MINUTES = 30;
+
+    private final CacheService cacheService;
+
+    private static String failureKey(Long identityId) {
+        return "login:pwd-failures:" + identityId;
+    }
 
     @SkipPermissionCheck
     @CrossTenant
@@ -156,5 +172,40 @@ public class UserIdentityServiceImpl extends EntityServiceImpl<UserIdentity, Lon
         identity.setPasswordSalt(salt);
         identity.setPassword(PasswordUtils.hashPassword(rawPassword, salt));
         this.updateOne(identity);
+        // A new password ends the window: the guesses were against the old one.
+        this.clearPasswordFailures(identityId);
+    }
+
+    @Override
+    public boolean isPasswordLocked(UserIdentity identity) {
+        return identity != null && identity.getPasswordLockedUntil() != null
+                && identity.getPasswordLockedUntil().isAfter(LocalDateTime.now());
+    }
+
+    @SkipPermissionCheck
+    @CrossTenant
+    @Override
+    public void recordPasswordFailure(UserIdentity identity) {
+        if (identity == null || identity.getId() == null) {
+            return;
+        }
+        Long failures = cacheService.increment(failureKey(identity.getId()), LOCK_MINUTES * 60L);
+        if (failures == null || failures < FAILURES_BEFORE_LOCK) {
+            return;
+        }
+        identity.setPasswordLockedUntil(LocalDateTime.now().plusMinutes(LOCK_MINUTES));
+        this.updateOne(identity);
+        // Counter cleared with the lock, so the next window starts fresh when it expires —
+        // otherwise one wrong password after unlocking would immediately re-lock.
+        this.clearPasswordFailures(identity.getId());
+        log.warn("Password login locked for {} minutes after {} consecutive failures (identity {}).",
+                LOCK_MINUTES, failures, identity.getId());
+    }
+
+    @Override
+    public void clearPasswordFailures(Long identityId) {
+        if (identityId != null) {
+            cacheService.clear(failureKey(identityId));
+        }
     }
 }
