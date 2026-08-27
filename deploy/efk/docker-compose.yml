@@ -1,4 +1,15 @@
-# Data lives in NAMED VOLUMES on purpose: this image runs as a non-root user
+# Dev EFK stack for demo-app / mini-app. Structurally mirrors the production
+# shape used by downstream deployments (ES healthcheck + one-shot `setup`
+# service that installs the change-log index BEFORE the first document is
+# written). Deliberate dev-only deltas, kept on purpose:
+#   - xpack security OFF — no passwords anywhere; curl and Kibana connect
+#     anonymously (production runs security on with ELASTIC_PASSWORD and a
+#     kibana_system password bootstrap)
+#   - loopback-only ports on the default compose network (production attaches
+#     to an external shared network instead of publishing ports)
+#   - smaller CPU/memory budget, no bootstrap.memory_lock
+#
+# Data lives in a NAMED VOLUME on purpose: this image runs as a non-root user
 # (UID 1000, elasticsearch), and a root-created bind-mount dir is unwritable to it on any real
 # Linux host (macOS Docker Desktop skips UID mapping, which is why dev never
 # saw it). Docker initializes a named volume with the image's own ownership —
@@ -11,6 +22,7 @@ services:
 
   elasticsearch:
     image: elasticsearch:9.3.1
+    restart: unless-stopped
     cpus: "1.25"
     mem_limit: 1536m
     memswap_limit: 1536m
@@ -25,14 +37,73 @@ services:
       # Loopback-only. 9300 (inter-node transport) is not published at all —
       # nothing uses it on a single-node setup.
       - 127.0.0.1:9200:9200
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "curl -fsS http://localhost:9200/_cluster/health >/dev/null || exit 1"
+        ]
+      interval: 10s
+      timeout: 10s
+      retries: 30
+
+  # One-shot bootstrap: installs the change-log index. Kibana waits for it to
+  # finish (service_completed_successfully), and the app must not write change
+  # logs before it has run — see the comment on the index step below.
+  setup:
+    image: elasticsearch:9.3.1
+    depends_on:
+      elasticsearch:
+        condition: service_healthy
+    environment:
+      # Same value the app uses (spring.elasticsearch.index.changelog) —
+      # demo-app's dev profile reads dev_demo_change_log.
+      CHANGELOG_INDEX: ${SPRING_ELASTICSEARCH_INDEX_CHANGELOG:-dev_demo_change_log}
+    volumes:
+      - ../init_es:/init:ro
+    entrypoint: /bin/sh
+    command:
+      - -c
+      - |
+        set -e
+        until curl -fsS http://elasticsearch:9200/_cluster/health >/dev/null; do
+          sleep 5
+        done
+
+        # Change-log index. Created directly under its configured name —
+        # no index template, no placeholder substitution: the name is known,
+        # so the most direct expression wins.
+        #
+        # ⚠️ This MUST exist before the first change-log document is written.
+        # Otherwise ES auto-creates it with DYNAMIC mapping, every changed
+        # field of every model becomes an ES field, index.mapping.total_fields
+        # .limit (default 1000) is reached, writes start failing and the only
+        # fix is a reindex. dynamic:false plus keyword/index:false on the two
+        # payload fields (JSON strings — es-starter's ChangeLogDocument is the
+        # storage DTO) is what prevents that.
+        #
+        # PUT /<index> is NOT idempotent (409 on an existing index), so probe
+        # first — re-running the stack then leaves the existing index alone.
+        if curl -fsS -o /dev/null "http://elasticsearch:9200/$${CHANGELOG_INDEX}"; then
+          echo "index $${CHANGELOG_INDEX} already exists, leaving it untouched"
+        else
+          curl -fsS -X PUT \
+            -H "Content-Type: application/json" \
+            "http://elasticsearch:9200/$${CHANGELOG_INDEX}" \
+            --data-binary @/init/changelog-index.json
+          echo "index $${CHANGELOG_INDEX} created"
+        fi
+    restart: "no"
 
   kibana:
     image: kibana:9.3.1
+    restart: unless-stopped
     cpus: "0.50"
     mem_limit: 1024m
     memswap_limit: 1024m
     depends_on:
-      - elasticsearch
+      setup:
+        condition: service_completed_successfully
     ports:
       # Kibana has no built-in auth — never expose it; local access only.
       - 127.0.0.1:5601:5601

@@ -51,9 +51,9 @@ docker compose -f deploy/efk/docker-compose.yml up -d
 ```
 Access the Kibana console at http://localhost:5601
 
-Or you can specify the `spring.elasticsearch.uris` property to connect to your own Elasticsearch cluster.
+The stack bootstraps the change-log index automatically: a one-shot `setup` service applies `deploy/init_es/changelog-index.json` (index name defaults to `dev_demo_change_log`; override with `SPRING_ELASTICSEARCH_INDEX_CHANGELOG`).
 
-Then create index using `demo-app/init_es/create_index`.
+Or you can specify the `spring.elasticsearch.uris` property to connect to your own Elasticsearch cluster — then apply `deploy/init_es/changelog-index.json` yourself before the first change log is written (otherwise ES auto-creates the index with dynamic mapping and eventually hits the total-fields limit).
 
 # 4. Start Pulsar by Docker Compose (Optional)
 ```bash
