@@ -13,10 +13,19 @@ networks:
   shared-net:
     external: true
     name: shared-net
+
+# json-file does not rotate by default — a long-running dev stack will fill the
+# disk. Applied to every service below.
+x-logging: &logging
+  logging:
+    driver: json-file
+    options: { max-size: "50m", max-file: "5" }
+
 services:
   # Start zookeeper
   zookeeper:
     image: apachepulsar/pulsar:4.2.1
+    <<: *logging
     container_name: zookeeper
     cpus: "0.50"
     mem_limit: 768m
@@ -56,6 +65,7 @@ services:
     container_name: pulsar-init
     hostname: pulsar-init
     image: apachepulsar/pulsar:4.2.1
+    <<: *logging
     networks:
       - shared-net
     environment:
@@ -79,6 +89,7 @@ services:
   # Start bookie
   bookie:
     image: apachepulsar/pulsar:4.2.1
+    <<: *logging
     container_name: bookie
     cpus: "1.50"
     mem_limit: 1536m
@@ -113,6 +124,7 @@ services:
   # Start broker
   broker:
     image: apachepulsar/pulsar:4.2.1
+    <<: *logging
     container_name: broker
     hostname: broker
     cpus: "1.5"
