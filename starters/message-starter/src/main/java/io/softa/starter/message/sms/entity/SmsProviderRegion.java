@@ -38,7 +38,7 @@ import io.softa.starter.referencedata.entity.CountryRegion;
  *       Implicit "any enabled provider" fallback is intentionally absent.</li>
  * </ol>
  *
- * <p><b>Tenant scoping</b>: {@code tenant_id = 0} for platform-level routing
+ * <p><b>Tenant scoping</b>: {@code tenant_id = -1} for platform-tier routing (invisible to tenants; per-country fallback only)
  * shared by all tenants; {@code tenant_id > 0} for per-tenant overrides
  * (auto-filled by the ORM tenant filter).
  *
@@ -53,9 +53,10 @@ import io.softa.starter.referencedata.entity.CountryRegion;
 @Model(
         label = "SMS Provider Region",
         idStrategy = IdStrategy.DISTRIBUTED_LONG,
-        multiTenant = true
+        multiTenant = true,
+        activeControl = true
 )
-@Index(indexName = "idx_region_enabled", fields = {"regionCode", "isEnabled"})
+@Index(indexName = "idx_region_active", fields = {"regionCode", "active"})
 @Index(indexName = "uk_tenant_provider_region", fields = {"tenantId", "providerConfigId", "regionCode"}, unique = true)
 @EqualsAndHashCode(callSuper = true)
 public class SmsProviderRegion extends AuditableModel {
@@ -67,7 +68,7 @@ public class SmsProviderRegion extends AuditableModel {
     private Long id;
 
     @Field(label = "Tenant ID",
-            description = "0 = platform-level (shared across tenants); >0 = tenant-level. "
+            description = "-1 = platform-tier (invisible to tenants); >0 = tenant-level. "
                     + "Auto-stamped by the ORM on writes when multi-tenancy is enabled.")
     private Long tenantId;
 
@@ -94,8 +95,12 @@ public class SmsProviderRegion extends AuditableModel {
                     + "Defaults to 100 so new rows sort after any explicitly-prioritised ones.")
     private Integer priority;
 
-    @Field(required = true,
-            description = "Row enable switch — false disables this (provider, region) "
-                    + "route without deleting the row, useful for temporary fault isolation.")
-    private Boolean isEnabled;
+    /**
+     * Framework active control: reads are auto-filtered to {@code active = true}, so a
+     * disabled route drops out of dispatch without deleting the row — the intended
+     * mechanism for temporary fault isolation. Filter on {@code active} explicitly to
+     * see disabled routes.
+     */
+    @Field(required = true, renamedFrom = "isEnabled")
+    private Boolean active;
 }

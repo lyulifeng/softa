@@ -33,6 +33,17 @@ public interface SysPreDataService extends EntityService<SysPreData, Long> {
     void loadPreTenantData(List<String> fileNames, Long tenantId);
 
     /**
+     * Load the specified list of predefined platform-tier data files from the root directory:
+     * resources/data-platform. Rows land on the platform tier of {@code multiTenant} models —
+     * {@code tenantId = BaseConstant.PLATFORM_TENANT_ID} (-1) — owned by the platform operator and
+     * invisible to tenant-scoped reads. Same file formats and idempotency (SysPreData ledger keyed by
+     * {@code (model, tenantId, preId)}) as the tenant loader.
+     *
+     * @param fileNames List of relative directory platform data file names to load
+     */
+    void loadPrePlatformData(List<String> fileNames);
+
+    /**
      * Loads predefined data from a given multipart file.
      * <p>
      * This method processes the provided multipart file to load predefined data

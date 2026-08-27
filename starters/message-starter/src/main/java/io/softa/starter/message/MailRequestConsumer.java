@@ -21,9 +21,9 @@ import io.softa.starter.message.service.MessageService;
  * message consumers.
  *
  * <p>The MQ hop drops the producer's thread context, so the message itself names the tenant: the
- * consumer restores {@code message.tenantId()} before accepting the send, letting an
- * {@code OVERLAY}-scoped render apply that tenant's template/server customizations. A message with no
- * tenant id keeps the historical behaviour — no tenant context, platform-tier resolution.
+ * consumer restores {@code message.tenantId()} before accepting the send, so a {@code TENANT}-scoped
+ * render reaches that tenant's own template and the send record lands in the tenant's books. A
+ * {@code PLATFORM}-scoped message renders from the platform tier regardless of the restored context.
  */
 @Slf4j
 @Component

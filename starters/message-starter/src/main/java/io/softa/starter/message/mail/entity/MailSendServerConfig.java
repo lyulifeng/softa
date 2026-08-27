@@ -15,11 +15,13 @@ import io.softa.starter.message.mail.enums.SendProtocol;
 /**
  * Outgoing mail server configuration (SMTP / SMTPS).
  * <p>
- * tenant_id = 0  — platform-level, managed by the ops platform or init scripts.
+ * tenant_id = -1 — platform-tier, managed by the platform operator. Invisible
+ * to tenants: reached only by the dispatcher's silent fallback when a tenant
+ * has no enabled default of its own, and by PLATFORM-scoped sends.
  * tenant_id > 0  — tenant-level, tenant_id is auto-filled by the ORM.
  */
 @Data
-@Model(idStrategy = IdStrategy.DISTRIBUTED_LONG, multiTenant = true)
+@Model(idStrategy = IdStrategy.DISTRIBUTED_LONG, multiTenant = true, activeControl = true)
 @Index(indexName = "idx_mail_send_cfg_default", fields = {"tenantId", "isDefault"})
 @EqualsAndHashCode(callSuper = true)
 public class MailSendServerConfig extends AuditableModel {
@@ -31,8 +33,8 @@ public class MailSendServerConfig extends AuditableModel {
     private Long id;
 
     @Field(label = "Tenant ID",
-            description = "0 = platform-level (shared across tenants); >0 = tenant-level. "
-                    + "Auto-stamped by the ORM on writes when multi-tenancy is enabled.")
+            description = "-1 = platform-tier (invisible to tenants, dispatcher fallback only); "
+                    + ">0 = tenant-level. Auto-stamped by the ORM on writes when multi-tenancy is enabled.")
     private Long tenantId;
 
     @Field(label = "Config Name", required = true, length = 100)
@@ -100,17 +102,14 @@ public class MailSendServerConfig extends AuditableModel {
                     + "other default when a config is saved with this flag set.")
     private Boolean isDefault;
 
-    @Field(description = "Whether this config is enabled")
-    private Boolean isEnabled;
-
-    @Field(description = "Meaningful on platform configs (tenant_id = 0) only: whether tenants may "
-                    + "see this config in their sender pickers and pin it via "
-                    + "MailTemplate.preferredServerConfigId. null/false = platform-internal "
-                    + "(billing/ops SMTP stays invisible to tenants). Does NOT affect the implicit "
-                    + "dispatcher fallback (tenant default → platform default), which is platform "
-                    + "policy and ignores this flag. Note the config's own dailySendLimit / "
-                    + "rateLimitPerMinute are global across every tenant pinning it.")
-    private Boolean sharedWithTenants;
+    /**
+     * Framework active control: reads are auto-filtered to {@code active = true},
+     * so a disabled row is retired from every list and every resolution without
+     * being deleted (rows referenced by send records stay intact). Filter on
+     * {@code active} explicitly to see disabled rows.
+     */
+    @Field(renamedFrom = "isEnabled")
+    private Boolean active;
 
     /** If send-side failover is ever introduced, rename to {@code priority} then. */
     @Field(description = "Tie-break order among multiple isDefault=true configs and display "

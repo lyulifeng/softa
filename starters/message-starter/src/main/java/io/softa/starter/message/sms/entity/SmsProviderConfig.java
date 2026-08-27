@@ -18,11 +18,12 @@ import io.softa.starter.message.sms.enums.SmsProvider;
  * Uses generic credential fields to avoid provider-specific columns — each adapter
  * interprets these fields according to its provider's requirements.
  * <p>
- * tenant_id = 0  — platform-level, shared across all tenants.
+ * tenant_id = -1 — platform-tier, invisible to tenants (dispatcher fallback only).
  * tenant_id > 0  — tenant-level, ORM auto-fills and isolates.
  */
 @Data
-@Model(label = "SMS Provider Config", idStrategy = IdStrategy.DISTRIBUTED_LONG, multiTenant = true)
+@Model(label = "SMS Provider Config", idStrategy = IdStrategy.DISTRIBUTED_LONG, multiTenant = true,
+        activeControl = true)
 @Index(indexName = "idx_sms_provider_cfg_default", fields = {"tenantId", "isDefault"})
 @EqualsAndHashCode(callSuper = true)
 public class SmsProviderConfig extends AuditableModel {
@@ -34,7 +35,7 @@ public class SmsProviderConfig extends AuditableModel {
     private Long id;
 
     @Field(label = "Tenant ID",
-            description = "0 = platform-level (shared across tenants); >0 = tenant-level. "
+            description = "-1 = platform-tier (invisible to tenants); >0 = tenant-level. "
                     + "Auto-stamped by the ORM on writes when multi-tenancy is enabled.")
     private Long tenantId;
 
@@ -88,8 +89,14 @@ public class SmsProviderConfig extends AuditableModel {
                     + "route and a catchall.")
     private Boolean isDefault;
 
-    @Field(description = "Whether this config is active")
-    private Boolean isEnabled;
+    /**
+     * Framework active control: reads are auto-filtered to {@code active = true},
+     * so a disabled row is retired from every list and every resolution without
+     * being deleted (rows referenced by send records stay intact). Filter on
+     * {@code active} explicitly to see disabled rows.
+     */
+    @Field(renamedFrom = "isEnabled")
+    private Boolean active;
 
     @Field(description = "Lower = higher priority. Used as selection ordering among "
                     + "isDefault=true providers in the catchall dispatch tier, and as the list-display "

@@ -24,7 +24,7 @@ public interface SmsTemplateProviderBindingService extends EntityService<SmsTemp
     List<SmsTemplateProviderBinding> findByTemplateId(Long templateId);
 
     /**
-     * Find all enabled platform-level (tenant_id = 0) bindings for the given template,
+     * Find all enabled platform-tier (tenant_id = -1) bindings for the given template,
      * ordered by {@code priority} ascending.
      * <p>
      * Uses {@code @CrossTenant} to bypass ORM tenant filtering.

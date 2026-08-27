@@ -18,22 +18,26 @@ import io.softa.starter.message.mail.enums.MailPriority;
 /**
  * Email template.
  * <p>
- * Templates are identified by {@code code}. Resolution prefers a tenant
- * template, falling back to the platform template:
- * <ol>
- *   <li>Tenant template for {@code code} — unless the platform template for the
- *       same code declares {@code overridable = false}, or the send declared
- *       {@code MailScope.PLATFORM_ONLY}</li>
- *   <li>Platform template (tenant_id = 0) for {@code code}</li>
- * </ol>
- * tenant_id = 0  — platform-level, shared across all tenants.
+ * Templates are identified by {@code code} within their own tier — the two
+ * tiers are fully separate namespaces with no overlay or fallback:
+ * <ul>
+ *   <li>{@code scope = TENANT} resolves the current tenant's template only.
+ *       Tenants receive their rows at provisioning from the application's
+ *       per-tenant seed files ({@code loadPreTenantData}) and edit them
+ *       freely from then on.</li>
+ *   <li>{@code scope = PLATFORM} resolves the platform tier (tenant_id = -1)
+ *       only — platform-owned mail such as billing and security notices.</li>
+ * </ul>
+ * tenant_id = -1 — platform-tier row, owned by the platform operator,
+ * invisible to tenant-scoped reads.
  * tenant_id > 0  — tenant-level, ORM auto-fills and isolates.
  */
 @Data
 @Model(
         idStrategy = IdStrategy.DISTRIBUTED_LONG,
         businessKey = {"code"},
-        multiTenant = true
+        multiTenant = true,
+        activeControl = true
 )
 @Index(indexName = "uk_mail_template_tenant_code", fields = {"tenantId", "code"}, unique = true)
 @EqualsAndHashCode(callSuper = true)
@@ -46,8 +50,8 @@ public class MailTemplate extends AuditableModel {
     private Long id;
 
     @Field(label = "Tenant ID",
-            description = "0 = platform-level (shared across tenants); >0 = tenant-level. "
-                    + "Auto-stamped by the ORM on writes when multi-tenancy is enabled.")
+            description = "-1 = platform-tier (owned by the platform operator, invisible to tenants); "
+                    + ">0 = tenant-level. Auto-stamped by the ORM on writes when multi-tenancy is enabled.")
     private Long tenantId;
 
     @Field(required = true, length = 100, copyable = false,
@@ -95,16 +99,14 @@ public class MailTemplate extends AuditableModel {
                     + "HTML_WITH_AUTHORED_PLAIN — bodyHtml + bodyText, multipart/alternative.")
     private BodyMode bodyMode;
 
-    @Field(description = "Whether this template is active")
-    private Boolean isEnabled;
-
-    @Field(description = "Meaningful on platform templates (tenant_id = 0) only: whether a tenant "
-                    + "may shadow this code with its own template. false = locked — send-time "
-                    + "resolution always uses the platform row for this code, the Customize action "
-                    + "is refused, and creating a tenant template with this code is rejected. "
-                    + "null/true = tenant customization applies. Protects platform-owned mail "
-                    + "(billing, security, compliance) from tenant template hijack at every call site.")
-    private Boolean overridable;
+    /**
+     * Framework active control: reads are auto-filtered to {@code active = true},
+     * so a disabled row is retired from every list and every resolution without
+     * being deleted (rows referenced by send records stay intact). Filter on
+     * {@code active} explicitly to see disabled rows.
+     */
+    @Field(renamedFrom = "isEnabled")
+    private Boolean active;
 
     @Field(description = "Default email priority for this template. "
                     + "When set, all emails sent via this template will use this priority unless overridden in SendMailDTO.")

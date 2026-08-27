@@ -8,7 +8,8 @@ import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
 
 import io.softa.starter.message.config.MessageProperties;
-import io.softa.framework.base.message.MailScope;
+import io.softa.framework.base.message.MessageScope;
+import io.softa.starter.message.shared.MonthlyQuotaGuard;
 import io.softa.starter.message.mail.dto.SendMailDTO;
 import io.softa.starter.message.mail.entity.MailSendRecord;
 import io.softa.starter.message.mail.entity.MailSendServerConfig;
@@ -183,7 +184,7 @@ class MailMessageBodyModeTest {
         MailSendRecordService recordService = mock(MailSendRecordService.class);
         MailTemplateService templateService = mock(MailTemplateService.class);
         OutboxRecordWriter outboxRecordWriter = mock(OutboxRecordWriter.class);
-        when(dispatcher.resolveSend(MailScope.OVERLAY)).thenReturn(config);
+        when(dispatcher.resolveSend(MessageScope.TENANT)).thenReturn(config);
         when(outboxRecordWriter.persistAndEnqueue(
                 any(), eq("MailSendRecord"), eq(TopicRoute.MAIL_SEND)))
                 .thenAnswer(invocation -> ((Supplier<Long>) invocation.getArgument(0)).get());
@@ -191,7 +192,7 @@ class MailMessageBodyModeTest {
 
         MailMessageHandler handler = new MailMessageHandler(
                 dispatcher, recordService, templateService, outboxRecordWriter,
-                new MessageProperties());
+                new MessageProperties(), mock(MonthlyQuotaGuard.class));
         handler.send(dto);
 
         ArgumentCaptor<MailSendRecord> captor = ArgumentCaptor.forClass(MailSendRecord.class);

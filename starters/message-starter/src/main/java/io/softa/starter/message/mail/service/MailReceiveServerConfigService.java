@@ -18,14 +18,14 @@ public interface MailReceiveServerConfigService extends EntityService<MailReceiv
     Optional<MailReceiveServerConfig> findTenantDefault();
 
     /**
-     * Find the platform-level default receiving config (tenant_id = 0).
+     * Find the platform-tier default receiving config (tenant_id = -1).
      * Uses {@code @CrossTenant} to bypass ORM tenant filtering.
      */
     Optional<MailReceiveServerConfig> findPlatformDefault();
 
     /**
      * Load a config by id within the caller's visibility scope: the caller's
-     * own tenant plus the platform tier (tenant_id = 0). Scheduled fetch runs
+     * own tenant plus the platform tier (tenant_id = -1). Scheduled fetch runs
      * against platform-level configs too, which the implicit single-tenant
      * filter would hide — id resolution must go through this method rather
      * than {@code getById}.

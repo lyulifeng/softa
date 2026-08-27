@@ -15,27 +15,19 @@ import java.util.Map;
  * {@code @PulsarListener} (so it works whether message-starter is in-process or a separate service).
  *
  * <p><b>Scope of the render.</b> The MQ hop drops the producer's thread context, so tier selection
- * must travel in the message. {@code tenantId} is the tenant the consumer restores before rendering
- * (letting {@code scope = OVERLAY} apply that tenant's template/server customizations); {@code scope}
- * is the {@link MailScope} tier policy. Both {@code null} keeps the historical behaviour — the render
- * runs with no tenant context and resolves the platform tier ({@code tenant_id = 0}) only. Producers
- * that want the tenant's branding must pass the tenant id explicitly via the 5-arg constructor.
+ * must travel in the message — every producer declares it explicitly (there is deliberately no
+ * shorter constructor to default it silently). {@code tenantId} is the tenant the consumer restores
+ * before rendering and persisting the send record; {@code scope} is the {@link MessageScope} tier
+ * policy. A {@code TENANT}-scoped message must carry the tenant id in multi-tenant deployments —
+ * the tenant's template is unreachable without its context.
  *
  * @param to           recipient addresses (at least one)
  * @param templateCode the {@code MailTemplate} business code to render
  * @param variables    placeholder values for the template ({@code {{ }}} substitution); may be empty
- * @param tenantId     tenant whose context the consumer restores for the render; null = no tenant
- *                     context (platform-tier render, the pre-scope behaviour)
- * @param scope        tier-selection policy; null = {@link MailScope#OVERLAY}
+ * @param tenantId     tenant whose context the consumer restores for the render and record
+ *                     ownership; null = no tenant context (single-tenant, or pure platform sends)
+ * @param scope        tier-selection policy; null = {@link MessageScope#TENANT}
  */
 public record MailRequestMessage(List<String> to, String templateCode, Map<String, Object> variables,
-                                 Long tenantId, MailScope scope) {
-
-    /**
-     * Compatibility constructor — platform-tier render with no tenant context,
-     * exactly the behaviour before {@code tenantId} / {@code scope} existed.
-     */
-    public MailRequestMessage(List<String> to, String templateCode, Map<String, Object> variables) {
-        this(to, templateCode, variables, null, null);
-    }
+                                 Long tenantId, MessageScope scope) {
 }

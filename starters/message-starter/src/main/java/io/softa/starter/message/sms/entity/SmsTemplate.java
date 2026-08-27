@@ -17,18 +17,22 @@ import io.softa.framework.orm.entity.AuditableModel;
  * Templates are identified by {@code code}. Resolution prefers a tenant
  * template, falling back to the platform template:
  * <ol>
- *   <li>Tenant template for {@code code}</li>
- *   <li>Platform template (tenant_id = 0) for {@code code}</li>
+ *   <li>{@code scope = TENANT}: the current tenant's template only (rows
+ *       arrive at provisioning via the application's per-tenant seed files)</li>
+ *   <li>{@code scope = PLATFORM}: the platform tier (tenant_id = -1) only</li>
  * </ol>
+ * No overlay or fallback between the tiers.
  * <p>
  * Content supports {@code {{ variable }}} placeholders rendered by
  * {@link io.softa.framework.base.placeholder.PlaceholderUtils}.
  * <p>
- * tenant_id = 0  — platform-level, shared across all tenants.
+ * tenant_id = -1 — platform-tier, owned by the platform operator,
+ * invisible to tenant-scoped reads.
  * tenant_id > 0  — tenant-level, ORM auto-fills and isolates.
  */
 @Data
-@Model(label = "SMS Template", idStrategy = IdStrategy.DISTRIBUTED_LONG, multiTenant = true)
+@Model(label = "SMS Template", idStrategy = IdStrategy.DISTRIBUTED_LONG, multiTenant = true,
+        activeControl = true)
 @Index(indexName = "uk_sms_template_tenant_code", fields = {"tenantId", "code"}, unique = true)
 @EqualsAndHashCode(callSuper = true)
 public class SmsTemplate extends AuditableModel {
@@ -40,8 +44,8 @@ public class SmsTemplate extends AuditableModel {
     private Long id;
 
     @Field(label = "Tenant ID",
-            description = "0 = platform-level (shared across tenants); >0 = tenant-level. "
-                    + "Auto-stamped by the ORM on writes when multi-tenancy is enabled.")
+            description = "-1 = platform-tier (owned by the platform operator, invisible to tenants); "
+                    + ">0 = tenant-level. Auto-stamped by the ORM on writes when multi-tenancy is enabled.")
     private Long tenantId;
 
     @Field(required = true, length = 100,
@@ -58,6 +62,12 @@ public class SmsTemplate extends AuditableModel {
             description = "SMS body template with {{ variable }} placeholders")
     private String content;
 
-    @Field(label = "Enabled", description = "Whether this template is active")
-    private Boolean isEnabled;
+    /**
+     * Framework active control: reads are auto-filtered to {@code active = true},
+     * so a disabled row is retired from every list and every resolution without
+     * being deleted (rows referenced by send records stay intact). Filter on
+     * {@code active} explicitly to see disabled rows.
+     */
+    @Field(renamedFrom = "isEnabled")
+    private Boolean active;
 }

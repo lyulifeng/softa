@@ -20,7 +20,7 @@ import io.softa.starter.message.inbox.enums.NotificationType;
  * and can carry a reference to the originating object via {@code sourceModel}
  * and {@code sourceId}.
  * <p>
- * tenant_id = 0 — platform-level notification; tenant_id > 0 — tenant-scoped.
+ * tenant_id = -1 — platform-tier notification; tenant_id > 0 — tenant-scoped.
  */
 @Data
 @Model(idStrategy = IdStrategy.DISTRIBUTED_LONG, copyable = false, multiTenant = true)
@@ -36,7 +36,7 @@ public class InboxNotification extends AuditableModel {
     private Long id;
 
     @Field(label = "Tenant ID",
-            description = "0 = platform-level (shared across tenants); >0 = tenant-level. "
+            description = "-1 = platform-tier (invisible to tenants); >0 = tenant-level. "
                     + "Auto-stamped by the ORM on writes when multi-tenancy is enabled.")
     private Long tenantId;
 

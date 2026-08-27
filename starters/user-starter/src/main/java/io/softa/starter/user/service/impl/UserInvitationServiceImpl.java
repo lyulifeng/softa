@@ -4,7 +4,6 @@ import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
-
 import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.lang3.StringUtils;
 import org.springframework.beans.factory.annotation.Value;
@@ -12,22 +11,23 @@ import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import io.softa.framework.base.context.ContextHolder;
 import io.softa.framework.base.exception.BusinessException;
+import io.softa.framework.base.message.MailRequestMessage;
+import io.softa.framework.base.message.MessageScope;
 import io.softa.framework.base.security.EncryptUtils;
-import io.softa.framework.base.security.PasswordUtils;
 import io.softa.framework.base.utils.Assert;
 import io.softa.framework.base.utils.RandomUtils;
 import io.softa.framework.orm.annotation.CrossTenant;
 import io.softa.framework.orm.annotation.SkipPermissionCheck;
 import io.softa.framework.orm.domain.Filters;
-import io.softa.framework.base.message.MailRequestMessage;
 import io.softa.framework.orm.service.impl.EntityServiceImpl;
 import io.softa.starter.user.dto.InvitationInfo;
 import io.softa.starter.user.entity.UserAccount;
+import io.softa.starter.user.entity.UserInvitation;
 import io.softa.starter.user.enums.AccountStatus;
 import io.softa.starter.user.enums.InvitationPurpose;
 import io.softa.starter.user.enums.InvitationStatus;
-import io.softa.starter.user.entity.UserInvitation;
 import io.softa.starter.user.service.UserAccountService;
 import io.softa.starter.user.service.UserIdentityService;
 import io.softa.starter.user.service.UserInvitationService;
@@ -145,8 +145,15 @@ public class UserInvitationServiceImpl extends EntityServiceImpl<UserInvitation,
         // once this invitation has committed; if no message-starter is present it is a graceful no-op.
         String link = frontendBaseUrl.replaceAll("/+$", "") + "/set-password?token=" + rawToken;
         String template = purpose == InvitationPurpose.PASSWORD_RESET ? TEMPLATE_RESET : TEMPLATE_INVITE;
+        // Tier of the render: with a tenant context (invite / authed reset) the
+        // tenant's own template + wording; the public forgotPassword path has no
+        // tenant context, so it renders the platform-tier template — the platform
+        // row doubles as the copy source for tenants AND the platform's own sender.
+        Long tenantId = ContextHolder.getContext().getTenantId();
+        MessageScope scope = tenantId != null ? MessageScope.TENANT : MessageScope.PLATFORM;
         eventPublisher.publishEvent(new MailRequestMessage(
-                List.of(account.getEmail()), template, Map.of("link", link, "expiryDays", EXPIRY_DAYS)));
+                List.of(account.getEmail()), template, Map.of("link", link, "expiryDays", EXPIRY_DAYS),
+                tenantId, scope));
         // Dev aid: surface the set-password / reset link so it can be copied from the logs when SMTP / MQ
         // is not wired locally. ⚠️ The link carries a one-time credential token — lower this to debug or
         // remove it before production so the token is not leaked into prod logs.

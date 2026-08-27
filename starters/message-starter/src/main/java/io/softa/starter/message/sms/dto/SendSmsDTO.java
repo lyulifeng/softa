@@ -4,6 +4,8 @@ import java.util.Map;
 import io.swagger.v3.oas.annotations.media.Schema;
 import lombok.Data;
 
+import io.softa.framework.base.message.MessageScope;
+
 /**
  * Request payload for one SMS recipient. Independent messages use
  * {@code MessageService.sendSmsBatch(List)}.
@@ -33,4 +35,10 @@ public class SendSmsDTO {
     @Schema(description = "External template ID override (from template if not set)")
     private String externalTemplateId;
 
+
+    @Schema(description = "Tier-selection policy in multi-tenant deployments. Null/TENANT = the "
+            + "current tenant's template and quota bucket. PLATFORM = platform tier only for "
+            + "template and quota — for platform-owned SMS (security codes for platform accounts, "
+            + "operational alerts). Explicit providerConfigId still wins over the policy.")
+    private MessageScope scope;
 }

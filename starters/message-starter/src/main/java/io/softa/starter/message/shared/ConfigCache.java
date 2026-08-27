@@ -20,7 +20,7 @@ import io.softa.framework.orm.service.CacheService;
  * <ul>
  *   <li>{@code {idPrefix}{id}} — direct lookup by primary key</li>
  *   <li>{@code {defaultPrefix}{tenantId}} — default config for a tenant
- *       ({@code tenantId = 0} for platform-level)</li>
+ *       ({@code tenantId = -1} for the platform tier)</li>
  * </ul>
  * Concrete subclasses supply the two key prefixes and the entity {@link Class}
  * (needed for {@link CacheService#get(String, Class)}); they remain distinct
@@ -58,12 +58,12 @@ public abstract class ConfigCache<T extends AbstractModel> {
     }
 
     /**
-     * The platform tier's default ({@code tenantId = 0} key) regardless of the
-     * current tenant — for {@code PLATFORM_ONLY} sends, which must neither read
-     * nor poison the caller tenant's default cache entry.
+     * The platform tier's default ({@code tenantId = -1} key) regardless of
+     * the current tenant — for {@code PLATFORM}-scoped sends, which must
+     * neither read nor poison the caller tenant's default cache entry.
      */
     public T getPlatformDefault(Supplier<T> loader) {
-        return getDefault(0L, loader);
+        return getDefault(TenantScopes.PLATFORM, loader);
     }
 
     private T getDefault(long tenantId, Supplier<T> loader) {
@@ -85,11 +85,13 @@ public abstract class ConfigCache<T extends AbstractModel> {
         cacheService.clear(keyId + id);
         // we don't know the tenant, so clear both plausible default keys
         cacheService.clear(keyDefault + currentTenantId());
-        cacheService.clear(keyDefault + 0L);
+        cacheService.clear(keyDefault + TenantScopes.PLATFORM);
     }
 
     private static long currentTenantId() {
+        // No tenant in context = platform scope; -1 keeps the platform's
+        // default-config cache entry distinct from any real tenant's.
         Context ctx = ContextHolder.getContext();
-        return ctx != null && ctx.getTenantId() != null ? ctx.getTenantId() : 0L;
+        return ctx != null && ctx.getTenantId() != null ? ctx.getTenantId() : TenantScopes.PLATFORM;
     }
 }

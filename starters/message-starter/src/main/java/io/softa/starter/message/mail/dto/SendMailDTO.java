@@ -5,7 +5,7 @@ import java.util.Map;
 import io.swagger.v3.oas.annotations.media.Schema;
 import lombok.Data;
 
-import io.softa.framework.base.message.MailScope;
+import io.softa.framework.base.message.MessageScope;
 import io.softa.framework.orm.dto.FileInfo;
 import io.softa.starter.message.mail.enums.BodyMode;
 import io.softa.starter.message.mail.enums.MailPriority;
@@ -79,11 +79,11 @@ public class SendMailDTO {
     @Schema(description = "Template placeholder variables")
     private Map<String, Object> templateVariables;
 
-    @Schema(description = "Tier-selection policy for template AND server resolution in multi-tenant "
-            + "deployments. Null/OVERLAY = tenant customization first, platform fallback. "
-            + "PLATFORM_ONLY = platform tier only — for platform-owned mail (billing, security, "
-            + "compliance) that must neither be re-worded by a tenant template nor routed through "
-            + "tenant SMTP. Explicit serverConfigId/templateId still win over the policy.")
-    private MailScope scope;
+    @Schema(description = "Tier-selection policy in multi-tenant deployments. Null/TENANT = the "
+            + "current tenant's template, tenant default server (platform fallback when none), "
+            + "tenant quota bucket. PLATFORM = platform tier only for template, server, and quota "
+            + "— for platform-owned mail (billing, security, compliance). Explicit "
+            + "serverConfigId/templateId still win over the policy.")
+    private MessageScope scope;
 
 }

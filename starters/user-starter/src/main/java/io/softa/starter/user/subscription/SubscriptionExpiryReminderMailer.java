@@ -8,6 +8,7 @@ import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.stereotype.Service;
 
 import io.softa.framework.base.message.MailRequestMessage;
+import io.softa.framework.base.message.MessageScope;
 import io.softa.framework.base.message.SubscriptionExpiryReminderMessage;
 import io.softa.framework.orm.domain.Filters;
 import io.softa.starter.user.constant.RoleConstant;
@@ -120,7 +121,12 @@ public class SubscriptionExpiryReminderMailer {
             templateCode = TEMPLATE_EXPIRY_REMINDER;
         }
         for (String email : emails) {
-            eventPublisher.publishEvent(new MailRequestMessage(List.of(email), templateCode, variables));
+            // Platform-owned mail about the tenant's contract: the PLATFORM tier
+            // renders it (a tenant must not re-word its own expiry notices) and
+            // the platform quota bucket absorbs it; the tenant id still travels
+            // so the send record lands in the tenant's books.
+            eventPublisher.publishEvent(new MailRequestMessage(List.of(email), templateCode, variables,
+                    message.tenantId(), MessageScope.PLATFORM));
         }
         // The template code itself, not a re-derivation of it: a two-branch guess here logged a gap reminder
         // as "subscription-expiry", so the log disagreed with the mail that was actually sent — exactly the

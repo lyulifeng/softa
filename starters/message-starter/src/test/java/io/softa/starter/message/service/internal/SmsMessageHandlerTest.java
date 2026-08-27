@@ -8,7 +8,9 @@ import org.mockito.ArgumentCaptor;
 
 import io.softa.framework.base.exception.BusinessException;
 import io.softa.starter.message.mq.TopicRoute;
+import io.softa.framework.base.message.MessageScope;
 import io.softa.starter.message.mq.outbox.OutboxRecordWriter;
+import io.softa.starter.message.shared.MonthlyQuotaGuard;
 import io.softa.starter.message.sms.dto.SendSmsDTO;
 import io.softa.starter.message.sms.entity.SmsProviderConfig;
 import io.softa.starter.message.sms.entity.SmsSendRecord;
@@ -43,7 +45,8 @@ class SmsMessageHandlerTest {
         templateService = mock(SmsTemplateService.class);
         routingPlanner = mock(SmsRoutingPlanner.class);
         outboxRecordWriter = mock(OutboxRecordWriter.class);
-        handler = new SmsMessageHandler(recordService, templateService, routingPlanner, outboxRecordWriter);
+        handler = new SmsMessageHandler(recordService, templateService, routingPlanner, outboxRecordWriter,
+                mock(MonthlyQuotaGuard.class));
 
         when(outboxRecordWriter.persistAndEnqueue(any(), eq("SmsSendRecord"), eq(TopicRoute.SMS_SEND)))
                 .thenAnswer(invocation -> ((Supplier<Long>) invocation.getArgument(0)).get());
@@ -69,7 +72,7 @@ class SmsMessageHandlerTest {
     @Test
     void templateRequestRendersContent() {
         SmsTemplate template = new SmsTemplate();
-        when(templateService.resolve("VERIFY")).thenReturn(template);
+        when(templateService.resolve("VERIFY", MessageScope.TENANT)).thenReturn(template);
         when(templateService.renderContent(eq(template), any())).thenReturn("code is 123456");
 
         SendSmsDTO dto = new SendSmsDTO();
@@ -81,7 +84,7 @@ class SmsMessageHandlerTest {
 
         assertEquals("code is 123456", capturedRecord().getContent());
         assertNull(dto.getContent());
-        verify(templateService).resolve("VERIFY");
+        verify(templateService).resolve("VERIFY", MessageScope.TENANT);
         verify(routingPlanner).plan(new SmsRoutingPlanner.RoutingRequest(
                 "+111", null, "VERIFY", null, null, template));
     }

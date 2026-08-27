@@ -8,7 +8,7 @@ import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
 
 import io.softa.framework.base.exception.BusinessException;
-import io.softa.framework.base.message.MailScope;
+import io.softa.framework.base.message.MessageScope;
 import io.softa.starter.message.config.MessageProperties;
 import io.softa.starter.message.mail.dto.SendMailDTO;
 import io.softa.starter.message.mail.entity.MailSendRecord;
@@ -19,6 +19,7 @@ import io.softa.starter.message.mail.service.MailSendRecordService;
 import io.softa.starter.message.mail.service.MailTemplateService;
 import io.softa.starter.message.mail.support.MailServerDispatcher;
 import io.softa.starter.message.mq.TopicRoute;
+import io.softa.starter.message.shared.MonthlyQuotaGuard;
 import io.softa.starter.message.mq.outbox.OutboxRecordWriter;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -41,6 +42,7 @@ class MailMessageHandlerTest {
     private MailTemplateService templateService;
     private OutboxRecordWriter outboxRecordWriter;
     private MessageProperties messageProperties;
+    private MonthlyQuotaGuard quotaGuard;
     private MailMessageHandler handler;
 
     @BeforeEach
@@ -50,13 +52,14 @@ class MailMessageHandlerTest {
         templateService = mock(MailTemplateService.class);
         outboxRecordWriter = mock(OutboxRecordWriter.class);
         messageProperties = new MessageProperties();
+        quotaGuard = mock(MonthlyQuotaGuard.class);
         handler = new MailMessageHandler(dispatcher, recordService, templateService, outboxRecordWriter,
-                messageProperties);
+                messageProperties, quotaGuard);
 
         when(outboxRecordWriter.persistAndEnqueue(any(), eq("MailSendRecord"), eq(TopicRoute.MAIL_SEND)))
                 .thenAnswer(invocation -> ((Supplier<Long>) invocation.getArgument(0)).get());
         when(recordService.createOne(any(MailSendRecord.class))).thenReturn(42L);
-        when(dispatcher.resolveSend(MailScope.OVERLAY)).thenReturn(config(10L));
+        when(dispatcher.resolveSend(MessageScope.TENANT)).thenReturn(config(10L));
     }
 
     @Test
@@ -107,7 +110,7 @@ class MailMessageHandlerTest {
     @Test
     void templateRequestRendersContent() {
         MailTemplate template = htmlTemplate("WELCOME");
-        when(templateService.resolve("WELCOME", MailScope.OVERLAY)).thenReturn(template);
+        when(templateService.resolve("WELCOME", MessageScope.TENANT)).thenReturn(template);
         when(templateService.renderSubject(eq(template), any())).thenReturn("Welcome, Alice!");
         when(templateService.renderBodyHtml(eq(template), any())).thenReturn("<p>Hello Alice</p>");
 
@@ -125,14 +128,14 @@ class MailMessageHandlerTest {
         assertNull(dto.getHtmlBody());
         assertNull(dto.getTextBody());
         assertNull(dto.getBodyMode());
-        verify(templateService).resolve("WELCOME", MailScope.OVERLAY);
+        verify(templateService).resolve("WELCOME", MessageScope.TENANT);
     }
 
     @Test
     void templatePreferredServerIsAppliedBeforeConfigResolution() {
         MailTemplate template = htmlTemplate("MARKETING");
         template.setPreferredServerConfigId(99L);
-        when(templateService.resolve("MARKETING", MailScope.OVERLAY)).thenReturn(template);
+        when(templateService.resolve("MARKETING", MessageScope.TENANT)).thenReturn(template);
         when(templateService.renderSubject(eq(template), any())).thenReturn("S");
         when(templateService.renderBodyHtml(eq(template), any())).thenReturn("<p>B</p>");
         when(dispatcher.resolveSendById(99L)).thenReturn(config(99L));
@@ -168,24 +171,24 @@ class MailMessageHandlerTest {
     }
 
     @Test
-    void platformOnlyScope_governsTemplateAndServerResolution() {
+    void platformScope_governsTemplateAndServerResolution() {
         MailTemplate template = htmlTemplate("INVOICE_ISSUED");
-        when(templateService.resolve("INVOICE_ISSUED", MailScope.PLATFORM_ONLY)).thenReturn(template);
+        when(templateService.resolve("INVOICE_ISSUED", MessageScope.PLATFORM)).thenReturn(template);
         when(templateService.renderSubject(eq(template), any())).thenReturn("Invoice");
         when(templateService.renderBodyHtml(eq(template), any())).thenReturn("<p>Invoice</p>");
-        when(dispatcher.resolveSend(MailScope.PLATFORM_ONLY)).thenReturn(config(10L));
+        when(dispatcher.resolveSend(MessageScope.PLATFORM)).thenReturn(config(10L));
 
         SendMailDTO dto = new SendMailDTO();
         dto.setTo(List.of("alice@example.com"));
         dto.setTemplateCode("INVOICE_ISSUED");
-        dto.setScope(MailScope.PLATFORM_ONLY);
+        dto.setScope(MessageScope.PLATFORM);
 
         handler.send(dto);
 
         // One declared scope governs BOTH axes: template tier and server tier.
-        verify(templateService).resolve("INVOICE_ISSUED", MailScope.PLATFORM_ONLY);
-        verify(dispatcher).resolveSend(MailScope.PLATFORM_ONLY);
-        verify(dispatcher, never()).resolveSend(MailScope.OVERLAY);
+        verify(templateService).resolve("INVOICE_ISSUED", MessageScope.PLATFORM);
+        verify(dispatcher).resolveSend(MessageScope.PLATFORM);
+        verify(dispatcher, never()).resolveSend(MessageScope.TENANT);
     }
 
     private MailSendServerConfig config(long id) {

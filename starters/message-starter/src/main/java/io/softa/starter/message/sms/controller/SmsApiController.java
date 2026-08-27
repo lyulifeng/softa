@@ -91,7 +91,7 @@ public class SmsApiController {
     @GetMapping("/templates")
     public ApiResponse<List<SmsTemplateSummaryDTO>> listTemplates() {
         Filters filters = new Filters()
-                .eq(SmsTemplate::getIsEnabled, true);
+                ;
         List<SmsTemplate> templates = templateService.searchList(filters);
         List<SmsTemplateSummaryDTO> summaries = templates.stream()
                 .map(SmsTemplateSummaryDTO::from)

@@ -92,7 +92,21 @@ public class SysPreDataServiceImpl extends EntityServiceImpl<SysPreData, Long> i
             Assert.notNull(tenantId,
                     "Loading tenant predefined data requires a tenant id when multi-tenancy is enabled!");
         }
-        String dataDir = BaseConstant.PREDEFINED_DATA_TENANT_DIR;
+        loadInTenantScope(BaseConstant.PREDEFINED_DATA_TENANT_DIR, fileNames, tenantId);
+    }
+
+    /**
+     * Platform-tier load: the tenant loader pointed at {@code data-platform/} with the reserved
+     * platform tenant id (-1), so seeded rows are platform-owned and invisible to tenant reads.
+     */
+    @Override
+    @Transactional(rollbackFor = Exception.class)
+    public void loadPrePlatformData(List<String> fileNames) {
+        loadInTenantScope(BaseConstant.PREDEFINED_DATA_PLATFORM_DIR, fileNames,
+                BaseConstant.PLATFORM_TENANT_ID);
+    }
+
+    private void loadInTenantScope(String dataDir, List<String> fileNames, Long tenantId) {
         Context tenantContext = ContextHolder.cloneContext();
         tenantContext.setTenantId(tenantId);
         // Set here as well, even though this path currently works. It works only because the caller is

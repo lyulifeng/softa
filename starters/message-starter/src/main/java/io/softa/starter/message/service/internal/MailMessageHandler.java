@@ -9,7 +9,7 @@ import org.springframework.util.CollectionUtils;
 import org.springframework.util.StringUtils;
 
 import io.softa.framework.base.exception.BusinessException;
-import io.softa.framework.base.message.MailScope;
+import io.softa.framework.base.message.MessageScope;
 import io.softa.framework.base.utils.HtmlUtils;
 import io.softa.framework.orm.dto.FileInfo;
 import io.softa.starter.message.config.MessageProperties;
@@ -26,6 +26,7 @@ import io.softa.starter.message.mail.service.impl.MailDeliveryProcessor;
 import io.softa.starter.message.mail.support.MailAddresses;
 import io.softa.starter.message.mail.support.MailServerDispatcher;
 import io.softa.starter.message.mq.TopicRoute;
+import io.softa.starter.message.shared.MonthlyQuotaGuard;
 import io.softa.starter.message.mq.outbox.OutboxRecordWriter;
 
 /**
@@ -70,14 +71,21 @@ final class MailMessageHandler {
 
     private final MessageProperties messageProperties;
 
+    private final MonthlyQuotaGuard quotaGuard;
+
     Long send(SendMailDTO dto) {
         // The tier policy governs BOTH axes of this send: which template tier
-        // renders the content, and which tier's default SMTP carries it.
-        MailScope scope = dto.getScope() != null ? dto.getScope() : MailScope.OVERLAY;
+        // renders the content, and which tier's default SMTP carries it — and
+        // which monthly-quota bucket the send consumes.
+        MessageScope scope = dto.getScope() != null ? dto.getScope() : MessageScope.TENANT;
         ResolvedMail message = resolve(dto, scope);
         // Config resolution happens AFTER request resolution so a template's
         // preferredServerConfigId is honored.
         MailSendServerConfig config = resolveConfig(message, scope);
+        // Quota consumes AFTER validation/resolution (an unsendable request
+        // must not burn quota) and BEFORE persistence — delivery retries of an
+        // accepted message never touch the counter again.
+        quotaGuard.consume("mail", MonthlyQuotaGuard.bucketFor(scope));
         return enqueueForAsyncSend(message, config);
     }
 
@@ -88,11 +96,11 @@ final class MailMessageHandler {
     /**
      * Resolve template defaults and validate one email request.
      */
-    private ResolvedMail resolve(SendMailDTO dto, MailScope scope) {
+    private ResolvedMail resolve(SendMailDTO dto, MessageScope scope) {
         // templateId addresses the exact row (editor test sends: what you
-        // preview is what goes out, enabled or not); templateCode goes through
-        // production resolution (tenant → platform overlay under the declared
-        // tier policy, enabled only).
+        // preview is what goes out, enabled or not); templateCode resolves in
+        // the tier the declared policy names (enabled only, no cross-tier
+        // fallback).
         MailTemplate template = dto.getTemplateId() != null
                 ? templateService.getRequiredById(dto.getTemplateId())
                 : StringUtils.hasText(dto.getTemplateCode())
@@ -212,7 +220,7 @@ final class MailMessageHandler {
     // Persistence — PENDING record + outbox row, atomically
     // ------------------------------------------------------------------
 
-    private MailSendServerConfig resolveConfig(ResolvedMail message, MailScope scope) {
+    private MailSendServerConfig resolveConfig(ResolvedMail message, MessageScope scope) {
         // An explicit id (caller override or template pin — both scope-checked
         // at write time) wins over the tier policy.
         return message.serverConfigId() != null

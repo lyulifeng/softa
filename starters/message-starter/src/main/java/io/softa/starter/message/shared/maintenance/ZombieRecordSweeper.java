@@ -11,6 +11,7 @@ import org.springframework.stereotype.Component;
 
 import io.softa.framework.base.context.Context;
 import io.softa.framework.base.context.ContextHolder;
+import io.softa.starter.message.shared.TenantScopes;
 import io.softa.framework.orm.annotation.CrossTenant;
 import io.softa.framework.orm.domain.Filters;
 import io.softa.framework.orm.domain.FlexQuery;
@@ -124,7 +125,7 @@ public class ZombieRecordSweeper {
     /** Run one revive inside the record's tenant context (see {@link #sweep()}). */
     private boolean reviveInTenantContext(Long tenantId, BooleanSupplier revive) {
         Context ctx = ContextHolder.cloneContext();
-        ctx.setTenantId(tenantId != null ? tenantId : 0L);
+        ctx.setTenantId(tenantId != null ? tenantId : TenantScopes.PLATFORM);
         ctx.setCrossTenant(false);
         ctx.setSkipPermissionCheck(true);
         boolean[] ok = new boolean[1];

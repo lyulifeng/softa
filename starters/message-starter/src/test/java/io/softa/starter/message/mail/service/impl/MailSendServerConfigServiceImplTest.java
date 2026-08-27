@@ -3,7 +3,7 @@ package io.softa.starter.message.mail.service.impl;
 import java.util.List;
 import org.junit.jupiter.api.Test;
 
-import io.softa.framework.orm.domain.Filters;
+import io.softa.framework.orm.domain.FlexQuery;
 import io.softa.starter.message.mail.entity.MailSendServerConfig;
 
 import static org.mockito.ArgumentMatchers.any;
@@ -23,11 +23,15 @@ class MailSendServerConfigServiceImplTest {
     void demoteClearsEveryOtherDefaultButKeepsTheSavedOne() {
         MailSendServerConfigServiceImpl service = spy(new MailSendServerConfigServiceImpl());
         doReturn(List.of(config(1L), config(2L), config(3L)))
-                .when(service).searchList(any(Filters.class));
+                .when(service).searchList(any(FlexQuery.class));
         doReturn(true).when(service).updateOne(any(MailSendServerConfig.class));
 
         service.demoteOtherDefaults(2L);
 
+        // Disabled rows are in scope: they too must lose isDefault, else one
+        // would resurface as a second default when it is re-activated.
+        verify(service).searchList(argThat((FlexQuery q) ->
+                q.getFilterControl().isSkipActiveControl()));
         verify(service, times(2)).updateOne(any(MailSendServerConfig.class));
         verify(service).updateOne(argThat((MailSendServerConfig c) ->
                 c.getId().equals(1L) && Boolean.FALSE.equals(c.getIsDefault())));
@@ -38,7 +42,7 @@ class MailSendServerConfigServiceImplTest {
     @Test
     void demoteIsNoOpWhenTheSavedRowIsTheOnlyDefault() {
         MailSendServerConfigServiceImpl service = spy(new MailSendServerConfigServiceImpl());
-        doReturn(List.of(config(2L))).when(service).searchList(any(Filters.class));
+        doReturn(List.of(config(2L))).when(service).searchList(any(FlexQuery.class));
 
         service.demoteOtherDefaults(2L);
 

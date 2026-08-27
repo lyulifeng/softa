@@ -9,6 +9,8 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.test.util.ReflectionTestUtils;
 
+import io.softa.framework.orm.domain.Filters;
+import io.softa.framework.orm.domain.FlexQuery;
 import io.softa.framework.web.response.ApiResponse;
 import io.softa.starter.message.mail.dto.MailSendStatusDTO;
 import io.softa.starter.message.mail.dto.MailSenderSummaryDTO;
@@ -98,16 +100,16 @@ class MailApiControllerTest {
         config1.setFromAddress("primary@example.com");
         config1.setFromName("Primary Sender");
         config1.setIsDefault(true);
-        config1.setIsEnabled(true);
+        config1.setActive(true);
 
         MailSendServerConfig config2 = new MailSendServerConfig();
         config2.setId(2L);
         config2.setName("Backup");
         config2.setFromAddress("backup@example.com");
         config2.setIsDefault(false);
-        config2.setIsEnabled(true);
+        config2.setActive(true);
 
-        when(sendConfigService.listSelectable()).thenReturn(List.of(config1, config2));
+        when(sendConfigService.searchList(any(FlexQuery.class))).thenReturn(List.of(config1, config2));
 
         ApiResponse<List<MailSenderSummaryDTO>> response = controller.listSenders();
         Assertions.assertNotNull(response.getData());
@@ -122,7 +124,7 @@ class MailApiControllerTest {
 
     @Test
     void listSendersReturnsEmptyWhenNoneEnabled() {
-        when(sendConfigService.listSelectable()).thenReturn(List.of());
+        when(sendConfigService.searchList(any(FlexQuery.class))).thenReturn(List.of());
 
         ApiResponse<List<MailSenderSummaryDTO>> response = controller.listSenders();
         Assertions.assertNotNull(response.getData());
@@ -141,7 +143,7 @@ class MailApiControllerTest {
         template.setSubject("Welcome, {{ name }}!");
         template.setDefaultPriority(MailPriority.NORMAL);
 
-        when(templateService.resolveEffectiveList(true)).thenReturn(List.of(template));
+        when(templateService.searchList(any(Filters.class))).thenReturn(List.of(template));
 
         ApiResponse<List<MailTemplateSummaryDTO>> response = controller.listTemplates();
         Assertions.assertNotNull(response.getData());

@@ -41,6 +41,19 @@ public interface BaseConstant {
     String PREDEFINED_DATA_SYSTEM_DIR = "data-system/";
     /** The directory of predefined tenant data, located in src/resources/data-tenant/ */
     String PREDEFINED_DATA_TENANT_DIR = "data-tenant/";
+    /** The directory of predefined platform-tier data, located in src/resources/data-platform/ */
+    String PREDEFINED_DATA_PLATFORM_DIR = "data-platform/";
+
+    /**
+     * The platform tier's tenant id on {@code multiTenant} models: rows owned by
+     * the platform operator, not by any tenant. Deliberately {@code -1} — never
+     * {@code 0}, which collides with "no tenant selected" defaults (unset
+     * context fallbacks), and never a real tenant id (id generation is
+     * positive). Framework-wide constant: every starter that keeps a platform
+     * tier (message templates, server configs, provider routing, quotas)
+     * compares against this value.
+     */
+    Long PLATFORM_TENANT_ID = -1L;
 
     String SESSION_ID = "sessionId";
     String SESSION_ID_HEADER = "X-Session-Id";

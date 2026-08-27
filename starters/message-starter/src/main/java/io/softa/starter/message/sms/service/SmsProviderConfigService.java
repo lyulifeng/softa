@@ -22,7 +22,7 @@ public interface SmsProviderConfigService extends EntityService<SmsProviderConfi
 
     /**
      * Load a config by id within the caller's visibility scope: the caller's
-     * own tenant plus the platform tier (tenant_id = 0). Send records
+     * own tenant plus the platform tier (tenant_id = -1). Send records
      * legitimately reference platform-level configs, which the implicit
      * single-tenant filter would hide — dispatch and retry paths must resolve
      * ids through this method rather than {@code getById}.

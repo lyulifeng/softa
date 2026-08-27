@@ -72,7 +72,9 @@ public class SmsProviderDispatcher {
             Long configId = row.getProviderConfigId();
             SmsProviderConfig c = configCache.getById(configId,
                     () -> configService.getById(configId).orElse(null));
-            if (c != null && Boolean.TRUE.equals(c.getIsEnabled())) {
+            // The by-id cache read bypasses active control by design, so the
+            // disabled-route check stays explicit here.
+            if (c != null && Boolean.TRUE.equals(c.getActive())) {
                 precise.add(new ProviderCandidate(c, row.getPriority()));
             }
         }
@@ -110,8 +112,8 @@ public class SmsProviderDispatcher {
      * persisted send record is retried through the same provider.
      */
     public SmsProviderConfig resolveProviderById(Long id) {
-        // Visibility-scoped lookup: records may reference platform-level
-        // (tenant 0) configs that the implicit tenant filter would hide.
+        // Visibility-scoped lookup: records may reference platform-tier
+        // (tenant -1) configs that the implicit tenant filter would hide.
         SmsProviderConfig config = configCache.getById(id,
                 () -> configService.findVisibleById(id).orElse(null));
         if (config == null) {

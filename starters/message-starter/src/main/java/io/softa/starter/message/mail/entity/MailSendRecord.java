@@ -38,7 +38,7 @@ public class MailSendRecord extends AuditableModel {
     private Long id;
 
     @Field(label = "Tenant ID",
-            description = "0 = platform-level (shared across tenants); >0 = tenant-level. "
+            description = "-1 = platform-tier (invisible to tenants); >0 = tenant-level. "
                     + "Auto-stamped by the ORM on writes when multi-tenancy is enabled.")
     private Long tenantId;
 
