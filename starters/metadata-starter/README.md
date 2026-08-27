@@ -4,7 +4,9 @@ Annotation-driven metadata management for Softa applications. Entities and
 their fields are described in Java annotations (`@Model` / `@Field` /
 `@OptionSet` / `@OptionItem` / `@Index`); a boot-time scanner reconciles the
 annotations with `sys_*` catalog rows and, for the packages listed in
-`scanner-scope`, applies the corresponding DDL automatically.
+`scanner-scope`, **converges the physical schema to the annotations** —
+declared changes and hand-made drift alike, so a restart always ends with
+schema ≡ annotations for everything the scope owns.
 
 ## Quick start
 
@@ -71,9 +73,9 @@ system:
 ```
 MetadataAnnotationScanner: scanner-scope active (matchAll=true), scanning classpath...
 MetadataAnnotationScanner: 12 in-scope @Model class(es), 1 in-scope @OptionSet enum(s) (of 12 / 1 on classpath)
+DdlOrchestrator: CREATE TABLE customer [converge] genesis OK
+DdlOrchestrator: converged 12 in-scope model(s) — executed 1 DDL statement(s), skipped 0 already applied
 MetadataAnnotationScanner: applied N row change(s) to sys_*
-DdlOrchestrator: CREATE TABLE customer OK
-DdlOrchestrator: applied 1 DDL statement(s); 0 drop operation(s) deferred to manual SQL
 ```
 
 Then `SELECT model_name, app_code FROM sys_model WHERE app_code = '<system.app-code>';`
@@ -180,9 +182,9 @@ empty / unset = manage nothing.
 
 | `system.metadata.scanner-scope` | Scanner runs | DDL execution | Drift detection |
 |---|---|---|---|
-| `["*"]` | Boot-time, eager, all packages | Auto: `CREATE TABLE` / `ADD COLUMN` / `MODIFY COLUMN` / `ADD INDEX`. **Never auto-DROP** | Code-less catalog roots named in a WARN with copy-paste SQL |
-| `["io\\.acme\\.foo.*", …]` | Boot-time, in-scope packages only | Same auto-policy, in-scope models only | n/a |
-| empty / unset (default, prod) | n/a | n/a | `MetadataAnnotationChecker` runs post-boot on a virtual thread; logs WARN if code-vs-DB drift detected, audits the physical schema against `sys_*` (see Physical recovery), and records the `GET /metadata/status` snapshot |
+| `["*"]` | Boot-time, eager, all packages | **Physical convergence** (see below): every owned table converges to its annotations on every boot — CREATE / ADD / MODIFY (narrowing included) / declared RENAME, plus **DROP of undeclared columns and indexes** | Code-less catalog roots named in a WARN with copy-paste SQL; the drift audit reports the residual (projections, undeclared tables) |
+| `["io\\.acme\\.foo.*", …]` | Boot-time, in-scope packages only | Same convergence, in-scope models only — out-of-scope tables are never touched | n/a |
+| empty / unset (default, prod) | n/a | n/a | `MetadataAnnotationChecker` runs post-boot on a virtual thread; logs WARN if code-vs-DB drift detected, audits the physical schema against `sys_*` (see Physical convergence — read-only here), and records the `GET /metadata/status` snapshot |
 
 On a **shared dev database**, give each developer a narrow scope (their own
 packages) so the scanner only reconciles the Java packages they are actively
@@ -207,23 +209,38 @@ Rationale, and why this differs from a Java-class deletion being "obvious drift"
 is a **first-class** state here — the Studio no-code lane and metadata seed files author models
 that never have a Java class, and nothing in the catalog records row ownership (the `Ownership`
 enum is retained but unused). So "orphan" and "deliberately code-less" are indistinguishable, and
-auto-deleting would silently destroy hand-authored definitions on every boot. Same asymmetry as
-the physical schema below: grow automatically, destroy only when a human says so.
+auto-deleting would silently destroy hand-authored definitions on every boot. Note the contrast
+with the physical schema: an undeclared **column** on a table the scope owns has no legitimate
+author (the owner's annotations are its single source of truth) and is converged away, while a
+code-less **root** may be someone's deliberate definition and is only ever named in the WARN.
 
-**DDL auto-execute policy**:
+**DDL execution policy** — the physical schema of every in-scope owned table is a pure
+function of the annotations. With physical facts available (the normal case) the scanner runs
+**physical convergence**:
 
-| Operation | Auto-executed |
+| Drift / change | Convergence action |
 |---|---|
-| `CREATE TABLE IF NOT EXISTS` | ✅ |
-| `ADD COLUMN` | ✅ |
-| `MODIFY COLUMN` (type / nullable / length / default) | ✅ when the physical comparison says EQUAL / WIDEN (or no physical facts are available) |
-| `MODIFY COLUMN` that would **narrow** the physical column (or the type families are incomparable) | ❌ — a MODIFY re-states the full column definition, so even a comment-only change could truncate a physically wider column; logs WARN with copy-paste SQL |
-| `ADD INDEX` | ✅ |
-| `DROP TABLE` / `DROP COLUMN` / `DROP INDEX` | ❌ — logs WARN with copy-paste SQL |
+| table missing | `CREATE TABLE` from the full code definition (genesis); a pre-existing table is adopted column-by-column instead |
+| declared column missing | `ADD COLUMN`; `CHANGE COLUMN` when a rename pairing's prior column physically exists |
+| declared attribute change (type / length / required / default / comment) | `MODIFY COLUMN` re-stating the declared shape |
+| physical type/width mismatch — widen, **narrow**, incomparable | `MODIFY COLUMN` to the declared shape. Narrowing executes here: the declaration is the truth, and a non-empty `scanner-scope` is by definition non-production |
+| **undeclared column / index** on an owned table | **`DROP`** — drift is eliminated, not reported |
+| declared index missing / definition changed | `ADD INDEX` / rebuild (DROP + ADD) |
+| bare `tableName` change while the old table physically exists | boot **fails** with instructions — creating the new table would silently divorce the data, and the planner never guesses (declare a model `renamedFrom`, or rename manually first) |
+| whole undeclared **tables**; anything on a **projection** | untouched — ownership cannot be proven (another `app_code`, a legacy table) / belongs to the owner; the drift audit is the reporting channel |
 
-Rationale: additive DDL doesn't lose data; `DROP` operations are destructive
-and may take minutes on large tables. Even in dev, you should consciously
-choose to drop schema.
+When physical introspection is unavailable the boot degrades to the conservative
+**metadata-only lane**: it plans purely from the `sys_*` diff — additive changes and declared
+renames auto-execute; DROPs, bare `tableName` changes and anything else destructive defer to a
+warn-only copy-paste SQL block, because without facts drift and intent are indistinguishable.
+
+Rationale: the audit and the convergence engine share one comparator (`PhysicalTypeCompat`) and
+one index-name matcher (`IndexNameCompat`), so what the audit would report is exactly what a
+converging boot eliminates — after any restart, schema ≡ annotations for everything the scope
+owns. Destructive verbs can never reach production because production runs the empty scope
+(checker-only, report-not-act); the gate is the existing `scanner-scope` posture, not a new
+switch. `DROP` / `MODIFY` on large tables can still lock for minutes — another reason a
+non-empty scope stays out of production.
 
 ### Catalog self-bootstrap (the `sys_*` tables' own schema)
 
@@ -242,14 +259,15 @@ from their own annotations, before the strict catalog read**
 | column missing, field declares `renamedFrom`, prior column present | `CHANGE COLUMN` — data carried |
 | prior **and** new columns both present under a declared rename | boot fails with instructions (half-applied rename; never guessed) |
 | column physically narrower than declared (bounded widths only) | `MODIFY COLUMN` widen. Declared-unbounded columns (TEXT/JSON/DTO) never trigger on width — engines report their width inconsistently and the same MODIFY would re-plan every boot |
-| column wider / incomparable, undeclared physical columns | untouched — the physical drift audit (which includes the catalog tables) is the reporting channel |
+| column wider / incomparable, undeclared physical columns | untouched by **this stage** — it runs before the diff exists and possibly under a narrow scope that does not manage the catalog, so it may only grow the schema. When the catalog packages are in scope, the main convergence pass later in the same boot eliminates these like any other in-scope drift; otherwise the drift audit is the reporting channel |
 | declared index missing | `ADD INDEX` |
 
 After the reconcile the strict read is structurally guaranteed to succeed
 (its SELECT set ⊆ physical columns). What still needs a migration: **backfill
 `UPDATE`s** that give an added column real values on rows the scanner does not
-manage (narrow scopes), any DROP, and environments running the empty-scope
-checker posture — there nothing auto-applies, catalog included.
+manage (narrow scopes), destructive changes on **out-of-scope** catalog tables,
+and environments running the empty-scope checker posture — there nothing
+auto-applies, catalog included.
 
 The whole boot DDL window (catalog reconcile → strict read → diff → DDL → row
 writes) is serialized across instances by a database session lock
@@ -257,69 +275,59 @@ writes) is serialized across instances by a database session lock
 connection, 60s wait budget; a timeout fails the boot rather than queueing
 instances behind a wedged sibling).
 
-### Physical recovery
+### Physical convergence
 
-The diff is computed against `sys_*`, which a hand-touched database can leave
-out of step with the physical schema — a planned `MODIFY` can target a
-hand-dropped column, planned ALTERs a hand-dropped table, a planned `CREATE` a
-pre-existing table. The orchestrator therefore snapshots the managed tables via
-`DatabaseMetaData` before rendering and prepends **additive-only** recovery DDL
-(labelled `[physical-recovery]` in the logs). The snapshot runs on **every**
-boot (the drift audit needs it too) and costs a constant number of round trips
-regardless of model count — tables and columns are each one catalog-wide
-metadata pass filtered in memory, index names one dialect query (MySQL /
-PostgreSQL; other engines fall back to one `getIndexInfo` per table). It is
-logged as `physical snapshot = N managed table(s)`. There is no switch for this —
-posture follows `scanner-scope` alone (active scope recovers, empty scope
-audits read-only), and an introspection failure degrades gracefully:
+The convergence planner needs facts: the orchestrator snapshots the managed tables via
+`DatabaseMetaData` on every boot (the drift audit needs it too). The snapshot costs a
+constant number of round trips regardless of model count — tables and columns are each one
+catalog-wide metadata pass filtered in memory, index names one dialect query (MySQL /
+PostgreSQL; other engines fall back to one `getIndexInfo` per table). It is logged as
+`physical snapshot = N managed table(s)`. There is no switch for any of this — posture
+follows `scanner-scope` alone (active scope converges, empty scope audits read-only), and
+an introspection failure degrades gracefully to the metadata-only lane described above.
 
-| Drift | Recovery |
-|---|---|
-| `MODIFY COLUMN` targets a physically missing column | `ADD COLUMN` from the code definition first; the original `MODIFY` then re-asserts |
-| ALTERs target a physically missing table | full `CREATE TABLE` from the code definition first |
-| `CREATE TABLE` targets a pre-existing table | the CREATE degrades to already-applied; missing declared columns / indexes are added (adoption) |
-| Declared rename whose old + new columns are both gone | `ADD COLUMN` of the new shape; the `CHANGE` degrades |
-| `MODIFY COLUMN` whose physical comparison says NARROW / INCOMPARABLE | deferred to the warn-only SQL block (widen freely, never narrow silently) |
+The planner reads the **verb** from the physical facts and the **deltas introspection
+cannot see** from the `sys_*` diff: declared-rename pairings with their exact prior
+column/table names, attribute changes (NOT NULL / DEFAULT / COMMENT), and index-definition
+changes behind an unchanged name. Because the verb comes from the facts, drift heals whether
+or not a diff exists — a hand-dropped column re-adds on the next boot, a hand-dropped table
+recreates in full, a pre-existing table behind a fresh model is adopted, and a declared
+rename whose prior column still lingers physically carries the data with `CHANGE COLUMN`
+even when the `sys_*` rows were already updated elsewhere (the partial-restore /
+cross-environment-import wound). Statements classify per unit on execution: a target that
+vanished between snapshot and execution degrades to an already-applied WARN, while genuine
+SQL errors fail the boot with the rows unwritten (the next boot replans the same state).
 
 Type comparison is by `java.sql.Types` **equivalence class** on both sides (the
 declared side through `FieldType.getSqlType()` / the TO_ONE FK's resolved
 mirror; the observed side through the same reverse map the studio JDBC
 connector uses) — never by parsing engine type-name strings. Within a class,
 widths compare numerically (declared TEXT/JSON/DTO and physical TEXT/CLOB count
-as unbounded); `INTEGER ⊂ LONG ⊂ BIG_DECIMAL` may widen along the lattice; a
-declared BOOLEAN accepts an integer-class column (MySQL renders BOOLEAN as
-TINYINT). Anything the comparison cannot classify degrades to
-report-not-act. Non-EQUAL verdicts also appear in the drift audit's
-TYPE MISMATCH section on every boot, so a deferred narrowing stays visible
-after its one-time WARN.
+as unbounded — declared-unbounded columns never trigger on width, because engines
+report their width inconsistently and the same MODIFY would re-plan every boot);
+`INTEGER ⊂ LONG ⊂ BIG_DECIMAL` orders the numeric lattice; a declared BOOLEAN
+accepts an integer-class column (MySQL renders BOOLEAN as TINYINT). Index names
+match through `IndexNameCompat` (exact, or an engine-mangled synthetic variant),
+by both the audit and the planner.
 
-The originally planned statements always still run after the recovery unit, so
-a stale introspection can only add degrade-to-WARN noise — never lose a change.
-Physical-only extras (columns/tables the code doesn't declare) are never
-touched, and nothing here changes the no-auto-DROP policy. Introspection
-failure logs a WARN and falls back to plain diff-driven planning (in which
-genuine drift behind a planned statement fails the boot, exactly the
-pre-recovery behavior — the narrowing guard likewise cannot judge without
-facts and lets the MODIFY through).
-
-**Whole-catalog drift audit + `GET /metadata/status`**: the same snapshot also
-feeds a consolidated physical health report on every boot — declared tables /
-columns / indexes that are physically missing, plus undeclared extras found on
-managed tables (hand-added, or orphaned by a warn-only DROP) — logged in one
-block by the scanner (active scope, audited against the from-code metadata) or
-the checker (empty scope, audited against `sys_*`, read-only). Recovery only
-heals declared-missing entries that sit behind the current diff; everything
-else stays in the report until acted on. The boot snapshot — code vs catalog
-fingerprints (SHA-256 over the per-aggregate checksums the studio handshake
+**Whole-catalog drift audit + `GET /metadata/status`**: after convergence executes, the
+scanner re-snapshots and audits, so the boot log's drift report is the **residual** —
+projection tables someone else must create, out-of-scope catalog drift, whole undeclared
+tables — never work the scope owns but left undone. Under the empty scope the checker
+audits `sys_*` vs physical read-only and the report is the whole drift. The boot snapshot —
+code vs catalog fingerprints (SHA-256 over the per-aggregate checksums the studio handshake
 uses) plus the drift report — is served by `GET /metadata/status`, so "did my
 change reach this runtime?" is one call.
 
 ### Field / model rename — declare `renamedFrom`
 
 The scanner uses **set-based comparison** keyed by `fieldName` / `modelName` /
-`itemCode`, so an *undeclared* rename looks identical to "drop old + add new":
-ADD COLUMN (auto) + WARN-only DROP → both columns coexist, old keeps the data,
-new is NULL = **silent data divorce**.
+`itemCode`, so an *undeclared* rename looks identical to "drop old + add new" —
+and under an active scope the convergence pass executes exactly that: the new
+column is added empty, and the old column — no longer declared by anything —
+is **dropped together with its data** in the same boot. (On the metadata-only
+fallback lane the DROP stays warn-only and the data lingers in the orphaned
+column instead.) Either way, nothing arrives in the new column.
 
 Declaring the prior name fixes this:
 

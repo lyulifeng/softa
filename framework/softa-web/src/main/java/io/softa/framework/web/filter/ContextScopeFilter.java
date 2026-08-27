@@ -5,6 +5,7 @@ import jakarta.servlet.*;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 import lombok.extern.slf4j.Slf4j;
+import org.slf4j.MDC;
 import org.springframework.core.Ordered;
 import org.springframework.core.annotation.Order;
 import org.springframework.http.MediaType;
@@ -12,6 +13,7 @@ import org.springframework.stereotype.Component;
 
 import io.softa.framework.base.context.Context;
 import io.softa.framework.base.context.ContextHolder;
+import io.softa.framework.base.context.MdcKeys;
 import io.softa.framework.base.enums.ResponseCode;
 import io.softa.framework.base.exception.BaseException;
 import io.softa.framework.base.exception.UserNotFoundException;
@@ -76,10 +78,25 @@ public class ContextScopeFilter implements Filter {
 
         try {
             ContextHolder.runWith(ctx, () -> {
+                // Mirror the scope identity into SLF4J's MDC: the Context lives in a
+                // ScopedValue the logging system cannot see, so this is what puts
+                // traceId / tenantId / userId on every log line (and on anything
+                // MDC-aware, e.g. structured log encoders and Sentry events).
+                MDC.put(MdcKeys.TRACE_ID, ctx.getTraceId());
+                if (ctx.getTenantId() != null) {
+                    MDC.put(MdcKeys.TENANT_ID, String.valueOf(ctx.getTenantId()));
+                }
+                if (ctx.getUserId() != null) {
+                    MDC.put(MdcKeys.USER_ID, String.valueOf(ctx.getUserId()));
+                }
                 try {
                     chain.doFilter(request, response);
                 } catch (IOException | ServletException e) {
                     throw new RuntimeException(e);
+                } finally {
+                    MDC.remove(MdcKeys.TRACE_ID);
+                    MDC.remove(MdcKeys.TENANT_ID);
+                    MDC.remove(MdcKeys.USER_ID);
                 }
             });
         } catch (RuntimeException re) {

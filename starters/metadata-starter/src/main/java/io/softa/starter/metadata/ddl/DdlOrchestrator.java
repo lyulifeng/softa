@@ -2,9 +2,11 @@ package io.softa.starter.metadata.ddl;
 
 import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Set;
 import java.util.function.Function;
 import java.util.stream.Collectors;
 import javax.sql.DataSource;
@@ -17,10 +19,13 @@ import org.springframework.jdbc.core.JdbcTemplate;
 
 import io.softa.framework.base.utils.StringTools;
 import io.softa.framework.orm.enums.DatabaseType;
+import io.softa.framework.orm.enums.FieldType;
+import io.softa.framework.orm.enums.StorageType;
 import io.softa.framework.orm.jdbc.database.DBUtil;
 import io.softa.starter.metadata.ddl.DdlPolicy.ModelOps;
 import io.softa.starter.metadata.ddl.context.ModelDdlCtx;
 import io.softa.starter.metadata.ddl.dialect.DdlDialect;
+import io.softa.starter.metadata.ddl.introspect.IndexNameCompat;
 import io.softa.starter.metadata.ddl.introspect.PhysicalSchema;
 import io.softa.starter.metadata.ddl.introspect.PhysicalSchemaReader;
 import io.softa.starter.metadata.ddl.introspect.PhysicalTypeCompat;
@@ -32,75 +37,85 @@ import io.softa.starter.metadata.scanner.diff.DiffEngine;
 import io.softa.starter.metadata.scanner.diff.SchemaDiff;
 
 /**
- * Applies a {@link SchemaDiff} to the database by rendering and executing the
- * appropriate DDL through the dialect-specific {@link DdlDialect}, gated by
- * {@link DdlPolicy}.
+ * Renders and executes the scanner lane's DDL through the dialect-specific
+ * {@link DdlDialect}. Two planners share one execution/classification core:
  *
- * <p>DDL auto-execute policy:
+ * <p><b>Convergence lane ({@link #converge})</b> — the primary path wherever
+ * {@code scanner-scope} is active (non-production). Annotations are the single source of
+ * truth: the physical schema of every in-scope owned table is converged to the declared
+ * shape on every boot, so drift cannot outlive a restart. The verb comes from comparing the
+ * from-code definition against the introspected {@link PhysicalSchema} facts; the
+ * {@link SchemaDiff} (code vs {@code sys_*} rows) contributes only what the physical shape
+ * cannot express — declared rename pairings with their exact prior column names, attribute
+ * modifications invisible to introspection (NOT NULL / DEFAULT / COMMENT), and index
+ * definition changes behind an unchanged name:
  * <ul>
- *   <li>CREATE TABLE / ADD COLUMN / MODIFY COLUMN / CHANGE COLUMN (declared
- *       rename) / RENAME TABLE (declared rename) → execute</li>
- *   <li>DROP TABLE / DROP COLUMN / DROP INDEX → never execute; all warn-only
- *       units are collected into a single consolidated WARN whose body is one
- *       copy-paste SQL block (labels ride along as {@code --} comments)</li>
- *   <li>undeclared {@code tableName}-attribute change → warn-only RENAME hint</li>
+ *   <li>declared table missing → {@code CREATE TABLE} from the full code definition
+ *       (genesis); a pre-existing table is adopted column-by-column instead;</li>
+ *   <li>declared table missing but the declared-rename prior table physically present →
+ *       {@code RENAME TABLE} (data carried); an <b>undeclared</b> {@code tableName} change
+ *       whose old table still physically exists fails the boot — silently creating the new
+ *       table would divorce the data, and the planner never guesses;</li>
+ *   <li>declared column missing → {@code ADD COLUMN}; with a rename pairing whose prior
+ *       column physically exists → {@code CHANGE COLUMN} (both sides physically present
+ *       fails fast — a half-applied rename a human must resolve);</li>
+ *   <li>declared column present with a DDL-relevant attribute delta in the diff, or a
+ *       physical type/width mismatch ({@link PhysicalTypeCompat} — the same comparator the
+ *       drift audit uses, so audit and execution can never disagree) → {@code MODIFY} to the
+ *       declared shape. Narrowing and type-family changes execute here: the declaration is
+ *       the truth and the environment is by definition non-production;</li>
+ *   <li>undeclared physical columns / indexes on an owned table → {@code DROP} — the
+ *       destructive half of "eliminate drift". Projections are never planned (their table
+ *       belongs to the owner), and whole undeclared <i>tables</i> stay untouched: nothing
+ *       proves their ownership (another app_code, a legacy table), so they remain a
+ *       report-only concern of the drift audit;</li>
+ *   <li>declared index missing → {@code ADD INDEX}; definition change → rebuild
+ *       (DROP + ADD). Index-name matching goes through {@link IndexNameCompat} so
+ *       engine-mangled names (H2 unique-index suffixes) neither flap nor get dropped.</li>
  * </ul>
  *
- * <p><b>Granularity</b>: every change renders as its own {@link RenderedDdl} and
- * executes <b>one statement at a time</b> ({@link SqlStatements}). This is a
- * correctness constraint, not a style choice: (a) MySQL Connector/J rejects
- * multi-statement strings without {@code allowMultiQueries=true}; (b) the
- * "already applied" degradation below classifies per statement — batching N
- * changes into one statement (or N statements into one execute) lets a
- * duplicate on the first change silently swallow the remaining N-1, after
- * which the committed {@code sys_*} rows make the diff empty and the loss
- * permanent.
+ * <p><b>Metadata-only lane ({@link #apply})</b> — the fallback when physical introspection
+ * is unavailable: plans purely from the {@link SchemaDiff} with the conservative
+ * pre-convergence policy (additive auto; DROP / undeclared-rename / anything destructive
+ * warn-only with copy-paste SQL), because without facts the planner cannot distinguish
+ * drift from intent.
  *
- * <p><b>Renames</b> (the {@code renamedFrom} attribute): when declared, the
- * upstream {@link DiffEngine} pairs the removed-old / added-new split into a single
- * {@code Modification(kind=RENAME)}, which this orchestrator renders as
- * {@code CHANGE COLUMN old new ...} (field, kind {@code DECLARED_COLUMN_RENAME}) or
- * {@code RENAME TABLE old TO new} (model, kind {@code DECLARED_TABLE_RENAME}) and
- * <b>auto-executes</b> — the data is preserved in place. Without a declaration the
- * diff still sees {@code added=[new] + removed=[old]} and processes it as ADD COLUMN
- * (auto) + DROP COLUMN (warn-only) — the old column keeps its data, the new is NULL;
- * to rename safely either declare {@code renamedFrom} or pre-stage an explicit
- * {@code CHANGE COLUMN} migration + matching {@code UPDATE sys_field} rows. See
- * {@code annotation-lane.md} Scenario 10 for the workflow.
+ * <p>{@link #reconcilePhysical} is the additive-only convergence over the {@code sys_*}
+ * catalog tables themselves (boot Stage A, before the strict catalog read): same planner,
+ * destructive verbs disabled — it runs before the diff exists and must be safe under narrow
+ * scopes where the catalog is somebody else's to manage.
  *
- * <p>Idempotency: relies on the {@link SchemaDiff} being accurate. If diff
- * says "field added" but the column already exists, the dialect will fail
- * with SQL error 1060 (Duplicate column) on MySQL — caught and degraded to
- * WARN for that statement only (assumes manual run of equivalent SQL already
- * happened); the remaining statements still execute.
+ * <p><b>Granularity</b>: every change renders as its own {@link RenderedDdl} and executes
+ * <b>one statement at a time</b> ({@link SqlStatements}). This is a correctness constraint,
+ * not a style choice: (a) MySQL Connector/J rejects multi-statement strings without
+ * {@code allowMultiQueries=true}; (b) the "already applied" degradation classifies per
+ * statement — batching N changes into one statement lets a duplicate on the first change
+ * silently swallow the remaining N-1, after which the committed {@code sys_*} rows make the
+ * diff empty and the loss permanent.
  *
- * <p><b>Physical recovery</b>: the diff is
- * computed against {@code sys_*}, which a hand-touched database can leave out of step with the
- * physical schema — a planned MODIFY can target a hand-dropped column, planned ALTERs a
- * hand-dropped table, a planned CREATE a pre-existing table. Before rendering, the orchestrator
- * snapshots the managed tables ({@link PhysicalSchemaReader}) and prepends <b>additive-only</b>
- * recovery units (labelled {@code [physical-recovery]}): the missing column / table is
- * recreated from the code definition, a pre-existing table is adopted column-by-column. The
- * originally planned statements always still render <i>after</i> the recovery unit — on a true
- * recovery they re-assert as no-ops or degrade as already-applied, and when the introspection
- * itself was stale they carry the real change — so wrong facts can only add WARN noise, never
- * lose a change. Introspection failure logs a WARN and disables recovery for that run (the
- * planning then runs purely from the metadata diff — no knob, graceful degradation only).
+ * <p><b>Renames</b> (the {@code renamedFrom} attribute): when declared, the upstream
+ * {@link DiffEngine} pairs the removed-old / added-new split into a single
+ * {@code Modification(kind=RENAME)} carrying the exact prior column / table name from the
+ * db row. The convergence lane additionally honors the attribute straight from the code
+ * definition (prior name via {@code snake_case}) so a rename whose rows were already
+ * updated still heals a lagging physical schema instead of divorcing it into ADD + DROP.
  *
- * <p>Failure handling: non-degradable SQL errors propagate as runtime
- * exceptions, which surface in {@code MetadataAnnotationScanner.initialize()}
- * and fail the {@code AppStartup} sequence (fail-fast while the scanner is
- * active). Because the scanner runs DDL <b>before</b> committing the
- * {@code sys_*} rows, a failed boot leaves the catalog rows unwritten — the
- * next boot recomputes the same diff and retries; DDL that already succeeded
- * on the earlier attempt degrades to WARN via the already-applied
- * classification above.
+ * <p>Failure handling: non-degradable SQL errors propagate as runtime exceptions, which
+ * surface in {@code MetadataAnnotationScanner.initialize()} and fail the {@code AppStartup}
+ * sequence (fail-fast while the scanner is active). Because the scanner runs DDL
+ * <b>before</b> committing the {@code sys_*} rows, a failed boot leaves the catalog rows
+ * unwritten — the next boot recomputes the same plan and retries; DDL that already
+ * succeeded degrades to WARN via the already-applied classification
+ * ({@link DdlErrorClassifier}).
  */
 @Slf4j
 public class DdlOrchestrator {
 
-    /** Label marker on units the physical-recovery planning prepended. */
-    static final String RECOVERY_TAG = "[physical-recovery]";
+    /** Label marker on units planned by {@link #reconcilePhysical} (the catalog-table boot path). */
+    static final String CATALOG_TAG = "[catalog]";
+
+    /** Label marker on convergence units that exist purely because the physical schema drifted. */
+    static final String CONVERGE_TAG = "[converge]";
 
     private final JdbcTemplate jdbcTemplate;
     private final DdlMetadataResolver metadataResolver;
@@ -114,52 +129,24 @@ public class DdlOrchestrator {
         this.datasourceUrl = datasourceUrl;
     }
 
-    /** Compatibility overload without from-code indexes (physical table recovery then recreates without them). */
-    public void apply(SchemaDiff diff, List<SysModel> allCodeModels, List<SysField> allCodeFields) {
-        apply(diff, allCodeModels, allCodeFields, List.of());
-    }
-
-    /** Self-introspecting overload: snapshots the managed tables itself (skipped on an empty diff). */
-    public void apply(SchemaDiff diff, List<SysModel> allCodeModels, List<SysField> allCodeFields,
-                      List<SysModelIndex> allCodeIndexes) {
-        apply(diff, allCodeModels, allCodeFields, allCodeIndexes,
-                diff.isEmpty() ? null : introspect(allCodeModels));
-    }
+    // ---- metadata-only lane (no physical facts) ------------------------
 
     /**
-     * Apply the diff. Called by {@code MetadataAnnotationScanner.initialize()}
-     * <b>before</b> {@code SysJdbcWriter.apply(diff)} writes the {@code sys_*}
-     * rows, so that a DDL failure leaves the catalog rows unwritten and the
-     * next boot retries the same diff.
+     * Apply the diff planning purely from the metadata delta — the fallback lane for a boot
+     * whose physical introspection failed ({@link #introspect} returned {@code null}).
+     * Conservative policy: additive changes and declared renames auto-execute; DROPs,
+     * undeclared table renames and everything else destructive defer to one consolidated
+     * warn-only SQL block, because without facts drift and intent are indistinguishable.
      *
-     * @param diff           the computed schema diff
-     * @param allCodeModels  all from-code {@code SysModel}s — used by
-     *                       {@link DdlPolicy} to resolve model attributes (e.g.
-     *                       custom {@code tableName}) when a model has field/index
-     *                       changes but no model-level diff
-     * @param allCodeFields  all from-code {@code SysField}s — used to build a
-     *                       complete field→column mapping for index DDL, so that
-     *                       indexes referencing pre-existing fields with custom
-     *                       {@code columnName} are resolved correctly
-     * @param allCodeIndexes all from-code {@code SysModelIndex}es — used to
-     *                       recreate the full index set when physical recovery
-     *                       rebuilds a hand-dropped table
-     * @param facts          the physical snapshot to plan recovery against, or
-     *                       {@code null} to plan purely from the metadata diff —
-     *                       the scanner shares its audit snapshot here
+     * <p>Called <b>before</b> {@code SysJdbcWriter.apply(diff)} writes the {@code sys_*}
+     * rows, so a DDL failure leaves the catalog rows unwritten and the next boot retries.
      */
-    public void apply(SchemaDiff diff, List<SysModel> allCodeModels, List<SysField> allCodeFields,
-                      List<SysModelIndex> allCodeIndexes, PhysicalSchema facts) {
-        List<RenderedDdl> rendered = render(diff, allCodeModels, allCodeFields, allCodeIndexes, facts);
-        long recovered = rendered.stream().filter(d -> d.label().contains(RECOVERY_TAG)).count();
-        if (recovered > 0) {
-            log.warn("DdlOrchestrator: physical schema drift detected — {} additive recovery unit(s) "
-                    + "prepended (see the {} labels below)", recovered, RECOVERY_TAG);
-        }
-        ExecResult result = executeAll(rendered);
+    public void apply(SchemaDiff diff, List<SysModel> allCodeModels, List<SysField> allCodeFields) {
+        List<RenderedDdl> rendered = render(diff, allCodeModels, allCodeFields);
+        ExecResult result = executeAll(rendered, false);
         warnDeferred(result.deferred());
         log.info("DdlOrchestrator: executed {} DDL statement(s), skipped {} already applied; "
-                        + "{} drop/rename/narrowing operation(s) deferred to manual SQL",
+                        + "{} drop/rename operation(s) deferred to manual SQL",
                 result.executed(), result.skipped(), result.deferred().size());
     }
 
@@ -168,16 +155,15 @@ public class DdlOrchestrator {
     }
 
     /**
-     * Execute the auto kinds statement by statement, collecting warn-only units. Shared by the
-     * diff-driven {@link #apply} and the snapshot-driven {@link #reconcilePhysical} so both
-     * paths get the same already-applied degradation and CREATE-degrade short-circuit.
+     * Execute rendered units statement by statement, deferring the warn-only kinds unless
+     * {@code executeEverything} (the convergence lane, where destructive verbs are policy).
      */
-    private ExecResult executeAll(List<RenderedDdl> rendered) {
+    private ExecResult executeAll(List<RenderedDdl> rendered, boolean executeEverything) {
         int executed = 0;
         int skipped = 0;
         List<RenderedDdl> deferred = new ArrayList<>();
         for (RenderedDdl ddl : rendered) {
-            if (!ddl.autoExecute()) {
+            if (!executeEverything && !ddl.autoExecute()) {
                 deferred.add(ddl);
                 continue;
             }
@@ -191,8 +177,7 @@ public class DdlOrchestrator {
                 }
                 // A degraded CREATE TABLE means the table pre-exists with an unknown shape: the
                 // unit's remaining statements (PostgreSQL renders COMMENT ON ... separately) may
-                // reference columns the physical table lacks — skip them. Adoption / recovery
-                // units carry their own comments for whatever they actually add. Index-rebuild
+                // reference columns the physical table lacks — skip them. Index-rebuild
                 // units keep running after a degraded DROP half (the ADD half must still apply).
                 if (firstStatement && !ran && ddl.kind() == RenderedDdl.Kind.CREATE_TABLE) {
                     break;
@@ -204,10 +189,10 @@ public class DdlOrchestrator {
     }
 
     /**
-     * Snapshot the managed tables' physical shape for recovery planning — also called by the
-     * scanner so one snapshot serves both the drift audit and the recovery. Any failure
-     * (introspection is an optimization, never a gate) degrades to "no facts" — the
-     * render then plans purely from the metadata diff, the pre-introspection behavior.
+     * Snapshot the managed tables' physical shape for convergence planning — also the
+     * drift audit's fact source, so one snapshot serves both. Any failure (introspection
+     * is an optimization, never a gate) degrades to "no facts" — the caller then falls
+     * back to the metadata-only lane.
      */
     public PhysicalSchema introspect(List<SysModel> allCodeModels) {
         DataSource dataSource = jdbcTemplate.getDataSource();
@@ -217,49 +202,79 @@ public class DdlOrchestrator {
         try {
             return PhysicalSchemaReader.readManagedTables(dataSource, allCodeModels);
         } catch (Exception e) {
-            log.warn("DdlOrchestrator: physical schema introspection unavailable — recovery planning "
-                    + "disabled for this run: {}", e.getMessage());
+            log.warn("DdlOrchestrator: physical schema introspection unavailable — convergence "
+                    + "planning disabled for this run: {}", e.getMessage());
             return null;
         }
     }
 
-    /** Label marker on units planned by {@link #reconcilePhysical} (the catalog-table boot path). */
-    static final String CATALOG_TAG = "[catalog]";
+    // ---- convergence lane (annotations vs physical facts) ---------------
 
     /**
-     * Converge the given models' physical tables <b>directly from their from-code
-     * definitions</b> against the introspected facts — no catalog-row diff involved.
+     * Converge every in-scope model's physical table to its from-code definition — the
+     * scanner's primary DDL path (see the class javadoc for the verb table). The
+     * {@code diff} supplies the deltas introspection cannot see; everything else derives
+     * from {@code facts}. Executes all planned units, destructive ones included.
      *
-     * <p>This is the boot path for the {@code sys_*} catalog tables themselves, whose
-     * "last applied state" is recorded nowhere but the physical schema (the rows that
-     * record every other model's state live <i>inside</i> these tables — the
-     * chicken-and-egg that used to require a hand-written migration for every
-     * catalog-table column, and a baseline SQL file for a fresh database). It runs
-     * <b>before</b> {@code SysJdbcLoader}'s strict read, so after it returns the read
+     * @return whether any statement was actually executed (callers refresh their snapshot
+     *         only then)
+     */
+    public boolean converge(List<SysModel> codeModels, List<SysField> codeFields,
+                            List<SysModelIndex> codeIndexes, SchemaDiff diff, PhysicalSchema facts) {
+        DdlDialect dialect = resolveDialect();
+        Map<String, SysModel> modelsByName = codeModels.stream()
+                .collect(Collectors.toMap(SysModel::getModelName, Function.identity(), (a, b) -> a));
+        Map<String, ModelOps> diffHints = DdlPolicy.classify(diff, modelsByName).stream()
+                .collect(Collectors.toMap(op -> op.model().getModelName(), Function.identity(), (a, b) -> a));
+        Map<String, SchemaDiff.Modification<SysModel>> modelMods = diff.models().modified().stream()
+                .collect(Collectors.toMap(m -> m.fromCode().getModelName(), Function.identity(), (a, b) -> a));
+        Map<String, List<SysField>> fieldsByModel = codeFields.stream()
+                .collect(Collectors.groupingBy(SysField::getModelName));
+        Map<String, List<SysModelIndex>> indexesByModel = codeIndexes.stream()
+                .collect(Collectors.groupingBy(SysModelIndex::getModelName));
+
+        List<RenderedDdl> out = new ArrayList<>();
+        for (SysModel model : codeModels) {
+            if (Boolean.TRUE.equals(model.getProjection())) {
+                continue;   // a projection owns no table — its shape belongs to the owner
+            }
+            if (model.getStorageType() != null && model.getStorageType() != StorageType.RDBMS) {
+                continue;   // no physical table to converge on this storage axis
+            }
+            ModelOps hints = diffHints.get(model.getModelName());
+            planConvergence(dialect, model,
+                    fieldsByModel.getOrDefault(model.getModelName(), List.of()),
+                    indexesByModel.getOrDefault(model.getModelName(), List.of()),
+                    hints == null ? DdlPolicy.FieldOps.EMPTY : hints.fields(),
+                    hints == null ? DdlPolicy.IndexOps.EMPTY : hints.indexes(),
+                    modelMods.get(model.getModelName()),
+                    facts, true, CONVERGE_TAG, out);
+        }
+        if (out.isEmpty()) {
+            log.info("DdlOrchestrator: physical schema of {} in-scope model(s) already matches "
+                    + "the annotations", codeModels.size());
+            return false;
+        }
+        ExecResult result = executeAll(out, true);
+        log.info("DdlOrchestrator: converged {} in-scope model(s) — executed {} DDL statement(s), "
+                        + "skipped {} already applied",
+                codeModels.size(), result.executed(), result.skipped());
+        return result.executed() > 0;
+    }
+
+    /**
+     * Additive-only convergence of the given models' physical tables <b>directly from their
+     * from-code definitions</b> — the boot path for the {@code sys_*} catalog tables
+     * themselves, whose "last applied state" is recorded nowhere but the physical schema
+     * (the rows that record every other model's state live <i>inside</i> these tables). It
+     * runs <b>before</b> {@code SysJdbcLoader}'s strict read, so after it returns the read
      * set is structurally guaranteed to be ⊆ the physical column set.
      *
-     * <p>Same policy vocabulary as the diff-driven lane, applied to the
-     * annotation-vs-physical set difference:
-     * <ul>
-     *   <li>table missing → {@code CREATE TABLE} from the full code definition (genesis);</li>
-     *   <li>column missing → {@code ADD COLUMN}; if the field declares
-     *       {@code renamedFrom} and the prior column physically exists →
-     *       {@code CHANGE COLUMN} instead (data carried, not divorced);</li>
-     *   <li>column present but physically narrower than declared
-     *       ({@link PhysicalTypeCompat.Verdict#WIDEN}) → {@code MODIFY COLUMN}
-     *       (widen freely);</li>
-     *   <li>column present and EQUAL → silence; NARROW / INCOMPARABLE → <b>no unit at
-     *       all</b> — with no planned change there is nothing to defer, and the
-     *       consolidated physical drift audit is the reporting channel;</li>
-     *   <li>undeclared physical columns → never dropped, never touched (the drift
-     *       audit names them);</li>
-     *   <li>declared index missing → {@code ADD INDEX}.</li>
-     * </ul>
-     *
-     * <p>Fail-fast: a declared rename whose old <b>and</b> new columns both physically
-     * exist is a half-applied rename this planner must not guess about — boot fails
-     * with instructions. Genuine DDL errors propagate exactly like {@link #apply}
-     * (rows are never involved here, so a retry on next boot converges naturally).
+     * <p>Destructive verbs are disabled here: this stage runs with no diff and possibly a
+     * narrow {@code scanner-scope} that does not manage the catalog, so it may only grow
+     * the schema (CREATE / ADD / declared-rename CHANGE / widening MODIFY / ADD INDEX);
+     * narrowing, type-family changes and undeclared extras stay with the drift audit — or
+     * with the full convergence pass when the catalog packages are in scope.
      *
      * @return whether any statement was actually executed (callers refresh their
      *         snapshot only then)
@@ -273,13 +288,15 @@ public class DdlOrchestrator {
                     .filter(f -> model.getModelName().equals(f.getModelName())).toList();
             List<SysModelIndex> modelIndexes = indexes.stream()
                     .filter(i -> model.getModelName().equals(i.getModelName())).toList();
-            planPhysicalConvergence(dialect, model, modelFields, modelIndexes, facts, out);
+            planConvergence(dialect, model, modelFields, modelIndexes,
+                    DdlPolicy.FieldOps.EMPTY, DdlPolicy.IndexOps.EMPTY, null,
+                    facts, false, CATALOG_TAG, out);
         }
         if (out.isEmpty()) {
             log.info("DdlOrchestrator: {} {} table(s) physically in sync", CATALOG_TAG, models.size());
             return false;
         }
-        ExecResult result = executeAll(out);
+        ExecResult result = executeAll(out, false);
         warnDeferred(result.deferred());
         log.info("DdlOrchestrator: {} reconciled {} table(s) — executed {} DDL statement(s), "
                         + "skipped {} already applied",
@@ -287,39 +304,62 @@ public class DdlOrchestrator {
         return result.executed() > 0;
     }
 
-    private void planPhysicalConvergence(DdlDialect dialect, SysModel model,
-                                         List<SysField> modelFields, List<SysModelIndex> modelIndexes,
-                                         PhysicalSchema facts, List<RenderedDdl> out) {
+    /**
+     * Plan one model's convergence against the facts. {@code destructive} distinguishes the
+     * full lane (narrowing MODIFY, undeclared DROPs) from the additive Stage-A lane; the
+     * diff buckets and {@code modelMod} are empty / {@code null} on the additive lane.
+     */
+    private void planConvergence(DdlDialect dialect, SysModel model,
+                                 List<SysField> modelFields, List<SysModelIndex> modelIndexes,
+                                 DdlPolicy.FieldOps diffFields, DdlPolicy.IndexOps diffIndexes,
+                                 SchemaDiff.Modification<SysModel> modelMod,
+                                 PhysicalSchema facts, boolean destructive, String tag,
+                                 List<RenderedDdl> out) {
         String table = effectiveTableName(model);
-        if (!facts.tableExists(table)) {
-            ModelDdlCtx ctx = SysDdlContextBuilder.forCreate(model, modelFields, modelIndexes);
-            if (ctx.getCreatedFields().isEmpty()) {
-                log.warn("DdlOrchestrator: {} table {} is missing but the code definition has no stored "
-                        + "fields to create it from", CATALOG_TAG, table);
-                return;
-            }
-            out.add(RenderedDdl.of(RenderedDdl.Kind.CREATE_TABLE,
-                    "CREATE TABLE " + ctx.getTableName() + " " + CATALOG_TAG + " genesis",
-                    dialect.createTableDDL(ctx).toString()));
+        // The facts may still know the table under its pre-rename name; lookups then go
+        // against that name while rendered ALTERs use the new one (the RENAME unit runs first).
+        String factsTable = planTableIdentity(model, modelMod, facts, tag, out);
+        if (factsTable == null) {
+            // Physically absent under both names: genesis CREATE from the full code
+            // definition (columns + indexes in one unit) — no per-column work.
+            planGenesis(dialect, model, modelFields, modelIndexes, tag, out);
             return;
         }
+
+        Map<String, String> diffRenames = new HashMap<>();
+        for (DdlPolicy.FieldRename rename : diffFields.renamed()) {
+            diffRenames.put(rename.field().getFieldName(), rename.oldColumnName());
+        }
+        Map<String, SysField> diffModified = diffFields.updated().stream()
+                .collect(Collectors.toMap(SysField::getFieldName, Function.identity(), (a, b) -> a));
+
+        Set<String> declaredColumns = new HashSet<>();
+        Set<String> renameSourceColumns = new HashSet<>();
         for (SysField field : modelFields) {
             if (!SysDdlContextBuilder.isStored(field)) {
                 continue;
             }
             String column = effectiveColumnName(field);
-            boolean columnExists = facts.columnExists(table, column);
-            // renamedFrom names the prior FIELD name; catalog entity fields never declare a
-            // custom columnName, so the prior column is its snake_case derivation.
-            String oldColumn = StringUtils.isBlank(field.getRenamedFrom())
-                    ? null : StringTools.toUnderscoreCase(field.getRenamedFrom());
-            boolean oldExists = oldColumn != null && facts.columnExists(table, oldColumn);
+            declaredColumns.add(lower(column));
+            // The diff pairing carries the exact prior column (custom columnName included);
+            // the code attribute is the fallback for drift healing after the rows already
+            // moved on — there the prior column is its snake_case derivation.
+            String oldColumn = diffRenames.get(field.getFieldName());
+            if (oldColumn == null && StringUtils.isNotBlank(field.getRenamedFrom())) {
+                oldColumn = StringTools.toUnderscoreCase(field.getRenamedFrom());
+            }
+            boolean columnExists = facts.columnExists(factsTable, column);
+            boolean oldExists = oldColumn != null && !lower(oldColumn).equals(lower(column))
+                    && facts.columnExists(factsTable, oldColumn);
+            if (oldExists) {
+                renameSourceColumns.add(lower(oldColumn));
+            }
             if (columnExists && oldExists) {
                 throw new IllegalStateException(String.format(
-                        "Half-applied catalog column rename on %s: both '%s' (declared renamedFrom) and "
+                        "Half-applied column rename on %s: both '%s' (declared renamedFrom) and "
                                 + "'%s' physically exist. Resolve manually — carry the data into '%s', then "
                                 + "DROP COLUMN %s — and boot again.",
-                        table, oldColumn, column, column, oldColumn));
+                        factsTable, oldColumn, column, column, oldColumn));
             }
             if (!columnExists) {
                 if (oldExists) {
@@ -328,47 +368,200 @@ public class DdlOrchestrator {
                                     List.of(new DdlPolicy.FieldRename(field, oldColumn)), List.of()),
                             RenderedDdl.Kind.DECLARED_COLUMN_RENAME,
                             "CHANGE COLUMN " + oldColumn + " -> " + columnLabel(model, field)
-                                    + " " + CATALOG_TAG + " declared renamedFrom"));
+                                    + " " + tag + " declared renamedFrom"));
                 } else {
                     addIfRendered(out, renderedFieldChange(dialect,
                             SysDdlContextBuilder.forAlter(model, List.of(field), List.of(), List.of(), List.of()),
                             RenderedDdl.Kind.ALTER_TABLE,
-                            "ADD COLUMN " + columnLabel(model, field) + " " + CATALOG_TAG));
+                            "ADD COLUMN " + columnLabel(model, field) + " " + tag));
                 }
                 continue;
             }
-            PhysicalSchema.PhysicalColumn observed = facts.column(table, column);
-            // WIDEN as a positive TRIGGER (stricter than the diff lane, where the verdict only
-            // vetoes an already-planned MODIFY): plan one only when executing it observably
-            // changes the physical shape. A declared-unbounded column (TEXT/JSON/DTO) is
-            // excluded — engines report its width inconsistently (H2-MySQL: VARCHAR(1e9)),
-            // so a width-based trigger there would re-plan the same MODIFY on every boot.
-            if (isBoundedDeclaredWidth(field)
-                    && PhysicalTypeCompat.compare(field, observed) == PhysicalTypeCompat.Verdict.WIDEN) {
+            if (diffModified.containsKey(field.getFieldName())) {
+                // The declaration itself changed (type, width, NOT NULL, DEFAULT, COMMENT) —
+                // re-state the full declared shape. This also covers a physical mismatch on
+                // the same column, so no drift unit is planned on top of it.
                 addIfRendered(out, renderedFieldChange(dialect,
                         SysDdlContextBuilder.forAlter(model, List.of(), List.of(field), List.of(), List.of()),
                         RenderedDdl.Kind.ALTER_TABLE,
-                        "MODIFY COLUMN " + columnLabel(model, field) + " " + CATALOG_TAG + " widen: "
-                                + PhysicalTypeCompat.describe(field, observed)));
+                        "MODIFY COLUMN " + columnLabel(model, field)));
+                continue;
+            }
+            PhysicalSchema.PhysicalColumn observed = facts.column(factsTable, column);
+            PhysicalTypeCompat.Verdict verdict = PhysicalTypeCompat.compare(field, observed);
+            if (verdict == PhysicalTypeCompat.Verdict.EQUAL) {
+                continue;
+            }
+            // WIDEN triggers only on a real declared width bound: a declared-unbounded column
+            // (TEXT/JSON/DTO) is excluded — engines report its width inconsistently
+            // (H2-MySQL: VARCHAR(1e9)), so a width-based trigger there would re-plan the same
+            // MODIFY on every boot.
+            if (verdict == PhysicalTypeCompat.Verdict.WIDEN && !isBoundedDeclaredWidth(field)) {
+                continue;
+            }
+            if (!destructive && verdict != PhysicalTypeCompat.Verdict.WIDEN) {
+                continue;   // additive lane: narrowing / type-family drift stays with the audit
+            }
+            addIfRendered(out, renderedFieldChange(dialect,
+                    SysDdlContextBuilder.forAlter(model, List.of(), List.of(field), List.of(), List.of()),
+                    RenderedDdl.Kind.ALTER_TABLE,
+                    "MODIFY COLUMN " + columnLabel(model, field) + " " + tag + " "
+                            + verdict.name().toLowerCase(Locale.ROOT) + ": "
+                            + PhysicalTypeCompat.describe(field, observed)));
+        }
+
+        PhysicalSchema.PhysicalTable physical = facts.tables().get(lower(factsTable));
+        if (destructive && physical != null) {
+            for (PhysicalSchema.PhysicalColumn column : physical.columns().values()) {
+                String columnLower = lower(column.name());
+                if (declaredColumns.contains(columnLower) || renameSourceColumns.contains(columnLower)) {
+                    continue;
+                }
+                addIfRendered(out, renderedFieldChange(dialect,
+                        SysDdlContextBuilder.forAlter(model, List.of(), List.of(), List.of(),
+                                List.of(undeclaredColumn(model, column.name()))),
+                        RenderedDdl.Kind.DROP_COLUMN,
+                        "DROP COLUMN " + column.name() + " ON " + table + " " + tag + " undeclared"));
             }
         }
+
+        planIndexConvergence(dialect, model, modelFields, modelIndexes, diffIndexes,
+                physical, destructive, tag, out);
+    }
+
+    /**
+     * Resolve which physical table this model's convergence works against, planning the
+     * genesis CREATE or declared RENAME on the way.
+     *
+     * @return the table name to use for facts lookups, or {@code null} when per-column
+     *         planning must not run (genesis planned, or nothing to create from)
+     */
+    private String planTableIdentity(SysModel model, SchemaDiff.Modification<SysModel> modelMod,
+                                     PhysicalSchema facts, String tag, List<RenderedDdl> out) {
+        String table = effectiveTableName(model);
+        String oldTable = priorTableName(model, modelMod);
+        boolean declaredRename = oldTable != null
+                && ((modelMod != null && modelMod.kind() == SchemaDiff.Kind.RENAME)
+                        || (modelMod == null && StringUtils.isNotBlank(model.getRenamedFrom())));
+        boolean oldExists = oldTable != null && !oldTable.equals(table) && facts.tableExists(oldTable);
+
+        if (facts.tableExists(table)) {
+            if (oldExists) {
+                throw new IllegalStateException(String.format(
+                        "Model %s points at table '%s' while its prior table '%s' also physically exists"
+                                + " — a half-applied %s a human must resolve: carry the data into '%s',"
+                                + " then DROP TABLE %s, and boot again.",
+                        model.getModelName(), table, oldTable,
+                        declaredRename ? "rename" : "tableName change", table, oldTable));
+            }
+            return table;
+        }
+        if (oldExists) {
+            if (!declaredRename) {
+                throw new IllegalStateException(String.format(
+                        "Model %s changed tableName '%s' -> '%s' without a declared rename while '%s'"
+                                + " physically exists. Creating '%s' would silently divorce the data."
+                                + " Either rename manually first — ALTER TABLE %s RENAME TO %s; — and"
+                                + " boot again, or move the old table away if '%s' really is new.",
+                        model.getModelName(), oldTable, table, oldTable, table, oldTable, table, table));
+            }
+            out.add(RenderedDdl.of(RenderedDdl.Kind.DECLARED_TABLE_RENAME,
+                    "model " + model.getModelName() + " tableName " + oldTable + " -> " + table
+                            + " (declared renamedFrom)",
+                    "ALTER TABLE " + oldTable + " RENAME TO " + table + ";"));
+            return oldTable;
+        }
+        return null;   // genesis (or nothing) — planned below
+    }
+
+    /** The physical table a rename-in-flight may still be under, or {@code null}. */
+    private static String priorTableName(SysModel model, SchemaDiff.Modification<SysModel> modelMod) {
+        if (modelMod != null) {
+            return effectiveTableName(modelMod.fromDb());
+        }
+        if (StringUtils.isNotBlank(model.getRenamedFrom())) {
+            // Drift healing after the rows already moved on: the prior table is the
+            // snake_case derivation (a custom prior tableName is only recoverable from the
+            // diff pairing, which covers the normal rename boot).
+            return StringTools.toUnderscoreCase(model.getRenamedFrom());
+        }
+        return null;
+    }
+
+    /** Plan the genesis CREATE for a physically missing table. Shared by both lanes. */
+    private void planGenesis(DdlDialect dialect, SysModel model, List<SysField> modelFields,
+                             List<SysModelIndex> modelIndexes, String tag, List<RenderedDdl> out) {
+        ModelDdlCtx ctx = SysDdlContextBuilder.forCreate(model, modelFields, modelIndexes);
+        if (ctx.getCreatedFields().isEmpty()) {
+            log.warn("DdlOrchestrator: {} table {} is missing but the code definition has no stored "
+                    + "fields to create it from", tag, ctx.getTableName());
+            return;
+        }
+        out.add(RenderedDdl.of(RenderedDdl.Kind.CREATE_TABLE,
+                "CREATE TABLE " + ctx.getTableName() + " " + tag + " genesis",
+                dialect.createTableDDL(ctx).toString()));
+    }
+
+    private void planIndexConvergence(DdlDialect dialect, SysModel model, List<SysField> modelFields,
+                                      List<SysModelIndex> modelIndexes, DdlPolicy.IndexOps diffIndexes,
+                                      PhysicalSchema.PhysicalTable physical, boolean destructive,
+                                      String tag, List<RenderedDdl> out) {
         Map<String, String> fieldToColumn = new HashMap<>();
         for (SysField field : modelFields) {
             fieldToColumn.put(field.getFieldName(), effectiveColumnName(field));
         }
+        Set<String> rebuilds = diffIndexes.updated().stream()
+                .map(i -> lower(i.getIndexName()))
+                .collect(Collectors.toSet());
+        Set<String> declaredNames = new HashSet<>();
         for (SysModelIndex index : modelIndexes) {
-            if (!facts.indexExists(table, index.getIndexName())) {
-                ModelDdlCtx ctx = SysDdlContextBuilder.forIndexChanges(model, fieldToColumn,
-                        List.of(index), List.of(), List.of());
-                if (ctx.isHasIndexChanges()) {
-                    String sql = dialect.alterIndexDDL(ctx).toString().trim();
-                    if (!sql.isEmpty()) {
-                        out.add(RenderedDdl.of(RenderedDdl.Kind.ALTER_INDEX,
-                                "ADD INDEX " + index.getIndexName() + " " + CATALOG_TAG, sql));
-                    }
-                }
+            declaredNames.add(lower(index.getIndexName()));
+            if (rebuilds.contains(lower(index.getIndexName()))) {
+                // A definition change rebuilds: DROP INDEX + ADD INDEX, two statements executed
+                // and classified separately (a missing index on the DROP half degrades and the
+                // ADD still runs).
+                renderIndexChange(dialect,
+                        SysDdlContextBuilder.forIndexChanges(model, fieldToColumn,
+                                List.of(), List.of(index), List.of()),
+                        RenderedDdl.Kind.ALTER_INDEX,
+                        "REBUILD INDEX " + index.getIndexName(), out);
+                continue;
+            }
+            if (physical == null || !IndexNameCompat.declaredIndexExists(physical, index.getIndexName())) {
+                renderIndexChange(dialect,
+                        SysDdlContextBuilder.forIndexChanges(model, fieldToColumn,
+                                List.of(index), List.of(), List.of()),
+                        RenderedDdl.Kind.ALTER_INDEX,
+                        "ADD INDEX " + index.getIndexName() + " " + tag, out);
             }
         }
+        if (destructive && physical != null) {
+            for (String indexName : physical.indexNames()) {
+                if (IndexNameCompat.matchesAnyDeclared(indexName, declaredNames)
+                        || IndexNameCompat.isPrimaryKeyIndex(indexName)) {
+                    continue;
+                }
+                SysModelIndex ghost = new SysModelIndex();
+                ghost.setModelName(model.getModelName());
+                ghost.setIndexName(indexName);
+                renderIndexChange(dialect,
+                        SysDdlContextBuilder.forIndexChanges(model, Map.of(),
+                                List.of(), List.of(), List.of(ghost)),
+                        RenderedDdl.Kind.DROP_INDEX,
+                        "DROP INDEX " + indexName + " ON " + effectiveTableName(model)
+                                + " " + tag + " undeclared", out);
+            }
+        }
+    }
+
+    /** A placeholder {@link SysField} for dropping a physical column no declaration owns. */
+    private static SysField undeclaredColumn(SysModel model, String columnName) {
+        SysField ghost = new SysField();
+        ghost.setModelName(model.getModelName());
+        ghost.setFieldName(columnName);
+        ghost.setColumnName(columnName);
+        ghost.setFieldType(FieldType.STRING);   // any stored type — only the column name renders
+        return ghost;
     }
 
     /** Render one field-change unit, or {@code null} when the ctx carries no stored change. */
@@ -389,10 +582,10 @@ public class DdlOrchestrator {
 
     /** Whether the declared physical shape carries a real width bound (see the WIDEN trigger note). */
     private static boolean isBoundedDeclaredWidth(SysField field) {
-        var physical = SysDdlContextBuilder.resolvePhysicalFieldType(field);
-        return physical != io.softa.framework.orm.enums.FieldType.TEXT
-                && physical != io.softa.framework.orm.enums.FieldType.JSON
-                && physical != io.softa.framework.orm.enums.FieldType.DTO;
+        FieldType physical = SysDdlContextBuilder.resolvePhysicalFieldType(field);
+        return physical != FieldType.TEXT
+                && physical != FieldType.JSON
+                && physical != FieldType.DTO;
     }
 
     /**
@@ -408,20 +601,22 @@ public class DdlOrchestrator {
                 .map(ddl -> "-- " + ddl.label() + "\n" + ddl.sql())
                 .collect(Collectors.joining("\n\n"));
         log.warn("""
-                DdlOrchestrator: {} operation(s) not auto-executed (data-bearing changes: DROP / RENAME / narrowing MODIFY).
+                DdlOrchestrator: {} operation(s) not auto-executed (data-bearing changes: DROP / RENAME).
                 To apply manually:
                 {}""", deferred.size(), block.indent(4).stripTrailing());
     }
 
+    // ---- metadata-only rendering ----------------------------------------
+
     /**
      * Render the DDL for a diff <b>without executing anything</b> — the render step behind
-     * {@link #apply} (which then executes the auto kinds). Returns units in execution
-     * order: table renames first (declared → auto RENAME TABLE, undeclared → warn),
-     * then per-model CREATE, per-change ALTERs (column adds / modifies / declared
-     * renames, then index adds / rebuilds) and per-model DROP hints (warn).
+     * {@link #apply}. Returns units in execution order: table renames first (declared →
+     * auto RENAME TABLE, undeclared → warn), then per-model CREATE, per-change ALTERs
+     * (column adds / modifies / declared renames, then index adds / rebuilds) and
+     * per-model DROP hints (warn).
      */
-    private List<RenderedDdl> render(SchemaDiff diff, List<SysModel> allCodeModels, List<SysField> allCodeFields,
-                                     List<SysModelIndex> allCodeIndexes, PhysicalSchema facts) {
+    private List<RenderedDdl> render(SchemaDiff diff, List<SysModel> allCodeModels,
+                                     List<SysField> allCodeFields) {
         if (diff.isEmpty()) {
             return List.of();
         }
@@ -443,24 +638,11 @@ public class DdlOrchestrator {
         for (ModelOps op : ops) {
             Map<String, String> modelFieldToColumn =
                     fieldToColumnByModel.getOrDefault(op.model().getModelName(), Map.of());
-            // Physical recovery: ALTERs against a hand-dropped table would all fail on
-            // "unknown table" — recreate it from the full code definition first. The planned
-            // ALTERs still render below: on the fresh table they re-assert as no-ops /
-            // already-applied WARNs, and they carry the real change if the facts were stale.
-            boolean tableMissing = facts != null && !facts.tableExists(effectiveTableName(op.model()));
             switch (op.operation()) {
-                case CREATE_TABLE -> renderCreate(dialect, op, facts, out);
-                case ALTER_TABLE -> {
-                    if (tableMissing) {
-                        renderRecoveredCreate(dialect, op.model(), allCodeFields, allCodeIndexes, out);
-                    }
-                    renderAlter(dialect, op, modelFieldToColumn, facts, out);
-                }
+                case CREATE_TABLE -> renderCreate(dialect, op, out);
+                case ALTER_TABLE -> renderAlter(dialect, op, modelFieldToColumn, out);
                 case ALTER_TABLE_WITH_DROP_WARNING -> {
-                    if (tableMissing) {
-                        renderRecoveredCreate(dialect, op.model(), allCodeFields, allCodeIndexes, out);
-                    }
-                    renderAlter(dialect, op, modelFieldToColumn, facts, out);
+                    renderAlter(dialect, op, modelFieldToColumn, out);
                     renderDropColumn(dialect, op, out);
                     renderDropIndex(dialect, op, out);
                 }
@@ -470,34 +652,9 @@ public class DdlOrchestrator {
         return out;
     }
 
-    /**
-     * Physical recovery for a hand-dropped table behind planned ALTERs: recreate it from the
-     * complete from-code definition (all of the model's fields + indexes, not just the diff'd
-     * ones), so the subsequent ALTER units land on a fully-shaped table.
-     */
-    private void renderRecoveredCreate(DdlDialect dialect, SysModel model,
-                                       List<SysField> allCodeFields, List<SysModelIndex> allCodeIndexes,
-                                       List<RenderedDdl> out) {
-        List<SysField> modelFields = allCodeFields.stream()
-                .filter(f -> model.getModelName().equals(f.getModelName())).toList();
-        List<SysModelIndex> modelIndexes = allCodeIndexes.stream()
-                .filter(i -> model.getModelName().equals(i.getModelName())).toList();
-        ModelDdlCtx ctx = SysDdlContextBuilder.forCreate(model, modelFields, modelIndexes);
-        if (ctx.getCreatedFields().isEmpty()) {
-            log.warn("DdlOrchestrator: table {} is physically missing but the code definition has no "
-                            + "stored fields to recreate it from — the planned ALTERs will fail",
-                    effectiveTableName(model));
-            return;
-        }
-        String sql = dialect.createTableDDL(ctx).toString();
-        out.add(RenderedDdl.of(RenderedDdl.Kind.CREATE_TABLE,
-                "CREATE TABLE " + ctx.getTableName() + " " + RECOVERY_TAG + " table missing, recreated from code",
-                sql));
-    }
-
     // ---- per-operation rendering --------------------------------------
 
-    private void renderCreate(DdlDialect dialect, ModelOps op, PhysicalSchema facts, List<RenderedDdl> out) {
+    private void renderCreate(DdlDialect dialect, ModelOps op, List<RenderedDdl> out) {
         ModelDdlCtx ctx = SysDdlContextBuilder.forCreate(
                 op.model(), op.createFields(), op.createIndexes());
         if (ctx.getCreatedFields().isEmpty()) {
@@ -507,41 +664,6 @@ public class DdlOrchestrator {
         }
         String sql = dialect.createTableDDL(ctx).toString();
         out.add(RenderedDdl.of(RenderedDdl.Kind.CREATE_TABLE, "CREATE TABLE " + ctx.getTableName(), sql));
-        renderAdoptedTableChanges(dialect, op, facts, out);
-    }
-
-    /**
-     * Physical recovery for a planned CREATE whose table already exists (the model's
-     * {@code sys_*} rows were removed while the physical table survived): the CREATE above
-     * degrades to already-applied, and the pre-existing table is adopted by adding whatever
-     * declared columns / indexes it physically lacks — instead of silently keeping the drift.
-     */
-    private void renderAdoptedTableChanges(DdlDialect dialect, ModelOps op, PhysicalSchema facts,
-                                           List<RenderedDdl> out) {
-        String table = effectiveTableName(op.model());
-        if (facts == null || !facts.tableExists(table)) {
-            return;
-        }
-        for (SysField field : op.createFields()) {
-            if (!facts.columnExists(table, effectiveColumnName(field))) {
-                renderFieldChange(dialect,
-                        SysDdlContextBuilder.forAlter(op.model(), List.of(field), List.of(), List.of(), List.of()),
-                        RenderedDdl.Kind.ALTER_TABLE,
-                        "ADD COLUMN " + columnLabel(op.model(), field) + " " + RECOVERY_TAG
-                                + " adopted pre-existing table", out);
-            }
-        }
-        Map<String, String> fieldToColumn = new HashMap<>();
-        addAllFieldMappings(fieldToColumn, op.createFields());
-        for (SysModelIndex index : op.createIndexes()) {
-            if (!facts.indexExists(table, index.getIndexName())) {
-                renderIndexChange(dialect,
-                        SysDdlContextBuilder.forIndexChanges(op.model(), fieldToColumn,
-                                List.of(index), List.of(), List.of()),
-                        "ADD INDEX " + index.getIndexName() + " " + RECOVERY_TAG
-                                + " adopted pre-existing table", out);
-            }
-        }
     }
 
     /**
@@ -552,87 +674,28 @@ public class DdlOrchestrator {
      * ({@link #renderDropColumn} / {@link #renderDropIndex}).
      */
     private void renderAlter(DdlDialect dialect, ModelOps op,
-                             Map<String, String> modelFieldToColumn, PhysicalSchema facts, List<RenderedDdl> out) {
+                             Map<String, String> modelFieldToColumn, List<RenderedDdl> out) {
         SysModel model = op.model();
-        String table = effectiveTableName(model);
         for (SysField field : op.fields().added()) {
-            renderFieldChange(dialect,
+            addIfRendered(out, renderedFieldChange(dialect,
                     SysDdlContextBuilder.forAlter(model, List.of(field), List.of(), List.of(), List.of()),
                     RenderedDdl.Kind.ALTER_TABLE,
-                    "ADD COLUMN " + columnLabel(model, field), out);
+                    "ADD COLUMN " + columnLabel(model, field)));
         }
         for (SysField field : op.fields().updated()) {
-            // Physical recovery: a MODIFY against a hand-dropped column would fail the boot —
-            // recreate the column first. The original MODIFY still renders below: a no-op
-            // re-assert on the recreated column, and the real change when the recovery ADD
-            // degraded because the facts were stale.
-            if (columnMissingPhysically(facts, table, field)) {
-                renderFieldChange(dialect,
-                        SysDdlContextBuilder.forAlter(model, List.of(field), List.of(), List.of(), List.of()),
-                        RenderedDdl.Kind.ALTER_TABLE,
-                        "ADD COLUMN " + columnLabel(model, field) + " " + RECOVERY_TAG
-                                + " column missing behind planned MODIFY", out);
-            }
-            // Narrowing policy: a MODIFY re-states the full column definition, so executing it
-            // against a physically wider (or type-incomparable) column could truncate data —
-            // even when the triggering delta was only a comment. Widen freely, never narrow
-            // silently; without facts the pre-introspection behavior stands.
-            PhysicalSchema.PhysicalColumn observed =
-                    facts == null ? null : facts.column(table, effectiveColumnName(field));
-            PhysicalTypeCompat.Verdict verdict =
-                    observed == null ? null : PhysicalTypeCompat.compare(field, observed);
-            if (verdict == PhysicalTypeCompat.Verdict.NARROW
-                    || verdict == PhysicalTypeCompat.Verdict.INCOMPARABLE) {
-                renderFieldChange(dialect,
-                        SysDdlContextBuilder.forAlter(model, List.of(), List.of(field), List.of(), List.of()),
-                        RenderedDdl.Kind.ALTER_NARROWING,
-                        "MODIFY COLUMN " + columnLabel(model, field)
-                                + " [" + verdict.name().toLowerCase(Locale.ROOT) + ": "
-                                + PhysicalTypeCompat.describe(field, observed) + "]", out);
-                continue;
-            }
-            renderFieldChange(dialect,
+            addIfRendered(out, renderedFieldChange(dialect,
                     SysDdlContextBuilder.forAlter(model, List.of(), List.of(field), List.of(), List.of()),
                     RenderedDdl.Kind.ALTER_TABLE,
-                    "MODIFY COLUMN " + columnLabel(model, field), out);
+                    "MODIFY COLUMN " + columnLabel(model, field)));
         }
         for (DdlPolicy.FieldRename rename : op.fields().renamed()) {
-            // Physical recovery: a declared rename whose old AND new columns are both physically
-            // gone cannot be expressed as CHANGE COLUMN — create the new-shape column; the
-            // original CHANGE below then degrades via the old-column-gone classification.
-            if (facts != null && facts.tableExists(table)
-                    && !facts.columnExists(table, rename.oldColumnName())
-                    && !facts.columnExists(table, effectiveColumnName(rename.field()))) {
-                renderFieldChange(dialect,
-                        SysDdlContextBuilder.forAlter(model, List.of(rename.field()), List.of(), List.of(), List.of()),
-                        RenderedDdl.Kind.ALTER_TABLE,
-                        "ADD COLUMN " + columnLabel(model, rename.field()) + " " + RECOVERY_TAG
-                                + " both rename sides missing", out);
-            }
-            renderFieldChange(dialect,
+            addIfRendered(out, renderedFieldChange(dialect,
                     SysDdlContextBuilder.forAlter(model, List.of(), List.of(), List.of(rename), List.of()),
                     RenderedDdl.Kind.DECLARED_COLUMN_RENAME,
                     "CHANGE COLUMN " + rename.oldColumnName() + " -> "
-                            + columnLabel(model, rename.field()), out);
+                            + columnLabel(model, rename.field())));
         }
         renderIndexChanges(dialect, op, modelFieldToColumn, out);
-    }
-
-    /** True only on a positive fact: the table was introspected and lacks this field's column. */
-    private static boolean columnMissingPhysically(PhysicalSchema facts, String table, SysField field) {
-        return facts != null && facts.tableExists(table)
-                && !facts.columnExists(table, effectiveColumnName(field));
-    }
-
-    private void renderFieldChange(DdlDialect dialect, ModelDdlCtx ctx,
-                                   RenderedDdl.Kind kind, String label, List<RenderedDdl> out) {
-        if (!ctx.isHasAlterTableChanges()) {
-            return;   // e.g. the single field is not stored
-        }
-        String sql = dialect.alterTableDDL(ctx).toString().trim();
-        if (!sql.isEmpty()) {
-            out.add(RenderedDdl.of(kind, label, sql));
-        }
     }
 
     private static String columnLabel(SysModel model, SysField field) {
@@ -660,6 +723,7 @@ public class DdlOrchestrator {
             renderIndexChange(dialect,
                     SysDdlContextBuilder.forIndexChanges(op.model(), fieldToColumn,
                             List.of(index), List.of(), List.of()),
+                    RenderedDdl.Kind.ALTER_INDEX,
                     "ADD INDEX " + index.getIndexName(), out);
         }
         // A definition change rebuilds: DROP INDEX + ADD INDEX, two statements executed
@@ -669,18 +733,19 @@ public class DdlOrchestrator {
             renderIndexChange(dialect,
                     SysDdlContextBuilder.forIndexChanges(op.model(), fieldToColumn,
                             List.of(), List.of(index), List.of()),
+                    RenderedDdl.Kind.ALTER_INDEX,
                     "REBUILD INDEX " + index.getIndexName(), out);
         }
     }
 
-    private void renderIndexChange(DdlDialect dialect, ModelDdlCtx ctx, String label,
-                                   List<RenderedDdl> out) {
+    private void renderIndexChange(DdlDialect dialect, ModelDdlCtx ctx, RenderedDdl.Kind kind,
+                                   String label, List<RenderedDdl> out) {
         if (!ctx.isHasIndexChanges()) {
             return;
         }
         String sql = dialect.alterIndexDDL(ctx).toString().trim();
         if (!sql.isEmpty()) {
-            out.add(RenderedDdl.of(RenderedDdl.Kind.ALTER_INDEX, label, sql));
+            out.add(RenderedDdl.of(kind, label, sql));
         }
     }
 
@@ -693,17 +758,16 @@ public class DdlOrchestrator {
     }
 
     /**
-     * Table renames, two flavours:
+     * Table renames on the metadata-only lane, two flavours:
      * <ul>
      *   <li><b>Declared</b> ({@code kind == RENAME}, the {@code renamedFrom} attribute on the
      *       model): the intent and the data-preserving target are explicit, so the
      *       {@code RENAME TABLE old TO new} <b>auto-executes</b>.</li>
      *   <li><b>Undeclared</b> ({@code kind == MODIFY}, a bare {@code tableName}-attribute
      *       change): could equally be a silent data divorce, so it stays
-     *       <b>warn-only</b> with copy-paste SQL — the same risk class as DROP.
-     *       Without surfacing it the change would be fully silent: the catalog points
-     *       at the new name while the physical table keeps the old one, and every
-     *       runtime query on the model fails.</li>
+     *       <b>warn-only</b> with copy-paste SQL — the same risk class as DROP. (The
+     *       convergence lane, which can consult the physical facts, fails the boot on the
+     *       ambiguous case instead.)</li>
      * </ul>
      * A declared model rename's fields / indexes were re-keyed by the
      * {@link DiffEngine} cascade, so they show no
@@ -811,10 +875,12 @@ public class DdlOrchestrator {
     /**
      * "Already applied" = the common idempotent-duplicate set, plus the narrow
      * source-already-gone state for the kinds that legitimately re-run against a
-     * renamed / rebuilt schema: a {@code CHANGE COLUMN} whose old column is gone
-     * ({@code DECLARED_COLUMN_RENAME}), a {@code RENAME TABLE} whose old table is
-     * gone ({@code DECLARED_TABLE_RENAME}), and the DROP half of an index rebuild
-     * whose index is gone ({@code ALTER_INDEX}). Scoping by kind keeps a genuine
+     * renamed / rebuilt / converged schema: a {@code CHANGE COLUMN} whose old column is
+     * gone ({@code DECLARED_COLUMN_RENAME}), a {@code RENAME TABLE} whose old table is
+     * gone ({@code DECLARED_TABLE_RENAME}), the DROP half of an index rebuild whose index
+     * is gone ({@code ALTER_INDEX}), and the convergence lane's undeclared-column /
+     * undeclared-index drops whose target vanished between snapshot and execution
+     * ({@code DROP_COLUMN} / {@code DROP_INDEX}). Scoping by kind keeps a genuine
      * unknown-column / missing-table error on an ordinary ALTER surfacing as a
      * hard failure.
      */
@@ -825,9 +891,14 @@ public class DdlOrchestrator {
         return switch (kind) {
             case DECLARED_COLUMN_RENAME -> DdlErrorClassifier.isColumnRenameAlreadyApplied(e);
             case DECLARED_TABLE_RENAME -> DdlErrorClassifier.isTableRenameAlreadyApplied(e);
-            case ALTER_INDEX -> DdlErrorClassifier.isIndexDropAlreadyApplied(e);
+            case ALTER_INDEX, DROP_INDEX -> DdlErrorClassifier.isIndexDropAlreadyApplied(e);
+            case DROP_COLUMN -> DdlErrorClassifier.isColumnDropAlreadyApplied(e);
             default -> false;
         };
+    }
+
+    private static String lower(String identifier) {
+        return identifier == null ? null : identifier.toLowerCase(Locale.ROOT);
     }
 
     // ---- dialect ------------------------------------------------------

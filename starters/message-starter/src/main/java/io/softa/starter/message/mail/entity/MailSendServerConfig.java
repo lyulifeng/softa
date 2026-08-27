@@ -8,6 +8,7 @@ import io.softa.framework.orm.annotation.Field;
 import io.softa.framework.orm.annotation.Index;
 import io.softa.framework.orm.annotation.Model;
 import io.softa.framework.orm.enums.IdStrategy;
+import io.softa.framework.orm.enums.MaskingType;
 import io.softa.framework.orm.entity.AuditableModel;
 import io.softa.starter.message.mail.enums.SendProtocol;
 
@@ -67,7 +68,11 @@ public class MailSendServerConfig extends AuditableModel {
     @Field(label = "Auth Username", length = 255)
     private String username;
 
-    @Field(length = 500)
+    @Field(length = 512, encrypted = true, copyable = false, unsearchable = true,
+            maskingType = MaskingType.ALL,
+            description = "SMTP auth password — AES-encrypted at rest, masked in API reads. "
+                    + "Omit the field on update to keep the stored value; a payload containing "
+                    + "the mask symbol is rejected.")
     private String password;
 
     @Field(length = 255,
@@ -90,11 +95,22 @@ public class MailSendServerConfig extends AuditableModel {
     @Field(description = "Rate limit: max emails per minute")
     private Integer rateLimitPerMinute;
 
-    @Field(description = "Whether this is the default sending config for this tenant")
+    @Field(description = "Whether this is the default sending config for this tenant. "
+                    + "At most one per tenant scope: the standard write endpoints demote every "
+                    + "other default when a config is saved with this flag set.")
     private Boolean isDefault;
 
     @Field(description = "Whether this config is enabled")
     private Boolean isEnabled;
+
+    @Field(description = "Meaningful on platform configs (tenant_id = 0) only: whether tenants may "
+                    + "see this config in their sender pickers and pin it via "
+                    + "MailTemplate.preferredServerConfigId. null/false = platform-internal "
+                    + "(billing/ops SMTP stays invisible to tenants). Does NOT affect the implicit "
+                    + "dispatcher fallback (tenant default → platform default), which is platform "
+                    + "policy and ignores this flag. Note the config's own dailySendLimit / "
+                    + "rateLimitPerMinute are global across every tenant pinning it.")
+    private Boolean sharedWithTenants;
 
     /** If send-side failover is ever introduced, rename to {@code priority} then. */
     @Field(description = "Tie-break order among multiple isDefault=true configs and display "

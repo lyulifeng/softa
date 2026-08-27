@@ -317,8 +317,8 @@ sub-packages, `io\.acme\.foo` for that package only; a sole entry `"*"` means
 
 | `scanner-scope` | Scanner runs | DDL execution | Drift detection |
 |---|---|---|---|
-| `["*"]` | Boot-time, eager, **all** packages | Auto: `CREATE TABLE` / `ADD COLUMN` / `MODIFY COLUMN` / `ADD INDEX`. **Never auto-DROP** — DROP COLUMN / DROP TABLE / DROP INDEX log WARN with copy-paste SQL. `tableName` changes are also warn-only (`RENAME TABLE` hint) | n/a |
-| `["io\\.acme\\.foo.*", …]` | Boot-time, **in-scope packages only** | Same auto-policy, in-scope models only | n/a |
+| `["*"]` | Boot-time, eager, **all** packages | **Physical convergence**: every owned table converges to its annotations on every boot — `CREATE` / `ADD` / `MODIFY` (narrowing included) / declared `RENAME` auto-execute, and **undeclared columns / indexes are DROPPED**. A bare `tableName` change whose old table still physically exists fails the boot (never guessed) | Residual drift (projection tables, whole undeclared tables) audited every boot |
+| `["io\\.acme\\.foo.*", …]` | Boot-time, **in-scope packages only** | Same convergence, in-scope models only; out-of-scope tables are never touched | n/a |
 | empty / unset (prod default) | n/a | n/a | `MetadataAnnotationChecker` runs post-boot async, logs WARN if code-vs-DB drift detected |
 
 Discovery is separate from management: `system.metadata.scan-base-packages`
@@ -328,23 +328,24 @@ Discovery is separate from management: `system.metadata.scan-base-packages`
 (system models, reference data, framework enums) discoverable out of the box;
 `scanner-scope` still decides what gets reconciled.
 
-Boot ordering and recovery: the scanner executes DDL **before** committing the
-`sys_*` rows — a failed DDL leaves the rows unwritten, so the next boot
-recomputes the same diff and retries (re-applied DDL degrades to WARN on
-"already exists"). **Physical recovery**: DDL planning also snapshots the
-managed tables via `DatabaseMetaData` (no switch — posture follows
-`scanner-scope`; introspection failure degrades to plain diff planning) and
-prepends *additive-only* recovery DDL where `sys_*` and
-the physical schema drifted apart (hand-dropped column behind a MODIFY →
-recreate it; hand-dropped table behind ALTERs → full CREATE from code;
-pre-existing table behind a CREATE → adopt by adding missing columns/indexes).
-Originally planned statements always still run, so stale facts only add WARN
-noise, never lose a change. A MODIFY whose physical comparison says the column
-would **narrow** (or types are incomparable) is deferred to the warn-only SQL
-block instead of auto-executing — widen freely, never narrow silently. Every
-boot also logs a consolidated physical drift audit (missing/undeclared
-tables/columns/indexes + type mismatches), and `GET /metadata/status` serves
-the boot snapshot (code vs catalog fingerprints + the drift report). Details:
+Boot ordering and convergence: the scanner executes DDL **before** committing
+the `sys_*` rows — a failed DDL leaves the rows unwritten, so the next boot
+replans and retries (re-applied DDL degrades to WARN on "already exists").
+**Physical convergence**: DDL planning snapshots the managed tables via
+`DatabaseMetaData` (no switch — posture follows `scanner-scope`) and derives
+its verbs from annotations vs physical facts, with the `sys_*` diff
+contributing only what introspection cannot see (rename pairings with exact
+prior names, NOT NULL / DEFAULT / COMMENT deltas, index-definition changes).
+Drift therefore heals with or without a metadata diff: hand-dropped
+columns/tables recreate, pre-existing tables are adopted, undeclared
+columns/indexes drop, and type/width mismatches — narrowing included — modify
+to the declared shape (the declaration is the truth; a non-empty scope is by
+definition non-production). Whole undeclared tables and projections stay
+untouched (ownership unprovable / owner's business). Introspection failure
+degrades to conservative metadata-only planning (additive auto, destructive
+warn-only). Every boot logs the **residual** drift audit (post-convergence),
+and `GET /metadata/status` serves the boot snapshot (code vs catalog
+fingerprints + the drift report). Details:
 [metadata-starter README](starters/metadata-starter/README.md).
 
 A **narrow scope on a shared dev database** lets each developer reconcile only
@@ -400,11 +401,13 @@ migration. The whole boot DDL window is serialized across instances by a
 database session lock (`BootDdlLock`, 60s wait budget). Hand-written SQL is
 therefore reserved for: **data-carrying transitions** (a catalog column whose
 addition needs a backfill `UPDATE` for out-of-scope rows — the auto-ADD only
-supplies the column default), destructive cleanup (any DROP), renames not
-expressible as single-step `renamedFrom`, business-data DML, and any change
-on an environment that runs with an empty `scanner-scope` (checker-only —
-nothing auto-applies there, catalog included; `design_*` studio tables are
-also not covered by the boot reconcile).
+supplies the column default), destructive cleanup **outside the scope's
+reach** (code-less-root `sys_*` rows, whole undeclared tables, out-of-scope
+packages — in-scope physical drift, DROPs included, converges automatically),
+renames not expressible as single-step `renamedFrom`, business-data DML, and
+any change on an environment that runs with an empty `scanner-scope`
+(checker-only — nothing auto-applies there, catalog included; `design_*`
+studio tables are also not covered by the boot reconcile).
 Migrations live in `deploy/migrations/<db>/V<N>__<slug>.sql` — the next free
 number is the registration, and the header comment carries the context,
 variants, and run-before-boot ordering contract (copy the structure of

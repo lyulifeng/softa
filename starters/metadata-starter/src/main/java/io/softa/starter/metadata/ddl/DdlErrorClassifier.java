@@ -83,13 +83,30 @@ public final class DdlErrorClassifier {
     }
 
     /**
+     * A {@code DROP COLUMN} whose column no longer exists — MySQL 1091 (can't drop:
+     * check that it exists), PostgreSQL 42703 (undefined_column), H2 42122 (column not
+     * found). Consult only for {@code DROP_COLUMN}: the convergence lane's undeclared-column
+     * cleanup plans from a snapshot, so a column hand-dropped between snapshot and execution
+     * is already in the target state and the boot must converge, not fail.
+     */
+    public static boolean isColumnDropAlreadyApplied(BadSqlGrammarException e) {
+        SQLException sqle = e.getSQLException();
+        if (sqle == null) {
+            return false;
+        }
+        int code = sqle.getErrorCode();
+        return code == 1091 || code == 42122 || "42703".equals(sqle.getSQLState());
+    }
+
+    /**
      * A {@code DROP INDEX} whose index no longer exists — MySQL 1091 (can't drop:
      * check that it exists), PostgreSQL 42704 (undefined_object), H2 42112 (index
      * not found) / 90057 (constraint not found — H2's MySQL mode routes
-     * {@code ALTER TABLE ... DROP INDEX} through constraint lookup). Consult only for
-     * {@code ALTER_INDEX}: the only auto-executed DROP INDEX is the drop-half of an
-     * index rebuild (definition change), where a missing index means the drop is
-     * already done and the following ADD must still run.
+     * {@code ALTER TABLE ... DROP INDEX} through constraint lookup). Consulted for
+     * {@code ALTER_INDEX} — the drop-half of an index rebuild (definition change),
+     * where a missing index means the drop is already done and the following ADD must
+     * still run — and for the convergence lane's undeclared-index {@code DROP_INDEX}
+     * units, whose snapshot may be stale the same way.
      */
     public static boolean isIndexDropAlreadyApplied(BadSqlGrammarException e) {
         SQLException sqle = e.getSQLException();

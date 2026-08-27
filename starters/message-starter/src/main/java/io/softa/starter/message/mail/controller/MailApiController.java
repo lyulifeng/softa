@@ -12,17 +12,14 @@ import org.springframework.web.bind.annotation.*;
 import org.springframework.util.StringUtils;
 
 import io.softa.framework.base.exception.BusinessException;
-import io.softa.framework.orm.domain.Filters;
-import io.softa.framework.orm.domain.FlexQuery;
-import io.softa.framework.orm.domain.Orders;
 import io.softa.framework.web.response.ApiResponse;
 import io.softa.starter.message.mail.dto.*;
-import io.softa.starter.message.mail.entity.MailSendServerConfig;
 import io.softa.starter.message.mail.entity.MailTemplate;
 import io.softa.starter.message.mail.service.MailSendRecordService;
 import io.softa.starter.message.mail.service.MailSendServerConfigService;
 import io.softa.starter.message.mail.service.MailTemplateService;
 import io.softa.starter.message.service.MessageService;
+import io.softa.starter.message.shared.TenantScopes;
 
 /**
  * External unified mail API for external systems and integrations.
@@ -96,17 +93,24 @@ public class MailApiController {
     // -------------------------------------------------
 
     /**
-     * List all available (enabled) sending server configs for the current tenant.
+     * List the sending server configs selectable by the current tenant: its
+     * own enabled configs plus the enabled platform configs shared with
+     * tenants. Platform rows are flagged {@code platformShared} so pickers
+     * can render them as selectable-but-read-only.
      */
     @Operation(summary = "List available mail senders")
     @GetMapping("/senders")
     public ApiResponse<List<MailSenderSummaryDTO>> listSenders() {
-        FlexQuery flexQuery = new FlexQuery(
-                new Filters().eq(MailSendServerConfig::getIsEnabled, true),
-                Orders.ofAsc(MailSendServerConfig::getSequence));
-        List<MailSendServerConfig> configs = sendConfigService.searchList(flexQuery);
-        List<MailSenderSummaryDTO> summaries = configs.stream()
-                .map(MailSenderSummaryDTO::from)
+        long caller = TenantScopes.currentTenantOrPlatform();
+        List<MailSenderSummaryDTO> summaries = sendConfigService.listSelectable().stream()
+                .map(config -> {
+                    MailSenderSummaryDTO dto = MailSenderSummaryDTO.from(config);
+                    long rowTenant = config.getTenantId() == null
+                            ? TenantScopes.PLATFORM : config.getTenantId();
+                    dto.setPlatformShared(TenantScopes.multiTenancyEnabled()
+                            && rowTenant == TenantScopes.PLATFORM && caller != TenantScopes.PLATFORM);
+                    return dto;
+                })
                 .toList();
         return ApiResponse.success(summaries);
     }
@@ -116,15 +120,15 @@ public class MailApiController {
     // -------------------------------------------------
 
     /**
-     * List all available (enabled) mail templates for the current tenant.
+     * List the templates a send with {@code templateCode} would actually
+     * reach for the current tenant: one entry per code, the tenant's enabled
+     * customization or the inherited enabled platform template — exactly the
+     * overlay resolution {@code MessageService.sendMail} performs.
      */
     @Operation(summary = "List available mail templates")
     @GetMapping("/templates")
     public ApiResponse<List<MailTemplateSummaryDTO>> listTemplates() {
-        Filters filters = new Filters()
-                .eq(MailTemplate::getIsEnabled, true);
-        List<MailTemplate> templates = templateService.searchList(filters);
-        List<MailTemplateSummaryDTO> summaries = templates.stream()
+        List<MailTemplateSummaryDTO> summaries = templateService.resolveEffectiveList(true).stream()
                 .map(MailTemplateSummaryDTO::from)
                 .toList();
         return ApiResponse.success(summaries);

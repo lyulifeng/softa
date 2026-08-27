@@ -33,6 +33,15 @@ public interface MailReceiveServerConfigService extends EntityService<MailReceiv
     Optional<MailReceiveServerConfig> findVisibleById(Long id);
 
     /**
+     * Demote every other default config in the current tenant scope so that
+     * {@code keptId} is the only one left with {@code isDefault = true}. Called
+     * by the write endpoints after a row is saved as default; rows authored by
+     * init scripts are untouched (the dispatcher's {@code sequence} ordering
+     * remains the tie-break for those).
+     */
+    void demoteOtherDefaults(Long keptId);
+
+    /**
      * Test IMAP/POP3 connectivity and authentication for the config identified by {@code id}.
      */
     ConnectivityTestResultDTO testConnectivity(Long id);

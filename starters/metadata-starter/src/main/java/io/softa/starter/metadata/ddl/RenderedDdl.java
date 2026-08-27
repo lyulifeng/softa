@@ -32,9 +32,10 @@ public record RenderedDdl(Kind kind, String label, List<String> statements) {
     }
 
     /**
-     * DDL categories. Additive / widening changes auto-execute; data-bearing
-     * <em>destructive</em> changes (any DROP) are warn-only — never auto-executed,
-     * surfaced for explicit human action (mirrors the scanner DDL policy).
+     * DDL categories. The {@code autoExecute} flag encodes the <b>metadata-only lane's</b>
+     * conservative policy (additive auto, destructive warn-only); the convergence lane
+     * executes every unit it plans regardless of the flag — there the destructive verbs
+     * are policy, guarded by the physical facts that lane requires.
      *
      * <p>Declared renames get their own kinds so the "source already renamed" retry
      * degradation ({@code DdlErrorClassifier}) can be scoped to exactly the statement
@@ -42,21 +43,18 @@ public record RenderedDdl(Kind kind, String label, List<String> statements) {
      * ({@code renamedFrom} on a field / a changed {@code columnName} → {@code CHANGE
      * COLUMN old new}) tolerates "unknown column <old>", {@link #DECLARED_TABLE_RENAME}
      * ({@code renamedFrom} on a model → {@code RENAME TABLE old TO new}) tolerates
-     * "missing table <old>". A plain {@link #ALTER_TABLE} gets <b>no</b> such tolerance —
+     * "missing table <old>", and the drop kinds ({@link #DROP_COLUMN} /
+     * {@link #DROP_INDEX} / the rebuild half of {@link #ALTER_INDEX}) tolerate an
+     * already-gone target. A plain {@link #ALTER_TABLE} gets <b>no</b> such tolerance —
      * a MODIFY on a genuinely missing column must fail the boot, not be mistaken for an
      * applied rename. {@link #UNDECLARED_TABLE_RENAME} is a bare {@code tableName}-attribute
      * change inferred from the diff: it could equally be a silent data divorce, so it stays
-     * warn-only and is surfaced as a copy-paste hint.
+     * warn-only on the metadata-only lane (the convergence lane fails the boot on the
+     * ambiguous case instead).
      */
     public enum Kind {
         CREATE_TABLE(true),
         ALTER_TABLE(true),
-        /**
-         * A MODIFY whose physical comparison says the column would shrink (or the type
-         * families are incomparable): executing it could truncate data, so it joins the
-         * warn-only tier with copy-paste SQL — the same risk class as DROP.
-         */
-        ALTER_NARROWING(false),
         ALTER_INDEX(true),
         DROP_TABLE(false),
         DROP_COLUMN(false),

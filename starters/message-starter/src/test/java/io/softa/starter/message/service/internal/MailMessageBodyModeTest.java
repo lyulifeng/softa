@@ -8,6 +8,7 @@ import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
 
 import io.softa.starter.message.config.MessageProperties;
+import io.softa.framework.base.message.MailScope;
 import io.softa.starter.message.mail.dto.SendMailDTO;
 import io.softa.starter.message.mail.entity.MailSendRecord;
 import io.softa.starter.message.mail.entity.MailSendServerConfig;
@@ -182,7 +183,7 @@ class MailMessageBodyModeTest {
         MailSendRecordService recordService = mock(MailSendRecordService.class);
         MailTemplateService templateService = mock(MailTemplateService.class);
         OutboxRecordWriter outboxRecordWriter = mock(OutboxRecordWriter.class);
-        when(dispatcher.resolveSend()).thenReturn(config);
+        when(dispatcher.resolveSend(MailScope.OVERLAY)).thenReturn(config);
         when(outboxRecordWriter.persistAndEnqueue(
                 any(), eq("MailSendRecord"), eq(TopicRoute.MAIL_SEND)))
                 .thenAnswer(invocation -> ((Supplier<Long>) invocation.getArgument(0)).get());

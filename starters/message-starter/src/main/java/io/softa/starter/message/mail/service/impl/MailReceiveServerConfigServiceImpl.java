@@ -1,6 +1,7 @@
 package io.softa.starter.message.mail.service.impl;
 
 import java.util.List;
+import java.util.Objects;
 import java.util.Optional;
 import java.util.Properties;
 import jakarta.mail.MessagingException;
@@ -63,6 +64,25 @@ public class MailReceiveServerConfigServiceImpl extends EntityServiceImpl<MailRe
                 Orders.ofAsc(MailReceiveServerConfig::getSequence));
         List<MailReceiveServerConfig> results = this.searchList(flexQuery);
         return results.isEmpty() ? Optional.empty() : Optional.of(results.getFirst());
+    }
+
+    /**
+     * ORM-scoped search sees exactly the rows of the scope being written
+     * (the write path's tenant context), so "other defaults" can never leak
+     * across tenants.
+     */
+    @Override
+    public void demoteOtherDefaults(Long keptId) {
+        Filters filters = new Filters().eq(MailReceiveServerConfig::getIsDefault, true);
+        for (MailReceiveServerConfig previous : this.searchList(filters)) {
+            if (Objects.equals(previous.getId(), keptId)) {
+                continue;
+            }
+            MailReceiveServerConfig demoted = new MailReceiveServerConfig();
+            demoted.setId(previous.getId());
+            demoted.setIsDefault(false);
+            this.updateOne(demoted);
+        }
     }
 
     @Override

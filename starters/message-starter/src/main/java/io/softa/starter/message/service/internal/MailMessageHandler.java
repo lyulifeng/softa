@@ -9,6 +9,7 @@ import org.springframework.util.CollectionUtils;
 import org.springframework.util.StringUtils;
 
 import io.softa.framework.base.exception.BusinessException;
+import io.softa.framework.base.message.MailScope;
 import io.softa.framework.base.utils.HtmlUtils;
 import io.softa.framework.orm.dto.FileInfo;
 import io.softa.starter.message.config.MessageProperties;
@@ -70,10 +71,13 @@ final class MailMessageHandler {
     private final MessageProperties messageProperties;
 
     Long send(SendMailDTO dto) {
-        ResolvedMail message = resolve(dto);
+        // The tier policy governs BOTH axes of this send: which template tier
+        // renders the content, and which tier's default SMTP carries it.
+        MailScope scope = dto.getScope() != null ? dto.getScope() : MailScope.OVERLAY;
+        ResolvedMail message = resolve(dto, scope);
         // Config resolution happens AFTER request resolution so a template's
         // preferredServerConfigId is honored.
-        MailSendServerConfig config = resolveConfig(message);
+        MailSendServerConfig config = resolveConfig(message, scope);
         return enqueueForAsyncSend(message, config);
     }
 
@@ -84,14 +88,15 @@ final class MailMessageHandler {
     /**
      * Resolve template defaults and validate one email request.
      */
-    private ResolvedMail resolve(SendMailDTO dto) {
+    private ResolvedMail resolve(SendMailDTO dto, MailScope scope) {
         // templateId addresses the exact row (editor test sends: what you
         // preview is what goes out, enabled or not); templateCode goes through
-        // production resolution (tenant → platform overlay, enabled only).
+        // production resolution (tenant → platform overlay under the declared
+        // tier policy, enabled only).
         MailTemplate template = dto.getTemplateId() != null
                 ? templateService.getRequiredById(dto.getTemplateId())
                 : StringUtils.hasText(dto.getTemplateCode())
-                        ? templateService.resolve(dto.getTemplateCode())
+                        ? templateService.resolve(dto.getTemplateCode(), scope)
                         : null;
 
         String subject = dto.getSubject();
@@ -207,10 +212,12 @@ final class MailMessageHandler {
     // Persistence — PENDING record + outbox row, atomically
     // ------------------------------------------------------------------
 
-    private MailSendServerConfig resolveConfig(ResolvedMail message) {
+    private MailSendServerConfig resolveConfig(ResolvedMail message, MailScope scope) {
+        // An explicit id (caller override or template pin — both scope-checked
+        // at write time) wins over the tier policy.
         return message.serverConfigId() != null
                 ? dispatcher.resolveSendById(message.serverConfigId())
-                : dispatcher.resolveSend();
+                : dispatcher.resolveSend(scope);
     }
 
     /**

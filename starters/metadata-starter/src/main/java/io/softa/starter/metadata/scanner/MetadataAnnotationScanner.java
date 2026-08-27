@@ -11,6 +11,7 @@ import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Component;
 
 import io.softa.framework.base.config.SystemConfig;
+import io.softa.framework.base.utils.StringTools;
 import io.softa.framework.orm.meta.MetadataInitializer;
 import io.softa.starter.metadata.catalog.SysCatalog;
 import io.softa.starter.metadata.checksum.CatalogFingerprint;
@@ -18,6 +19,7 @@ import io.softa.starter.metadata.config.MetadataProperties;
 import io.softa.starter.metadata.ddl.BootDdlLock;
 import io.softa.starter.metadata.ddl.DdlOrchestrator;
 import io.softa.starter.metadata.ddl.ReferenceColumnResolver;
+import io.softa.starter.metadata.ddl.SysDdlContextBuilder;
 import io.softa.starter.metadata.ddl.introspect.PhysicalDriftAuditor;
 import io.softa.starter.metadata.ddl.introspect.PhysicalDriftReport;
 import io.softa.starter.metadata.ddl.introspect.PhysicalSchema;
@@ -68,10 +70,13 @@ import io.softa.starter.metadata.scanner.diff.SchemaDiff;
  *   <li>Parse them into an {@link AnnotationScanResult} (the from-code state).</li>
  *   <li>Load the current {@code sys_*} rows via {@link SysJdbcLoader} and
  *       confine them to the in-scope key set ({@link ScannerScope#confineFromDb}).</li>
- *   <li>Diff via {@link DiffEngine}; apply DDL via {@link DdlOrchestrator}
- *       <b>first</b>, then the {@code sys_*} rows via {@link SysJdbcWriter} —
- *       a failed DDL leaves the rows unwritten so the next boot retries the
- *       same diff (re-applied DDL degrades to WARN on duplicates).</li>
+ *   <li>Diff via {@link DiffEngine}; converge the physical schema via
+ *       {@link DdlOrchestrator#converge} <b>first</b> — annotations against the
+ *       introspected facts, so hand-made drift heals alongside declared changes, with
+ *       the diff contributing renames and attribute deltas (introspection failure
+ *       degrades to conservative metadata-only planning) — then write the {@code sys_*}
+ *       rows via {@link SysJdbcWriter}: a failed DDL leaves the rows unwritten so the
+ *       next boot retries (re-applied DDL degrades to WARN on duplicates).</li>
  * </ol>
  *
  * <p>This scanner uses {@code JdbcTemplate} directly, never
@@ -271,42 +276,62 @@ public class MetadataAnnotationScanner implements MetadataInitializer {
                 fromDb.optionSets().size(), fromDb.optionItems().size());
         warnCodelessRoots(scope, current, inScopeModelNames, inScopeOptionCodes);
 
-        // One physical snapshot serves the whole-catalog drift audit AND the DDL recovery
-        // planning below (null when introspection failed — recovery then degrades to plain
-        // diff planning). The audit runs on every boot — an idempotent diff can still hide
-        // hand-made physical drift, and this consolidated report surfaces all of it at once.
-        // The catalog tables audit alongside the in-scope business tables: under a narrow
-        // scope they are not in fromCode, yet their drift (undeclared columns left by a
-        // pending column-drop migration, narrower-than-declared types) belongs in the same
-        // report — Stage A deliberately emits no warn-units of its own for those states.
-        // Under ["*"] they are already in fromCode; the merge dedups by model name.
-        AnnotationScanResult audited = withCatalogEntities(fromCode, catalogFromCode);
-        PhysicalSchema facts = ddlOrchestrator.introspect(audited.models());
-        log.info("MetadataAnnotationScanner: physical snapshot = {}",
-                facts == null ? "unavailable (recovery planning disabled)"
-                        : facts.tables().size() + " managed table(s)");
-        PhysicalDriftReport physicalDrift = null;
-        if (facts != null) {
-            physicalDrift = PhysicalDriftAuditor.audit(
-                    audited.models(), audited.fields(), audited.modelIndexes(), facts);
-            PhysicalDriftAuditor.warn(physicalDrift, "MetadataAnnotationScanner");
-        }
-
+        // The row diff (code vs sys_*) is computed first: the convergence planner consumes
+        // its rename pairings, attribute modifications and index-definition changes — the
+        // deltas physical introspection cannot see.
         SchemaDiff diff = pipeline.diff(fromCode, fromDb);
         if (diff.isEmpty()) {
-            log.info("MetadataAnnotationScanner: no changes detected (idempotent boot)");
+            log.info("MetadataAnnotationScanner: no metadata changes detected (idempotent catalog)");
         } else {
             for (String summary : writer.changeSummary(diff)) {
                 log.info("MetadataAnnotationScanner: diff {}", summary);
             }
-            // DDL first (additive + ALTER COLUMN auto; DROP warn-only), sys_* rows
-            // second: a DDL failure leaves the rows unwritten, so the next boot
-            // recomputes the same diff and retries. The opposite order is
-            // unrecoverable — once the rows are committed the next boot's diff is
-            // empty and the failed DDL is never re-attempted. Re-running DDL that
-            // already succeeded is absorbed by DdlErrorClassifier's
-            // already-applied degradation (1050/1060/1061/42P07 → WARN).
-            ddlOrchestrator.apply(diff, fromCode.models(), fromCode.fields(), fromCode.modelIndexes(), facts);
+        }
+
+        // One physical snapshot serves the convergence planning AND the residual drift
+        // audit (null when introspection failed — the boot then degrades to conservative
+        // metadata-only DDL planning). The catalog tables audit alongside the in-scope
+        // business tables: under a narrow scope they are not in fromCode, yet their drift
+        // belongs in the same report — Stage A deliberately emits no warn-units for those
+        // states. Under ["*"] they are already in fromCode; the merge dedups by model name.
+        AnnotationScanResult audited = withCatalogEntities(fromCode, catalogFromCode);
+        List<SysModel> snapshotUniverse = withPriorTables(audited.models(), diff);
+        PhysicalSchema facts = ddlOrchestrator.introspect(snapshotUniverse);
+        log.info("MetadataAnnotationScanner: physical snapshot = {}",
+                facts == null ? "unavailable (metadata-only DDL planning)"
+                        : facts.tables().size() + " managed table(s)");
+        PhysicalDriftReport physicalDrift = null;
+        if (facts == null) {
+            // Degraded lane: plan DDL purely from the metadata diff (additive auto, DROP /
+            // undeclared-rename warn-only); physical drift can be neither converged nor
+            // audited this boot.
+            if (!diff.isEmpty()) {
+                ddlOrchestrator.apply(diff, fromCode.models(), fromCode.fields());
+            }
+        } else {
+            // Convergence lane: annotations are the single source of truth — every
+            // in-scope owned table is converged to its declared shape, hand-made drift
+            // included, before the rows commit. The audit then runs on the healed
+            // snapshot, so it reports only the residual (projection tables, out-of-scope
+            // catalog drift, anything convergence cannot own).
+            boolean executed = ddlOrchestrator.converge(fromCode.models(), fromCode.fields(),
+                    fromCode.modelIndexes(), diff, facts);
+            if (executed) {
+                facts = ddlOrchestrator.introspect(snapshotUniverse);
+            }
+            if (facts != null) {
+                physicalDrift = PhysicalDriftAuditor.audit(
+                        audited.models(), audited.fields(), audited.modelIndexes(), facts);
+                PhysicalDriftAuditor.warn(physicalDrift, "MetadataAnnotationScanner");
+            }
+        }
+
+        if (!diff.isEmpty()) {
+            // Rows second: a DDL failure above leaves them unwritten, so the next boot
+            // recomputes the same diff and retries. The opposite order is unrecoverable —
+            // once the rows are committed the next boot's diff is empty and the failed DDL
+            // is never re-attempted. Re-running DDL that already succeeded is absorbed by
+            // DdlErrorClassifier's already-applied degradation.
             writer.apply(diff);
             log.info("MetadataAnnotationScanner: applied {} row change(s) to sys_*", diff.totalCount());
         }
@@ -361,6 +386,38 @@ public class MetadataAnnotationScanner implements MetadataInitializer {
                 .filter(i -> missingNames.contains(i.getModelName())).forEach(indexes::add);
         return new AnnotationScanResult(models, fields,
                 fromCode.optionSets(), fromCode.optionItems(), indexes);
+    }
+
+    /**
+     * The snapshot universe: every audited model's table, plus the tables a rename-in-flight
+     * may still physically be under — the diff's fromDb side of a pending {@code tableName}
+     * change, and the {@code snake_case(renamedFrom)} derivation for declared model renames
+     * whose {@code sys_*} rows already moved on (drift healing). Without the prior names the
+     * convergence planner could not see the old table and would genesis-create an empty
+     * successor instead of renaming — a silent data divorce.
+     */
+    private static List<SysModel> withPriorTables(List<SysModel> models, SchemaDiff diff) {
+        List<SysModel> universe = new ArrayList<>(models);
+        Set<String> tables = models.stream()
+                .map(m -> SysDdlContextBuilder.resolveTableName(m).toLowerCase(Locale.ROOT))
+                .collect(Collectors.toCollection(HashSet::new));
+        for (SchemaDiff.Modification<SysModel> mod : diff.models().modified()) {
+            addPriorTable(universe, tables, SysDdlContextBuilder.resolveTableName(mod.fromDb()));
+        }
+        for (SysModel model : models) {
+            if (model.getRenamedFrom() != null && !model.getRenamedFrom().isBlank()) {
+                addPriorTable(universe, tables, StringTools.toUnderscoreCase(model.getRenamedFrom()));
+            }
+        }
+        return universe;
+    }
+
+    private static void addPriorTable(List<SysModel> universe, Set<String> tables, String priorTable) {
+        if (tables.add(priorTable.toLowerCase(Locale.ROOT))) {
+            SysModel stub = new SysModel();
+            stub.setTableName(priorTable);
+            universe.add(stub);
+        }
     }
 
     /**

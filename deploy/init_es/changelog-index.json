@@ -1,0 +1,31 @@
+{
+  "settings": {
+    "number_of_shards": 1,
+    "number_of_replicas": 0
+  },
+  "mappings": {
+    "dynamic": "false",
+    "_meta": {
+      "owner": "deploy/efk/docker-compose.yml (setup service)",
+      "source_of_truth": "es-starter ChangeLogDocument — the storage DTO actually indexed; field types mirror it",
+      "why": "dynamic:false is what stops mapping explosion: if the index does not exist, ES auto-creates it with dynamic mapping on the first write, turns every changed field of every model into an ES field, and hits index.mapping.total_fields.limit (default 1000) — after which writes are rejected and the only fix is a reindex. dataBeforeChange/dataAfterChange are JSON strings (ChangeLogDocument flattens the payload maps), so keyword + index:false + doc_values:false keeps them as unindexed _source-only scalars and fails fast at write time if a producer ever regresses to sending objects.",
+      "note": "_meta must live INSIDE mappings — at the top level the create-index API rejects it with 400 'unknown key [_meta]'."
+    },
+    "properties": {
+      "uuid":        { "type": "keyword" },
+      "traceId":     { "type": "keyword" },
+      "model":       { "type": "keyword" },
+      "rowId":       { "type": "keyword" },
+      "accessType":  { "type": "keyword" },
+      "dataBeforeChange": { "type": "keyword", "index": false, "doc_values": false },
+      "dataAfterChange":  { "type": "keyword", "index": false, "doc_values": false },
+      "tenantId":    { "type": "keyword" },
+      "changedById": { "type": "keyword" },
+      "changedBy":   { "type": "keyword" },
+      "changedTime": {
+        "type": "date",
+        "format": "yyyy-MM-dd HH:mm:ss||strict_date_optional_time||epoch_millis"
+      }
+    }
+  }
+}
