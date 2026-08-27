@@ -21,7 +21,9 @@ import io.softa.starter.message.mail.enums.MailPriority;
  * Templates are identified by {@code code}. Resolution prefers a tenant
  * template, falling back to the platform template:
  * <ol>
- *   <li>Tenant template for {@code code}</li>
+ *   <li>Tenant template for {@code code} — unless the platform template for the
+ *       same code declares {@code overridable = false}, or the send declared
+ *       {@code MailScope.PLATFORM_ONLY}</li>
  *   <li>Platform template (tenant_id = 0) for {@code code}</li>
  * </ol>
  * tenant_id = 0  — platform-level, shared across all tenants.
@@ -58,7 +60,7 @@ public class MailTemplate extends AuditableModel {
     @Field(length = 500, description = "Description")
     private String description;
 
-    @Field(length = 500,
+    @Field(required = true, length = 500,
             description = "Email subject template, supports {{ variable }} placeholders")
     private String subject;
 
@@ -96,6 +98,14 @@ public class MailTemplate extends AuditableModel {
     @Field(description = "Whether this template is active")
     private Boolean isEnabled;
 
+    @Field(description = "Meaningful on platform templates (tenant_id = 0) only: whether a tenant "
+                    + "may shadow this code with its own template. false = locked — send-time "
+                    + "resolution always uses the platform row for this code, the Customize action "
+                    + "is refused, and creating a tenant template with this code is rejected. "
+                    + "null/true = tenant customization applies. Protects platform-owned mail "
+                    + "(billing, security, compliance) from tenant template hijack at every call site.")
+    private Boolean overridable;
+
     @Field(description = "Default email priority for this template. "
                     + "When set, all emails sent via this template will use this priority unless overridden in SendMailDTO.")
     private MailPriority defaultPriority;
@@ -119,6 +129,8 @@ public class MailTemplate extends AuditableModel {
                     + "SendMailDTO.serverConfigId > MailTemplate.preferredServerConfigId > "
                     + "MailServerDispatcher default (tenant default → platform default). "
                     + "Routes template categories through dedicated SMTP "
-                    + "(marketing / transactional / compliance).")
+                    + "(marketing / transactional / compliance). Scope rule enforced on the "
+                    + "write endpoints: only a config owned by the template's own tenant scope "
+                    + "may be pinned — a tenant template can never pin platform infrastructure.")
     private Long preferredServerConfigId;
 }

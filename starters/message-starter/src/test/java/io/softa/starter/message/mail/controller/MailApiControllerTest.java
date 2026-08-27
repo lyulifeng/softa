@@ -9,8 +9,6 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.test.util.ReflectionTestUtils;
 
-import io.softa.framework.orm.domain.Filters;
-import io.softa.framework.orm.domain.FlexQuery;
 import io.softa.framework.web.response.ApiResponse;
 import io.softa.starter.message.mail.dto.MailSendStatusDTO;
 import io.softa.starter.message.mail.dto.MailSenderSummaryDTO;
@@ -109,7 +107,7 @@ class MailApiControllerTest {
         config2.setIsDefault(false);
         config2.setIsEnabled(true);
 
-        when(sendConfigService.searchList(any(FlexQuery.class))).thenReturn(List.of(config1, config2));
+        when(sendConfigService.listSelectable()).thenReturn(List.of(config1, config2));
 
         ApiResponse<List<MailSenderSummaryDTO>> response = controller.listSenders();
         Assertions.assertNotNull(response.getData());
@@ -124,7 +122,7 @@ class MailApiControllerTest {
 
     @Test
     void listSendersReturnsEmptyWhenNoneEnabled() {
-        when(sendConfigService.searchList(any(Filters.class))).thenReturn(List.of());
+        when(sendConfigService.listSelectable()).thenReturn(List.of());
 
         ApiResponse<List<MailSenderSummaryDTO>> response = controller.listSenders();
         Assertions.assertNotNull(response.getData());
@@ -143,7 +141,7 @@ class MailApiControllerTest {
         template.setSubject("Welcome, {{ name }}!");
         template.setDefaultPriority(MailPriority.NORMAL);
 
-        when(templateService.searchList(any(Filters.class))).thenReturn(List.of(template));
+        when(templateService.resolveEffectiveList(true)).thenReturn(List.of(template));
 
         ApiResponse<List<MailTemplateSummaryDTO>> response = controller.listTemplates();
         Assertions.assertNotNull(response.getData());

@@ -54,7 +54,20 @@ public abstract class ConfigCache<T extends AbstractModel> {
     }
 
     public T getDefault(Supplier<T> loader) {
-        String key = keyDefault + currentTenantId();
+        return getDefault(currentTenantId(), loader);
+    }
+
+    /**
+     * The platform tier's default ({@code tenantId = 0} key) regardless of the
+     * current tenant — for {@code PLATFORM_ONLY} sends, which must neither read
+     * nor poison the caller tenant's default cache entry.
+     */
+    public T getPlatformDefault(Supplier<T> loader) {
+        return getDefault(0L, loader);
+    }
+
+    private T getDefault(long tenantId, Supplier<T> loader) {
+        String key = keyDefault + tenantId;
         T cached = cacheService.get(key, type);
         if (cached != null) return cached;
         T loaded = loader.get();

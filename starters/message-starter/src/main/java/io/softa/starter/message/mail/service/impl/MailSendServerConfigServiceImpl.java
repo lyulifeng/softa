@@ -1,13 +1,17 @@
 package io.softa.starter.message.mail.service.impl;
 
+import java.util.Comparator;
 import java.util.List;
+import java.util.Objects;
 import java.util.Optional;
 import jakarta.mail.MessagingException;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.context.annotation.Lazy;
 import org.springframework.mail.javamail.JavaMailSenderImpl;
 import org.springframework.stereotype.Service;
 
+import io.softa.framework.base.exception.BusinessException;
 import io.softa.framework.base.exception.IllegalArgumentException;
 import io.softa.framework.orm.annotation.CrossTenant;
 import io.softa.framework.orm.domain.Filters;
@@ -28,6 +32,14 @@ import io.softa.starter.message.shared.TenantScopes;
 @Service
 public class MailSendServerConfigServiceImpl extends EntityServiceImpl<MailSendServerConfig, Long>
         implements MailSendServerConfigService {
+
+    /**
+     * Self-reference to allow {@code @CrossTenant} AOP advice to be applied
+     * when calling the cross-tenant query methods from within the same bean.
+     */
+    @Lazy
+    @Autowired
+    private MailSendServerConfigService self;
 
     @Autowired
     private SmtpMailTransport smtpMailTransport;
@@ -67,12 +79,82 @@ public class MailSendServerConfigServiceImpl extends EntityServiceImpl<MailSendS
         return results.isEmpty() ? Optional.empty() : Optional.of(results.getFirst());
     }
 
+    /**
+     * One {@code @CrossTenant} query over both visible scopes, with the
+     * sharing policy applied in memory (config tables hold a handful of
+     * rows): own rows always qualify; platform rows qualify for tenant
+     * callers only when {@code sharedWithTenants = true}. With multi-tenancy
+     * disabled the visibility filter collapses harmlessly — but rows written
+     * in single-tenant mode carry no tenant id, so the plain scoped list is
+     * used instead.
+     */
+    @Override
+    @CrossTenant
+    public List<MailSendServerConfig> listSelectable() {
+        FlexQuery selectableQuery = new FlexQuery(
+                new Filters().eq(MailSendServerConfig::getIsEnabled, true),
+                Orders.ofAsc(MailSendServerConfig::getSequence));
+        if (!TenantScopes.multiTenancyEnabled()) {
+            return searchList(selectableQuery);
+        }
+        long caller = TenantScopes.currentTenantOrPlatform();
+        selectableQuery.getFilters()
+                .in(MailSendServerConfig::getTenantId, TenantScopes.currentPlusPlatform());
+        return searchList(selectableQuery).stream()
+                .filter(config -> {
+                    long rowTenant = config.getTenantId() == null
+                            ? TenantScopes.PLATFORM : config.getTenantId();
+                    return rowTenant == caller
+                            || Boolean.TRUE.equals(config.getSharedWithTenants());
+                })
+                .sorted(Comparator.comparing(MailSendServerConfig::getSequence,
+                        Comparator.nullsLast(Comparator.naturalOrder())))
+                .toList();
+    }
+
+    @Override
+    public void assertWritableInCurrentScope(Long id) {
+        if (id == null || getById(id).isPresent()) {
+            return;
+        }
+        // Visible but not own-scope readable = a platform row seen from a tenant.
+        if (self.findVisibleById(id).isPresent()) {
+            throw new BusinessException(
+                    "Mail send server config {0} is platform-owned and cannot be edited or deleted "
+                    + "from a tenant scope — it is managed by the platform operator.", id);
+        }
+    }
+
+    /**
+     * ORM-scoped search sees exactly the rows of the scope being written
+     * (the write path's tenant context), so "other defaults" can never leak
+     * across tenants. Demotion goes through {@link #updateOne} so the config
+     * cache is evicted for every demoted row.
+     */
+    @Override
+    public void demoteOtherDefaults(Long keptId) {
+        Filters filters = new Filters().eq(MailSendServerConfig::getIsDefault, true);
+        for (MailSendServerConfig previous : this.searchList(filters)) {
+            if (Objects.equals(previous.getId(), keptId)) {
+                continue;
+            }
+            MailSendServerConfig demoted = new MailSendServerConfig();
+            demoted.setId(previous.getId());
+            demoted.setIsDefault(false);
+            this.updateOne(demoted);
+        }
+    }
+
     @Override
     public boolean updateOne(MailSendServerConfig entity) {
         boolean result = super.updateOne(entity);
         if (result) {
             // SmtpMailTransport is now stateless — only the Redis config cache needs eviction.
             configCache.evictById(entity.getId());
+        } else if (entity != null) {
+            // The ORM silently drops writes to rows outside the caller's scope —
+            // name the platform-row case instead of returning a mute false.
+            assertWritableInCurrentScope(entity.getId());
         }
         return result;
     }
@@ -82,6 +164,8 @@ public class MailSendServerConfigServiceImpl extends EntityServiceImpl<MailSendS
         boolean result = super.deleteById(id);
         if (result) {
             configCache.evictById(id);
+        } else {
+            assertWritableInCurrentScope(id);
         }
         return result;
     }

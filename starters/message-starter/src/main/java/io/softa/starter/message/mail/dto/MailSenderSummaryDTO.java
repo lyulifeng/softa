@@ -41,4 +41,8 @@ public class MailSenderSummaryDTO {
 
     @Schema(description = "Whether this config is enabled")
     private Boolean isEnabled;
+
+    @Schema(description = "True when this sender is a platform config offered to the tenant via "
+            + "sharing (sharedWithTenants) — selectable but read-only for tenant callers")
+    private Boolean platformShared;
 }

@@ -5,6 +5,8 @@ import org.springframework.pulsar.annotation.PulsarListener;
 import org.springframework.stereotype.Component;
 import lombok.extern.slf4j.Slf4j;
 
+import io.softa.framework.base.context.Context;
+import io.softa.framework.base.context.ContextHolder;
 import io.softa.framework.base.message.MailRequestMessage;
 import io.softa.starter.message.mail.dto.SendMailDTO;
 import io.softa.starter.message.service.MessageService;
@@ -13,10 +15,15 @@ import io.softa.starter.message.service.MessageService;
  * Consumes {@link MailRequestMessage} off the mail-request MQ topic and delivers it through the mail
  * pipeline. Lets any starter request a <b>templated</b> mail without depending on message-starter (⊥):
  * the producer publishes to the topic, this consumer maps it to a {@link SendMailDTO} (template code +
- * variables) and hands it to {@link MessageService}, which renders the {@code MailTemplate} (system
- * {@code tenantId=0} fallback) and delivers via its outbox pipeline. Registered only when
+ * variables + tier scope) and hands it to {@link MessageService}, which renders the
+ * {@code MailTemplate} and delivers via its outbox pipeline. Registered only when
  * {@code mq.topics.mail-request.topic} is configured (Pulsar optional) — same gating as the other
  * message consumers.
+ *
+ * <p>The MQ hop drops the producer's thread context, so the message itself names the tenant: the
+ * consumer restores {@code message.tenantId()} before accepting the send, letting an
+ * {@code OVERLAY}-scoped render apply that tenant's template/server customizations. A message with no
+ * tenant id keeps the historical behaviour — no tenant context, platform-tier resolution.
  */
 @Slf4j
 @Component
@@ -43,8 +50,13 @@ public class MailRequestConsumer {
         mail.setTo(message.to());
         mail.setTemplateCode(message.templateCode());
         mail.setTemplateVariables(message.variables());
-        messageService.sendMail(mail);
-        log.debug("Delivered mail-request → template '{}' to {} recipient(s)",
-                message.templateCode(), message.to().size());
+        mail.setScope(message.scope());
+        Context ctx = ContextHolder.cloneContext();
+        if (message.tenantId() != null) {
+            ctx.setTenantId(message.tenantId());
+        }
+        ContextHolder.runWith(ctx, () -> messageService.sendMail(mail));
+        log.debug("Delivered mail-request → template '{}' to {} recipient(s), tenantId={}, scope={}",
+                message.templateCode(), message.to().size(), message.tenantId(), message.scope());
     }
 }

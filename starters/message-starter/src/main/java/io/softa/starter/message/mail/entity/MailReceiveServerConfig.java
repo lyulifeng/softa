@@ -8,6 +8,7 @@ import io.softa.framework.orm.annotation.Field;
 import io.softa.framework.orm.annotation.Index;
 import io.softa.framework.orm.annotation.Model;
 import io.softa.framework.orm.enums.IdStrategy;
+import io.softa.framework.orm.enums.MaskingType;
 import io.softa.framework.orm.entity.AuditableModel;
 import io.softa.starter.message.mail.enums.ReceiveProtocol;
 
@@ -58,7 +59,11 @@ public class MailReceiveServerConfig extends AuditableModel {
     @Field(label = "Auth Username", length = 255)
     private String username;
 
-    @Field(length = 255)
+    @Field(length = 512, encrypted = true, copyable = false, unsearchable = true,
+            maskingType = MaskingType.ALL,
+            description = "Mailbox auth password — AES-encrypted at rest, masked in API reads. "
+                    + "Omit the field on update to keep the stored value; a payload containing "
+                    + "the mask symbol is rejected.")
     private String password;
 
     @Field(length = 255,
@@ -66,7 +71,9 @@ public class MailReceiveServerConfig extends AuditableModel {
                     + "Supports INBOX, Junk, and any custom folder name.")
     private String fetchFolders;
 
-    @Field(description = "Whether this is the default receiving config for this tenant")
+    @Field(description = "Whether this is the default receiving config for this tenant. "
+                    + "At most one per tenant scope: the standard write endpoints demote every "
+                    + "other default when a config is saved with this flag set.")
     private Boolean isDefault;
 
     @Field(description = "Whether this config is enabled")
