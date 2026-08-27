@@ -159,12 +159,6 @@ public class UserProfileServiceImpl extends EntityServiceImpl<UserProfile, Long>
     }
 
     /**
-     * Get UserInfo from cache or database
-     *
-     * @param userId User ID
-     * @return UserInfo object
-     */
-    /**
      * <p><b>Why {@code @SkipPermissionCheck}</b>: same reasoning as {@link #getCurrentUserProfile()}
      * — the id comes from the request context, and the lookup this delegates to reads the caller's
      * own {@code UserProfile}, which is anchorless and therefore fails closed without an explicit
@@ -180,7 +174,9 @@ public class UserProfileServiceImpl extends EntityServiceImpl<UserProfile, Long>
     }
 
     /**
-     * Deliberately NOT waived: {@code userId} is a parameter. Self-service callers go through
+     * Get UserInfo from cache or database.
+     *
+     * <p>Deliberately NOT waived: {@code userId} is a parameter. Self-service callers go through
      * {@link #getMyUserInfo()}; the authenticated paths that legitimately pass another id
      * (login, OAuth callback) run before a permission snapshot exists, which
      * {@code PermissionServiceImpl} already treats as a bypass.
