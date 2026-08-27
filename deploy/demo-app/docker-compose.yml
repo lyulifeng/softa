@@ -3,10 +3,18 @@ networks:
   shared-net:
     name: shared-net
 
+# json-file does not rotate by default — a long-running dev stack will fill the
+# disk. Applied to every service below.
+x-logging: &logging
+  logging:
+    driver: json-file
+    options: { max-size: "50m", max-file: "5" }
+
 services:
 
   redis:
     image: redis:8.4.0-alpine
+    <<: *logging
     command: redis-server --requirepass admin
     networks:
       - shared-net
@@ -28,6 +36,7 @@ services:
 
   mysql:
     image: mysql:9.6.0
+    <<: *logging
     networks:
       - shared-net
     ports:

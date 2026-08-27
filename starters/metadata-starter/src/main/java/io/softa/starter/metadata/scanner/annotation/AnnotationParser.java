@@ -391,12 +391,41 @@ public final class AnnotationParser {
         // @Field(defaultValue = ...) still wins; ModelManager.validateVersionField fail-fasts
         // on rows that carry none.
         if (model.versionLock()) {
-            out.stream()
-                    .filter(f -> ModelConstant.VERSION.equals(f.getFieldName()))
-                    .filter(f -> f.getDefaultValue() == null)
-                    .forEach(f -> f.setDefaultValue(String.valueOf(ModelConstant.DEFAULT_VERSION)));
+            materializeControlDefault(out, ModelConstant.VERSION,
+                    String.valueOf(ModelConstant.DEFAULT_VERSION));
+        }
+        // Same treatment for the other two framework control flags, and for the same
+        // reason: `ModelManager` sets their runtime defaults (validateActiveControl /
+        // validateSoftDeleted set defaultValueObject, which is what the ORM insert
+        // pipeline autofills from), but that is the READ side — built FROM sys_field —
+        // so leaving default_value null made the DDL layer emit a column with NO
+        // DEFAULT. Every read then filters on the flag (`active = true` /
+        // `deleted = false`), so a row inserted OUTSIDE the ORM — a migration backfill,
+        // a DBA script — got NULL and became invisible: a template nobody could see, a
+        // row that reads as deleted. The flags are declared bare on the entity
+        // (`@Field private Boolean active;`), so the value has to come from here.
+        if (model.activeControl()) {
+            materializeControlDefault(out, ModelConstant.ACTIVE_CONTROL_FIELD, "true");
+        }
+        if (model.softDelete()) {
+            materializeControlDefault(out, ModelConstant.SOFT_DELETED_FIELD, "false");
         }
         return out;
+    }
+
+    /**
+     * Stamp a framework control field's starting value into {@code sys_field.default_value}
+     * so the DDL layer renders it and every consumer (insert autofill, studio export,
+     * hand-written SQL) agrees on one value. An explicit {@code @Field(defaultValue = ...)}
+     * still wins; a model that does not declare the field at all is left to
+     * {@code ModelManager}'s own fail-fast validation.
+     */
+    private static void materializeControlDefault(List<SysField> fields, String fieldName,
+                                                  String defaultValue) {
+        fields.stream()
+                .filter(f -> fieldName.equals(f.getFieldName()))
+                .filter(f -> f.getDefaultValue() == null)
+                .forEach(f -> f.setDefaultValue(defaultValue));
     }
 
     /**

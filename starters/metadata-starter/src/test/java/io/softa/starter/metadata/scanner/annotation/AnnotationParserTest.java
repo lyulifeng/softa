@@ -1016,6 +1016,87 @@ class AnnotationParserTest {
     }
 
     @Test
+    void activeControlModel_materializesActiveDefault() {
+        @Model(activeControl = true)
+        @SuppressWarnings("unused")
+        class Catalogue extends AuditableModel {
+            @Field private Long id;
+            @Field private Boolean active;
+            @Override public Serializable getId() { return id; }
+        }
+        // Every read of an activeControl model filters `active = true`, so a column
+        // with no DEFAULT turns any insert made OUTSIDE the ORM (migration backfill,
+        // DBA script) into an invisible row. ModelManager's runtime default covers the
+        // ORM path only — it is built FROM sys_field, so the value has to be stamped
+        // here for the DDL layer to render `DEFAULT TRUE`.
+        SysField active = byFieldName(
+                parser.parse(List.of(Catalogue.class), List.of()).fields(), "active");
+        assertEquals("true", active.getDefaultValue());
+    }
+
+    @Test
+    void activeControlModel_explicitActiveDefaultWins() {
+        @Model(activeControl = true)
+        @SuppressWarnings("unused")
+        class OptInCatalogue extends AuditableModel {
+            @Field private Long id;
+            // A catalogue whose rows are authored disabled and activated deliberately.
+            @Field(defaultValue = "false") private Boolean active;
+            @Override public Serializable getId() { return id; }
+        }
+        SysField active = byFieldName(
+                parser.parse(List.of(OptInCatalogue.class), List.of()).fields(), "active");
+        assertEquals("false", active.getDefaultValue());
+    }
+
+    @Test
+    void activeFieldWithoutActiveControl_keepsNoDefault() {
+        @Model
+        @SuppressWarnings("unused")
+        class PlainRevision extends AuditableModel {
+            @Field private Long id;
+            // A plain business flag that happens to be named `active` (flow-starter's
+            // FlowBundle does exactly this) — the framework must not invent a default
+            // for a model it does not gate reads on.
+            @Field private Boolean active;
+            @Override public Serializable getId() { return id; }
+        }
+        SysField active = byFieldName(
+                parser.parse(List.of(PlainRevision.class), List.of()).fields(), "active");
+        assertNull(active.getDefaultValue());
+    }
+
+    @Test
+    void softDeleteModel_materializesDeletedDefault() {
+        @Model(softDelete = true)
+        @SuppressWarnings("unused")
+        class Archivable extends AuditableModel {
+            @Field private Long id;
+            @Field private Boolean deleted;
+            @Override public Serializable getId() { return id; }
+        }
+        // The mirror of the active case, and the worse failure: reads filter
+        // `deleted = false`, so a NULL makes a freshly inserted row read as deleted.
+        SysField deleted = byFieldName(
+                parser.parse(List.of(Archivable.class), List.of()).fields(), "deleted");
+        assertEquals("false", deleted.getDefaultValue());
+    }
+
+    @Test
+    void deletedFieldWithoutSoftDelete_keepsNoDefault() {
+        @Model
+        @SuppressWarnings("unused")
+        class HardDeleted extends AuditableModel {
+            @Field private Long id;
+            @Field private Boolean deleted;
+            @Override public Serializable getId() { return id; }
+        }
+        SysField deleted = byFieldName(
+                parser.parse(List.of(HardDeleted.class), List.of()).fields(), "deleted");
+        assertNull(deleted.getDefaultValue());
+    }
+
+    @Test
     void versionFieldWithoutVersionLock_keepsNoDefault() {
         @Model
         @SuppressWarnings("unused")
