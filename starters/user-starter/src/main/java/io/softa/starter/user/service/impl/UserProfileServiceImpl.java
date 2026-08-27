@@ -15,6 +15,8 @@ import io.softa.framework.base.context.ContextHolder;
 import io.softa.framework.base.context.UserInfo;
 import io.softa.framework.base.exception.BusinessException;
 import io.softa.framework.base.exception.IllegalArgumentException;
+import io.softa.framework.base.exception.PermissionException;
+import io.softa.framework.orm.entity.FileRecord;
 import io.softa.framework.base.utils.Assert;
 import io.softa.framework.base.utils.LambdaUtils;
 import io.softa.framework.orm.annotation.SkipPermissionCheck;
@@ -139,7 +141,26 @@ public class UserProfileServiceImpl extends EntityServiceImpl<UserProfile, Long>
         profile.setBirthTime(myProfileDTO.getBirthTime());
         profile.setBirthCity(myProfileDTO.getBirthCity());
         profile.setGender(myProfileDTO.getGender());
-        profile.setPhotoId(myProfileDTO.getPhotoId());
+        // photoId is the one field here that points at another row, and the waiver above turned off
+        // the write-payload guard that would normally vet it. Left unchecked, a crafted payload could
+        // set this person's avatar to any file id — buildUserInfo would then mint a signed download URL
+        // for it — so a caller could read back any uploaded file by pointing their own avatar at it.
+        // Verify ownership when the value actually changes: an unchanged photo is already theirs (or was
+        // set for them, e.g. by an admin on onboarding), and only a change can smuggle in a foreign id.
+        // The check reads FileRecord.createdId — stamped by audit to the uploader — under the same
+        // waived span, which is fine: it is our own authorization test, not the row scope we bypassed.
+        Long newPhotoId = myProfileDTO.getPhotoId();
+        if (newPhotoId != null && !newPhotoId.equals(profile.getPhotoId())) {
+            Long owner = this.modelService
+                    .getById(FileRecord.class.getSimpleName(), newPhotoId, java.util.List.of("createdId"))
+                    .map(row -> (Long) row.get("createdId"))
+                    .orElseThrow(() -> new IllegalArgumentException("Photo file {0} not found.", newPhotoId));
+            Long me = ContextHolder.getContext().getUserId();
+            if (!owner.equals(me)) {
+                throw new PermissionException("You can only set your avatar to a file you uploaded.");
+            }
+        }
+        profile.setPhotoId(newPhotoId);
         profile.setLanguage(myProfileDTO.getLanguage());
         profile.setTimezone(myProfileDTO.getTimezone());
         // updateOne(profile, false) — nulls overwrite. The one-arg overload drops null keys before
