@@ -127,15 +127,16 @@ public class LoginServiceImpl implements LoginService {
 
     /** Human-readable reason for refusing login to a non-ACTIVE account. */
     private static String accountDeniedMessage(AccountStatus status) {
+        // No default branch on purpose: the switch is exhaustive over the six-value axis, so
+        // adding a status makes this fail to COMPILE rather than silently fall through to
+        // "not active" — which is how the removed values earned their vague message.
         String reason = switch (status == null ? AccountStatus.FROZEN : status) {
-            case FROZEN, PENDING_DELETION, DELETED -> "your account has been deactivated";
+            case FROZEN -> "your account has been deactivated";
             case DEACTIVATED -> "your membership of this company has ended";
             case LOCKED -> "your account is locked";
-            case BLACKLISTED -> "your account has been blocked";
             case PENDING -> "your account has not been invited yet — ask your administrator to send the invitation";
             case INVITED -> "your account invitation has not been accepted yet";
-            case UNVERIFIED -> "your account has not been verified yet";
-            default -> "your account is not active";
+            case ACTIVE -> "your account is not active";
         };
         return "Login denied: " + reason + ".";
     }
