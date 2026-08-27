@@ -3,6 +3,7 @@ package io.softa.starter.user.service.impl;
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.Optional;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.lang3.StringUtils;
@@ -52,6 +53,8 @@ public class UserInvitationServiceImpl extends EntityServiceImpl<UserInvitation,
     private static final int EXPIRY_DAYS = 7;
     /** Token entropy: 32 random bytes → URL-safe Base64 (~43 chars). */
     private static final int TOKEN_BYTES = 32;
+    /** Cap on the unbind reason (W5). Long enough for a sentence, short enough to stay readable. */
+    private static final int MAX_REASON_LENGTH = 500;
     /** Template codes, seeded as system ({@code tenantId=0}) rows by the host app.
      *  {@code MailTemplate} and {@code SmsTemplate} are separate models, so one code names
      *  the invitation in BOTH channels — same message, different transport. */
@@ -136,6 +139,66 @@ public class UserInvitationServiceImpl extends EntityServiceImpl<UserInvitation,
         issue(account, InvitationPurpose.INVITE, invitedBy);
     }
 
+    /** Statuses a mis-binding can be corrected from (§2.3 matrix, row "Unbind & Re-invite"). */
+    private static final Set<AccountStatus> UNBINDABLE = Set.of(
+            AccountStatus.INVITED, AccountStatus.ACTIVE, AccountStatus.LOCKED, AccountStatus.FROZEN);
+
+    @SkipPermissionCheck
+    @CrossTenant
+    @Override
+    @Transactional
+    public void unbindAndReinvite(Long userId, String newEmail, String newMobile, String reason,
+            Long operatedBy) {
+        Assert.notNull(userId, "userId is required");
+        Assert.notBlank(reason, "A reason is required to unbind this account.");
+        Assert.isTrue(reason.trim().length() <= MAX_REASON_LENGTH,
+                "The reason cannot exceed " + MAX_REASON_LENGTH + " characters.");
+        String email = StringUtils.trimToNull(newEmail);
+        String mobile = StringUtils.trimToNull(newMobile);
+        if (email == null && mobile == null) {
+            throw new BusinessException(
+                    "Enter the correct work email or work mobile before re-inviting.");
+        }
+
+        UserAccount account = accountService.getById(userId)
+                .orElseThrow(() -> new BusinessException("User not found."));
+        // PENDING is excluded on purpose: nobody has accepted, so there is nothing to unbind —
+        // correct the contact and Send. DEACTIVATED is excluded because the membership is closed;
+        // bringing it back is reviveMembership, not a re-invitation.
+        if (!UNBINDABLE.contains(account.getStatus())) {
+            throw new BusinessException("This account cannot be unbound in its current state.");
+        }
+        // Refused here rather than at the unique index: "this email is already registered" from a
+        // constraint violation names no account and arrives after the unbind has been written.
+        accountService.getUserByEmail(email).filter(other -> !other.getId().equals(userId))
+                .ifPresent(other -> {
+                    throw new BusinessException(
+                            "That work email already belongs to another account.");
+                });
+
+        // ① Release what this company issued from the OLD person's login identifiers, FIRST. The
+        // order encodes which half is security-critical: a failure after this point leaves the
+        // membership detached, which is recoverable, while the reverse leaves the wrong person
+        // holding a live login route into an address this company is about to hand to someone else.
+        accountService.releaseLoginIdentifiers(account);
+
+        // ② Detach, ③ record the corrected contacts, and reset to "not contacted yet".
+        Long previousProfileId = account.getProfileId();
+        account.setProfileId(null);
+        account.setActivationTime(null);
+        account.setEmail(email);
+        account.setMobile(mobile);
+        account.setStatus(AccountStatus.INVITED);
+        // updateOne(entity, false): detaching means WRITING nulls, which the default overload
+        // drops — it would leave the membership attached to the wrong person and report success.
+        accountService.updateOne(account, false);
+
+        // ④ Fresh token, every outstanding one revoked inside issue().
+        issue(account, InvitationPurpose.REINVITE, operatedBy, reason.trim());
+        log.warn("Account {} unbound from profile {} and re-invited by {}. Reason: {}",
+                userId, previousProfileId, operatedBy, reason.trim());
+    }
+
     @SkipPermissionCheck
     @Override
     @Transactional
@@ -214,6 +277,10 @@ public class UserInvitationServiceImpl extends EntityServiceImpl<UserInvitation,
      * so a null only affects the authed 明细 scoping — a super-admin still sees them; a tenant-admin does not).
      */
     private void issue(UserAccount account, InvitationPurpose purpose, Long invitedBy) {
+        this.issue(account, purpose, invitedBy, null);
+    }
+
+    private void issue(UserAccount account, InvitationPurpose purpose, Long invitedBy, String reason) {
         revokePending(account.getId());
 
         // Who this invitation BELONGS to: the invitee's own tenant, never the caller's. It is a record
@@ -244,6 +311,7 @@ public class UserInvitationServiceImpl extends EntityServiceImpl<UserInvitation,
         invitation.setTokenHash(EncryptUtils.computeSha256(rawToken));
         invitation.setStatus(InvitationStatus.PENDING);
         invitation.setInvitedBy(invitedBy);
+        invitation.setReason(reason);
         invitation.setExpiresAt(LocalDateTime.now().plusDays(EXPIRY_DAYS));
         // "sent" here = requested; the actual delivery + status is message-starter's (MailSendRecord).
         invitation.setSentAt(LocalDateTime.now());

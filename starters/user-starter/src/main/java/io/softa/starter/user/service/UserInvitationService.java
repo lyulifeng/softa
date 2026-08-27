@@ -78,6 +78,39 @@ public interface UserInvitationService extends EntityService<UserInvitation, Lon
     void invite(Long userId, Long invitedBy);
 
     /**
+     * Unbind a membership from the person it was wrongly bound to, and re-invite it (W5 / B8).
+     *
+     * <p>The remedy for a mis-binding: an invitation went to the wrong address, someone else
+     * accepted it, and the membership now belongs to a person who should never have had it.
+     * Editing the work contact does not undo that — the person is already attached, and their
+     * login identifiers may still carry an address this company issued.
+     *
+     * <p>Four things happen together, and leaving any one out is a defect:
+     *
+     * <ol>
+     *   <li><b>the work contacts are released from the OLD person's login identifiers</b> — the
+     *       security half: otherwise the wrong person keeps a working login route into this
+     *       company's address, and a verification code to it still reaches them;</li>
+     *   <li><b>the membership is detached</b> ({@code profileId} and {@code activationTime}
+     *       cleared) — it is nobody's until the right person accepts;</li>
+     *   <li><b>the new work contacts are recorded</b>, refusing an address another account already
+     *       holds rather than surfacing a constraint violation;</li>
+     *   <li><b>a fresh REINVITE token is issued</b> and every outstanding one revoked, so the link
+     *       the wrong person may still be holding stops working.</li>
+     * </ol>
+     *
+     * <p>Role grants are deliberately KEPT: they were assigned to the position, and the position is
+     * what this row represents. Off-boarding clears them because the position itself is closing;
+     * unbinding is the opposite — the position stands and only its holder was wrong.
+     *
+     * @param reason required, at most 500 characters. Mandatory because this is the one operation
+     *               that detaches a person from a membership that keeps its authority, and
+     *               "who did this and why" is the only thing a later review has to go on
+     */
+    void unbindAndReinvite(Long userId, String newEmail, String newMobile, String reason,
+            Long operatedBy);
+
+    /**
      * Self-service forgot-password: issue a PASSWORD_RESET token for the email. Silently no-ops when
      * the email is unknown (no account enumeration).
      */

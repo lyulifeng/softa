@@ -90,6 +90,20 @@ public interface UserAccountService extends EntityService<UserAccount, Long> {
     void offBoard(Long accountId);
 
     /**
+     * Release from the person's login identifiers whatever THIS company issued them.
+     *
+     * <p>Shared by the two operations that end a binding — off-boarding and unbind-and-re-invite —
+     * because both create the same hazard: once the address is recycled, whoever receives it next
+     * could verify by code straight into the previous holder's personal account.
+     *
+     * <p>Only the value this company issued is reclaimed. A personal login email is not ours to
+     * take, which is why it compares before clearing rather than blindly nulling.
+     *
+     * @return whether anything was released
+     */
+    boolean releaseLoginIdentifiers(UserAccount account);
+
+    /**
      * Prepare a membership for someone re-joining this company, reusing the closed row.
      *
      * <p>Re-hire revives rather than inserts, because {@code (tenantId, profileId)} is unique —

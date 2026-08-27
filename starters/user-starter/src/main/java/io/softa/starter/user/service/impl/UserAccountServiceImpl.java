@@ -232,11 +232,25 @@ public class UserAccountServiceImpl extends EntityServiceImpl<UserAccount, Long>
         // ① Release the work contact from the person's login identifiers FIRST. Doing this before
         // the status write means a failure here cannot leave a closed membership whose address is
         // still a live login route — the order encodes which half is security-critical.
-        //
-        // Only the value THIS company issued is reclaimed: a personal login email is not ours to
-        // take, which is why it compares rather than blindly nulling.
-        Long profileId = account.getProfileId();
-        identityService.findByProfile(profileId).ifPresent(identity -> {
+        this.releaseLoginIdentifiers(account);
+
+        // ② Clear role grants. A closed membership holding live grants is a standing hole by
+        // itself, and since a re-hire REVIVES this row, anything left here is silently inherited.
+        clearRoleGrants(account);
+
+        // ③ Close the membership.
+        account.setStatus(AccountStatus.DEACTIVATED);
+        return true;
+    }
+
+    @SkipPermissionCheck
+    @CrossTenant
+    @Override
+    public boolean releaseLoginIdentifiers(UserAccount account) {
+        if (account == null) {
+            return false;
+        }
+        return identityService.findByProfile(account.getProfileId()).map(identity -> {
             boolean released = false;
             if (StringUtils.isNotBlank(account.getEmail())
                     && account.getEmail().equalsIgnoreCase(identity.getLoginEmail())) {
@@ -252,18 +266,11 @@ public class UserAccountServiceImpl extends EntityServiceImpl<UserAccount, Long>
                 // updateOne(entity) drops null keys — the one thing this write is FOR. The
                 // overload that keeps them is not optional here.
                 identityService.updateOne(identity, false);
-                log.info("Released work contact(s) from identity {} on off-boarding account {}.",
+                log.info("Released work contact(s) from identity {} of account {}.",
                         identity.getId(), account.getId());
             }
-        });
-
-        // ② Clear role grants. A closed membership holding live grants is a standing hole by
-        // itself, and since a re-hire REVIVES this row, anything left here is silently inherited.
-        clearRoleGrants(account);
-
-        // ③ Close the membership.
-        account.setStatus(AccountStatus.DEACTIVATED);
-        return true;
+            return released;
+        }).orElse(false);
     }
 
     @Override

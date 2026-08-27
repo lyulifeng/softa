@@ -1,0 +1,193 @@
+package io.softa.starter.user.service.impl;
+
+import java.time.LocalDateTime;
+import java.util.List;
+import java.util.Optional;
+
+import org.junit.jupiter.api.Test;
+import org.springframework.context.ApplicationEventPublisher;
+
+import io.softa.framework.base.exception.BusinessException;
+import io.softa.framework.base.exception.IllegalArgumentException;
+import io.softa.framework.orm.domain.Filters;
+import io.softa.starter.user.entity.UserAccount;
+import io.softa.starter.user.entity.UserInvitation;
+import io.softa.starter.user.enums.AccountStatus;
+import io.softa.starter.user.enums.InvitationPurpose;
+import io.softa.starter.user.enums.InvitationStatus;
+import io.softa.starter.user.service.UserAccountService;
+import io.softa.starter.user.service.UserIdentityService;
+
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyBoolean;
+import static org.mockito.Mockito.doAnswer;
+import static org.mockito.Mockito.doReturn;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.spy;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.when;
+
+/**
+ * Unbind & Re-invite (W5 / B8) — the remedy when a membership was bound to the WRONG person.
+ *
+ * <p>Three of these are security properties rather than behaviour:
+ *
+ * <ul>
+ *   <li>the OLD person's login identifiers are released, or the wrong person keeps a working route
+ *       into an address this company is about to hand to someone else;</li>
+ *   <li>the detach is written with the overload that KEEPS nulls — the default one drops them, so
+ *       the membership would stay attached and the call would report success;</li>
+ *   <li>outstanding tokens are revoked, so the link the wrong person holds stops working.</li>
+ * </ul>
+ *
+ * <p>And one that is a deliberate difference from off-boarding: role grants are KEPT, because the
+ * position stands and only its holder was wrong.
+ */
+class UnbindAndReinviteTest {
+
+    private static final Long ACCOUNT = 100L;
+    private static final Long PROFILE = 7L;
+    private static final Long OPERATOR = 1L;
+
+    private final UserAccountService accountService = mock(UserAccountService.class);
+    private final UserIdentityService identityService = mock(UserIdentityService.class);
+    private final ApplicationEventPublisher eventPublisher = mock(ApplicationEventPublisher.class);
+    private final UserInvitationServiceImpl invitationService = spy(new UserInvitationServiceImpl(
+            accountService, identityService, eventPublisher, null, "http://localhost:3000"));
+
+    private UserAccount given(AccountStatus status) {
+        UserAccount account = new UserAccount();
+        account.setId(ACCOUNT);
+        account.setTenantId(1L);
+        account.setProfileId(PROFILE);
+        account.setStatus(status);
+        account.setEmail("wrong@acme.com");
+        account.setActivationTime(LocalDateTime.now());
+        account.setRoles(List.of(9L));
+        when(accountService.getById(ACCOUNT)).thenReturn(Optional.of(account));
+        // No outstanding invitations unless a test says otherwise.
+        doReturn(List.of()).when(invitationService).searchList(any(Filters.class));
+        doReturn(1L).when(invitationService).createOne(any(UserInvitation.class));
+        return account;
+    }
+
+    @Test
+    void theOldPersonsLoginIdentifiersAreReleased_beforeAnythingElseIsWritten() {
+        UserAccount account = given(AccountStatus.ACTIVE);
+
+        invitationService.unbindAndReinvite(ACCOUNT, "right@acme.com", null, "Wrong hire", OPERATOR);
+
+        verify(accountService).releaseLoginIdentifiers(account);
+    }
+
+    @Test
+    void theMembershipIsDetached_writtenWithTheOverloadThatKeepsNulls() {
+        // The trap: updateOne(entity) drops null keys, so the detach would silently not happen.
+        UserAccount account = given(AccountStatus.ACTIVE);
+
+        invitationService.unbindAndReinvite(ACCOUNT, "right@acme.com", null, "Wrong hire", OPERATOR);
+
+        assertThat(account.getProfileId()).isNull();
+        assertThat(account.getActivationTime()).isNull();
+        assertThat(account.getEmail()).isEqualTo("right@acme.com");
+        assertThat(account.getStatus()).isEqualTo(AccountStatus.INVITED);
+        verify(accountService).updateOne(account, false);
+        verify(accountService, never()).updateOne(any(UserAccount.class));
+    }
+
+    @Test
+    void roleGrantsAreKept_unlikeOffBoarding() {
+        // The position stands; only its holder was wrong. Clearing them here would quietly strip a
+        // department's manager of their authority as a side effect of fixing a typo.
+        UserAccount account = given(AccountStatus.ACTIVE);
+
+        invitationService.unbindAndReinvite(ACCOUNT, "right@acme.com", null, "Wrong hire", OPERATOR);
+
+        assertThat(account.getRoles()).containsExactly(9L);
+    }
+
+    @Test
+    void theLinkTheWrongPersonHolds_isRevoked_andAReinviteTokenIssued() {
+        UserAccount account = given(AccountStatus.INVITED);
+        UserInvitation outstanding = new UserInvitation();
+        outstanding.setId(55L);
+        outstanding.setUserId(ACCOUNT);
+        outstanding.setStatus(InvitationStatus.PENDING);
+        doReturn(List.of(outstanding)).when(invitationService).searchList(any(Filters.class));
+        doReturn(true).when(invitationService).updateOne(any(UserInvitation.class));
+
+        UserInvitation[] issued = new UserInvitation[1];
+        doAnswer(call -> {
+            issued[0] = call.getArgument(0);
+            return 2L;
+        }).when(invitationService).createOne(any(UserInvitation.class));
+
+        invitationService.unbindAndReinvite(ACCOUNT, "right@acme.com", null, "Wrong hire", OPERATOR);
+
+        assertThat(outstanding.getStatus()).isEqualTo(InvitationStatus.REVOKED);
+        assertThat(issued[0].getPurpose()).isEqualTo(InvitationPurpose.REINVITE);
+        // The reason rides on the invitation, where a later review of the membership will see it.
+        assertThat(issued[0].getReason()).isEqualTo("Wrong hire");
+        assertThat(issued[0].getEmail()).isEqualTo("right@acme.com");
+    }
+
+    @Test
+    void aBlankOrOversizedReason_isRefused_beforeAnythingIsTouched() {
+        given(AccountStatus.ACTIVE);
+
+        // Assert.* raises the framework's own IllegalArgumentException (BAD_REQUEST) — not
+        // java.lang's — which is the shape invite() uses for its preconditions too.
+        assertThatThrownBy(() ->
+                invitationService.unbindAndReinvite(ACCOUNT, "right@acme.com", null, "  ", OPERATOR))
+                .isInstanceOf(IllegalArgumentException.class);
+        assertThatThrownBy(() -> invitationService.unbindAndReinvite(
+                ACCOUNT, "right@acme.com", null, "x".repeat(501), OPERATOR))
+                .isInstanceOf(IllegalArgumentException.class);
+
+        verify(accountService, never()).releaseLoginIdentifiers(any());
+        verify(accountService, never()).updateOne(any(UserAccount.class), anyBoolean());
+    }
+
+    @Test
+    void pendingAndDeactivated_areOutOfScope_perTheStatusMatrix() {
+        // Pending: nobody accepted, so there is nothing to unbind — fix the contact and Send.
+        // Deactivated: the membership is closed; bringing it back is reviveMembership.
+        for (AccountStatus status : List.of(AccountStatus.PENDING, AccountStatus.DEACTIVATED)) {
+            given(status);
+            assertThatThrownBy(() -> invitationService.unbindAndReinvite(
+                    ACCOUNT, "right@acme.com", null, "Wrong hire", OPERATOR))
+                    .isInstanceOf(BusinessException.class)
+                    .hasMessageContaining("cannot be unbound");
+        }
+        verify(accountService, never()).releaseLoginIdentifiers(any());
+    }
+
+    @Test
+    void anAddressAnotherAccountHolds_isRefusedWithAName_notAConstraintViolation() {
+        given(AccountStatus.ACTIVE);
+        UserAccount other = new UserAccount();
+        other.setId(999L);
+        when(accountService.getUserByEmail("taken@acme.com")).thenReturn(Optional.of(other));
+
+        assertThatThrownBy(() -> invitationService.unbindAndReinvite(
+                ACCOUNT, "taken@acme.com", null, "Wrong hire", OPERATOR))
+                .isInstanceOf(BusinessException.class)
+                .hasMessageContaining("already belongs to another account");
+
+        // Refused BEFORE the unbind: otherwise the membership is detached and the call still fails.
+        verify(accountService, never()).releaseLoginIdentifiers(any());
+    }
+
+    @Test
+    void neitherContactSupplied_isRefused() {
+        given(AccountStatus.ACTIVE);
+
+        assertThatThrownBy(() ->
+                invitationService.unbindAndReinvite(ACCOUNT, "  ", null, "Wrong hire", OPERATOR))
+                .isInstanceOf(BusinessException.class)
+                .hasMessageContaining("before re-inviting");
+    }
+}

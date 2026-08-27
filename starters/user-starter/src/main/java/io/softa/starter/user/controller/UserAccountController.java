@@ -48,6 +48,7 @@ import io.softa.framework.web.utils.CookieUtils;
 import io.softa.starter.user.constant.RoleConstant;
 import io.softa.starter.user.dto.ChangePasswordDTO;
 import io.softa.starter.user.dto.SetFirstPasswordDTO;
+import io.softa.starter.user.dto.UnbindAndReinviteDTO;
 import io.softa.starter.user.dto.UnlockAccountDTO;
 import io.softa.starter.user.dto.UnlockAccountsDTO;
 import io.softa.starter.user.dto.UserAccountDTO;
@@ -427,6 +428,21 @@ public class UserAccountController extends EntityController<UserAccountService, 
         Long currentUserId = ContextHolder.getContext() == null ? null
                 : ContextHolder.getContext().getUserId();
         onRosterAccounts(List.of(id), () -> invitationService.invite(id, currentUserId));
+        return ApiResponse.success();
+    }
+
+    @Operation(summary = "Unbind a membership from the wrong person, correct the work contacts "
+            + "and re-invite it — invalidates any link the wrong person still holds")
+    @PostMapping("/unbindAndReinvite")
+    public ApiResponse<Void> unbindAndReinvite(@RequestParam @NotNull Long id,
+            @RequestBody @Valid UnbindAndReinviteDTO dto) {
+        // Not validateNotSelf-guarded like Lock / Unlock: unbinding your OWN membership detaches
+        // you from it, which is a foot-gun rather than a privilege escalation — and an admin who
+        // was themselves bound to the wrong membership is exactly who needs this.
+        Long currentUserId = ContextHolder.getContext() == null ? null
+                : ContextHolder.getContext().getUserId();
+        onRosterAccounts(List.of(id), () -> invitationService.unbindAndReinvite(
+                id, dto.getEmail(), dto.getMobile(), dto.getReason(), currentUserId));
         return ApiResponse.success();
     }
 
