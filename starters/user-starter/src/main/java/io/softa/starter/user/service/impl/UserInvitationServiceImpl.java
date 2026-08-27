@@ -482,6 +482,37 @@ public class UserInvitationServiceImpl extends EntityServiceImpl<UserInvitation,
                 ContactMasking.mobile(invitation.getMobile()));
     }
 
+    /**
+     * Returns the address stored ON the invitation, never one supplied by the caller. That is the
+     * point: the caller only ever saw a masked value, and accepting an address from them would let
+     * a link-holder redirect the code to themselves.
+     *
+     * <p>The send itself lives in {@code LoginService} — it already owns code issuance and rate
+     * limiting, and it already depends on this service, so sending from here would close a cycle.
+     */
+    @SkipPermissionCheck
+    @CrossTenant
+    @Override
+    public String resolveJoinChannel(String rawToken, String channel) {
+        // Re-runs the full five-check gate rather than trusting the page's earlier call.
+        if (!this.inspectJoinToken(rawToken).usable()) {
+            throw new BusinessException("This invitation link is no longer usable.");
+        }
+        UserInvitation invitation = this.searchOne(new Filters()
+                        .eq(UserInvitation::getTokenHash, EncryptUtils.computeSha256(rawToken)))
+                .orElseThrow(() -> new BusinessException("This invitation link is no longer usable."));
+
+        String address = "mobile".equalsIgnoreCase(channel) ? invitation.getMobile()
+                : "email".equalsIgnoreCase(channel) ? invitation.getEmail()
+                        : null;
+        if (address == null) {
+            // Covers both "unknown channel" and "this invitation has no such contact" with one
+            // message: telling a link-holder WHICH channels an invitation carries is itself a leak.
+            throw new BusinessException("That verification channel is not available for this invitation.");
+        }
+        return address;
+    }
+
     // @CrossTenant: public token-inspection endpoint has no tenant context — see acceptToken.
     @SkipPermissionCheck
     @CrossTenant

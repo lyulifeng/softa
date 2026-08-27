@@ -268,6 +268,18 @@ public class LoginServiceImpl implements LoginService {
     }
 
     @Override
+    public void sendJoinCode(String rawToken, String channel) {
+        // The address never crosses the wire in either direction: the caller sends a token, the
+        // invitation service resolves it, and the code goes out to what IT stored.
+        String address = invitationService.resolveJoinChannel(rawToken, channel);
+        if ("mobile".equalsIgnoreCase(channel)) {
+            this.sendMobileCode(address);
+        } else {
+            this.sendEmailCode(address);
+        }
+    }
+
+    @Override
     public boolean mustSetPassword(Long profileId) {
         return identityService.findByProfile(profileId)
                 .map(identity -> StringUtils.isBlank(identity.getPassword()))

@@ -41,6 +41,22 @@ public interface UserInvitationService extends EntityService<UserInvitation, Lon
      * <p>Separate from setting a password because they mean different things — see the
      * implementation for why activation waits for this call.
      */
+    /**
+     * Resolves the PLAINTEXT address the invitation names, for the caller to send a code to.
+     *
+     * <p>Exists because the join page is shown MASKED contacts by design (a leaked link must not
+     * hand out a working phone number), so it cannot call the plaintext send-code endpoints with an
+     * address of its own. Making the invitee re-type their address instead would both worsen the
+     * flow and turn the link into an address oracle for whoever holds it.
+     *
+     * <p>Server-internal: the returned value must never reach a response body. It re-runs the full
+     * entry gate, because the invitation may have been revoked or re-sent since the page loaded and
+     * the caller is about to send a message.
+     *
+     * @param channel {@code "email"} or {@code "mobile"}
+     */
+    String resolveJoinChannel(String rawToken, String channel);
+
     void confirmJoin(String rawToken, Long profileId);
 
     /**

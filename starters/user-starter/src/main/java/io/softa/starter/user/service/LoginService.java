@@ -39,6 +39,16 @@ public interface LoginService {
     AuthenticationResult authenticateByPassword(String identifier, String password);
 
     /** Whether this person still has to set a password (arrived by invitation or code only). */
+    /**
+     * Sends a verification code to whichever channel an invitation names, resolved from its token.
+     *
+     * <p>Lives here rather than on the invitation service because code issuance and its rate limits
+     * are a login concern, and the invitation service is already a dependency of this one.
+     *
+     * @param channel {@code "email"} or {@code "mobile"}
+     */
+    void sendJoinCode(String rawToken, String channel);
+
     boolean mustSetPassword(Long profileId);
 
     /**

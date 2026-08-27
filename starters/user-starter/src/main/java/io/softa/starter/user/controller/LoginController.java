@@ -145,6 +145,20 @@ public class LoginController {
     }
 
     /**
+     * Send a verification code to the channel the invitation names, without the caller ever seeing
+     * the address. The join page only has masked contacts, so it cannot use the plaintext
+     * send-code endpoints — and it must not, or a leaked link would become an address oracle.
+     */
+    @Operation(summary = "Send a verification code to the invitation's own email or mobile")
+    @PostMapping("/sendJoinCode")
+    @SwitchUser(SystemUser.REGISTERED_USER)
+    public ApiResponse<Void> sendJoinCode(@RequestParam @NotNull String token,
+            @RequestParam @NotNull String channel) {
+        loginService.sendJoinCode(token, channel);
+        return ApiResponse.success();
+    }
+
+    /**
      * Confirm joining, after the person verified their identity (and set a password if new).
      *
      * <p>A session is issued here, not earlier: activation and "you are now in" are the same
