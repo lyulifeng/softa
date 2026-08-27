@@ -290,9 +290,18 @@ its annotation default (`required = false`, `copyable = true`, `multiTenant =
 false`, `idStrategy = DB_AUTO_ID`, `@Index(unique = false)`, …); omit
 `tableName` / `columnName` equal to `snake_case(name)`; omit `length` / `scale`
 equal to the **type-default** above (so a bare `@Field private String x;` is a
-VARCHAR(64) column); omit `defaultValue` on a versionLock model's `version`
-field (the metadata layer materializes `0` into `sys_field.default_value`, and
-`ModelManager` fail-fasts when it is missing). Omit `@OptionItem` entirely when its only effect would be
+VARCHAR(64) column); omit `defaultValue` on the three **framework control
+fields** — `version` on a `versionLock` model, `active` on an `activeControl`
+one, `deleted` on a `softDelete` one — the metadata layer materializes their
+starting values (`0` / `true` / `false`) into `sys_field.default_value`
+(`AnnotationParser.materializeControlDefault`), so the DDL layer renders the
+`DEFAULT` and the ORM insert autofill, the physical column and hand-written SQL
+all agree on one value. Declare `defaultValue` on one of them ONLY to mean
+something different (a catalogue whose rows are authored inactive:
+`@Field(defaultValue = "false") private Boolean active;`) — an explicit value
+still wins. A field merely *named* `active` / `deleted` on a model that does
+not declare the corresponding flag is a plain business column and gets no
+default. Omit `@OptionItem` entirely when its only effect would be
 `label == humanize(constant)`. The rule is safe precisely because the parser
 regenerates the identical `sys_*` value on omission. Keep the attribute only
 when the value genuinely differs from the default (acronym labels like `ID` /
