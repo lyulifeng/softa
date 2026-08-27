@@ -69,12 +69,55 @@ public class UserIdentityServiceImpl extends EntityServiceImpl<UserIdentity, Lon
         }
         // Both are tried rather than guessing by shape ("@" or "+"): a caller that guessed wrong
         // would report "no such account" for an account that exists.
-        Optional<UserIdentity> byEmail =
-                this.searchOne(new Filters().eq(UserIdentity::getLoginEmail, identifier));
+        Optional<UserIdentity> byEmail = this.searchOneIdentifier(
+                new Filters().eq(UserIdentity::getLoginEmail, identifier), identifier);
         if (byEmail.isPresent()) {
             return byEmail;
         }
-        return this.searchOne(new Filters().eq(UserIdentity::getLoginMobile, identifier));
+        return this.searchOneIdentifier(
+                new Filters().eq(UserIdentity::getLoginMobile, identifier), identifier);
+    }
+
+    /**
+     * One identity for this identifier, refusing loudly when several rows claim it.
+     *
+     * <p>The identifier columns carry no unique index yet (see {@link UserIdentity}), so the
+     * database cannot rule this out. The raw {@code searchOne} does throw on more than one row,
+     * but as an {@code IllegalArgumentException} carrying the filter — which would surface at an
+     * anonymous login endpoint as a server error quoting somebody's address. Translated here so
+     * the caller reports a refusal instead: ambiguous is not "pick one", because picking would
+     * mean signing someone in as a person who merely shares their phone number.
+     */
+    private Optional<UserIdentity> searchOneIdentifier(Filters filters, String identifier) {
+        try {
+            return this.searchOne(filters);
+        } catch (IllegalArgumentException e) {
+            log.error("Login identifier is not unique — several people claim it. Refusing to guess.");
+            throw new BusinessException("This contact is shared by more than one account. "
+                    + "Please contact your HR.");
+        }
+    }
+
+    @SkipPermissionCheck
+    @CrossTenant
+    @Override
+    public void adoptIdentifier(UserIdentity identity, String identifier) {
+        if (identity == null || StringUtils.isBlank(identifier)) {
+            return;
+        }
+        boolean isEmail = identifier.contains("@");
+        if (isEmail ? StringUtils.isNotBlank(identity.getLoginEmail())
+                : StringUtils.isNotBlank(identity.getLoginMobile())) {
+            return;
+        }
+        if (isEmail) {
+            identity.setLoginEmail(identifier);
+        } else {
+            identity.setLoginMobile(identifier);
+        }
+        this.updateOne(identity);
+        log.info("Backfilled the login {} of identity {} from the account's work contact.",
+                isEmail ? "email" : "mobile", identity.getId());
     }
 
     @Override

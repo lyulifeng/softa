@@ -80,12 +80,10 @@ public class LoginController {
      */
     @PostMapping("/loginByEmailCode")
     @SwitchUser(SystemUser.REGISTERED_USER)
-    public ApiResponse<UserInfo> loginByEmail(@RequestBody @Valid EmailCodeDTO emailCodeDTO,
+    public ApiResponse<AuthenticationResult> loginByEmail(@RequestBody @Valid EmailCodeDTO emailCodeDTO,
             HttpServletResponse response) {
-        UserInfo userInfo = loginService.loginByEmailCode(emailCodeDTO.getEmail(), emailCodeDTO.getCode());
-        String sessionId = loginService.generateSessionId(userInfo.getUserId());
-        CookieUtils.setCookie(response, BaseConstant.SESSION_ID, sessionId);
-        return ApiResponse.success(userInfo);
+        return this.issueOrAskForCompany(
+                loginService.authenticateByCode(emailCodeDTO.getEmail(), emailCodeDTO.getCode()), response);
     }
 
     /**
@@ -94,12 +92,10 @@ public class LoginController {
      */
     @PostMapping("/loginByMobileCode")
     @SwitchUser(SystemUser.REGISTERED_USER)
-    public ApiResponse<UserInfo> loginByMobileCode(@RequestBody @Valid MobileCodeDTO mobileCodeDTO,
+    public ApiResponse<AuthenticationResult> loginByMobileCode(@RequestBody @Valid MobileCodeDTO mobileCodeDTO,
             HttpServletResponse response) {
-        UserInfo userInfo = loginService.loginByMobileCode(mobileCodeDTO.getMobile(), mobileCodeDTO.getCode());
-        String sessionId = loginService.generateSessionId(userInfo.getUserId());
-        CookieUtils.setCookie(response, BaseConstant.SESSION_ID, sessionId);
-        return ApiResponse.success(userInfo);
+        return this.issueOrAskForCompany(
+                loginService.authenticateByCode(mobileCodeDTO.getMobile(), mobileCodeDTO.getCode()), response);
     }
 
     @PostMapping("/sendEmailCode")
@@ -123,13 +119,31 @@ public class LoginController {
      */
     @PostMapping("/loginByPassword")
     @SwitchUser(SystemUser.REGISTERED_USER)
-    public ApiResponse<UserInfo> loginByPassword(@RequestBody @Valid EmailPasswordDTO userNameLoginDTO,
+    public ApiResponse<AuthenticationResult> loginByPassword(@RequestBody @Valid EmailPasswordDTO userNameLoginDTO,
             HttpServletResponse response) {
-        UserInfo userInfo = loginService.loginByEmailAndPassword(userNameLoginDTO.getEmail(),
-                        userNameLoginDTO.getPassword());
-        String sessionId = loginService.generateSessionId(userInfo.getUserId());
-        CookieUtils.setCookie(response, BaseConstant.SESSION_ID, sessionId);
-        return ApiResponse.success(userInfo);
+        return this.issueOrAskForCompany(
+                loginService.authenticateByPassword(userNameLoginDTO.getEmail(),
+                        userNameLoginDTO.getPassword()), response);
+    }
+
+    /**
+     * Issue the session when authentication resolved to one membership; otherwise hand back the
+     * choice for the client to present.
+     *
+     * <p>Shared by all three authentication endpoints so the "one or many" decision cannot differ
+     * between channels — a path that issued a session without going through here would bypass the
+     * whole point of the company step.
+     *
+     * <p>The response carries {@code profileId} either way: the client needs it for
+     * {@code selectCompany}, and it is also what makes {@code mustSetPassword} actionable.
+     */
+    private ApiResponse<AuthenticationResult> issueOrAskForCompany(AuthenticationResult result,
+            HttpServletResponse response) {
+        if (result.isResolved()) {
+            String sessionId = loginService.generateSessionId(result.userInfo().getUserId());
+            CookieUtils.setCookie(response, BaseConstant.SESSION_ID, sessionId);
+        }
+        return ApiResponse.success(result);
     }
 
     /**
@@ -156,13 +170,15 @@ public class LoginController {
     @Operation(summary = "Enter the chosen company and issue the session")
     @PostMapping("/selectCompany")
     @SwitchUser(SystemUser.REGISTERED_USER)
-    public ApiResponse<UserInfo> selectCompany(@RequestParam @NotNull Long profileId,
+    public ApiResponse<AuthenticationResult> selectCompany(@RequestParam @NotNull Long profileId,
             @RequestParam @NotNull Long accountId, HttpServletResponse response) {
         Long resolved = loginService.selectCompany(profileId, accountId);
-        UserInfo userInfo = profileService.getUserInfo(resolved);
-        String sessionId = loginService.generateSessionId(resolved);
-        CookieUtils.setCookie(response, BaseConstant.SESSION_ID, sessionId);
-        return ApiResponse.success(userInfo);
+        // Same shape as the authentication endpoints, so the client has one response contract to
+        // handle rather than two — including mustSetPassword, which still applies after choosing.
+        return this.issueOrAskForCompany(
+                AuthenticationResult.resolved(profileId, profileService.getUserInfo(resolved),
+                        loginService.mustSetPassword(profileId)),
+                response);
     }
 
     /**

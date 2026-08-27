@@ -3,6 +3,7 @@ package io.softa.starter.user.service;
 import io.softa.framework.base.context.UserInfo;
 import java.util.List;
 
+import io.softa.starter.user.dto.AuthenticationResult;
 import io.softa.starter.user.dto.InvitationInfo;
 import io.softa.starter.user.dto.MembershipOption;
 
@@ -26,22 +27,19 @@ public interface LoginService {
     void sendMobileCode(String mobile);
 
     /**
-     * User login by email verification code
+     * Authenticate by one-time code sent to a login identifier (email or dial-code mobile).
      *
-     * @param email Email address
-     * @param code  Verification code
-     * @return UserInfo
+     * <p>Replaces the per-channel {@code loginByEmailCode} / {@code loginByMobileCode}: the code
+     * was sent to an identifier, and which KIND it is stopped mattering once identifiers became
+     * properties of the person rather than of a company's account.
      */
-    UserInfo loginByEmailCode(String email, String code);
+    AuthenticationResult authenticateByCode(String identifier, String code);
 
-    /**
-     * User login by mobile verification code
-     *
-     * @param mobile Mobile number
-     * @param code   Verification code
-     * @return UserInfo
-     */
-    UserInfo loginByMobileCode(String mobile, String code);
+    /** Authenticate by password against a login identifier. */
+    AuthenticationResult authenticateByPassword(String identifier, String password);
+
+    /** Whether this person still has to set a password (arrived by invitation or code only). */
+    boolean mustSetPassword(Long profileId);
 
     /**
      * Generate a new session ID for a user
@@ -50,6 +48,7 @@ public interface LoginService {
      * @return Session ID
      */
     String generateSessionId(Long userId);
+
     /**
      * The companies this person may log into, for the "choose your company" step.
      *
@@ -83,15 +82,6 @@ public interface LoginService {
      * have no membership of.
      */
     Long selectCompany(Long profileId, Long accountId);
-    /**
-     * User login by email and password
-     *
-     * @param email    Email address
-     * @param password Password
-     * @return UserInfo
-     */
-    UserInfo loginByEmailAndPassword(String email, String password);
-
     /**
      * Forgot password — issue a self-service password-reset token and email the set-password link.
      *

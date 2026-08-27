@@ -1,5 +1,7 @@
 package io.softa.starter.user.service.impl;
 
+import org.apache.commons.lang3.StringUtils;
+
 import java.util.Comparator;
 import java.util.List;
 import java.util.Objects;
@@ -21,6 +23,7 @@ import io.softa.framework.base.utils.UUIDUtils;
 import io.softa.framework.orm.domain.Filters;
 import io.softa.framework.orm.service.CacheService;
 import io.softa.framework.orm.service.TenantInfoService;
+import io.softa.starter.user.dto.AuthenticationResult;
 import io.softa.starter.user.dto.InvitationInfo;
 import io.softa.starter.user.dto.MembershipOption;
 import io.softa.starter.user.exception.MultipleMembershipsException;
@@ -172,60 +175,95 @@ public class LoginServiceImpl implements LoginService {
     }
 
     @Override
-    public UserInfo loginByEmailCode(String email, String code) {
-        verifyCode(email, code);
-        // No auto-provisioning: an account exists only because someone was invited into a
-        // company. A verified code still cannot conjure a membership.
-        UserAccount account = accountService.getUserByEmail(email).orElseThrow(
-                () -> new BusinessException(
-                        "This account is not linked to any company. Please contact your HR."));
-        return profileService.getUserInfo(account.getId());
+    public AuthenticationResult authenticateByCode(String identifier, String code) {
+        verifyCode(identifier, code);
+        // Resolved by LOGIN IDENTIFIER on the person, not by a company's work contact: the code
+        // was sent to an identifier, and that identifier is what identifies the human being.
+        return this.afterAuthentication(this.resolveIdentity(identifier,
+                "This account is not linked to any company. Please contact your HR."));
     }
 
     @Override
-    public UserInfo loginByMobileCode(String mobile, String code) {
-        verifyCode(mobile, code);
-        // No auto-provisioning: an account exists only because someone was invited into a
-        // company. A verified code still cannot conjure a membership.
-        UserAccount account = accountService.getUserByMobile(mobile).orElseThrow(
-                () -> new BusinessException(
-                        "This account is not linked to any company. Please contact your HR."));
-        return profileService.getUserInfo(account.getId());
+    public AuthenticationResult authenticateByPassword(String identifier, String password) {
+        // Same message for "no such identifier" and "wrong password": splitting them turns the
+        // login form into an account-existence oracle.
+        UserIdentity identity = this.resolveIdentity(identifier, "Incorrect account or password.");
+        if (!identityService.matchesPassword(identity, password)) {
+            throw new BusinessException("Incorrect account or password.");
+        }
+        return this.afterAuthentication(identity);
     }
 
     /**
-     * User login by email and password
+     * Find the PERSON behind a login identifier, healing the identifier as it goes.
      *
-     * @param email    Email address
-     * @param password Password
-     * @return UserInfo
+     * <p>Identifiers live on {@code UserIdentity} and are seeded when a person is created — but
+     * only since that seeding existed. Rows created before it have none, so resolving by
+     * identifier alone would lock every one of those people out of their own account. The fallback
+     * resolves the way login used to (by the ACCOUNT's work contact) and writes the identifier
+     * back, so the data converges on its own as people sign in: no migration script, no downtime,
+     * and no release where a subset of users simply cannot get in.
+     *
+     * <p>The fallback is sound only while {@code UserAccount.email} is globally unique — that is
+     * what makes "one account per address" true. Narrowing that index to {@code (tenantId, email)}
+     * must therefore wait for a LATER release, once this backfill has converged; doing both at
+     * once would make the fallback ambiguous exactly where it is still needed.
+     *
+     * @param notFoundMessage what the caller may safely tell an anonymous stranger. Both reasons
+     *                        ("no such identifier", "identifier is not
+     *                        linked to a person") must report the same thing: a distinct message would confirm which accounts exist.
      */
-    @Override
-    public UserInfo loginByEmailAndPassword(String email, String password) {
-        UserAccount userAccount = accountService.getUserByEmail(email).orElseThrow(
-                () -> new BusinessException("User or password is incorrect."));
-        // The account still identifies WHO is signing in; only the credential moved. Verifying
-        // against the person means someone employed by two companies has one password to remember,
-        // and it is the same one whichever account they arrive through.
-        //
-        // requireProfile's own error ("not linked to a person") must not escape here: this endpoint
-        // is anonymous, and a distinct message would tell a stranger which accounts exist but are
-        // broken — an account-existence oracle. Inside, it is a data fault; outside, it is just a
-        // failed login.
+    private UserIdentity resolveIdentity(String identifier, String notFoundMessage) {
+        Optional<UserIdentity> byIdentifier = identityService.findByLoginIdentifier(identifier);
+        if (byIdentifier.isPresent()) {
+            return byIdentifier.get();
+        }
+        UserAccount account = accountService.getUserByEmail(identifier)
+                .or(() -> accountService.getUserByMobile(identifier))
+                .orElseThrow(() -> new BusinessException(notFoundMessage));
         UserIdentity identity;
         try {
-            identity = identityService.requireIdentity(userAccount);
+            identity = identityService.requireIdentity(account);
         } catch (BusinessException e) {
-            log.error("Password login blocked: account {} has no linked person — run the "
-                    + "credentials migration. Reporting a plain failed login to the caller.", userAccount.getId());
-            throw new BusinessException("User or password is incorrect.");
+            // A data fault inside, an ordinary failed login outside — see notFoundMessage.
+            log.error("Login blocked: account {} has no linked person; the credentials migration "
+                    + "did not cover it. Reporting a plain failure to the caller.", account.getId());
+            throw new BusinessException(notFoundMessage);
         }
-        if (!identityService.matchesPassword(identity, password)) {
-            throw new BusinessException("User or password is incorrect.");
-        }
-        return profileService.getUserInfo(userAccount.getId());
+        identityService.adoptIdentifier(identity, identifier);
+        return identity;
     }
 
+    /**
+     * The shared tail of every authentication path: decide what the client must do next.
+     *
+     * <p>One place rather than per-path, because the three questions (needs a password? one
+     * company or a choice? which membership?) have the same answers however the person proved
+     * who they are — and a path that skipped one of them would be a hole rather than a variation.
+     */
+    private AuthenticationResult afterAuthentication(UserIdentity identity) {
+        Long profileId = identity.getProfileId();
+        boolean mustSetPassword = StringUtils.isBlank(identity.getPassword());
+        List<MembershipOption> options = this.listCompanies(profileId);
+        List<MembershipOption> enterable = options.stream()
+                .filter(MembershipOption::selectable).toList();
+        if (options.size() == 1 && enterable.size() == 1) {
+            return AuthenticationResult.resolved(profileId,
+                    profileService.getUserInfo(enterable.get(0).accountId()), mustSetPassword);
+        }
+        if (options.isEmpty()) {
+            throw new BusinessException("Your account is not linked to any company. Please contact your HR.");
+        }
+        return AuthenticationResult.choicePending(profileId, options, mustSetPassword);
+    }
+
+    @Override
+    public boolean mustSetPassword(Long profileId) {
+        return identityService.findByProfile(profileId)
+                .map(identity -> StringUtils.isBlank(identity.getPassword()))
+                // Unknown person → do not claim they are fine; the caller fails elsewhere.
+                .orElse(Boolean.FALSE);
+    }
     @Override
     public List<MembershipOption> listCompanies(Long profileId) {
         return accountService.listMembershipsOf(profileId).stream()
