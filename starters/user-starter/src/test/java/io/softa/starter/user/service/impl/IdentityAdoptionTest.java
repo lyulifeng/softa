@@ -1,5 +1,6 @@
 package io.softa.starter.user.service.impl;
 
+import java.util.List;
 import java.util.Optional;
 
 import org.junit.jupiter.api.Test;
@@ -48,6 +49,7 @@ class IdentityAdoptionTest {
     @Test
     void anEmptyEmailSlot_isFilled() {
         UserIdentity person = identity(null, null);
+        doReturn(List.of()).when(identityService).searchList(any(Filters.class));
         doReturn(true).when(identityService).updateOne(person);
 
         identityService.adoptIdentifier(person, "alice@acme.com");
@@ -59,6 +61,7 @@ class IdentityAdoptionTest {
     @Test
     void anEmptyMobileSlot_isFilled_andEmailIsLeftAlone() {
         UserIdentity person = identity(null, null);
+        doReturn(List.of()).when(identityService).searchList(any(Filters.class));
         doReturn(true).when(identityService).updateOne(person);
 
         identityService.adoptIdentifier(person, "+8613800138000");
@@ -76,6 +79,37 @@ class IdentityAdoptionTest {
 
         assertThat(person.getLoginEmail()).isEqualTo("personal@gmail.com");
         verify(identityService, never()).updateOne(any(UserIdentity.class));
+    }
+
+    @Test
+    void anIdentifierAnotherPersonAlreadyLogsInWith_isNotClaimed() {
+        // The 27-accounts-on-one-work-number case. Copying the contact across does not create a
+        // login route, it destroys one: both holders would then resolve to "shared by more than one
+        // account" instead of the one who had it to themselves.
+        UserIdentity mine = identity(null, null);
+        UserIdentity someoneElse = identity(null, "+8613800138000");
+        someoneElse.setId(99L);
+        someoneElse.setProfileId(8L);
+        doReturn(List.of(someoneElse)).when(identityService).searchList(any(Filters.class));
+
+        identityService.adoptIdentifier(mine, "+8613800138000");
+
+        assertThat(mine.getLoginMobile()).isNull();
+        verify(identityService, never()).updateOne(any(UserIdentity.class));
+    }
+
+    @Test
+    void reClaimingMyOwnIdentifier_isFine() {
+        // Only OTHER people block a claim. A row that already names this same person is not a
+        // conflict, and treating it as one would refuse a legitimate re-seed.
+        UserIdentity mine = identity(null, null);
+        UserIdentity alsoMine = identity(null, "+8613800138000");
+        doReturn(List.of(alsoMine)).when(identityService).searchList(any(Filters.class));
+        doReturn(true).when(identityService).updateOne(mine);
+
+        identityService.adoptIdentifier(mine, "+8613800138000");
+
+        assertThat(mine.getLoginMobile()).isEqualTo("+8613800138000");
     }
 
     @Test

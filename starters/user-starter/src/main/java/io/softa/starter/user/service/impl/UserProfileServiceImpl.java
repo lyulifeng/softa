@@ -343,8 +343,14 @@ public class UserProfileServiceImpl extends EntityServiceImpl<UserProfile, Long>
         // are healed lazily on their first sign-in (UserIdentityService.adoptIdentifier).
         UserIdentity identity = new UserIdentity();
         identity.setProfileId(profileId);
-        identity.setLoginEmail(StringUtils.trimToNull(account.getEmail()));
-        identity.setLoginMobile(StringUtils.trimToNull(account.getMobile()));
+        // Seeded only when the value is not ALREADY someone's login identifier. A work contact and
+        // a login identifier are different roles for the same string, and only the second has to be
+        // unique: shared work numbers are ordinary (a shop's phone, a shared floor handset, a
+        // manager's number entered for a worker who has none). Copying such a number across anyway
+        // does not create a login route, it destroys one — both holders then resolve to "shared by
+        // more than one account" instead of the one who had it to themselves.
+        identity.setLoginEmail(claimable(account.getEmail(), profileId));
+        identity.setLoginMobile(claimable(account.getMobile(), profileId));
         identityService.createOne(identity);
 
         // Build UserInfo and upload photo if photo is not empty
@@ -354,6 +360,12 @@ public class UserProfileServiceImpl extends EntityServiceImpl<UserProfile, Long>
         this.refreshUserInfo(userId, userInfo);
 
         return userInfo;
+    }
+
+    /** The work contact, or null when it is already someone else's login identifier. */
+    private String claimable(String contact, Long profileId) {
+        String value = StringUtils.trimToNull(contact);
+        return value != null && identityService.isIdentifierClaimable(value, profileId) ? value : null;
     }
 
     @SkipPermissionCheck
@@ -376,6 +388,10 @@ public class UserProfileServiceImpl extends EntityServiceImpl<UserProfile, Long>
         } else {
             identity.setLoginMobile(identifier);
         }
+        // No claimable() guard here, deliberately: on /join the identifier is the address the
+        // invitation was SENT to and the code was verified against, so this person demonstrably
+        // controls it. If another identity holds it, that is the duplicate to resolve — refusing
+        // here would instead refuse the person who just proved control.
         identityService.createOne(identity);
         return profileId;
     }

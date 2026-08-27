@@ -1,6 +1,7 @@
 package io.softa.starter.user.service.impl;
 
 import java.time.LocalDateTime;
+import java.util.Objects;
 import java.util.Optional;
 
 import org.apache.commons.lang3.StringUtils;
@@ -117,6 +118,23 @@ public class UserIdentityServiceImpl extends EntityServiceImpl<UserIdentity, Lon
     @SkipPermissionCheck
     @CrossTenant
     @Override
+    public boolean isIdentifierClaimable(String identifier, Long forProfileId) {
+        if (StringUtils.isBlank(identifier)) {
+            return false;
+        }
+        boolean isEmail = identifier.contains("@");
+        Filters filters = isEmail
+                ? new Filters().eq(UserIdentity::getLoginEmail, identifier)
+                : new Filters().eq(UserIdentity::getLoginMobile, identifier);
+        // searchList, not searchOne: the point is to COUNT claimants, and searchOne throws on more
+        // than one — which is the very state this method exists to detect.
+        return this.searchList(filters).stream()
+                .allMatch(other -> Objects.equals(other.getProfileId(), forProfileId));
+    }
+
+    @SkipPermissionCheck
+    @CrossTenant
+    @Override
     public void adoptIdentifier(UserIdentity identity, String identifier) {
         if (identity == null || StringUtils.isBlank(identifier)) {
             return;
@@ -124,6 +142,14 @@ public class UserIdentityServiceImpl extends EntityServiceImpl<UserIdentity, Lon
         boolean isEmail = identifier.contains("@");
         if (isEmail ? StringUtils.isNotBlank(identity.getLoginEmail())
                 : StringUtils.isNotBlank(identity.getLoginMobile())) {
+            return;
+        }
+        if (!this.isIdentifierClaimable(identifier, identity.getProfileId())) {
+            // Someone else already logs in with this. Claiming it would take BOTH of them out —
+            // resolution refuses an identifier two people hold — so the one who had it keeps it,
+            // and this person signs in by their other channel until they get one of their own.
+            log.warn("Not adopting login identifier for identity {}: another person already holds "
+                    + "it. They keep their existing channels.", identity.getId());
             return;
         }
         if (isEmail) {

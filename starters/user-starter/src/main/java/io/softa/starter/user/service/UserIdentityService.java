@@ -56,6 +56,21 @@ public interface UserIdentityService extends EntityService<UserIdentity, Long> {
     void adoptIdentifier(UserIdentity identity, String identifier);
 
     /**
+     * Whether this identifier is free to become someone's LOGIN identifier.
+     *
+     * <p>A work contact and a login identifier are different roles for the same string, and only
+     * one of them has to be unique. Shared work numbers are ordinary — a shop's phone, a shared
+     * floor handset, a manager's number entered for a worker who has none — and nothing is wrong
+     * with that as a CONTACT. As a login identifier it is unusable: a code sent there cannot say
+     * which of the holders is signing in, so resolution can only refuse.
+     *
+     * <p>Every path that seeds an identifier from a work contact must ask this first. Copying the
+     * contact across regardless does not create a login route, it destroys one: both holders then
+     * resolve to "shared by more than one account" instead of the one who had it to themselves.
+     */
+    boolean isIdentifierClaimable(String identifier, Long forProfileId);
+
+    /**
      * Finds a person's credentials by an email OR a dial-code mobile.
      *
      * <p>⚠️ NO CALLER THIS RELEASE — deliberately. Login still resolves the account by its email;
