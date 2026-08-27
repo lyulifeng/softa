@@ -140,6 +140,17 @@ public interface UserAccountService extends EntityService<UserAccount, Long> {
     void setMyFirstPassword(String newPassword);
 
     /**
+     * Whether the logged-in person still owes a first password.
+     *
+     * <p>Exists so the forced Set Password step survives a page reload. Authentication reports
+     * {@code mustSetPassword} once, in its response; a client that only remembers it from there
+     * loses the requirement the moment the person refreshes or closes the tab — and since a
+     * password-less person cannot come back through the password route, skipping it that way locks
+     * them out of their own account rather than merely postponing a screen.
+     */
+    boolean mustSetMyPassword();
+
+    /**
      * Force reset user password (admin operation)
      *
      * @param userId User ID

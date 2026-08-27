@@ -351,6 +351,23 @@ public class UserAccountServiceImpl extends EntityServiceImpl<UserAccount, Long>
     }
 
     @Override
+    public boolean mustSetMyPassword() {
+        Long userId = ContextHolder.getContext().getUserId();
+        if (userId == null) {
+            // No session, nothing owed — the caller is not the person this could apply to.
+            return false;
+        }
+        return this.getById(userId)
+                .map(account -> account.getProfileId() != null
+                        && identityService.findByProfile(account.getProfileId())
+                                .map(identity -> StringUtils.isBlank(identity.getPassword()))
+                                // No credentials row at all: a data fault, and NOT a reason to
+                                // force a password screen the set-password call would then refuse.
+                                .orElse(false))
+                .orElse(false);
+    }
+
+    @Override
     @Transactional
     public void setMyFirstPassword(String newPassword) {
         Assert.notBlank(newPassword, "New password cannot be empty.");

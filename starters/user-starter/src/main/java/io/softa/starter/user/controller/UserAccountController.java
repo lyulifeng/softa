@@ -491,6 +491,12 @@ public class UserAccountController extends EntityController<UserAccountService, 
         return ApiResponse.success();
     }
 
+    @Operation(summary = "Whether the logged-in person still owes a first password")
+    @GetMapping("/mustSetMyPassword")
+    public ApiResponse<Boolean> mustSetMyPassword() {
+        return ApiResponse.success(service.mustSetMyPassword());
+    }
+
     @Operation(summary = "setMyFirstPassword")
     @PostMapping("/setMyFirstPassword")
     public ApiResponse<Void> setMyFirstPassword(@RequestBody @Valid SetFirstPasswordDTO dto) {
