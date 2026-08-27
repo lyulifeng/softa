@@ -23,25 +23,20 @@ import io.softa.starter.metadata.entity.SysModelIndex;
  * <p>Pure function over its inputs; the <b>caller chooses the baseline</b>: the scanner audits
  * its in-scope from-code metadata (what it is about to enforce), the checker audits the
  * {@code sys_*} rows (the contract the runtime actually enforces in production). Only stored
- * fields expect a column ({@link SysDdlContextBuilder#isStored}); index comparison is by exact
- * name (engines that mangle names — e.g. H2's synthetic unique-index suffixes — can report
- * false pairs; MySQL/PostgreSQL keep names verbatim).
+ * fields expect a column ({@link SysDdlContextBuilder#isStored}); index comparison goes through
+ * {@link IndexNameCompat} — the same matcher the convergence planner uses — so engine-mangled
+ * names (H2's synthetic unique-index suffixes) neither report as drift nor get acted on.
  *
- * <p>Reporting only — the auditor never renders or executes DDL. Declared-but-missing entries
- * that sit behind a metadata diff are healed by the orchestrator's physical recovery in the
- * same boot; entries with no diff (and every undeclared extra) persist until acted on.
+ * <p>Reporting only — the auditor never renders or executes DDL. Under an active
+ * {@code scanner-scope} the orchestrator's convergence pass heals in-scope drift in the same
+ * boot and this audit runs on the healed snapshot, so it reports the <i>residual</i>: what
+ * convergence cannot own (projection tables, out-of-scope models) or could not do. Under an
+ * empty scope (production) nothing heals and the report is the whole drift.
  */
 @Slf4j
 public final class PhysicalDriftAuditor {
 
     private PhysicalDriftAuditor() {
-    }
-
-    /** Primary-key backing indexes carry engine names, not declarations — never "undeclared". */
-    private static boolean isPrimaryKeyIndex(String indexNameLower) {
-        return indexNameLower.equals("primary")
-                || indexNameLower.startsWith("primary_key")
-                || indexNameLower.endsWith("_pkey");
     }
 
     public static PhysicalDriftReport audit(List<SysModel> models, List<SysField> fields,
@@ -106,13 +101,14 @@ public final class PhysicalDriftAuditor {
                     .map(i -> lower(i.getIndexName()))
                     .collect(Collectors.toSet());
             for (SysModelIndex index : declaredIndexes) {
-                if (!facts.indexExists(table, index.getIndexName())) {
+                if (!IndexNameCompat.declaredIndexExists(physical, index.getIndexName())) {
                     missingIndexes.add(table + "." + index.getIndexName());
                 }
             }
             if (!projection) {
                 for (String indexName : physical.indexNames()) {
-                    if (!declaredIndexNames.contains(indexName) && !isPrimaryKeyIndex(indexName)) {
+                    if (!IndexNameCompat.matchesAnyDeclared(indexName, declaredIndexNames)
+                            && !IndexNameCompat.isPrimaryKeyIndex(indexName)) {
                         undeclaredIndexes.add(table + "." + indexName);
                     }
                 }
@@ -145,15 +141,17 @@ public final class PhysicalDriftAuditor {
             return;
         }
         StringBuilder body = new StringBuilder();
-        section(body, "declared but physically MISSING TABLE (recovery recreates it when the "
-                + "current diff touches the model; otherwise reconcile or run DDL manually)", report.missingTables());
+        section(body, "declared but physically MISSING TABLE (an active scanner-scope recreates "
+                + "in-scope tables at boot; otherwise run DDL manually)", report.missingTables());
         section(body, "declared but physically MISSING COLUMN", report.missingColumns());
         section(body, "declared but physically MISSING INDEX", report.missingIndexes());
-        section(body, "physically present but UNDECLARED COLUMN (hand-added, or pending a warn-only DROP)",
+        section(body, "physically present but UNDECLARED COLUMN (an active scanner-scope drops these "
+                + "on in-scope tables at boot; otherwise declare the column or DROP it manually)",
                 report.undeclaredColumns());
         section(body, "physically present but UNDECLARED INDEX", report.undeclaredIndexes());
-        section(body, "TYPE MISMATCH between the declared and physical shape (a narrowing MODIFY is "
-                + "never auto-executed — resolve with the deferred SQL or by widening the declaration)",
+        section(body, "TYPE MISMATCH between the declared and physical shape (an active scanner-scope "
+                + "converges in-scope columns to the declared shape at boot; otherwise resolve "
+                + "manually or change the declaration)",
                 report.typeMismatches());
         if (body.isEmpty()) {
             return;   // only projection-table findings — already reported at ERROR above

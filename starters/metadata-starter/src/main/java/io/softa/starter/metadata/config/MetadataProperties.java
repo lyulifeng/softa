@@ -13,20 +13,25 @@ import org.springframework.boot.context.properties.ConfigurationProperties;
  *     {@linkplain java.util.regex.Matcher#matches() full-matched} against a
  *     class's {@linkplain Class#getPackageName() package name}, deciding which
  *     {@code @Model} / {@code @OptionSet} declarations the
- *     {@code MetadataAnnotationScanner} reconciles into {@code sys_*} (and
- *     applies DDL for) at boot.
+ *     {@code MetadataAnnotationScanner} reconciles into {@code sys_*} — and whose
+ *     physical tables it <b>converges to the annotations</b> at boot: declared
+ *     changes and hand-made drift alike, destructive verbs included (undeclared
+ *     columns / indexes drop, mismatched shapes — narrowing included — modify to
+ *     the declared shape).
  *     <ul>
  *       <li>A sole entry {@code "*"} ⇒ match every package (manage all).</li>
  *       <li>Empty / unset ⇒ the scanner manages nothing and the
  *           {@code MetadataAnnotationChecker} instead observes the whole
  *           catalog read-only and WARNs on drift (the safe default).</li>
  *       <li>A partial list ⇒ the scanner reconciles only in-scope packages;
- *           rows outside the scope are never read, written, or deleted (lets
- *           developers share one dev database on disjoint package areas).</li>
+ *           rows outside the scope are never read, written, or deleted, and
+ *           out-of-scope tables are never touched (lets developers share one
+ *           dev database on disjoint package areas).</li>
  *     </ul>
  *     Dots are regex metacharacters — write {@code io\.softa\.foo.*} to include
  *     sub-packages, {@code io\.softa\.foo} for that exact package only.
- *     <b>Never set a non-empty scope on a production runtime.</b>
+ *     <b>Never set a non-empty scope on a production runtime</b> — the scope is
+ *     exactly what licenses the destructive convergence.
  * @param scanBasePackages classpath roots the scanner / checker <b>discover</b>
  *     {@code @Model} / {@code @OptionSet} classes under, in addition to the
  *     application's own {@code AutoConfigurationPackages}. Defaults to

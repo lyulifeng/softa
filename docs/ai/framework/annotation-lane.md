@@ -36,16 +36,20 @@ Rows are matched by **business key** (`modelName` / `fieldName` /
 `ownership` tier column — the annotation lane and the Studio no-code lane
 reconcile the same rows by business key.
 
-**Boot ordering / recovery:** the scanner executes DDL **before** committing the
-`sys_*` rows — a failed DDL leaves the rows unwritten, so the next boot
-recomputes the same diff and retries (re-applied DDL degrades to WARN on
-"already exists"). DDL planning also snapshots the managed tables via
-`DatabaseMetaData` and prepends **additive-only** `[physical-recovery]` units
-where `sys_*` and the physical schema drifted apart (hand-dropped column behind
-a MODIFY → recreated; hand-dropped table behind ALTERs → full CREATE from code;
-pre-existing table behind a CREATE → adopted column-by-column). Every boot also
-logs a consolidated physical drift audit, and `GET /metadata/status` serves the
-boot snapshot (code vs catalog fingerprints + the drift report) — details in the
+**Boot ordering / convergence:** the scanner executes DDL **before** committing
+the `sys_*` rows — a failed DDL leaves the rows unwritten, so the next boot
+replans and retries (re-applied DDL degrades to WARN on "already exists"). DDL
+planning snapshots the managed tables via `DatabaseMetaData` and **converges
+every in-scope owned table to its annotations** — the verbs come from
+annotations vs physical facts, the `sys_*` diff contributes only what
+introspection cannot see (rename pairings, NOT NULL / DEFAULT / COMMENT deltas,
+index-definition changes). Hand-made drift therefore heals with or without a
+metadata diff: dropped columns/tables recreate, pre-existing tables are adopted,
+undeclared columns/indexes drop, mismatched shapes modify to the declared shape.
+Introspection failure degrades to conservative metadata-only planning (additive
+auto, destructive warn-only). Every boot then logs the **residual** drift audit,
+and `GET /metadata/status` serves the boot snapshot (code vs catalog
+fingerprints + the drift report) — details in the
 [metadata-starter README](../../../starters/metadata-starter/README.md).
 
 ## Catalog row policy (`sys_*` rows)
@@ -69,27 +73,29 @@ definition is never left as a headless or field-less husk. Implementation:
 `ScannerScope#confineFromDb` (no match-all short-circuit) +
 `MetadataAnnotationScanner#warnCodelessRoots`.
 
-## DDL auto-execute policy
+## DDL execution policy (physical convergence)
 
 When the model's package is in `system.metadata.scanner-scope` (e.g.
-`scanner-scope: ["*"]`):
+`scanner-scope: ["*"]`), the physical table is a pure function of the
+annotations — every boot converges it, declared changes and hand-made drift
+alike:
 
-| Annotation change | DDL | Auto-executed? |
+| State (annotation vs physical) | DDL | Executed? |
 |---|---|---|
-| New `@Model` class | `CREATE TABLE …` (with inline indexes) | ✅ |
-| New `@Field` | `ALTER TABLE … ADD COLUMN …` | ✅ |
-| Changed `@Field` attribute (length / required / type / default) | `ALTER TABLE … MODIFY COLUMN …` | ✅ when the physical comparison says EQUAL / WIDEN (or no physical facts are available) |
-| Changed `@Field` attribute where the physical column would **narrow** (or the type families are incomparable) | `MODIFY COLUMN` | ❌ **WARN only** — a MODIFY re-states the full column definition and could truncate data |
-| New `@Index` | `ALTER TABLE … ADD INDEX …` | ✅ |
-| Removed `@Field` | `DROP COLUMN` | ❌ **WARN only** — log prints copy-paste SQL |
-| Removed `@Model` | `DROP TABLE` | ❌ **WARN only** |
-| Removed `@Index` | `DROP INDEX` | ❌ **WARN only** |
-| Changed `tableName` | `RENAME TABLE` | ❌ **WARN only** (hint logged) |
+| New `@Model` class / table physically missing | `CREATE TABLE …` (with inline indexes); a pre-existing table is adopted column-by-column instead | ✅ |
+| New `@Field` / declared column physically missing | `ALTER TABLE … ADD COLUMN …` | ✅ |
+| Changed `@Field` attribute (length / required / type / default / comment) | `ALTER TABLE … MODIFY COLUMN …` | ✅ |
+| Physical type/width mismatch — widen, **narrow**, incomparable | `MODIFY COLUMN` to the declared shape | ✅ — the declaration is the truth; a non-empty scope is by definition non-production |
+| Removed `@Field` / **undeclared physical column** | `DROP COLUMN` | ✅ |
+| **Undeclared physical index** | `DROP INDEX` | ✅ (primary-key backing indexes excluded) |
+| New `@Index` / declared index physically missing | `ALTER TABLE … ADD INDEX …` | ✅ |
+| Removed `@Model` | `DROP TABLE` | ❌ — the code-less root keeps its rows *and* its table; the `["*"]` WARN prints the cleanup SQL |
+| Changed `tableName` (no `renamedFrom`) while the old table physically exists | — | ❌ **boot fails** with instructions: rename manually first, or declare a model rename — creating the new table would silently divorce the data |
 
-If the log shows `WARN: … not auto-executed` (DROP / RENAME / narrowing
-MODIFY), run the printed SQL by hand after confirming intent. A deferred
-narrowing also re-surfaces in the physical drift audit's TYPE MISMATCH section
-on every boot until resolved.
+Caveat: this table describes the normal boot (physical introspection
+succeeded). If introspection fails, the boot degrades to metadata-only
+planning — additive changes auto-execute, every destructive verb defers to a
+warn-only copy-paste SQL block.
 
 **Projection models are outside this table entirely**: a model declared
 `@Model(projection = true)` (read-only over a table it does not own) generates
@@ -117,10 +123,10 @@ git diff -- '<affected files>'
 git diff main...HEAD -- '**/*.java'      # full PR scope
 
 # 5. (If a scanner-scope: ["*"] app exists) restart and watch:
+#   DdlOrchestrator: CREATE TABLE ... OK / ADD COLUMN ... OK / DROP COLUMN ... [converge] undeclared OK
+#   DdlOrchestrator: converged N in-scope model(s) — executed X DDL statement(s), ...
 #   MetadataAnnotationScanner: applied N row change(s)
-#   DdlOrchestrator: CREATE TABLE ... OK        (auto)
-#   DdlOrchestrator: ... DROP COLUMN ... not auto-executed   (WARN)
-#   MetadataAnnotationScanner: physical schema drift — N finding(s) ...   (audit; absent = consistent)
+#   MetadataAnnotationScanner: physical schema drift — N finding(s) ...   (RESIDUAL audit; absent = converged clean)
 # 6. GET /metadata/status — code vs catalog fingerprints ("did my change land?")
 #    + the physical drift report from this boot.
 ```

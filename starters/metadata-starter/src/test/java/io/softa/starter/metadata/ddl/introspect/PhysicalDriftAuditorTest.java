@@ -130,6 +130,28 @@ class PhysicalDriftAuditorTest {
     }
 
     @Test
+    void engineMangledIndexName_isNeitherMissingNorUndeclared() {
+        // H2 reports a unique index created as uk_customer_email under a synthetic
+        // uk_customer_email_index_2 name. IndexNameCompat pairs the two, so the audit
+        // reports neither a missing declared index nor an undeclared physical one —
+        // the same matcher the convergence planner uses, keeping report and action aligned.
+        SysModel customer = model("Customer", "customer");
+        List<SysField> fields = List.of(
+                field("Customer", "id", FieldType.LONG),
+                field("Customer", "email", FieldType.STRING));
+        List<SysModelIndex> indexes = List.of(index("Customer", "uk_customer_email"));
+
+        PhysicalSchema facts = schema(
+                table("customer", Set.of("uk_customer_email_index_2", "primary"),
+                        bigintColumn("id"), varcharColumn("email", 64)));
+
+        PhysicalDriftReport report = PhysicalDriftAuditor.audit(
+                List.of(customer), fields, indexes, facts);
+
+        assertTrue(report.isEmpty(), "mangled unique-index names must not read as drift: " + report);
+    }
+
+    @Test
     void nonStoredFieldsNeverExpectAColumn() {
         SysModel customer = model("Customer", "customer");
         List<SysField> fields = List.of(
