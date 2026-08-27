@@ -322,9 +322,12 @@ change reach this runtime?" is one call.
 ### Field / model rename — declare `renamedFrom`
 
 The scanner uses **set-based comparison** keyed by `fieldName` / `modelName` /
-`itemCode`, so an *undeclared* rename looks identical to "drop old + add new":
-ADD COLUMN (auto) + WARN-only DROP → both columns coexist, old keeps the data,
-new is NULL = **silent data divorce**.
+`itemCode`, so an *undeclared* rename looks identical to "drop old + add new" —
+and under an active scope the convergence pass executes exactly that: the new
+column is added empty, and the old column — no longer declared by anything —
+is **dropped together with its data** in the same boot. (On the metadata-only
+fallback lane the DROP stays warn-only and the data lingers in the orphaned
+column instead.) Either way, nothing arrives in the new column.
 
 Declaring the prior name fixes this:
 

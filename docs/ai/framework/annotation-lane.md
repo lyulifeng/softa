@@ -160,7 +160,9 @@ UPDATE sys_field SET field_name = 'externalId', column_name = 'external_id'
 
 Apply it (with DBA review on shared/prod), **then** change the annotation — the
 scanner then sees no diff and emits zero DDL. Never rename a `@Field`/`@Model`
-without either `renamedFrom` or a migration → silent data divorce in staging/prod.
+without either `renamedFrom` or a migration: an active `scanner-scope` treats the
+old column as undeclared and **drops it, data included, on the next boot**;
+checker-only environments strand the data in an orphaned column instead.
 
 ## Framework-internal notes & pitfalls
 

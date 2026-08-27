@@ -32,6 +32,7 @@
         <module>user-starter</module>
         <module>permission-starter</module>
         <module>tenant-starter</module>
+        <module>sentry-starter</module>
     </modules>
 
 </project>
