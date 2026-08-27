@@ -50,8 +50,14 @@ public interface ModelConstant {
      * dimension under this name or does not have it at all, and every mechanism keyed on it degrades
      * to a no-op when the model is absent. One constant so the multi-company narrowing and the
      * request enricher cannot drift apart on what "the company" is.
+     *
+     * <p>Renamed from {@code LegalEntity} (2026-08): the model describes which company rows belong
+     * to, and "legal entity" now names a different concept — the entity a contract is signed under,
+     * carried by ordinary business fields, not by this axis. Deployments carrying rows keyed on the
+     * old name (notably {@code role_data_scope.model}) must migrate them BEFORE this binary boots:
+     * an unmatched model name reads as "not configured", which resolves to unrestricted.
      */
-    String COMPANY_MODEL = "LegalEntity";
+    String COMPANY_MODEL = "Company";
 
     /**
      * The field a multi-company model belongs through. <b>Required</b>, asserted at init — same
@@ -60,10 +66,14 @@ public interface ModelConstant {
      * <p>Fixing the name is what lets a model hold more than one reference to a company without
      * declaring which is which: {@code PayGroup.payingEntityId} names the entity that pays a group,
      * and does not make the group belong to it. A model with no company column of its own declares
-     * this name as a {@code dynamic} cascaded field ({@code cascadedField = "deptId.legalEntityId"}),
+     * this name as a {@code dynamic} cascaded field ({@code cascadedField = "deptId.companyId"}),
      * which takes no column and is joined at query time.
+     *
+     * <p>Renamed from {@code legalEntityId} (2026-08), together with {@link #COMPANY_MODEL}. A model
+     * may keep a field named {@code legalEntityId} — it then names the signing/issuing entity, an
+     * attribute, and takes no part in the company axis.
      */
-    String COMPANY_FIELD = "legalEntityId";
+    String COMPANY_FIELD = "companyId";
     // Reserved field: Version number identifier, used for optimistic lock control
     String VERSION = "version";
     // Starting value of the optimistic-lock version, materialized into the catalog

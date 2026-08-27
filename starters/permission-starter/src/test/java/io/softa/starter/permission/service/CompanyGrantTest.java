@@ -104,7 +104,7 @@ class CompanyGrantTest {
 
         Filters result = service().appendCompanyGrant("Department", new Filters(), grant(GRANTED));
 
-        assertThat(Filters.containsField(result, "legalEntityId")).isTrue();
+        assertThat(Filters.containsField(result, "companyId")).isTrue();
         assertThat(result.toString()).contains("8712", "9001");
     }
 
@@ -112,7 +112,7 @@ class CompanyGrantTest {
     void boundsAModelThatReachesItsCompanyThroughAnother() {
         // A per-department statistic has no company column of its own — it declares one as a dynamic
         // cascaded field, so the grant is bounded on a plain field name and WhereBuilder rewrites it
-        // back to deptId.legalEntityId. Reading the anchor off the metadata rather than assuming it is
+        // back to deptId.companyId. Reading the anchor off the metadata rather than assuming it is
         // what keeps such a report bounded at all: hard-coding a name it did not have would leave every
         // company's aggregates visible with nothing on screen saying so.
         model("DeptHeadcountStats", true);
@@ -129,7 +129,7 @@ class CompanyGrantTest {
         // ANDs the grant on top: selected ∧ granted. A subset, so never empty for a company the
         // switcher was allowed to offer.
         model("Department", true);
-        Filters selected = Filters.of("legalEntityId", Operator.EQUAL, 8712L);
+        Filters selected = Filters.of("companyId", Operator.EQUAL, 8712L);
 
         Filters result = service().appendCompanyGrant("Department", selected, grant(GRANTED));
 

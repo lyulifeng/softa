@@ -7,6 +7,7 @@ import io.softa.framework.base.context.EmpInfo;
 import io.softa.framework.base.enums.Operator;
 import io.softa.framework.orm.domain.Filters;
 import io.softa.framework.orm.domain.FlexQuery;
+import io.softa.framework.orm.constant.ModelConstant;
 import io.softa.framework.orm.meta.ModelManager;
 import io.softa.framework.orm.service.CacheService;
 import io.softa.framework.orm.service.ModelService;
@@ -119,7 +120,10 @@ public class EmployeeContextEnricher implements ContextEnricher {
             info.setPhone(asString(me.get("workPhone")));
             info.setDeptId(coerceLong(me.get("departmentId")));
             info.setPositionId(coerceLong(me.get("jobPositionId")));
-            info.setCompanyId(coerceLong(me.get("legalEntityId")));
+            // The org affiliation feeds USER_COMP_ID, so it reads the company AXIS field — after
+            // the split, Employee.legalEntityId still exists but names the signing entity, an
+            // attribute rather than the axis.
+            info.setCompanyId(coerceLong(me.get(ModelConstant.COMPANY_FIELD)));
             info.setTenantId(coerceLong(me.get("tenantId")));
             info.setManagedDeptIds(collectManagedDeptIds(info.getEmpId()));
             return info;

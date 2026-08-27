@@ -54,7 +54,7 @@ public record UserRef(
         @Schema(description = "Employee.departmentId for the linked employee (null if unbound)")
         Long departmentId,
 
-        @Schema(description = "Employee.legalEntityId for the linked employee (null if unbound)")
-        Long legalEntityId
+        @Schema(description = "Employee.companyId (org affiliation) for the linked employee (null if unbound)")
+        Long companyId
 ) {
 }

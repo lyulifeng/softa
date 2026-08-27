@@ -104,12 +104,12 @@ public class UserAccessController {
                     asString(u.get("updatedTime")),
                     ctx == null ? null : ctx.getId(),
                     ctx == null ? null : ctx.getDepartmentId(),
-                    ctx == null ? null : ctx.getLegalEntityId()));
+                    ctx == null ? null : ctx.getCompanyId()));
         }
         return ApiResponse.success(out);
     }
 
-    /** Resolve employeeId / departmentId / legalEntityId per user by reading the
+    /** Resolve employeeId / departmentId / companyId per user by reading the
      *  {@code Employee} model directly (约定读). Empty map when no {@code Employee}
      *  model exists (non-HR deployment) or on error — degrades to "every user is
      *  pure". {@code /userAccess/*} is super-admin only, so the read is not
@@ -125,7 +125,7 @@ public class UserAccessController {
         List<EmployeeOrgView> rows;
         try {
             rows = modelService.searchList("Employee",
-                    new FlexQuery(List.of("userId", "id", "departmentId", "legalEntityId"),
+                    new FlexQuery(List.of("userId", "id", "departmentId", "companyId"),
                             new Filters().in("userId", userIds)),
                     EmployeeOrgView.class);
         } catch (Throwable t) {
@@ -144,14 +144,14 @@ public class UserAccessController {
     }
 
     /** {@code Employee} projection for org-identity enrichment. {@code id} is the
-     *  employeeId; department / legalEntity may be null. Public + no-arg ctor so
+     *  employeeId; department / company may be null. Public + no-arg ctor so
      *  the ModelService Class projection (BeanTool) can populate it. */
     @Data
     public static class EmployeeOrgView {
         private Long userId;
         private Long id;
         private Long departmentId;
-        private Long legalEntityId;
+        private Long companyId;
     }
 
     // ─────────────────────── effective permissions (user detail view) ───────────────────────

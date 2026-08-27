@@ -37,7 +37,9 @@ import static org.mockito.Mockito.when;
  */
 class CompanyCountryEnricherTest {
 
-    private static final String COMPANY_MODEL = "LegalEntity";
+    // The real constant, not a local copy: a shadow literal is exactly how this test kept
+    // passing against a renamed production model.
+    private static final String COMPANY_MODEL = io.softa.framework.orm.constant.ModelConstant.COMPANY_MODEL;
 
     private MockedStatic<ModelManager> modelManager;
 
@@ -91,7 +93,7 @@ class CompanyCountryEnricherTest {
         // Pinned so a rename of the HR model does not silently disable the narrowing: the framework
         // hard-codes this name, so the two have to stay in step.
         ModelService<Long> models = models();
-        when(models.getById(eq("LegalEntity"), eq(8712L))).thenReturn(Optional.of(Map.of("country", "SG")));
+        when(models.getById(eq(COMPANY_MODEL), eq(8712L))).thenReturn(Optional.of(Map.of("country", "SG")));
         Context context = contextWith(8712L);
 
         new CompanyCountryEnricher(models, mock(CacheService.class)).enrich(context);
