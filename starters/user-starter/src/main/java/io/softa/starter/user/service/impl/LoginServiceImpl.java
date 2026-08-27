@@ -24,6 +24,8 @@ import io.softa.framework.orm.domain.Filters;
 import io.softa.framework.orm.service.CacheService;
 import io.softa.framework.orm.service.TenantInfoService;
 import io.softa.starter.user.dto.AuthenticationResult;
+import io.softa.starter.user.dto.JoinContacts;
+import io.softa.starter.user.dto.JoinVerification;
 import io.softa.starter.user.dto.InvitationInfo;
 import io.softa.starter.user.dto.MembershipOption;
 import io.softa.starter.user.exception.MultipleMembershipsException;
@@ -277,6 +279,48 @@ public class LoginServiceImpl implements LoginService {
         } else {
             this.sendEmailCode(address);
         }
+    }
+
+    @Override
+    @Transactional
+    public JoinVerification verifyJoinCode(String rawToken, String channel, String code) {
+        // Resolving the address from the token (not from the caller) is what keeps this from being
+        // a way to verify a code against an address of the caller's choosing.
+        String address = invitationService.resolveJoinChannel(rawToken, channel);
+        this.verifyCode(address, code);
+
+        // Find-or-create by the address the invitation was sent to. Found = this person already
+        // works somewhere and is being added to a second company, and they keep ONE person record
+        // (that is the whole point of the global profile). Not found = their first company.
+        Optional<UserIdentity> existing = identityService.findByLoginIdentifier(address);
+        if (existing.isPresent()) {
+            return new JoinVerification(existing.get().getProfileId(),
+                    StringUtils.isBlank(existing.get().getPassword()));
+        }
+        // Brand new person: no password by construction, so the password step always follows.
+        // Constructed through the profile service, which is the one waived choke point where a
+        // person and their credentials row are minted together.
+        return new JoinVerification(profileService.createPersonForJoin(address), true);
+    }
+
+    @Override
+    @Transactional
+    public void setJoinPassword(String rawToken, Long profileId, String newPassword) {
+        JoinContacts contacts = invitationService.resolveJoinContacts(rawToken);
+        UserIdentity identity = identityService.findByProfile(profileId)
+                .orElseThrow(() -> new BusinessException("Person record not found."));
+
+        // Both checks matter. The first ties the person to THIS invitation, so holding a link
+        // cannot reach an unrelated person. The second keeps it a first-password path rather than
+        // a reset — someone who already has a password must prove it, or arrive by code.
+        if (!contacts.includes(identity.getLoginEmail()) && !contacts.includes(identity.getLoginMobile())) {
+            throw new BusinessException("This link does not belong to that account.");
+        }
+        if (StringUtils.isNotBlank(identity.getPassword())) {
+            throw new BusinessException("A password is already set — sign in with it instead.");
+        }
+        // Strength rules live inside setPassword, checked against this person's own contacts.
+        identityService.setPassword(identity.getId(), newPassword);
     }
 
     @Override

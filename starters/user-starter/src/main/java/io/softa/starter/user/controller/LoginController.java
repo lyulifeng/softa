@@ -159,6 +159,32 @@ public class LoginController {
     }
 
     /**
+     * Verify the code and identify the person, without issuing a session. Joining is a separate
+     * agreement — see confirmJoin — so this step deliberately stops at "we know who you are".
+     */
+    @Operation(summary = "Verify the join code and return the person behind the invitation")
+    @PostMapping("/verifyJoinCode")
+    @SwitchUser(SystemUser.REGISTERED_USER)
+    public ApiResponse<JoinVerification> verifyJoinCode(@RequestParam @NotNull String token,
+            @RequestParam @NotNull String channel, @RequestParam @NotNull String code) {
+        return ApiResponse.success(loginService.verifyJoinCode(token, channel, code));
+    }
+
+    /**
+     * Set a first password mid-join, where no session exists yet. Authorized by the invitation, and
+     * narrow because of it: it reaches only the profile the invitation names, only when that
+     * profile has no password.
+     */
+    @Operation(summary = "Set the first password during the join flow")
+    @PostMapping("/setJoinPassword")
+    @SwitchUser(SystemUser.REGISTERED_USER)
+    public ApiResponse<Void> setJoinPassword(@RequestParam @NotNull String token,
+            @RequestParam @NotNull Long profileId, @RequestBody @Valid SetFirstPasswordDTO dto) {
+        loginService.setJoinPassword(token, profileId, dto.getNewPassword());
+        return ApiResponse.success();
+    }
+
+    /**
      * Confirm joining, after the person verified their identity (and set a password if new).
      *
      * <p>A session is issued here, not earlier: activation and "you are now in" are the same

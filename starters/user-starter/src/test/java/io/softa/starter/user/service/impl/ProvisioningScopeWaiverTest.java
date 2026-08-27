@@ -59,5 +59,8 @@ class ProvisioningScopeWaiverTest {
         // through here, and it is the only place in main code that constructs either.
         assertWaived(UserProfileServiceImpl.class, "registerUserProfile",
                 Long.class, UserProfileDTO.class);
+        // The /join twin: a first-time invitee's person and credentials row, minted before any
+        // session exists. Same rows, same reason, and the only other place that constructs them.
+        assertWaived(UserProfileServiceImpl.class, "createPersonForJoin", String.class);
     }
 }

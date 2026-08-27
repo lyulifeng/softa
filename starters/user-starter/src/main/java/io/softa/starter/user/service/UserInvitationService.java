@@ -2,6 +2,7 @@ package io.softa.starter.user.service;
 
 import io.softa.framework.orm.service.EntityService;
 import io.softa.starter.user.dto.InvitationInfo;
+import io.softa.starter.user.dto.JoinContacts;
 import io.softa.starter.user.dto.JoinEntry;
 import io.softa.starter.user.entity.UserInvitation;
 
@@ -56,6 +57,14 @@ public interface UserInvitationService extends EntityService<UserInvitation, Lon
      * @param channel {@code "email"} or {@code "mobile"}
      */
     String resolveJoinChannel(String rawToken, String channel);
+
+    /**
+     * Both PLAINTEXT addresses the invitation names, for callers that must compare rather than send.
+     *
+     * <p>Server-internal, same reasoning as {@link #resolveJoinChannel}. Also re-runs the entry
+     * gate: every caller is about to act on the invitation's behalf.
+     */
+    JoinContacts resolveJoinContacts(String rawToken);
 
     void confirmJoin(String rawToken, Long profileId);
 

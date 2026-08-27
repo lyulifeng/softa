@@ -4,6 +4,7 @@ import io.softa.framework.base.context.UserInfo;
 import java.util.List;
 
 import io.softa.starter.user.dto.AuthenticationResult;
+import io.softa.starter.user.dto.JoinVerification;
 import io.softa.starter.user.dto.InvitationInfo;
 import io.softa.starter.user.dto.MembershipOption;
 
@@ -48,6 +49,29 @@ public interface LoginService {
      * @param channel {@code "email"} or {@code "mobile"}
      */
     void sendJoinCode(String rawToken, String channel);
+
+    /**
+     * Proves identity on the /join flow: verifies the code against the invitation's OWN address and
+     * returns the person behind it, creating that person if this is their first company.
+     *
+     * <p>Separate from {@link #authenticateByCode} because that path resolves an existing person by
+     * login identifier and then runs the company resolution. A first-time invitee has neither — no
+     * profile, and no ACTIVE membership until they confirm — so it would reject exactly the people
+     * this flow serves.
+     *
+     * @param channel {@code "email"} or {@code "mobile"} — which address the code was sent to
+     */
+    JoinVerification verifyJoinCode(String rawToken, String channel, String code);
+
+    /**
+     * Sets a first password during /join, where no session exists yet.
+     *
+     * <p>Authorized by the invitation rather than by a session, so it is deliberately narrow: it
+     * refuses unless the profile's own login identifier is one the invitation names AND that
+     * profile has no password. Without both checks a link-holder could name any profileId and
+     * overwrite a stranger's password.
+     */
+    void setJoinPassword(String rawToken, Long profileId, String newPassword);
 
     boolean mustSetPassword(Long profileId);
 

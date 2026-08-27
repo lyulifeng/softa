@@ -27,6 +27,7 @@ import io.softa.framework.base.message.SmsRequestMessage;
 import io.softa.framework.orm.service.TenantInfoService;
 import io.softa.framework.orm.service.impl.EntityServiceImpl;
 import io.softa.starter.user.dto.InvitationInfo;
+import io.softa.starter.user.dto.JoinContacts;
 import io.softa.starter.user.dto.JoinEntry;
 import io.softa.starter.user.entity.UserAccount;
 import io.softa.starter.user.entity.UserInvitation;
@@ -429,6 +430,21 @@ public class UserInvitationServiceImpl extends EntityServiceImpl<UserInvitation,
                 profileId, account.getTenantId(), invitation.getId());
     }
 
+    @SkipPermissionCheck
+    @CrossTenant
+    @Override
+    public JoinContacts resolveJoinContacts(String rawToken) {
+        // Re-runs the full five-check gate rather than trusting the page's earlier call: the
+        // invitation may have been revoked or re-sent since the page loaded.
+        if (!this.inspectJoinToken(rawToken).usable()) {
+            throw new BusinessException("This invitation link is no longer usable.");
+        }
+        UserInvitation invitation = this.searchOne(new Filters()
+                        .eq(UserInvitation::getTokenHash, EncryptUtils.computeSha256(rawToken)))
+                .orElseThrow(() -> new BusinessException("This invitation link is no longer usable."));
+        return new JoinContacts(invitation.getEmail(), invitation.getMobile());
+    }
+
     /**
      * The /join entry check (PRD §3.0) — five conditions, in this order.
      *
@@ -494,16 +510,9 @@ public class UserInvitationServiceImpl extends EntityServiceImpl<UserInvitation,
     @CrossTenant
     @Override
     public String resolveJoinChannel(String rawToken, String channel) {
-        // Re-runs the full five-check gate rather than trusting the page's earlier call.
-        if (!this.inspectJoinToken(rawToken).usable()) {
-            throw new BusinessException("This invitation link is no longer usable.");
-        }
-        UserInvitation invitation = this.searchOne(new Filters()
-                        .eq(UserInvitation::getTokenHash, EncryptUtils.computeSha256(rawToken)))
-                .orElseThrow(() -> new BusinessException("This invitation link is no longer usable."));
-
-        String address = "mobile".equalsIgnoreCase(channel) ? invitation.getMobile()
-                : "email".equalsIgnoreCase(channel) ? invitation.getEmail()
+        JoinContacts contacts = this.resolveJoinContacts(rawToken);
+        String address = "mobile".equalsIgnoreCase(channel) ? contacts.mobile()
+                : "email".equalsIgnoreCase(channel) ? contacts.email()
                         : null;
         if (address == null) {
             // Covers both "unknown channel" and "this invitation has no such contact" with one

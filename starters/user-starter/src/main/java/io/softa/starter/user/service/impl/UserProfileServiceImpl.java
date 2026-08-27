@@ -338,10 +338,9 @@ public class UserProfileServiceImpl extends EntityServiceImpl<UserProfile, Long>
         // account's work contacts, in the same transaction — a person is not fully created until
         // their credentials row exists, and requireIdentity resolves through it.
         //
-        // The identifiers are not read by anything yet — login still resolves an account by its
-        // email, exactly as before. They are populated from day one so that the release which DOES
-        // resolve people by identifier needs no backfill: the expensive part of that change is the
-        // data, and this is the one moment where every new person passes through a single place.
+        // Login RESOLVES people by these identifiers now, so seeding them here is what makes a
+        // freshly created person able to sign in at all. Rows created before this seeding existed
+        // are healed lazily on their first sign-in (UserIdentityService.adoptIdentifier).
         UserIdentity identity = new UserIdentity();
         identity.setProfileId(profileId);
         identity.setLoginEmail(StringUtils.trimToNull(account.getEmail()));
@@ -355,6 +354,30 @@ public class UserProfileServiceImpl extends EntityServiceImpl<UserProfile, Long>
         this.refreshUserInfo(userId, userInfo);
 
         return userInfo;
+    }
+
+    @SkipPermissionCheck
+    @Override
+    public Long createPersonForJoin(String identifier) {
+        Assert.notBlank(identifier, "An identifier is required to create a person.");
+        // @SkipPermissionCheck for the same reason registerUserProfile carries it: these are rows
+        // this method mints itself, and on /join the caller has no session at all. Both models are
+        // global, so no @CrossTenant is needed; atomicity comes from the caller's transaction —
+        // a profile without its identity row would fail every later requireIdentity.
+        UserProfile profile = new UserProfile();
+        Long profileId = this.createOne(profile);
+
+        UserIdentity identity = new UserIdentity();
+        identity.setProfileId(profileId);
+        // Which column depends on the channel, and "@" is the only thing that distinguishes them
+        // once we hold a bare address. A dial-code mobile can never contain one.
+        if (identifier.contains("@")) {
+            identity.setLoginEmail(identifier);
+        } else {
+            identity.setLoginMobile(identifier);
+        }
+        identityService.createOne(identity);
+        return profileId;
     }
 
     /**
