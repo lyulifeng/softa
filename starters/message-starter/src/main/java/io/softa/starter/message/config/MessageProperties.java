@@ -44,6 +44,21 @@ public class MessageProperties {
     private final Zombie zombie = new Zombie();
     private final Mail mail = new Mail();
     private final Sms sms = new Sms();
+    private final Quota quota = new Quota();
+
+    /**
+     * Deployment-default monthly send ceilings, used for any quota bucket with
+     * no {@code TenantMessageQuota} row (or a null limit on its row). Null =
+     * unlimited. Per-bucket enforcement lives in {@code MonthlyQuotaGuard};
+     * the platform's own sends draw on the {@code tenantId = -1} bucket.
+     */
+    @Data
+    public static class Quota {
+        /** Default maximum accepted mail sends per bucket per calendar month; null = unlimited. */
+        private Long mailMonthlyDefault;
+        /** Default maximum accepted SMS sends per bucket per calendar month; null = unlimited. */
+        private Long smsMonthlyDefault;
+    }
 
     @Data
     public static class Outbox {

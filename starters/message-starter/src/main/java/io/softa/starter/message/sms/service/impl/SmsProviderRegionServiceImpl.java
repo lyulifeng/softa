@@ -47,15 +47,23 @@ public class SmsProviderRegionServiceImpl extends EntityServiceImpl<SmsProviderR
     @Override
     @CrossTenant
     public List<SmsProviderRegion> findEnabledByRegion(String regionCode) {
-        // Platform-overlay read: platform routing rows (tenant 0, shared by
-        // all tenants) plus the caller's own per-tenant overrides.
-        Filters filters = new Filters()
-                .eq(SmsProviderRegion::getRegionCode, regionCode)
-                .eq(SmsProviderRegion::getIsEnabled, true)
-                .in(SmsProviderRegion::getTenantId, TenantScopes.currentPlusPlatform());
-        FlexQuery flexQuery = new FlexQuery(filters,
-                Orders.ofAsc(SmsProviderRegion::getPriority));
-        return this.searchList(flexQuery);
+        // Per-country, tenant-first: the tenant's own routing rows for this
+        // country win outright; only a country the tenant has not routed falls
+        // back to the (invisible) platform-tier rows. Both tiers organize
+        // routing by country; they never interleave within one country.
+        List<SmsProviderRegion> own = searchList(new FlexQuery(
+                new Filters()
+                        .eq(SmsProviderRegion::getRegionCode, regionCode)
+                        .eq(SmsProviderRegion::getTenantId, TenantScopes.currentTenantOrPlatform()),
+                Orders.ofAsc(SmsProviderRegion::getPriority)));
+        if (!own.isEmpty()) {
+            return own;
+        }
+        return searchList(new FlexQuery(
+                new Filters()
+                        .eq(SmsProviderRegion::getRegionCode, regionCode)
+                        .eq(SmsProviderRegion::getTenantId, TenantScopes.PLATFORM),
+                Orders.ofAsc(SmsProviderRegion::getPriority)));
     }
 
     private void validateRegionCode(SmsProviderRegion region) {

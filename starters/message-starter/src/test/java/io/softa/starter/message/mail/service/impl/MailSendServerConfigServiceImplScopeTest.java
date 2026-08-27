@@ -1,31 +1,29 @@
 package io.softa.starter.message.mail.service.impl;
 
-import java.util.List;
 import java.util.Optional;
-import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Assertions;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.test.util.ReflectionTestUtils;
 
-import io.softa.framework.base.config.SystemConfig;
-import io.softa.framework.base.context.Context;
-import io.softa.framework.base.context.ContextHolder;
 import io.softa.framework.base.exception.BusinessException;
 import io.softa.framework.orm.domain.FlexQuery;
 import io.softa.starter.message.mail.entity.MailSendServerConfig;
 import io.softa.starter.message.mail.service.MailSendServerConfigService;
 
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.argThat;
 import static org.mockito.Mockito.doReturn;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.spy;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 /**
- * Scope rules of {@link MailSendServerConfigServiceImpl}: what
- * {@code listSelectable} exposes to tenant vs platform callers, and the
- * explanatory rejection of tenant writes addressed at platform rows.
+ * Scope rules of {@link MailSendServerConfigServiceImpl}: a tenant write
+ * addressed at a platform config fails with an explanation, not the ORM's
+ * silent no-op. (Platform configs never appear on tenant list surfaces —
+ * they are reached only by the dispatcher's default fallback.)
  */
 class MailSendServerConfigServiceImplScopeTest {
 
@@ -39,61 +37,32 @@ class MailSendServerConfigServiceImplScopeTest {
         ReflectionTestUtils.setField(service, "self", self);
     }
 
-    @AfterEach
-    void tearDown() {
-        SystemConfig.env = null;
-    }
-
-    private static void asTenant(long tenantId, Runnable action) {
-        SystemConfig config = new SystemConfig();
-        config.setEnableMultiTenancy(true);
-        SystemConfig.env = config;
-        Context ctx = new Context();
-        ctx.setTenantId(tenantId);
-        ContextHolder.runWith(ctx, action);
-    }
-
-    private static MailSendServerConfig config(long id, Long tenantId, Boolean shared, Integer sequence) {
+    private static MailSendServerConfig config(long id, Long tenantId) {
         MailSendServerConfig config = new MailSendServerConfig();
         config.setId(id);
         config.setTenantId(tenantId);
-        config.setSharedWithTenants(shared);
-        config.setSequence(sequence);
-        config.setIsEnabled(true);
         return config;
-    }
-
-    @Test
-    void tenantSeesOwnConfigsAndSharedPlatformConfigsOnly() {
-        MailSendServerConfig own = config(1L, 5L, null, 20);
-        MailSendServerConfig shared = config(2L, 0L, true, 10);
-        MailSendServerConfig internal = config(3L, 0L, false, 1);
-        doReturn(List.of(own, shared, internal)).when(service).searchList(any(FlexQuery.class));
-
-        asTenant(5L, () -> {
-            List<MailSendServerConfig> selectable = service.listSelectable();
-            Assertions.assertEquals(List.of(2L, 1L),
-                    selectable.stream().map(MailSendServerConfig::getId).toList(),
-                    "shared platform config and own config, ordered by sequence; "
-                            + "platform-internal config invisible");
-        });
-    }
-
-    @Test
-    void platformCallerSeesItsOwnConfigsRegardlessOfSharing() {
-        MailSendServerConfig internal = config(3L, 0L, false, 1);
-        doReturn(List.of(internal)).when(service).searchList(any(FlexQuery.class));
-
-        asTenant(0L, () -> Assertions.assertEquals(1, service.listSelectable().size()));
     }
 
     @Test
     void writeAddressedAtAPlatformConfigIsRejectedWithAnExplanation() {
         doReturn(Optional.empty()).when(service).getById(9L);
-        when(self.findVisibleById(9L)).thenReturn(Optional.of(config(9L, 0L, true, 1)));
+        when(self.findVisibleById(9L)).thenReturn(Optional.of(config(9L, -1L)));
 
         Assertions.assertThrows(BusinessException.class,
                 () -> service.assertWritableInCurrentScope(9L));
+    }
+
+    @Test
+    void visibleByIdReachesDisabledConfigs() {
+        doReturn(Optional.of(config(9L, 5L))).when(service).searchOne(any(FlexQuery.class));
+
+        service.findVisibleById(9L);
+
+        // Replay safety: an accepted record must resolve the config it was
+        // accepted with, even after ops disabled that config.
+        verify(service).searchOne(argThat((FlexQuery q) ->
+                q.getFilterControl().isSkipActiveControl()));
     }
 
     @Test

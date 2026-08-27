@@ -1,13 +1,14 @@
 -- ============================================================
 -- message-starter DDL
--- tenant_id = 0  → platform-level config (managed by ops/scripts)
--- tenant_id > 0  → tenant-level config (ORM auto-fills)
+-- tenant_id = -1 → platform-tier row (managed by the platform operator; invisible to tenants)
+-- tenant_id > 0  → tenant-level row (ORM auto-fills)
+-- tenant_id = 0  → single-tenant deployments only (column default, no filtering applies)
 -- ============================================================
 
 CREATE TABLE IF NOT EXISTS mail_send_server_config
 (
     id                    BIGINT       NOT NULL PRIMARY KEY COMMENT 'ID',
-    tenant_id             BIGINT       NOT NULL DEFAULT 0 COMMENT '0=platform, >0=tenant',
+    tenant_id             BIGINT       NOT NULL DEFAULT 0 COMMENT '-1=platform, >0=tenant, 0=single-tenant default',
     name                  VARCHAR(100) NOT NULL COMMENT 'Config name',
     description           VARCHAR(500)          COMMENT 'Description',
     protocol              VARCHAR(10)  NOT NULL COMMENT 'SMTP or SMTPS',
@@ -24,8 +25,7 @@ CREATE TABLE IF NOT EXISTS mail_send_server_config
     rate_limit_per_minute INT                   COMMENT 'Max emails per minute',
     read_receipt_enabled  TINYINT(1)   DEFAULT 0 COMMENT 'Request read receipts by default',
     is_default            TINYINT(1)   DEFAULT 0 COMMENT 'Default sending config for this tenant',
-    is_enabled            TINYINT(1)   DEFAULT 1 COMMENT 'Whether this config is active',
-    shared_with_tenants   TINYINT(1)   DEFAULT 0 COMMENT 'Platform rows only: expose to tenant sender pickers and template pinning; the implicit dispatcher fallback ignores this flag',
+    active                TINYINT(1)   DEFAULT 1 COMMENT 'Whether this config is active',
     sequence              INT          DEFAULT 0 COMMENT 'Display + processing order (ascending). NOT a failover priority — see entity Javadoc.',
     created_time          DATETIME              COMMENT 'Created time',
     updated_time          DATETIME              COMMENT 'Updated time',
@@ -39,7 +39,7 @@ CREATE TABLE IF NOT EXISTS mail_send_server_config
 CREATE TABLE IF NOT EXISTS mail_receive_server_config
 (
     id                    BIGINT       NOT NULL PRIMARY KEY COMMENT 'ID',
-    tenant_id             BIGINT       NOT NULL DEFAULT 0 COMMENT '0=platform, >0=tenant',
+    tenant_id             BIGINT       NOT NULL DEFAULT 0 COMMENT '-1=platform, >0=tenant, 0=single-tenant default',
     name                  VARCHAR(100) NOT NULL COMMENT 'Config name',
     description           VARCHAR(500)          COMMENT 'Description',
     protocol              VARCHAR(10)  NOT NULL COMMENT 'IMAP, IMAPS, POP3, POP3S',
@@ -50,7 +50,7 @@ CREATE TABLE IF NOT EXISTS mail_receive_server_config
     password              VARCHAR(512)          COMMENT 'Password (AES-encrypted at rest)',
     fetch_folders         VARCHAR(255) DEFAULT 'INBOX' COMMENT 'Comma-separated list of folders to fetch from',
     is_default            TINYINT(1)   DEFAULT 0 COMMENT 'Default receiving config for this tenant',
-    is_enabled            TINYINT(1)   DEFAULT 1 COMMENT 'Whether this config is active',
+    active                TINYINT(1)   DEFAULT 1 COMMENT 'Whether this config is active',
     sequence              INT          DEFAULT 0 COMMENT 'Display + processing order (ascending). NOT a failover priority — see entity Javadoc.',
     created_time          DATETIME              COMMENT 'Created time',
     updated_time          DATETIME              COMMENT 'Updated time',
@@ -64,7 +64,7 @@ CREATE TABLE IF NOT EXISTS mail_receive_server_config
 CREATE TABLE IF NOT EXISTS mail_send_record
 (
     id               BIGINT       NOT NULL PRIMARY KEY COMMENT 'ID',
-    tenant_id        BIGINT       NOT NULL DEFAULT 0 COMMENT '0=platform, >0=tenant',
+    tenant_id        BIGINT       NOT NULL DEFAULT 0 COMMENT '-1=platform, >0=tenant, 0=single-tenant default',
     server_config_id BIGINT                COMMENT 'FK → mail_send_server_config.id',
     from_address     VARCHAR(255)          COMMENT 'Sender address',
     to_addresses     TEXT                  COMMENT 'Recipients (List<String> JSON, ORM-managed)',
@@ -103,7 +103,7 @@ CREATE TABLE IF NOT EXISTS mail_send_record
 CREATE TABLE IF NOT EXISTS mail_fetch_imap_watermark
 (
     id                 BIGINT       NOT NULL PRIMARY KEY COMMENT 'ID',
-    tenant_id          BIGINT       NOT NULL DEFAULT 0 COMMENT '0=platform, >0=tenant',
+    tenant_id          BIGINT       NOT NULL DEFAULT 0 COMMENT '-1=platform, >0=tenant, 0=single-tenant default',
     server_config_id   BIGINT       NOT NULL COMMENT 'FK → mail_receive_server_config.id',
     folder_name        VARCHAR(100) NOT NULL COMMENT 'IMAP folder name (e.g. INBOX)',
     uid_validity       BIGINT                COMMENT 'IMAP UIDVALIDITY observed when last_seen_uid was set',
@@ -128,7 +128,7 @@ CREATE TABLE IF NOT EXISTS mail_fetch_imap_watermark
 CREATE TABLE IF NOT EXISTS inbox_notification
 (
     id                BIGINT       NOT NULL PRIMARY KEY COMMENT 'ID',
-    tenant_id         BIGINT       NOT NULL DEFAULT 0 COMMENT '0=platform, >0=tenant',
+    tenant_id         BIGINT       NOT NULL DEFAULT 0 COMMENT '-1=platform, >0=tenant, 0=single-tenant default',
     recipient_id      BIGINT       NOT NULL COMMENT 'Recipient user ID',
     title             VARCHAR(200) NOT NULL COMMENT 'Notification title',
     content           TEXT                  COMMENT 'Notification body content',
@@ -151,7 +151,7 @@ CREATE TABLE IF NOT EXISTS inbox_notification
 CREATE TABLE IF NOT EXISTS mail_template
 (
     id           BIGINT       NOT NULL PRIMARY KEY COMMENT 'ID',
-    tenant_id    BIGINT       NOT NULL DEFAULT 0 COMMENT '0=platform, >0=tenant',
+    tenant_id    BIGINT       NOT NULL DEFAULT 0 COMMENT '-1=platform, >0=tenant, 0=single-tenant default',
     code         VARCHAR(100) NOT NULL COMMENT 'Template code for programmatic lookup, e.g. USER_WELCOME',
     name         VARCHAR(100) NOT NULL COMMENT 'Display name',
     description  VARCHAR(500)          COMMENT 'Description',
@@ -163,8 +163,7 @@ CREATE TABLE IF NOT EXISTS mail_template
     body_html    MEDIUMTEXT            COMMENT 'HTML body template with {{ variable }} placeholders',
     body_text    MEDIUMTEXT            COMMENT 'Plain text body template with {{ variable }} placeholders; required for PLAIN and HTML_WITH_AUTHORED_PLAIN modes',
     body_mode    VARCHAR(32)  NOT NULL DEFAULT 'HTML_WITH_DERIVED_PLAIN' COMMENT 'HTML / PLAIN / HTML_WITH_DERIVED_PLAIN / HTML_WITH_AUTHORED_PLAIN',
-    is_enabled   TINYINT(1)   DEFAULT 1 COMMENT 'Whether this template is active',
-    overridable  TINYINT(1)   DEFAULT 1 COMMENT 'Platform rows only: 0 locks the code — tenant customization never fires and tenant creates with this code are rejected',
+    active       TINYINT(1)   DEFAULT 1 COMMENT 'Whether this template is active',
     created_time DATETIME              COMMENT 'Created time',
     updated_time DATETIME              COMMENT 'Updated time',
     created_id   BIGINT                COMMENT 'Created by user ID',
@@ -174,10 +173,51 @@ CREATE TABLE IF NOT EXISTS mail_template
     UNIQUE INDEX uk_mail_template_tenant_code (tenant_id, code)
 ) COMMENT = 'Email templates with platform/tenant-level scoping';
 
+-- System-maintained monthly send ledger (one row per bucket per month),
+-- incremented via optimistic-lock CAS at send acceptance. Durable history:
+-- rows are never expired. tenant_id = -1 is the platform's own bucket.
+CREATE TABLE IF NOT EXISTS tenant_message_usage
+(
+    id                  BIGINT       NOT NULL PRIMARY KEY COMMENT 'Distributed ID',
+    tenant_id           BIGINT       NOT NULL COMMENT 'Quota bucket; -1 = the platform itself',
+    month               VARCHAR(7)   NOT NULL COMMENT 'Calendar month, yyyy-MM (server default zone)',
+    mail_monthly_limit  BIGINT                COMMENT 'Snapshot of the mail ceiling at the last accepted mail send; NULL = unlimited',
+    mail_used           BIGINT       NOT NULL DEFAULT 0 COMMENT 'Accepted mail sends this month',
+    sms_monthly_limit   BIGINT                COMMENT 'Snapshot of the SMS ceiling at the last accepted SMS send; NULL = unlimited',
+    sms_used            BIGINT       NOT NULL DEFAULT 0 COMMENT 'Accepted SMS sends this month',
+    version             BIGINT       NOT NULL DEFAULT 0 COMMENT 'Optimistic-lock version',
+    created_time        DATETIME              COMMENT 'Created time',
+    updated_time        DATETIME              COMMENT 'Updated time',
+    created_id          BIGINT                COMMENT 'Created by user ID',
+    created_by          VARCHAR(100)          COMMENT 'Created by username',
+    updated_id          BIGINT                COMMENT 'Updated by user ID',
+    updated_by          VARCHAR(100)          COMMENT 'Updated by username',
+    UNIQUE INDEX uk_tenant_message_usage_bucket (tenant_id, month)
+) COMMENT = 'Monthly message send ledger per quota bucket (system-maintained)';
+
+-- Platform-owned registry ABOUT tenants (deliberately NOT tenant-isolated):
+-- monthly send ceilings, configured by platform operations only.
+-- tenant_id = -1 governs the platform's own sends.
+CREATE TABLE IF NOT EXISTS tenant_message_quota
+(
+    id                  BIGINT       NOT NULL PRIMARY KEY COMMENT 'Distributed ID',
+    tenant_id           BIGINT       NOT NULL COMMENT 'Governed tenant; -1 = the platform itself',
+    mail_monthly_limit  BIGINT                COMMENT 'Max accepted mail sends per calendar month; NULL = deployment default',
+    sms_monthly_limit   BIGINT                COMMENT 'Max accepted SMS sends per calendar month; NULL = deployment default',
+    description         VARCHAR(500)          COMMENT 'Operations note (plan/contract behind this ceiling)',
+    created_time        DATETIME              COMMENT 'Created time',
+    updated_time        DATETIME              COMMENT 'Updated time',
+    created_id          BIGINT                COMMENT 'Created by user ID',
+    created_by          VARCHAR(100)          COMMENT 'Created by username',
+    updated_id          BIGINT                COMMENT 'Updated by user ID',
+    updated_by          VARCHAR(100)          COMMENT 'Updated by username',
+    UNIQUE INDEX uk_tenant_message_quota_tenant (tenant_id)
+) COMMENT = 'Monthly message send quotas per tenant (platform-operations managed)';
+
 CREATE TABLE IF NOT EXISTS mail_receive_record
 (
     id               BIGINT       NOT NULL PRIMARY KEY COMMENT 'ID',
-    tenant_id        BIGINT       NOT NULL DEFAULT 0 COMMENT '0=platform, >0=tenant',
+    tenant_id        BIGINT       NOT NULL DEFAULT 0 COMMENT '-1=platform, >0=tenant, 0=single-tenant default',
     server_config_id BIGINT                COMMENT 'FK → mail_receive_server_config.id',
     message_id       VARCHAR(255)          COMMENT 'RFC 5322 Message-ID header value (or synthetic SHA-256 fallback when absent); dedup key together with server_config_id',
     mail_type        VARCHAR(20)  DEFAULT 'Normal' COMMENT 'Primary content type: Normal / ReadReceipt / Bounce / AutoReply / CalendarInvite / Unknown',

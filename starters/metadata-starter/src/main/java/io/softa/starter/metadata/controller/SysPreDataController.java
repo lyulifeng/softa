@@ -47,6 +47,18 @@ public class SysPreDataController extends EntityController<SysPreDataService, Sy
         return ApiResponse.success(true);
     }
 
+    @Operation(summary = "loadPrePlatformData", description = """
+            Load the predefined platform-tier data from resources/data-platform.
+            Rows land on the platform tier (tenantId = -1) of multiTenant models,
+            supporting data files in JSON, XML, and CSV formats.
+            """)
+    @PostMapping("/loadPrePlatformData")
+    public ApiResponse<Boolean> loadPrePlatformData(@RequestBody List<String> fileNames) {
+        Assert.allNotBlank(fileNames, "The filename of the data to be loaded cannot be empty!");
+        service.loadPrePlatformData(fileNames);
+        return ApiResponse.success(true);
+    }
+
     @Operation(summary = "loadSystemDataByUpload", description = """
             Upload a predefined data file to load data.
             The file should be in JSON, XML, or CSV format and follow the required structure for predefined data.

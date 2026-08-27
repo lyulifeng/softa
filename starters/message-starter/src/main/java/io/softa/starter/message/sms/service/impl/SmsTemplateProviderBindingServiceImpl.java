@@ -14,6 +14,7 @@ import io.softa.framework.orm.domain.Orders;
 import io.softa.framework.orm.service.impl.EntityServiceImpl;
 import io.softa.starter.message.sms.entity.SmsTemplateProviderBinding;
 import io.softa.starter.message.sms.service.SmsTemplateProviderBindingService;
+import io.softa.starter.message.shared.TenantScopes;
 import io.softa.starter.referencedata.service.CountryRegionService;
 
 /**
@@ -44,8 +45,7 @@ public class SmsTemplateProviderBindingServiceImpl extends EntityServiceImpl<Sms
     @Override
     public List<SmsTemplateProviderBinding> findByTemplateId(Long templateId) {
         Filters filters = new Filters()
-                .eq(SmsTemplateProviderBinding::getTemplateId, templateId)
-                .eq(SmsTemplateProviderBinding::getIsEnabled, true);
+                .eq(SmsTemplateProviderBinding::getTemplateId, templateId);
         FlexQuery flexQuery = new FlexQuery(filters,
                 Orders.ofAsc(SmsTemplateProviderBinding::getPriority));
         return this.searchList(flexQuery);
@@ -55,9 +55,8 @@ public class SmsTemplateProviderBindingServiceImpl extends EntityServiceImpl<Sms
     @CrossTenant
     public List<SmsTemplateProviderBinding> findPlatformBindingsByTemplateId(Long templateId) {
         Filters filters = new Filters()
-                .eq("tenantId", 0L)
-                .eq(SmsTemplateProviderBinding::getTemplateId, templateId)
-                .eq(SmsTemplateProviderBinding::getIsEnabled, true);
+                .eq(SmsTemplateProviderBinding::getTenantId, TenantScopes.PLATFORM)
+                .eq(SmsTemplateProviderBinding::getTemplateId, templateId);
         FlexQuery flexQuery = new FlexQuery(filters,
                 Orders.ofAsc(SmsTemplateProviderBinding::getPriority));
         return this.searchList(flexQuery);

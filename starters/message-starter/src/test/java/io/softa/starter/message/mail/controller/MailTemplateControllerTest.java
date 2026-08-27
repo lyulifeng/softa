@@ -59,17 +59,6 @@ class MailTemplateControllerTest {
     }
 
     @Test
-    void createRejectsALockedCodeOverrideBeforeWriting() {
-        Map<String, Object> row = new HashMap<>();
-        row.put("code", "INVOICE_ISSUED");
-        doThrow(new BusinessException("locked platform code"))
-                .when(service).validateCodeOverride(row);
-
-        Assertions.assertThrows(BusinessException.class, () -> controller.createOne(row));
-        verifyNoInteractions(modelService);
-    }
-
-    @Test
     void updateProbesThePlatformRowGuardWithThePayloadId() {
         Map<String, Object> row = new HashMap<>();
         row.put("id", 9L);
@@ -78,12 +67,6 @@ class MailTemplateControllerTest {
 
         Assertions.assertThrows(BusinessException.class, () -> controller.updateOne(row));
         verifyNoInteractions(modelService);
-    }
-
-    @Test
-    void customizeDelegatesToTheService() {
-        when(service.customize(77L)).thenReturn(1001L);
-        Assertions.assertEquals(1001L, controller.customize(77L).getData());
     }
 
     @Test

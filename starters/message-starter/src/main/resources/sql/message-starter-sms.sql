@@ -7,7 +7,7 @@
 CREATE TABLE IF NOT EXISTS sms_provider_config
 (
     id                     BIGINT       NOT NULL PRIMARY KEY COMMENT 'ID',
-    tenant_id              BIGINT       NOT NULL DEFAULT 0 COMMENT '0=platform, >0=tenant',
+    tenant_id              BIGINT       NOT NULL DEFAULT 0 COMMENT '-1=platform, >0=tenant, 0=single-tenant default',
     name                   VARCHAR(100) NOT NULL COMMENT 'Config name',
     description            VARCHAR(500)          COMMENT 'Description',
     provider_type          VARCHAR(20)  NOT NULL COMMENT 'Twilio / Infobip / Aliyun / Tencent / Custom',
@@ -21,7 +21,7 @@ CREATE TABLE IF NOT EXISTS sms_provider_config
     rate_limit_per_minute  INT                   COMMENT 'Max SMS per minute',
     daily_send_limit       INT                   COMMENT 'Max SMS per day (null = unlimited)',
     is_default             TINYINT(1)   DEFAULT 0 COMMENT 'Default config for this tenant',
-    is_enabled             TINYINT(1)   DEFAULT 1 COMMENT 'Whether this config is active',
+    active                 TINYINT(1)   DEFAULT 1 COMMENT 'Whether this config is active',
     priority               INT          DEFAULT 100 COMMENT 'Lower = higher priority. Selection ordering among isDefault providers + UI list order.',
     created_time           DATETIME              COMMENT 'Created time',
     updated_time           DATETIME              COMMENT 'Updated time',
@@ -40,7 +40,7 @@ CREATE TABLE IF NOT EXISTS sms_provider_region
     region_code        VARCHAR(2)   NOT NULL COMMENT 'ISO 3166-1 alpha-2 (CN/TW/HK/MO/US/...); concept FK to country_region.code; "*" or invalid values rejected at app layer',
     dial_code          VARCHAR(8)   NOT NULL DEFAULT '' COMMENT 'ITU-T E.164 dial code (no leading +); denormalized from country_region.dial_code by service layer at write time',
     priority           INT          NOT NULL DEFAULT 100 COMMENT 'Lower = higher provider-selection priority within the same region',
-    is_enabled         TINYINT(1)   NOT NULL DEFAULT 1 COMMENT 'Row-level enable switch',
+    active             TINYINT(1)   NOT NULL DEFAULT 1 COMMENT 'Active control: reads are auto-filtered to active = 1',
     created_time       DATETIME              COMMENT 'Created time',
     updated_time       DATETIME              COMMENT 'Updated time',
     created_id         BIGINT                COMMENT 'Created by user ID',
@@ -48,18 +48,18 @@ CREATE TABLE IF NOT EXISTS sms_provider_region
     updated_id         BIGINT                COMMENT 'Updated by user ID',
     updated_by         VARCHAR(100)          COMMENT 'Updated by username',
     UNIQUE INDEX uk_tenant_provider_region (tenant_id, provider_config_id, region_code),
-    INDEX idx_region_enabled (region_code, is_enabled)
+    INDEX idx_region_active (region_code, active)
 ) COMMENT = 'Per-country SMS provider routing. Absence of any row for region X = provider does NOT serve X. Catchall via SmsProviderConfig.isDefault, NOT a magic region_code.';
 
 CREATE TABLE IF NOT EXISTS sms_template
 (
     id                   BIGINT       NOT NULL PRIMARY KEY COMMENT 'ID',
-    tenant_id            BIGINT       NOT NULL DEFAULT 0 COMMENT '0=platform, >0=tenant',
+    tenant_id            BIGINT       NOT NULL DEFAULT 0 COMMENT '-1=platform, >0=tenant, 0=single-tenant default',
     code                 VARCHAR(100) NOT NULL COMMENT 'Template code for programmatic lookup, e.g. VERIFY_CODE',
     name                 VARCHAR(100) NOT NULL COMMENT 'Display name',
     description          VARCHAR(500)          COMMENT 'Description',
     content              TEXT                  COMMENT 'SMS body template with {{ variable }} placeholders',
-    is_enabled           TINYINT(1)   DEFAULT 1 COMMENT 'Whether this template is active',
+    active               TINYINT(1)   DEFAULT 1 COMMENT 'Whether this template is active',
     created_time         DATETIME              COMMENT 'Created time',
     updated_time         DATETIME              COMMENT 'Updated time',
     created_id           BIGINT                COMMENT 'Created by user ID',
@@ -72,14 +72,14 @@ CREATE TABLE IF NOT EXISTS sms_template
 CREATE TABLE IF NOT EXISTS sms_template_provider_binding
 (
     id                   BIGINT       NOT NULL PRIMARY KEY COMMENT 'ID',
-    tenant_id            BIGINT       NOT NULL DEFAULT 0 COMMENT '0=platform, >0=tenant',
+    tenant_id            BIGINT       NOT NULL DEFAULT 0 COMMENT '-1=platform, >0=tenant, 0=single-tenant default',
     template_id          BIGINT       NOT NULL COMMENT 'FK → sms_template.id',
     provider_config_id   BIGINT       NOT NULL COMMENT 'FK → sms_provider_config.id',
     region_code          VARCHAR(2)   NOT NULL DEFAULT '' COMMENT 'Optional ISO 3166-1 alpha-2 region override; blank = generic binding for this provider',
     external_template_id VARCHAR(100)          COMMENT 'Provider-registered template ID (e.g. Aliyun SMS_12345678)',
     sign_name            VARCHAR(50)           COMMENT 'SMS signature for this provider',
     priority             INT          DEFAULT 0 COMMENT 'Template-aware provider selection priority (lower = preferred)',
-    is_enabled           TINYINT(1)   DEFAULT 1 COMMENT 'Whether this binding is active',
+    active               TINYINT(1)   DEFAULT 1 COMMENT 'Whether this binding is active',
     created_time         DATETIME              COMMENT 'Created time',
     updated_time         DATETIME              COMMENT 'Updated time',
     created_id           BIGINT                COMMENT 'Created by user ID',
@@ -94,7 +94,7 @@ CREATE TABLE IF NOT EXISTS sms_template_provider_binding
 CREATE TABLE IF NOT EXISTS sms_send_record
 (
     id                         BIGINT       NOT NULL PRIMARY KEY COMMENT 'ID',
-    tenant_id                  BIGINT       NOT NULL DEFAULT 0 COMMENT '0=platform, >0=tenant',
+    tenant_id                  BIGINT       NOT NULL DEFAULT 0 COMMENT '-1=platform, >0=tenant, 0=single-tenant default',
     provider_config_id         BIGINT                COMMENT 'FK → sms_provider_config.id',
     provider_type              VARCHAR(20)           COMMENT 'Provider type used for this send (Twilio/Infobip/Aliyun/etc.)',
     phone_number               VARCHAR(50)           COMMENT 'Recipient phone number',

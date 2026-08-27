@@ -20,7 +20,7 @@ public class MailSenderSummaryDTO {
         dto.setFromAddress(config.getFromAddress());
         dto.setFromName(config.getFromName());
         dto.setIsDefault(config.getIsDefault());
-        dto.setIsEnabled(config.getIsEnabled());
+        dto.setActive(config.getActive());
         return dto;
     }
 
@@ -39,10 +39,6 @@ public class MailSenderSummaryDTO {
     @Schema(description = "Whether this is the default config")
     private Boolean isDefault;
 
-    @Schema(description = "Whether this config is enabled")
-    private Boolean isEnabled;
-
-    @Schema(description = "True when this sender is a platform config offered to the tenant via "
-            + "sharing (sharedWithTenants) — selectable but read-only for tenant callers")
-    private Boolean platformShared;
+    @Schema(description = "Whether this config is active (disabled configs are not listed)")
+    private Boolean active;
 }

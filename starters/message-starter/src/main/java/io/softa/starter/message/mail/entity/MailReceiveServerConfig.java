@@ -15,11 +15,12 @@ import io.softa.starter.message.mail.enums.ReceiveProtocol;
 /**
  * Incoming mail server configuration (IMAP / IMAPS / POP3 / POP3S).
  * <p>
- * tenant_id = 0  — platform-level, managed by the ops platform or init scripts.
+ * tenant_id = -1 — platform-tier, managed by the platform operator; invisible
+ * to tenants, reached only by the dispatcher fallback.
  * tenant_id > 0  — tenant-level, tenant_id is auto-filled by the ORM.
  */
 @Data
-@Model(idStrategy = IdStrategy.DISTRIBUTED_LONG, multiTenant = true)
+@Model(idStrategy = IdStrategy.DISTRIBUTED_LONG, multiTenant = true, activeControl = true)
 @Index(indexName = "idx_mail_recv_cfg_default", fields = {"tenantId", "isDefault"})
 @EqualsAndHashCode(callSuper = true)
 public class MailReceiveServerConfig extends AuditableModel {
@@ -31,7 +32,7 @@ public class MailReceiveServerConfig extends AuditableModel {
     private Long id;
 
     @Field(label = "Tenant ID",
-            description = "0 = platform-level (shared across tenants); >0 = tenant-level. "
+            description = "-1 = platform-tier (invisible to tenants); >0 = tenant-level. "
                     + "Auto-stamped by the ORM on writes when multi-tenancy is enabled.")
     private Long tenantId;
 
@@ -76,8 +77,14 @@ public class MailReceiveServerConfig extends AuditableModel {
                     + "other default when a config is saved with this flag set.")
     private Boolean isDefault;
 
-    @Field(description = "Whether this config is enabled")
-    private Boolean isEnabled;
+    /**
+     * Framework active control: reads are auto-filtered to {@code active = true},
+     * so a disabled row is retired from every list and every resolution without
+     * being deleted (rows referenced by send records stay intact). Filter on
+     * {@code active} explicitly to see disabled rows.
+     */
+    @Field(renamedFrom = "isEnabled")
+    private Boolean active;
 
     /**
      * If receive-side failover is ever introduced, rename to {@code priority};

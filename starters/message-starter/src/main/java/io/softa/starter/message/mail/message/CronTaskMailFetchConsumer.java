@@ -11,6 +11,7 @@ import org.springframework.stereotype.Component;
 
 import io.softa.framework.base.context.Context;
 import io.softa.framework.base.context.ContextHolder;
+import io.softa.starter.message.shared.TenantScopes;
 import io.softa.framework.base.enums.SystemUser;
 import io.softa.framework.orm.annotation.CrossTenant;
 import io.softa.framework.orm.annotation.SwitchUser;
@@ -97,7 +98,7 @@ public class CronTaskMailFetchConsumer {
      */
     private int fetchInTenantContext(MailReceiveServerConfig config) {
         Context ctx = ContextHolder.cloneContext();
-        ctx.setTenantId(config.getTenantId() != null ? config.getTenantId() : 0L);
+        ctx.setTenantId(config.getTenantId() != null ? config.getTenantId() : TenantScopes.PLATFORM);
         ctx.setCrossTenant(false);
         ctx.setSkipPermissionCheck(true);
         int[] fetched = new int[1];
@@ -111,7 +112,7 @@ public class CronTaskMailFetchConsumer {
      */
     private List<MailReceiveServerConfig> findEnabledConfigs() {
         Filters filters = new Filters()
-                .eq(MailReceiveServerConfig::getIsEnabled, true);
+                ;
         FlexQuery flexQuery = new FlexQuery(filters,
                 Orders.ofAsc(MailReceiveServerConfig::getSequence));
         return receiveConfigService.searchList(flexQuery);

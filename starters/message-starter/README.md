@@ -60,7 +60,7 @@ etc.). The trade-off and the operational expectations:
 | Dependency | Used by | Failure behaviour | Operational expectation |
 |---|---|---|---|
 | Database | All paths (records, outbox, framework versionLock) | Operation throws; caller sees 5xx | HA-Database (replicated MySQL / managed PG); migrations applied. |
-| Redis | `RateLimiter` (per-tenant + per-config quotas), `MailConfigCache`, send-quota counters | Operation throws; caller sees 5xx | Sentinel or Cluster setup. K8s `readinessProbe` should include `/actuator/health/redis` so the load balancer routes traffic away while Redis is unreachable. |
+| Redis | `RateLimiter` (per-config delivery rate windows), `MailConfigCache` | Operation throws; caller sees 5xx | Sentinel or Cluster setup. K8s `readinessProbe` should include `/actuator/health/redis` so the load balancer routes traffic away while Redis is unreachable. |
 | Pulsar broker | `OutboxPublisher` (publish), consumers (subscribe) | Outbox row stays `NEW`; publisher retries with exponential back-off; eventually marks `DEAD` after `MAX_PUBLISH_ATTEMPTS=10`. | HA cluster. Failure does not block business writes — outbox absorbs the gap. |
 | SMTP / SMS provider | Outbound send | Per-record fails; classified by `ErrorClassifier`; retried with exponential back-off (`ExponentialBackoffPolicy`). | Configure provider-side rate limits below provider's quota. |
 
@@ -75,11 +75,39 @@ via the readiness probe than to silently fan out under partial failure.
 All messaging business tables (`mail_*`, `sms_*`, `inbox_notification`) are
 `multiTenant` models: when the platform's `system.enable-multi-tenancy` is on,
 reads are isolated to the caller's tenant and writes are auto-stamped by the
-ORM. `tenant_id = 0` rows form the **platform tier**, shared by every tenant:
+ORM. `tenant_id = -1` rows (`BaseConstant.PLATFORM_TENANT_ID`) form the
+**platform tier** — owned by the platform operator and invisible to tenants.
+The two tiers are fully separate namespaces; there is no overlay:
 
-- Config/template/routing resolution is **overlay-style**: the caller's own
-  rows plus the platform tier (tenant default → platform default; tenant
-  template → platform template; routing = union of both, by priority).
+- **Templates are seeded per tenant, not shared.** Each tenant receives its
+  template rows at provisioning from the APPLICATION's per-tenant seed files
+  (`SysPreDataService.loadPreTenantData`, driven by the app's
+  tenant-provisioned seeder — e.g. hcm's `TenantSeedListener` — with
+  SysPreData-ledger idempotency and rebuild cleanup). From then on the tenant
+  owns and edits its rows freely; seed-file changes do NOT propagate to
+  existing tenants. The platform tier holds only the templates PLATFORM-scoped
+  sends render (billing, security); a code needed on both tiers (e.g. a public
+  password-reset fallback) appears in both seed sets. Send-time resolution is
+  tier-pure: `scope = TENANT` reads the current scope's own rows only,
+  `scope = PLATFORM` reads the platform tier only — no fallback in either
+  direction on the template axis.
+- **Server/provider configs are invisible to tenants.** Tenants see and pin
+  only their own configs. The platform tier is reached in exactly one way:
+  the dispatchers' silent fallback (`@CrossTenant`) when a tenant has none —
+  mail send/receive fall back to the platform default; SMS routing falls back
+  **per country** (a country the tenant has not routed uses the platform's
+  rows for that country; tiers never interleave within one country), and the
+  SMS catchall default is tenant-first-else-platform the same way.
+- Per-send tier policy: `SendMailDTO.scope` / `SendSmsDTO.scope` /
+  `MailRequestMessage.scope` (`MessageScope.TENANT` default, `PLATFORM` = the
+  platform tier for template, server AND quota bucket — for billing/security/
+  compliance messages). `MailRequestMessage.tenantId` lets the MQ consumer
+  restore the tenant context, so a TENANT-scoped render reaches the tenant's
+  own template and the send record lands in the tenant's books.
+- Platform rows are structurally un-writable from a tenant scope (payload
+  guard, insert stamping, and the tenant-filtered pre-read on update/delete);
+  the mail write endpoints additionally turn that silent no-op into an
+  explanatory `BusinessException`.
 - Background jobs are cross-tenant scans that execute per-record in the owning
   tenant's context: the scheduled mail fetch runs each receive config inside
   its config's tenant, and the zombie sweeper revives each stuck record inside
@@ -88,32 +116,69 @@ ORM. `tenant_id = 0` rows form the **platform tier**, shared by every tenant:
   tables; tenant identity travels inside the message payload
   (`recordId / tenantId / traceId`) and is restored by the consumer.
 
-The overlay also has a **management surface** (mail side):
-
-- `GET /MailTemplate/effectiveList` shows a tenant its own templates PLUS the
-  inherited platform tier, one row per `code`, tagged
-  `INHERITED / CUSTOMIZED / OWN`; `POST /MailTemplate/customize?id=` copies a
-  platform template into the tenant scope under the same code (copy-on-write —
-  the override flow never hand-types a code), and deleting the copy reverts to
-  the inherited template.
-- Platform rows are structurally un-writable from a tenant scope (payload
-  guard, insert stamping, and the tenant-filtered pre-read on update/delete);
-  the mail write endpoints additionally turn that silent no-op into an
-  explanatory `BusinessException`.
-- Two per-row policy flags: `MailTemplate.overridable = false` locks a platform
-  code against tenant customization (send-time resolution then always uses the
-  platform row); `MailSendServerConfig.sharedWithTenants = true` exposes a
-  platform SMTP config to tenant sender pickers and template pinning
-  (`GET /api/mail/senders` lists own + shared-platform configs).
-- Per-send tier policy: `SendMailDTO.scope` / `MailRequestMessage.scope`
-  (`MailScope.OVERLAY` default, `PLATFORM_ONLY` = skip the tenant tier on both
-  the template AND server axes — for billing/security/compliance mail).
-  `MailRequestMessage.tenantId` lets the MQ consumer restore the tenant
-  context, so platform-initiated jobs can opt INTO tenant branding; with no
-  tenant id the render stays platform-tier (the historical behaviour).
-
 With multi-tenancy disabled, no filtering or stamping occurs and everything
 behaves single-tenant.
+
+### Enable / disable (framework active control)
+
+The seven config/template models (`MailTemplate`, `MailSendServerConfig`,
+`MailReceiveServerConfig`, `SmsTemplate`, `SmsProviderConfig`,
+`SmsProviderRegion`, `SmsTemplateProviderBinding`) declare
+`@Model(activeControl = true)` with the framework's `active` field — there is
+no hand-rolled `isEnabled` switch and no service hand-writes an
+`active = true` condition: `WhereBuilder` appends it to every FlexQuery read,
+so resolution, dispatch and list surfaces filter consistently and a new query
+cannot forget it. Disabling retires a row from every read WITHOUT deleting it,
+which is what rows referenced by send records need. Consequences worth
+knowing:
+
+- A disabled row leaves the default list view, so each of the seven admin
+  pages is a two-tab MultiView — **Active** (framework default) and **All**
+  (`active IN (true, false)`, which names the field and therefore suppresses
+  the automatic condition). Without that second tab, disabling a row would
+  make it vanish from its own admin page. The column-header filter on `active`
+  works the same way for ad-hoc queries.
+- Reads that must reach disabled rows use `FilterControl.bypassActiveControl()`
+  and say why: id-addressed replay (`findVisibleById` — an accepted record
+  resolves the config it was accepted with, so disabling a config never turns
+  in-flight retries into `CONFIG_NOT_RESOLVABLE`), authoring tooling
+  (`resolveAny` / `findPlatformByCodeAny` — preview and variable extraction
+  work before a template is activated), the platform-row write probe
+  (`findPlatformById` — a disabled platform row must still produce the
+  explanatory rejection), and default demotion (`demoteOtherDefaults` — a
+  skipped disabled row would resurface as a second default when re-activated).
+  Plain `getById` needs no bypass: id lookups never carry the filter.
+- The SMS dispatcher's by-id provider read comes from the config cache, so its
+  disabled-route check stays an explicit in-memory guard.
+
+### Monthly send quotas
+
+`TenantMessageQuota` (deliberately NOT `multiTenant` — a platform-owned
+registry ABOUT tenants, writable only from the platform scope; the service
+and the shadowed write endpoints both enforce `assertPlatformScope`) sets
+per-tenant monthly ceilings for accepted mail/SMS sends. Enforcement is at
+**acceptance** time in `MonthlyQuotaGuard`: an over-quota send is rejected
+synchronously — a commercial ceiling, not rate limiting — and delivery
+retries never touch the count. The bucket follows the send's scope:
+`PLATFORM` sends draw on the platform's own `tenantId = -1` row (set it very
+large; it exists to cap runaway or malicious mass sending). Missing rows fall
+back to `softa.message.quota.mail-monthly-default` / `sms-monthly-default`
+(null = unlimited; the ledger still advances for reporting).
+
+The counters live in the **database**: one `TenantMessageUsage` row per
+bucket per calendar month (server default zone), check-and-incremented via
+the ORM's optimistic-lock CAS — the same `versionLock` pattern as the
+delivery state machine — with each attempt in its own `REQUIRES_NEW`
+transaction (a lost race retries on a fresh read and can never poison an
+ambient batch transaction; consequence: a rolled-back accept keeps its
+increment — a rare, reconcilable over-count). There is no reset job — a new
+month simply starts a new row — and rows are never expired, so per-tenant
+consumption history is a plain model query, with the ceiling in force
+snapshotted onto each row. `GET /TenantMessageQuota/usage?tenantId=` serves
+one bucket's usage vs currently-resolved limits (a tenant session may read
+only its own bucket). The per-config `dailySendLimit` / `rateLimitPerMinute`
+windows are a different axis (delivery-time infrastructure protection) and
+stay unchanged.
 
 ### Async delivery (the only delivery model)
 
@@ -224,7 +289,8 @@ Email sending uses the following default lookup order:
 
 ```text
 1. Current tenant default mail server
-2. Platform default mail server (`tenant_id = 0`)
+2. Platform default mail server (`tenant_id = -1`) — the silent fallback;
+   platform configs are invisible on tenant management surfaces
 3. BusinessException if nothing is available
 ```
 
@@ -232,25 +298,21 @@ If multiple records are marked as default, the one with the smallest `sequence`
 is used. Config objects are cached in Redis for 5 minutes; updating a config
 via `MailSendServerConfigService.updateOne` / `deleteById` evicts automatically.
 
-A send declaring `scope = PLATFORM_ONLY` skips step 1 and resolves the
+A send declaring `scope = PLATFORM` skips step 1 and resolves the
 platform default only (cached under the platform key, so the tenant's own
 default cache entry is neither read nor poisoned) — platform mail must not
 route through tenant-controlled SMTP.
 
 #### Template resolution
 
-Email templates are resolved by `code` with a platform fallback. Both visible
-rows of a code (own + platform, `uk(tenantId, code)` guarantees at most one
-per scope) are fetched in one query and the tier policy picks:
+Email templates are resolved by `code` within the tier the send's scope
+names — the tiers are separate namespaces with no fallback:
 
 ```text
-scope = PLATFORM_ONLY            -> platform template only
-platform template locked          -> platform template (a tenant override
-  (overridable = false)              never fires for a locked code — even
-                                     disabled, the lock holds)
-otherwise                         -> tenant template (code + enabled)
-                                       -> platform template (tenant_id = 0)
-                                       -> BusinessException
+scope = TENANT (default) -> the current scope's own template (code + enabled)
+                            (tenants receive their copies at provisioning)
+scope = PLATFORM         -> the platform-tier template (tenant_id = -1)
+either tier missing      -> BusinessException (loud — no cross-tier rescue)
 ```
 
 Template placeholders use the unified Softa syntax: `{{ variable }}`.
@@ -279,9 +341,9 @@ persists until save, and Cancel restores the loaded record.
 
 The Preview & Send Test dialog is backed by three id-addressable operations.
 `id` targets the **exact row being edited** — no resolution semantics, no
-`isEnabled` filter, so a disabled template stays fully inspectable and
-testable *before* being enabled; `code` keeps the tenant → platform overlay
-resolution for programmatic callers:
+active-control filter, so a disabled template stays fully inspectable and
+testable *before* being enabled; `code` resolves within the caller's own
+tier for programmatic callers:
 
 - `GET /api/mail/templates/variables?id=|code=` — the template's distinct
   input tokens in first-appearance order, each classified for the input UI
@@ -343,7 +405,7 @@ SendMailDTO.serverConfigId          (1) explicit call-site override
 MailTemplate.preferredServerConfigId (2) template-level soft preference
   ↓ null
 MailServerDispatcher.resolveSend()   (3) tenant default → platform default
-  ↓ none found                           (PLATFORM_ONLY scope: platform default only)
+  ↓ none found                           (PLATFORM scope: platform default only)
 BusinessException
 ```
 
@@ -357,10 +419,8 @@ secondary" behaviour. SMTP failure goes through the normal retry policy
 |---|---|---|
 | `MailSendServerConfig.isDefault` | Marks the tenant/platform default. The standard write endpoints keep it unique per tenant scope — saving a config as default demotes the previous one | Failover (only the first default is ever picked) |
 | `MailSendServerConfig.sequence` | Tie-break among multiple `isDefault=true` rows (only reachable via batch/copy/init-script writes) + UI list order | Failover priority |
-| `MailReceiveServerConfig.sequence` | Cron polling order (all enabled configs polled each tick) + UI list order | Failover priority |
-| `MailTemplate.preferredServerConfigId` | Per-template preferred SMTP (e.g. marketing→SendGrid, transactional→Postmark). Scope-checked on write: a config owned by the template's own tenant scope, or a platform config with `sharedWithTenants = true` | Hard binding — DTO can still override |
-| `MailTemplate.overridable` | Platform rows only: `false` locks the code — tenant customization never fires, Customize is refused, and a tenant create with this code is rejected. Protects platform-owned mail (billing/security/compliance) from template hijack | Anything on tenant rows (ignored there) |
-| `MailSendServerConfig.sharedWithTenants` | Platform rows only: `true` exposes the config to tenant sender pickers (`/api/mail/senders`) and template pinning. Its `dailySendLimit` / `rateLimitPerMinute` stay global across every tenant using it | The implicit dispatcher fallback (platform policy — the flag is ignored there) |
+| `MailReceiveServerConfig.sequence` | Cron polling order (all active configs polled each tick) + UI list order | Failover priority |
+| `MailTemplate.preferredServerConfigId` | Per-template preferred SMTP (e.g. marketing→SendGrid, transactional→Postmark). Scope-checked on write: only a config owned by the template's own tenant scope (platform configs are invisible to tenants) | Hard binding — DTO can still override |
 
 Resolution failure is loud: when neither a tenant default nor a platform
 default exists, `resolveSend()` / `resolveReceive()` log an ERROR (with the
@@ -496,7 +556,7 @@ POST /MailTemplate/createOne
   "subject": "Welcome, {{ name }}!",
   "bodyHtml": "<h1>Welcome, {{ name }}</h1><p><a href='{{ activationUrl }}'>Activate</a></p>",
   "bodyMode": "HTML",
-  "isEnabled": true
+  "active": true
 }
 ```
 
@@ -529,7 +589,7 @@ against the send log in a single batched `IN()` query; the matched
 - Scheduled fetch is optional and requires `cron-starter`
 - The current consumer listens to `mq.topics.cron-task.topic`
 - When it receives a cron whose name starts with `mail-fetch`, it polls every
-  receive config with `isEnabled = true` — across all tenants; each config's
+  receive config with `active = true` — across all tenants; each config's
   fetch runs inside that config's tenant context
 - Cadence is governed by a single global `mail-fetch` cron registered in
   `cron-starter`; per-inbox cadence is not supported in this module
@@ -570,8 +630,9 @@ Unread -> Read -> Archived
 SMS sending uses the following default lookup order:
 
 ```text
-1. Current tenant default SMS provider
-2. Platform default SMS provider (`tenant_id = 0`)
+1. Current tenant default SMS provider(s)
+2. Platform default SMS provider(s) (`tenant_id = -1`) — only when the tenant
+   has none; the tiers never interleave
 3. BusinessException if nothing is available
 ```
 
@@ -581,12 +642,12 @@ is used. Provider configs are cached in Redis (5 min TTL) and evicted on update
 
 #### Template resolution
 
-SMS templates are resolved by `code` with a platform fallback:
+SMS templates are resolved by `code` within the tier the send's scope names —
+no cross-tier fallback:
 
 ```text
-tenant template (code + enabled)
-  -> platform template (tenant_id = 0)
-  -> BusinessException
+scope = TENANT (default) -> the current scope's own template (code + enabled)
+scope = PLATFORM         -> the platform-tier template (tenant_id = -1)
 ```
 
 Template placeholders use the unified Softa syntax: `{{ variable }}`.
@@ -672,7 +733,7 @@ POST /SmsTemplate/createOne
   "code": "VERIFY_CODE",
   "name": "Verification Code",
   "content": "Your verification code is {{ code }}. Valid for {{ minutes }} minutes.",
-  "isEnabled": true
+  "active": true
 }
 ```
 
@@ -781,9 +842,11 @@ Dispatch behaviour:
 #### Tenant scoping
 
 `sms_provider_region.tenant_id` follows the same rule as other tenant tables:
-`0` for platform-level routing (shared by all tenants); `>0` for per-tenant
-overrides. Routing reads are platform-overlay: the dispatcher sees the union
-of platform rows and the caller's own tenant rows, interleaved by priority.
+`-1` for platform-tier routing (invisible to tenants); `>0` for per-tenant
+rows. Routing reads are per-country and tenant-first: for the recipient's
+country the dispatcher uses the tenant's own rows when any exist, otherwise
+the platform's rows for that country — the tiers never interleave within one
+country.
 
 #### Template-level provider bindings
 

@@ -14,6 +14,7 @@ import io.softa.starter.message.sms.entity.SmsProviderConfig;
 import io.softa.starter.message.sms.entity.SmsTemplate;
 import io.softa.starter.message.sms.entity.SmsTemplateProviderBinding;
 import io.softa.starter.message.sms.service.SmsTemplateProviderBindingService;
+import io.softa.starter.message.shared.TenantScopes;
 
 /**
  * Builds the final SMS provider plan for one recipient.
@@ -61,7 +62,7 @@ public class SmsRoutingPlanner {
         }
 
         SmsTemplate template = request.template();
-        List<SmsTemplateProviderBinding> bindings = bindingsFor(template.getId());
+        List<SmsTemplateProviderBinding> bindings = bindingsFor(template);
         if (bindings.isEmpty()) {
             return new Plan(providers.getFirst(), request.externalTemplateId(), request.signName(),
                     region, null);
@@ -82,12 +83,17 @@ public class SmsRoutingPlanner {
                 binding);
     }
 
-    private List<SmsTemplateProviderBinding> bindingsFor(Long templateId) {
-        List<SmsTemplateProviderBinding> bindings = bindingService.findByTemplateId(templateId);
-        if (bindings.isEmpty()) {
-            bindings = bindingService.findPlatformBindingsByTemplateId(templateId);
-        }
-        return bindings;
+    /**
+     * Bindings follow the template's tier: a platform template's bindings are
+     * platform rows (invisible to the tenant context, hence the explicit
+     * cross-tenant lookup); a tenant template's bindings are its own rows.
+     */
+    private List<SmsTemplateProviderBinding> bindingsFor(SmsTemplate template) {
+        boolean platformTemplate = template.getTenantId() != null
+                && template.getTenantId() == TenantScopes.PLATFORM;
+        return platformTemplate
+                ? bindingService.findPlatformBindingsByTemplateId(template.getId())
+                : bindingService.findByTemplateId(template.getId());
     }
 
     private BindingMatch selectBinding(List<SmsTemplateProviderBinding> bindings,

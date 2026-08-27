@@ -148,7 +148,7 @@ class SmsRoutingPlannerTest {
         config.setId(id);
         config.setProviderType(type);
         config.setPriority(priority);
-        config.setIsEnabled(true);
+        config.setActive(true);
         return config;
     }
 
@@ -163,7 +163,7 @@ class SmsRoutingPlannerTest {
         binding.setExternalTemplateId(externalTemplateId);
         binding.setSignName(signName);
         binding.setPriority(priority);
-        binding.setIsEnabled(true);
+        binding.setActive(true);
         return binding;
     }
 }

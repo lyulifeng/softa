@@ -24,11 +24,12 @@ import io.softa.starter.referencedata.entity.CountryRegion;
  * regions served by that provider, while a concrete ISO country code overrides
  * the generic binding for that region.
  * <p>
- * tenant_id = 0  — platform-level binding, shared across all tenants.
+ * tenant_id = -1 — platform-tier binding, used by PLATFORM-scoped sends only.
  * tenant_id > 0  — tenant-level binding, ORM auto-fills and isolates.
  */
 @Data
-@Model(label = "SMS Template Provider Binding", idStrategy = IdStrategy.DISTRIBUTED_LONG, multiTenant = true)
+@Model(label = "SMS Template Provider Binding", idStrategy = IdStrategy.DISTRIBUTED_LONG,
+        multiTenant = true, activeControl = true)
 @Index(indexName = "idx_template_priority", fields = {"templateId", "priority"})
 @Index(indexName = "uk_tenant_tmpl_provider_region", fields = {"tenantId", "templateId", "providerConfigId", "regionCode"}, unique = true)
 @Index(indexName = "idx_template_region", fields = {"templateId", "regionCode"})
@@ -42,7 +43,7 @@ public class SmsTemplateProviderBinding extends AuditableModel {
     private Long id;
 
     @Field(label = "Tenant ID",
-            description = "0 = platform-level (shared across tenants); >0 = tenant-level. "
+            description = "-1 = platform-tier (invisible to tenants); >0 = tenant-level. "
                     + "Auto-stamped by the ORM on writes when multi-tenancy is enabled.")
     private Long tenantId;
 
@@ -65,6 +66,12 @@ public class SmsTemplateProviderBinding extends AuditableModel {
     @Field(description = "Template-aware provider selection priority (lower = preferred)")
     private Integer priority;
 
-    @Field(description = "Whether this binding is active")
-    private Boolean isEnabled;
+    /**
+     * Framework active control: reads are auto-filtered to {@code active = true},
+     * so a disabled row is retired from every list and every resolution without
+     * being deleted (rows referenced by send records stay intact). Filter on
+     * {@code active} explicitly to see disabled rows.
+     */
+    @Field(renamedFrom = "isEnabled")
+    private Boolean active;
 }

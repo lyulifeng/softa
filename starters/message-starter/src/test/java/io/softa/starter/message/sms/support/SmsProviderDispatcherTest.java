@@ -131,7 +131,7 @@ class SmsProviderDispatcherTest {
     void disabledConfigSkippedEvenIfRegionRowEnabled() {
         // Aliyun has a region row but its config is disabled → next enabled wins.
         SmsProviderConfig aliyunDisabled = enabledConfig(1L, SmsProvider.ALIYUN, false, 10);
-        aliyunDisabled.setIsEnabled(false);
+        aliyunDisabled.setActive(false);
         SmsProviderConfig twilio = enabledConfig(2L, SmsProvider.TWILIO, false, 20);
         when(regionService.findEnabledByRegion("CN")).thenReturn(List.of(row(1L, 10), row(2L, 20)));
         when(configService.getById(1L)).thenReturn(Optional.of(aliyunDisabled));
@@ -164,7 +164,7 @@ class SmsProviderDispatcherTest {
         c.setId(id);
         c.setProviderType(type);
         c.setIsDefault(isDefault);
-        c.setIsEnabled(true);
+        c.setActive(true);
         c.setPriority(priority);
         return c;
     }
@@ -173,7 +173,7 @@ class SmsProviderDispatcherTest {
         SmsProviderRegion r = new SmsProviderRegion();
         r.setProviderConfigId(providerConfigId);
         r.setPriority(priority);
-        r.setIsEnabled(true);
+        r.setActive(true);
         return r;
     }
 }

@@ -7,8 +7,10 @@ import org.springframework.stereotype.Component;
 import org.springframework.util.StringUtils;
 
 import io.softa.framework.base.exception.BusinessException;
+import io.softa.framework.base.message.MessageScope;
 import io.softa.starter.message.mq.TopicRoute;
 import io.softa.starter.message.mq.outbox.OutboxRecordWriter;
+import io.softa.starter.message.shared.MonthlyQuotaGuard;
 import io.softa.starter.message.sms.dto.SendSmsDTO;
 import io.softa.starter.message.sms.entity.SmsProviderConfig;
 import io.softa.starter.message.sms.entity.SmsSendRecord;
@@ -54,12 +56,17 @@ final class SmsMessageHandler {
 
     private final OutboxRecordWriter outboxRecordWriter;
 
+    private final MonthlyQuotaGuard quotaGuard;
+
     Long send(SendSmsDTO dto) {
         if (!StringUtils.hasText(dto.getPhoneNumber())) {
             throw new BusinessException("SMS send rejected: phoneNumber is required");
         }
+        // The tier policy names the template tier and the quota bucket this
+        // send consumes; provider routing falls back per country on its own.
+        MessageScope scope = dto.getScope() != null ? dto.getScope() : MessageScope.TENANT;
         SmsTemplate template = StringUtils.hasText(dto.getTemplateCode())
-                ? templateService.resolve(dto.getTemplateCode())
+                ? templateService.resolve(dto.getTemplateCode(), scope)
                 : null;
         String content = resolveContent(dto.getContent(), template, dto.getTemplateVariables());
         SmsRoutingPlanner.RoutingRequest routingRequest = new SmsRoutingPlanner.RoutingRequest(
@@ -68,6 +75,9 @@ final class SmsMessageHandler {
         SmsRoutingPlanner.Plan plan = routingPlanner.plan(routingRequest);
         ResolvedSms message = new ResolvedSms(
                 dto.getPhoneNumber(), content, dto.getTemplateCode(), plan);
+        // Quota consumes AFTER validation/routing and BEFORE persistence;
+        // delivery retries never touch the counter again.
+        quotaGuard.consume("sms", MonthlyQuotaGuard.bucketFor(scope));
         return enqueueForAsyncSend(message);
     }
 

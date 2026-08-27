@@ -6,6 +6,7 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 
 import io.softa.framework.orm.annotation.CrossTenant;
+import io.softa.framework.orm.domain.FilterControl;
 import io.softa.framework.orm.domain.Filters;
 import io.softa.framework.orm.domain.FlexQuery;
 import io.softa.framework.orm.domain.Orders;
@@ -42,22 +43,33 @@ public class SmsProviderConfigServiceImpl extends EntityServiceImpl<SmsProviderC
     @Override
     @CrossTenant
     public List<SmsProviderConfig> findEnabledDefaults() {
-        // Catchall tier is a platform-overlay read: the tenant's own defaults
-        // plus the platform-level (tenant 0) defaults, interleaved by priority.
-        Filters filters = new Filters()
-                .eq(SmsProviderConfig::getIsDefault, true)
-                .eq(SmsProviderConfig::getIsEnabled, true)
-                .in(SmsProviderConfig::getTenantId, TenantScopes.currentPlusPlatform());
-        FlexQuery flexQuery = new FlexQuery(filters,
-                Orders.ofAsc(SmsProviderConfig::getPriority));
-        return this.searchList(flexQuery);
+        // Catchall tier, tenant-first: the tenant's own enabled defaults win
+        // outright; only a tenant with none falls back to the (invisible)
+        // platform-tier defaults. The two tiers never interleave.
+        List<SmsProviderConfig> own = searchList(new FlexQuery(
+                new Filters()
+                        .eq(SmsProviderConfig::getIsDefault, true)
+                        .eq(SmsProviderConfig::getTenantId, TenantScopes.currentTenantOrPlatform()),
+                Orders.ofAsc(SmsProviderConfig::getPriority)));
+        if (!own.isEmpty()) {
+            return own;
+        }
+        return searchList(new FlexQuery(
+                new Filters()
+                        .eq(SmsProviderConfig::getIsDefault, true)
+                        .eq(SmsProviderConfig::getTenantId, TenantScopes.PLATFORM),
+                Orders.ofAsc(SmsProviderConfig::getPriority)));
     }
 
     @Override
     @CrossTenant
     public Optional<SmsProviderConfig> findVisibleById(Long id) {
-        return searchOne(new Filters()
+        // Disabled providers stay resolvable by id: an accepted record replays
+        // through the very provider it was routed to at acceptance.
+        FlexQuery flexQuery = new FlexQuery(new Filters()
                 .eq(SmsProviderConfig::getId, id)
                 .in(SmsProviderConfig::getTenantId, TenantScopes.currentPlusPlatform()));
+        flexQuery.setFilterControl(FilterControl.bypassActiveControl());
+        return searchOne(flexQuery);
     }
 }

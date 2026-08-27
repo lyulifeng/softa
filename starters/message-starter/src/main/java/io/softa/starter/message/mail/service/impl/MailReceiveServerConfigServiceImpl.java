@@ -13,6 +13,7 @@ import org.springframework.stereotype.Service;
 
 import io.softa.framework.base.exception.IllegalArgumentException;
 import io.softa.framework.orm.annotation.CrossTenant;
+import io.softa.framework.orm.domain.FilterControl;
 import io.softa.framework.orm.domain.Filters;
 import io.softa.framework.orm.domain.FlexQuery;
 import io.softa.framework.orm.domain.Orders;
@@ -36,9 +37,9 @@ public class MailReceiveServerConfigServiceImpl extends EntityServiceImpl<MailRe
 
     @Override
     public Optional<MailReceiveServerConfig> findTenantDefault() {
+        // active = true is appended by the framework's active control.
         Filters filters = new Filters()
-                .eq(MailReceiveServerConfig::getIsDefault, true)
-                .eq(MailReceiveServerConfig::getIsEnabled, true);
+                .eq(MailReceiveServerConfig::getIsDefault, true);
         FlexQuery flexQuery = new FlexQuery(filters,
                 Orders.ofAsc(MailReceiveServerConfig::getSequence));
         List<MailReceiveServerConfig> results = this.searchList(flexQuery);
@@ -48,18 +49,21 @@ public class MailReceiveServerConfigServiceImpl extends EntityServiceImpl<MailRe
     @Override
     @CrossTenant
     public Optional<MailReceiveServerConfig> findVisibleById(Long id) {
-        return searchOne(new Filters()
+        // Disabled configs stay resolvable by id: a stored receive record
+        // points at the config it was fetched through.
+        FlexQuery flexQuery = new FlexQuery(new Filters()
                 .eq(MailReceiveServerConfig::getId, id)
                 .in(MailReceiveServerConfig::getTenantId, TenantScopes.currentPlusPlatform()));
+        flexQuery.setFilterControl(FilterControl.bypassActiveControl());
+        return searchOne(flexQuery);
     }
 
     @Override
     @CrossTenant
     public Optional<MailReceiveServerConfig> findPlatformDefault() {
         Filters filters = new Filters()
-                .eq("tenantId", 0L)
-                .eq(MailReceiveServerConfig::getIsDefault, true)
-                .eq(MailReceiveServerConfig::getIsEnabled, true);
+                .eq(MailReceiveServerConfig::getTenantId, TenantScopes.PLATFORM)
+                .eq(MailReceiveServerConfig::getIsDefault, true);
         FlexQuery flexQuery = new FlexQuery(filters,
                 Orders.ofAsc(MailReceiveServerConfig::getSequence));
         List<MailReceiveServerConfig> results = this.searchList(flexQuery);

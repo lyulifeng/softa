@@ -7,7 +7,7 @@ import org.springframework.stereotype.Component;
 import io.softa.framework.base.context.Context;
 import io.softa.framework.base.context.ContextHolder;
 import io.softa.framework.base.exception.BusinessException;
-import io.softa.framework.base.message.MailScope;
+import io.softa.framework.base.message.MessageScope;
 import io.softa.starter.message.mail.entity.MailReceiveServerConfig;
 import io.softa.starter.message.mail.entity.MailSendServerConfig;
 import io.softa.starter.message.mail.service.MailReceiveServerConfigService;
@@ -19,10 +19,12 @@ import io.softa.starter.message.mail.service.MailSendServerConfigService;
  * Resolution order for both directions:
  * <ol>
  *   <li>Tenant's own default config (ORM auto-filters by current tenant_id)</li>
- *   <li>Platform-level default config (tenant_id = 0, via {@code @CrossTenant})</li>
+ *   <li>Platform-tier default config (tenant_id = -1, via {@code @CrossTenant}) —
+ *       the only way tenant traffic ever reaches platform infrastructure;
+ *       platform configs are invisible to tenant management surfaces</li>
  *   <li>{@link BusinessException} if neither is found</li>
  * </ol>
- * A send declaring {@link MailScope#PLATFORM_ONLY} skips step 1 — platform
+ * A send declaring {@link MessageScope#PLATFORM} skips step 1 — platform
  * mail must not route through tenant-controlled SMTP.
  */
 @Slf4j
@@ -44,17 +46,17 @@ public class MailServerDispatcher {
      * on config update.
      */
     public MailSendServerConfig resolveSend() {
-        return resolveSend(MailScope.OVERLAY);
+        return resolveSend(MessageScope.TENANT);
     }
 
     /**
      * {@link #resolveSend()} under an explicit tier policy:
-     * {@code PLATFORM_ONLY} skips the tenant default and resolves the platform
+     * {@code PLATFORM} skips the tenant default and resolves the platform
      * default only (cached under the platform key, so the tenant's own default
      * cache entry is neither read nor poisoned).
      */
-    public MailSendServerConfig resolveSend(MailScope scope) {
-        MailSendServerConfig config = scope == MailScope.PLATFORM_ONLY
+    public MailSendServerConfig resolveSend(MessageScope scope) {
+        MailSendServerConfig config = scope == MessageScope.PLATFORM
                 ? configCache.getPlatformDefault(
                         () -> sendConfigService.findPlatformDefault().orElse(null))
                 : configCache.getDefault(
@@ -67,7 +69,7 @@ public class MailServerDispatcher {
             // send time so alerting catches it before users report it.
             log.error("Mail send rejected: no enabled default send server config "
                     + "available. scope={}, tenantId={}", scope, currentTenantId());
-            throw new BusinessException(scope == MailScope.PLATFORM_ONLY
+            throw new BusinessException(scope == MessageScope.PLATFORM
                     ? "No enabled platform-level default sending mail server is configured. "
                             + "Ask the platform operator to add and enable one."
                     : "No sending mail server is configured for this tenant. "
@@ -80,8 +82,8 @@ public class MailServerDispatcher {
      * Resolve a specific sending config by ID, bypassing dispatch logic.
      */
     public MailSendServerConfig resolveSendById(Long id) {
-        // Visibility-scoped lookup: records may reference platform-level
-        // (tenant 0) configs that the implicit tenant filter would hide.
+        // Visibility-scoped lookup: records may reference platform-tier
+        // (tenant -1) configs that the implicit tenant filter would hide.
         MailSendServerConfig config = configCache.getById(id,
                 () -> sendConfigService.findVisibleById(id).orElse(null));
         if (config == null) {

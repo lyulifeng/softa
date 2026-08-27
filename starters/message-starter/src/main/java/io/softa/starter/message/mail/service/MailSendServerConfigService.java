@@ -1,6 +1,5 @@
 package io.softa.starter.message.mail.service;
 
-import java.util.List;
 import java.util.Optional;
 
 import io.softa.framework.orm.service.EntityService;
@@ -13,35 +12,26 @@ import io.softa.starter.message.mail.entity.MailSendServerConfig;
 public interface MailSendServerConfigService extends EntityService<MailSendServerConfig, Long> {
 
     /**
-     * Find the current tenant's default enabled sending config.
+     * Find the current tenant's default active sending config.
      * ORM automatically applies {@code WHERE tenant_id = currentTenantId}.
      */
     Optional<MailSendServerConfig> findTenantDefault();
 
     /**
-     * Find the platform-level default sending config (tenant_id = 0).
-     * Uses {@code @CrossTenant} to bypass ORM tenant filtering.
+     * Find the platform-tier default sending config (tenant_id = -1) — the
+     * dispatcher's silent fallback; platform configs are otherwise invisible
+     * to tenants. Uses {@code @CrossTenant} to bypass ORM tenant filtering.
      */
     Optional<MailSendServerConfig> findPlatformDefault();
 
     /**
      * Load a config by id within the caller's visibility scope: the caller's
-     * own tenant plus the platform tier (tenant_id = 0). Send records
+     * own tenant plus the platform tier (tenant_id = -1). Send records
      * legitimately reference platform-level configs, which the implicit
      * single-tenant filter would hide — dispatch and retry paths must resolve
      * ids through this method rather than {@code getById}.
      */
     Optional<MailSendServerConfig> findVisibleById(Long id);
-
-    /**
-     * The sender configs the caller may select: the caller's own enabled
-     * configs plus the enabled platform configs shared with tenants
-     * ({@code sharedWithTenants = true}), ordered by {@code sequence}.
-     * Backs sender pickers — including the template editor's
-     * {@code preferredServerConfigId} dropdown, whose choices must match what
-     * {@code validatePreferredServerScope} accepts.
-     */
-    List<MailSendServerConfig> listSelectable();
 
     /**
      * Reject — with an explanatory error — a write addressed at a platform

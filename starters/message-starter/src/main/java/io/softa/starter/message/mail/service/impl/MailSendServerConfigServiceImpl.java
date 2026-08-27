@@ -1,6 +1,5 @@
 package io.softa.starter.message.mail.service.impl;
 
-import java.util.Comparator;
 import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
@@ -14,6 +13,7 @@ import org.springframework.stereotype.Service;
 import io.softa.framework.base.exception.BusinessException;
 import io.softa.framework.base.exception.IllegalArgumentException;
 import io.softa.framework.orm.annotation.CrossTenant;
+import io.softa.framework.orm.domain.FilterControl;
 import io.softa.framework.orm.domain.Filters;
 import io.softa.framework.orm.domain.FlexQuery;
 import io.softa.framework.orm.domain.Orders;
@@ -49,9 +49,9 @@ public class MailSendServerConfigServiceImpl extends EntityServiceImpl<MailSendS
 
     @Override
     public Optional<MailSendServerConfig> findTenantDefault() {
+        // active = true is appended by the framework's active control.
         Filters filters = new Filters()
-                .eq(MailSendServerConfig::getIsDefault, true)
-                .eq(MailSendServerConfig::getIsEnabled, true);
+                .eq(MailSendServerConfig::getIsDefault, true);
         FlexQuery flexQuery = new FlexQuery(filters,
                 Orders.ofAsc(MailSendServerConfig::getSequence));
         List<MailSendServerConfig> results = this.searchList(flexQuery);
@@ -61,55 +61,26 @@ public class MailSendServerConfigServiceImpl extends EntityServiceImpl<MailSendS
     @Override
     @CrossTenant
     public Optional<MailSendServerConfig> findVisibleById(Long id) {
-        return searchOne(new Filters()
+        // Disabled configs stay resolvable by id: an accepted record replays
+        // through the very config it was accepted with, and disabling a config
+        // must not turn in-flight retries into CONFIG_NOT_RESOLVABLE.
+        FlexQuery flexQuery = new FlexQuery(new Filters()
                 .eq(MailSendServerConfig::getId, id)
                 .in(MailSendServerConfig::getTenantId, TenantScopes.currentPlusPlatform()));
+        flexQuery.setFilterControl(FilterControl.bypassActiveControl());
+        return searchOne(flexQuery);
     }
 
     @Override
     @CrossTenant
     public Optional<MailSendServerConfig> findPlatformDefault() {
         Filters filters = new Filters()
-                .eq("tenantId", 0L)
-                .eq(MailSendServerConfig::getIsDefault, true)
-                .eq(MailSendServerConfig::getIsEnabled, true);
+                .eq(MailSendServerConfig::getTenantId, TenantScopes.PLATFORM)
+                .eq(MailSendServerConfig::getIsDefault, true);
         FlexQuery flexQuery = new FlexQuery(filters,
                 Orders.ofAsc(MailSendServerConfig::getSequence));
         List<MailSendServerConfig> results = this.searchList(flexQuery);
         return results.isEmpty() ? Optional.empty() : Optional.of(results.getFirst());
-    }
-
-    /**
-     * One {@code @CrossTenant} query over both visible scopes, with the
-     * sharing policy applied in memory (config tables hold a handful of
-     * rows): own rows always qualify; platform rows qualify for tenant
-     * callers only when {@code sharedWithTenants = true}. With multi-tenancy
-     * disabled the visibility filter collapses harmlessly — but rows written
-     * in single-tenant mode carry no tenant id, so the plain scoped list is
-     * used instead.
-     */
-    @Override
-    @CrossTenant
-    public List<MailSendServerConfig> listSelectable() {
-        FlexQuery selectableQuery = new FlexQuery(
-                new Filters().eq(MailSendServerConfig::getIsEnabled, true),
-                Orders.ofAsc(MailSendServerConfig::getSequence));
-        if (!TenantScopes.multiTenancyEnabled()) {
-            return searchList(selectableQuery);
-        }
-        long caller = TenantScopes.currentTenantOrPlatform();
-        selectableQuery.getFilters()
-                .in(MailSendServerConfig::getTenantId, TenantScopes.currentPlusPlatform());
-        return searchList(selectableQuery).stream()
-                .filter(config -> {
-                    long rowTenant = config.getTenantId() == null
-                            ? TenantScopes.PLATFORM : config.getTenantId();
-                    return rowTenant == caller
-                            || Boolean.TRUE.equals(config.getSharedWithTenants());
-                })
-                .sorted(Comparator.comparing(MailSendServerConfig::getSequence,
-                        Comparator.nullsLast(Comparator.naturalOrder())))
-                .toList();
     }
 
     @Override
@@ -133,8 +104,11 @@ public class MailSendServerConfigServiceImpl extends EntityServiceImpl<MailSendS
      */
     @Override
     public void demoteOtherDefaults(Long keptId) {
-        Filters filters = new Filters().eq(MailSendServerConfig::getIsDefault, true);
-        for (MailSendServerConfig previous : this.searchList(filters)) {
+        // Includes disabled rows: a demotion that skipped them would leave a
+        // second isDefault=true row waiting to re-appear when it is re-enabled.
+        FlexQuery flexQuery = new FlexQuery(new Filters().eq(MailSendServerConfig::getIsDefault, true));
+        flexQuery.setFilterControl(FilterControl.bypassActiveControl());
+        for (MailSendServerConfig previous : this.searchList(flexQuery)) {
             if (Objects.equals(previous.getId(), keptId)) {
                 continue;
             }
