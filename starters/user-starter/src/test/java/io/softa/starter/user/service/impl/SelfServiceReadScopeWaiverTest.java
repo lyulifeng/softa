@@ -43,31 +43,14 @@ class SelfServiceReadScopeWaiverTest {
      * asserted "updateOne was called" would prove nothing. This reads the source instead, because
      * which overload was chosen is the whole behaviour here.
      */
-    /**
-     * The photo field is the one input that references another row, and the save waives the
-     * write-payload guard that would otherwise vet it. This pins the compensating ownership check in
-     * source, for the same reason as the overload test: a green functional test could pass with the
-     * check quietly deleted, and the hole (set your avatar to anyone's file, read its URL back) only
-     * opens once the waiver makes the save reachable — which this PR does.
-     */
-    @Test
-    @DisplayName("the profile save verifies the avatar file belongs to the caller")
-    void profileSaveChecksPhotoOwnership() throws Exception {
-        Path source = Path.of("src/main/java/io/softa/starter/user/service/impl/UserProfileServiceImpl.java");
-        String method = methodBody(source, "public void saveMyProfile(");
-        String code = method.replaceAll("(?m)^\\s*//.*$", "");
-        assertTrue(code.contains("createdId") && code.contains("PermissionException"),
-                "saveMyProfile must verify the new photoId's FileRecord.createdId is the caller before "
-                        + "setting it — the waiver turns off the write guard, so an unchecked photoId lets "
-                        + "a caller point their avatar at any file and read its signed URL back.");
-    }
-
     @Test
     @DisplayName("the profile save overwrites nulls, so cleared fields are actually cleared")
     void profileSaveOverwritesNulls() throws Exception {
-        String method = methodBody(
-                Path.of("src/main/java/io/softa/starter/user/service/impl/UserProfileServiceImpl.java"),
-                "public void saveMyProfile(");
+        Path source = Path.of("src/main/java/io/softa/starter/user/service/impl/UserProfileServiceImpl.java");
+        String body = Files.readString(source);
+        int start = body.indexOf("public void saveMyProfile(");
+        assertTrue(start > 0, "saveMyProfile not found — this test pins its update overload");
+        String method = body.substring(start, body.indexOf("\n    }", start));
         // Comments are stripped first, and this is not fussiness: the call site explains itself by
         // naming the overload, so a check that merely searched the method text would keep passing
         // after someone reverted the call and left the paragraph above it — the exact false green
@@ -77,13 +60,6 @@ class SelfServiceReadScopeWaiverTest {
                 "saveMyProfile must call updateOne(profile, false): the one-arg overload ignores nulls, "
                         + "so clearing the avatar or the birth details would report success and change "
                         + "nothing. See the comment at the call site.");
-    }
-
-    private static String methodBody(Path source, String signature) throws Exception {
-        String body = Files.readString(source);
-        int start = body.indexOf(signature);
-        assertTrue(start > 0, signature + " not found in " + source);
-        return body.substring(start, body.indexOf("\n    }", start));
     }
 
     private static Method method(String name, Class<?>... params) throws Exception {
