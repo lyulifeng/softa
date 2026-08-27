@@ -1,6 +1,7 @@
 package io.softa.starter.metadata.entity;
 
 import java.io.Serial;
+import java.util.List;
 import lombok.Data;
 import lombok.EqualsAndHashCode;
 
@@ -145,6 +146,17 @@ public class SysField extends AuditableModel {
 
     @Field
     private WidgetType widgetType;
+
+    /**
+     * Countries this field applies to (ISO 3166-1 alpha-2); empty = every country.
+     *
+     * <p>MULTI_STRING, so it lands as one comma-joined column exactly like
+     * {@code sys_model.business_key} — a set of codes per field, not a value per country. The moment a
+     * country needs its own label / order / requiredness for a field, that no longer fits a column and
+     * belongs in per-country data instead.
+     */
+    @Field
+    private List<String> countries;
 
     // System-computed at reconciliation time (never declared on @Field). For a TO_ONE FK
     // this holds the resolved PHYSICAL type of the referenced column (STRING / LONG / ...)

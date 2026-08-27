@@ -136,6 +136,7 @@ class SysJdbcRoundtripTest {
                   auto_sequence TINYINT,
                   masking_type VARCHAR(64),
                   widget_type VARCHAR(64),
+                  countries VARCHAR(256),
                   related_field_type VARCHAR(64),
                   created_time DATETIME,
                   created_id BIGINT,

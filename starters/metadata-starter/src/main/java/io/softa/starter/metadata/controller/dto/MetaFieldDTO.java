@@ -1,5 +1,6 @@
 package io.softa.starter.metadata.controller.dto;
 
+import java.util.List;
 import io.swagger.v3.oas.annotations.media.Schema;
 import lombok.Data;
 
@@ -45,4 +46,13 @@ public class MetaFieldDTO {
     private MaskingType maskingType;
     private WidgetType widgetType;
     private OnDelete onDelete;
+
+    /**
+     * Countries this field applies to (ISO 3166-1 alpha-2); empty or null = every country.
+     *
+     * <p>Rides along with the metadata the client already fetches, which is the point of keeping the
+     * declaration on the field rather than in a table of its own: the screens that need it — the
+     * employee form, the import column picker — are asking for this model's fields anyway.
+     */
+    private List<String> countries;
 }

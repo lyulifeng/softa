@@ -1028,4 +1028,74 @@ class AnnotationParserTest {
                 parser.parse(List.of(PlainDoc.class), List.of()).fields(), "version");
         assertNull(version.getDefaultValue());
     }
+
+    // ------- @Field(countries) -------------------------------------------
+
+    @Test
+    void fieldCountries_declaredCodesAreStored() {
+        @Model
+        @SuppressWarnings("unused")
+        class NzPayroll extends AuditableModel {
+            @Field
+            private Long id;
+
+            @Override
+            public Long getId() {
+                return id;
+            }
+
+            @Field(countries = {"NZ"})
+            private String kiwiSaverStatus;
+
+            @Field(countries = {"SG", "NZ"})
+            private String sharedByTwo;
+        }
+
+        List<SysField> fields = parser.parse(List.of(NzPayroll.class), List.of()).fields();
+
+        assertEquals(List.of("NZ"), byName(fields, "kiwiSaverStatus").getCountries());
+        assertEquals(List.of("SG", "NZ"), byName(fields, "sharedByTwo").getCountries());
+    }
+
+    @Test
+    void fieldCountries_undeclaredMeansEveryCountry() {
+        // Null rather than an empty list: the read side asks "did anyone narrow this field", and an
+        // empty list would have to mean "narrowed to nothing", which no field ever wants to say.
+        List<SysField> fields = parser.parse(List.of(Customer.class), List.of()).fields();
+
+        assertNull(byName(fields, "name").getCountries());
+    }
+
+    @Test
+    void fieldCountries_rejectsCodeThatIsNotAlpha2() {
+        // The two typos that actually happen: alpha-3, and lower case. Both match no country at
+        // runtime, and matching no country is indistinguishable from applying to every country —
+        // so the field would quietly appear where it does not belong.
+        @Model
+        @SuppressWarnings("unused")
+        class WrongCode extends AuditableModel {
+            @Field
+            private Long id;
+
+            @Override
+            public Long getId() {
+                return id;
+            }
+
+            @Field(countries = {"SGP"})
+            private String skillLevel;
+        }
+
+        IllegalStateException thrown = assertThrows(IllegalStateException.class,
+                () -> parser.parse(List.of(WrongCode.class), List.of()));
+        assertTrue(thrown.getMessage().contains("SGP"), thrown.getMessage());
+        assertTrue(thrown.getMessage().contains("skillLevel"), thrown.getMessage());
+    }
+
+    private static SysField byName(List<SysField> fields, String fieldName) {
+        return fields.stream()
+                .filter(f -> fieldName.equals(f.getFieldName()))
+                .findFirst()
+                .orElseThrow(() -> new AssertionError("no field named " + fieldName));
+    }
 }

@@ -3,6 +3,7 @@ package io.softa.starter.metadata.scanner.annotation;
 import java.lang.reflect.Field;
 import java.lang.reflect.Modifier;
 import java.util.*;
+import java.util.regex.Pattern;
 import org.apache.commons.lang3.StringUtils;
 import org.jspecify.annotations.Nullable;
 
@@ -57,6 +58,9 @@ public final class AnnotationParser {
      * not specify one: CosID Radix36 ids are &le;13 chars (Radix62 &le;11); 24
      * leaves headroom and stays index-friendly.
      */
+    /** ISO 3166-1 alpha-2: exactly two upper-case letters. */
+    private static final Pattern COUNTRY_CODE = Pattern.compile("[A-Z]{2}");
+
     private static final int STRING_ID_LENGTH = 24;
 
     /**
@@ -566,6 +570,7 @@ public final class AnnotationParser {
 
         f.setMaskingType(firstOrNull(anno.maskingType()));
         f.setWidgetType(firstOrNull(anno.widgetType()));
+        f.setCountries(checkedCountries(anno.countries(), modelName, javaField.getName()));
         // onDelete: only for TO_ONE relations + explicit declaration (empty array = KEEP).
         if (FieldType.TO_ONE_TYPES.contains(resolved.fieldType())) {
             f.setOnDelete(firstOrNull(anno.onDelete()));
@@ -984,6 +989,33 @@ public final class AnnotationParser {
                     + " and contributor notes to Javadoc.");
         }
         return value;
+    }
+
+    /**
+     * Validates {@code @Field(countries)} and hands back the list to store.
+     *
+     * <p>Checks the shape only — two upper-case letters — not membership of any country table. The
+     * parser runs before reference data is loaded and cannot see one; and the codes are ISO 3166-1
+     * alpha-2 throughout the product, so the shape catches what typos actually look like:
+     * {@code "SGP"} (alpha-3) and {@code "sg"} (lower case) both resolve to nothing at runtime, and
+     * nothing to resolve reads exactly like a field that applies everywhere. Failing at boot is the
+     * difference between a stack trace naming the field and a column quietly appearing in the wrong
+     * country's template.
+     */
+    private static List<String> checkedCountries(String[] countries, String modelName, String fieldName) {
+        if (countries == null || countries.length == 0) {
+            return null;
+        }
+        for (String country : countries) {
+            if (country == null || !COUNTRY_CODE.matcher(country).matches()) {
+                throw new IllegalStateException(
+                        "@Field(countries) on " + modelName + "." + fieldName + " has \"" + country
+                                + "\", which is not an ISO 3166-1 alpha-2 code (two upper-case letters,"
+                                + " e.g. \"SG\"). An unrecognised code matches no country at runtime,"
+                                + " which is indistinguishable from the field applying everywhere.");
+            }
+        }
+        return toList(countries);
     }
 
     private static List<String> toList(String[] arr) {

@@ -119,6 +119,14 @@ public class MetaField implements Serializable {
     private WidgetType widgetType;
 
     /**
+     * Countries this field applies to (ISO 3166-1 alpha-2). Empty or null = every country.
+     *
+     * <p>Read straight off {@code sys_field.countries}; see {@code @Field(countries)} for what the
+     * attribute means and why it is declared positively.
+     */
+    private List<String> countries;
+
+    /**
      * Get translation by language code from translations.
      * If the translation is not found, return the original label.
      *
