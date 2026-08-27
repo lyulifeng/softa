@@ -23,6 +23,7 @@ import io.softa.framework.web.response.ApiResponse;
 import io.softa.framework.web.utils.CookieUtils;
 import io.softa.starter.user.dto.*;
 import io.softa.starter.user.service.LoginService;
+import io.softa.starter.user.service.UserInvitationService;
 import io.softa.starter.user.service.UserProfileService;
 import io.softa.starter.user.service.OAuth2Service;
 
@@ -38,6 +39,10 @@ public class LoginController {
 
     @Autowired
     private LoginService loginService;
+
+    /** The /join endpoints delegate the token work to the invitation service. */
+    @Autowired
+    private UserInvitationService invitationService;
 
     /** Builds the session payload once a membership is chosen. */
     @Autowired
@@ -124,6 +129,36 @@ public class LoginController {
         return this.issueOrAskForCompany(
                 loginService.authenticateByPassword(userNameLoginDTO.getEmail(),
                         userNameLoginDTO.getPassword()), response);
+    }
+
+    /**
+     * The /join landing check — may this token proceed, and if not, why (PRD §3.0).
+     *
+     * <p>Public by necessity: whoever opened the link has no session yet. It reveals only masked
+     * contacts and the company name, so a leaked token yields recognition, not usable details.
+     */
+    @Operation(summary = "Check an invitation link and return what the join page should show")
+    @PostMapping("/joinEntry")
+    @SwitchUser(SystemUser.REGISTERED_USER)
+    public ApiResponse<JoinEntry> joinEntry(@RequestParam @NotNull String token) {
+        return ApiResponse.success(invitationService.inspectJoinToken(token));
+    }
+
+    /**
+     * Confirm joining, after the person verified their identity (and set a password if new).
+     *
+     * <p>A session is issued here, not earlier: activation and "you are now in" are the same
+     * moment. Verifying a code proves control of the invitation; joining is the agreement.
+     */
+    @Operation(summary = "Accept the invitation: bind the person, activate the membership, sign in")
+    @PostMapping("/confirmJoin")
+    @SwitchUser(SystemUser.REGISTERED_USER)
+    public ApiResponse<AuthenticationResult> confirmJoin(@RequestParam @NotNull String token,
+            @RequestParam @NotNull Long profileId, HttpServletResponse response) {
+        invitationService.confirmJoin(token, profileId);
+        // Re-runs the company resolution rather than assuming the just-joined membership is the
+        // only one: the person may already belong elsewhere, in which case they must still choose.
+        return this.issueOrAskForCompany(loginService.afterJoin(profileId), response);
     }
 
     /**

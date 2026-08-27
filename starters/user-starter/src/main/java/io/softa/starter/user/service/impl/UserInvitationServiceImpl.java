@@ -6,6 +6,7 @@ import java.util.Map;
 import java.util.Optional;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.lang3.StringUtils;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.stereotype.Service;
@@ -23,8 +24,10 @@ import io.softa.framework.orm.annotation.CrossTenant;
 import io.softa.framework.orm.annotation.SkipPermissionCheck;
 import io.softa.framework.orm.domain.Filters;
 import io.softa.framework.base.message.SmsRequestMessage;
+import io.softa.framework.orm.service.TenantInfoService;
 import io.softa.framework.orm.service.impl.EntityServiceImpl;
 import io.softa.starter.user.dto.InvitationInfo;
+import io.softa.starter.user.dto.JoinEntry;
 import io.softa.starter.user.entity.UserAccount;
 import io.softa.starter.user.entity.UserInvitation;
 import io.softa.starter.user.enums.AccountStatus;
@@ -59,15 +62,19 @@ public class UserInvitationServiceImpl extends EntityServiceImpl<UserInvitation,
     private final UserAccountService accountService;
     private final UserIdentityService identityService;
     private final ApplicationEventPublisher eventPublisher;
+    /** Optional: the join screens show the inviting company's name; absent tenant-starter → null. */
+    private final TenantInfoService tenantInfoService;
     private final String frontendBaseUrl;
 
     public UserInvitationServiceImpl(UserAccountService accountService,
                                      UserIdentityService identityService,
                                      ApplicationEventPublisher eventPublisher,
+                                     @Autowired(required = false) TenantInfoService tenantInfoService,
                                      @Value("${app.frontend-base-url:http://localhost:3000}") String frontendBaseUrl) {
         this.accountService = accountService;
         this.identityService = identityService;
         this.eventPublisher = eventPublisher;
+        this.tenantInfoService = tenantInfoService;
         this.frontendBaseUrl = frontendBaseUrl;
     }
 
@@ -361,6 +368,118 @@ public class UserInvitationServiceImpl extends EntityServiceImpl<UserInvitation,
 
         log.info("User {} set password via {} token (invitation {}).",
                 invitation.getUserId(), invitation.getPurpose(), invitation.getId());
+    }
+
+    /**
+     * Confirm joining: bind the person to the membership and activate it (PRD §3.3 / §4.4).
+     *
+     * <p><b>Binding happens HERE, not when the password was set.</b> Someone who sets a password
+     * and closes the tab has proved control of the invitation but has not agreed to join this
+     * company — their membership stays INVITED and the confirm screen is what they return to
+     * (E8). Activating early would make "set a password" mean "accepted", which is exactly the
+     * mis-binding the confirm screen exists to prevent.
+     *
+     * <p>Re-entrant on purpose: a double-tapped Join Now must not fail. An already-activated
+     * membership returns quietly rather than throwing, because from the person's point of view
+     * they did join.
+     *
+     * @param rawToken  the invitation token, re-validated here — the caller may have held the
+     *                  page open long enough for a revoke or re-send to land
+     * @param profileId the person who verified their identity in the preceding step
+     */
+    @SkipPermissionCheck
+    @CrossTenant
+    @Override
+    @Transactional
+    public void confirmJoin(String rawToken, Long profileId) {
+        Assert.notNull(profileId, "profileId is required");
+        JoinEntry entry = this.inspectJoinToken(rawToken);
+        if (!entry.usable()) {
+            if (entry.reason() == JoinEntry.Reason.ALREADY_JOINED) {
+                return;   // re-entrant: a double tap is not an error
+            }
+            throw new BusinessException("This link is no longer valid. Please contact your HR.");
+        }
+        UserInvitation invitation = this.searchOne(new Filters()
+                        .eq(UserInvitation::getTokenHash, EncryptUtils.computeSha256(rawToken)))
+                .orElseThrow(() -> new BusinessException("This link is invalid."));
+        UserAccount account = accountService.getById(invitation.getUserId())
+                .orElseThrow(() -> new BusinessException("Account not found."));
+
+        // Refuse if this person already holds a membership of this company (PRD §4.5 duplicate
+        // invitation). The unique index would refuse it too, but a clear message beats a
+        // constraint violation for something a person can actually be told about.
+        boolean alreadyMember = accountService.listMembershipsOf(profileId).stream()
+                .anyMatch(existing -> !existing.getId().equals(account.getId())
+                        && existing.getTenantId().equals(account.getTenantId()));
+        if (alreadyMember) {
+            throw new BusinessException(
+                    "You are already a member of this company. Please contact your HR.");
+        }
+
+        account.setProfileId(profileId);
+        account.setStatus(AccountStatus.ACTIVE);
+        account.setActivationTime(LocalDateTime.now());
+        accountService.updateOne(account);
+
+        invitation.setStatus(InvitationStatus.ACCEPTED);
+        invitation.setAcceptedAt(LocalDateTime.now());
+        this.updateOne(invitation);
+        log.info("Profile {} joined tenant {} via invitation {}.",
+                profileId, account.getTenantId(), invitation.getId());
+    }
+
+    /**
+     * The /join entry check (PRD §3.0) — five conditions, in this order.
+     *
+     * <p><b>The order is the requirement, not an implementation detail.</b> A token that was
+     * superseded by a re-send is "invalid" even if the account is also already active; reporting
+     * the account state first would tell the person to contact HR when the real remedy is "open
+     * the newest link". Checking cheapest-and-most-specific first also keeps a stranger holding a
+     * leaked token from learning anything about the account behind it.
+     *
+     * <p>The first four all render as "this link has expired" on screen; the reason travels anyway
+     * because it is what support needs to decide between re-send, re-invite, and "you already
+     * joined".
+     */
+    @SkipPermissionCheck
+    @CrossTenant
+    @Override
+    public JoinEntry inspectJoinToken(String rawToken) {
+        if (StringUtils.isBlank(rawToken)) {
+            return JoinEntry.rejected(JoinEntry.Reason.LINK_INVALID);
+        }
+        Optional<UserInvitation> found = this.searchOne(new Filters()
+                .eq(UserInvitation::getTokenHash, EncryptUtils.computeSha256(rawToken)));
+        // ① unknown token, or superseded by a re-send / revoke (those set status away from PENDING)
+        if (found.isEmpty() || found.get().getStatus() != InvitationStatus.PENDING) {
+            return JoinEntry.rejected(JoinEntry.Reason.LINK_INVALID);
+        }
+        UserInvitation invitation = found.get();
+        // ② past its 7-day life
+        if (invitation.getExpiresAt() != null && invitation.getExpiresAt().isBefore(LocalDateTime.now())) {
+            return JoinEntry.rejected(JoinEntry.Reason.LINK_EXPIRED);
+        }
+        Optional<UserAccount> account = accountService.getById(invitation.getUserId());
+        if (account.isEmpty()) {
+            return JoinEntry.rejected(JoinEntry.Reason.LINK_INVALID);
+        }
+        UserAccount membership = account.get();
+        // ③ already completed — they joined, possibly on another device
+        if (membership.getActivationTime() != null) {
+            return JoinEntry.rejected(JoinEntry.Reason.ALREADY_JOINED);
+        }
+        // ④ closed or frozen while the invitation was outstanding (E11: off-boarded mid-invite)
+        if (membership.getStatus() == AccountStatus.DEACTIVATED
+                || membership.getStatus() == AccountStatus.FROZEN) {
+            return JoinEntry.rejected(JoinEntry.Reason.MEMBERSHIP_CLOSED);
+        }
+        // ⑤ usable
+        return JoinEntry.usable(
+                tenantInfoService == null ? null : tenantInfoService.getTenantName(membership.getTenantId()),
+                membership.getNickname(),
+                ContactMasking.email(invitation.getEmail()),
+                ContactMasking.mobile(invitation.getMobile()));
     }
 
     // @CrossTenant: public token-inspection endpoint has no tenant context — see acceptToken.

@@ -42,6 +42,15 @@ public interface LoginService {
     boolean mustSetPassword(Long profileId);
 
     /**
+     * Decide where a person lands right after joining a company.
+     *
+     * <p>Not simply "the membership they just joined": someone who already belonged elsewhere now
+     * has two, and must still choose. Reusing the same resolution as authentication is what keeps
+     * the two entry points from disagreeing.
+     */
+    AuthenticationResult afterJoin(Long profileId);
+
+    /**
      * Generate a new session ID for a user
      *
      * @param userId User ID

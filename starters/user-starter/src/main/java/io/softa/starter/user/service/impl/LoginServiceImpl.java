@@ -257,6 +257,16 @@ public class LoginServiceImpl implements LoginService {
         return AuthenticationResult.choicePending(profileId, options, mustSetPassword);
     }
 
+
+    @Override
+    public AuthenticationResult afterJoin(Long profileId) {
+        // The identity, not the profile: what decides the next step is whether a password exists,
+        // and that lives on the credential.
+        return identityService.findByProfile(profileId)
+                .map(this::afterAuthentication)
+                .orElseThrow(() -> new BusinessException("Person record not found."));
+    }
+
     @Override
     public boolean mustSetPassword(Long profileId) {
         return identityService.findByProfile(profileId)

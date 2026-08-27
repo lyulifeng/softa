@@ -2,6 +2,7 @@ package io.softa.starter.user.service;
 
 import io.softa.framework.orm.service.EntityService;
 import io.softa.starter.user.dto.InvitationInfo;
+import io.softa.starter.user.dto.JoinEntry;
 import io.softa.starter.user.entity.UserInvitation;
 
 /**
@@ -25,6 +26,22 @@ public interface UserInvitationService extends EntityService<UserInvitation, Lon
      * @param userId the account whose invitation is being withdrawn
      */
     void revokeInvitation(Long userId);
+
+    /**
+     * The /join entry check — whether this token may proceed to identity verification, and if not,
+     * why (PRD §3.0's five ordered conditions).
+     *
+     * <p>Public: called before any session exists, by whoever opened the link.
+     */
+    JoinEntry inspectJoinToken(String rawToken);
+
+    /**
+     * Confirm joining: bind the verified person to the membership and activate it.
+     *
+     * <p>Separate from setting a password because they mean different things — see the
+     * implementation for why activation waits for this call.
+     */
+    void confirmJoin(String rawToken, Long profileId);
 
     /**
      * Issue (or re-issue) an INVITE token for a user and email the set-password link. Any prior
