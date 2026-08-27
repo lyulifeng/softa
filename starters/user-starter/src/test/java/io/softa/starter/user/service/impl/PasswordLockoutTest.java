@@ -170,6 +170,23 @@ class PasswordLockoutTest {
     }
 
     @Test
+    void settingAPassword_clearsTheLock_notJustTheCounter() {
+        // The reset path's whole point: someone who forgot their password must be able to use the
+        // one they just set. Leaving passwordLockedUntil standing would refuse them for 30 more
+        // minutes, on a lock the reset itself resolved.
+        UserIdentity person = identity(LocalDateTime.now().plusMinutes(29));
+        doReturn(Optional.of(person)).when(identityImpl).getById(IDENTITY);
+        doReturn(true).when(identityImpl).updateOne(person, false);
+
+        identityImpl.setPassword(IDENTITY, "N3w-Passw0rd");
+
+        assertThat(person.getPasswordLockedUntil()).isNull();
+        // The overload that keeps nulls — the default one would drop exactly this write.
+        verify(identityImpl).updateOne(person, false);
+        verify(cacheService).clear("login:pwd-failures:" + IDENTITY);
+    }
+
+    @Test
     void anExpiredLock_isNotALock() {
         assertThat(identityImpl.isPasswordLocked(identity(LocalDateTime.now().minusMinutes(1))))
                 .isFalse();

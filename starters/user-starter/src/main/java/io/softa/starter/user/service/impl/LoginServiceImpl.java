@@ -338,6 +338,19 @@ public class LoginServiceImpl implements LoginService {
     }
 
     @Override
+    @Transactional
+    public void resetPasswordByCode(String identifier, String code, String newPassword) {
+        // Code first. Looking the person up before verifying would let a caller probe which
+        // identifiers exist by watching which ones fail differently.
+        this.verifyCode(identifier, code);
+        UserIdentity identity = identityService.findByLoginIdentifier(identifier).orElseThrow(
+                () -> new BusinessException("Incorrect account or code."));
+        // Strength rules and the lock reset both live inside setPassword — a reset must clear the
+        // lock, or someone who forgot their password stays locked out of the password they just set.
+        identityService.setPassword(identity.getId(), newPassword);
+    }
+
+    @Override
     public boolean mustSetPassword(Long profileId) {
         return identityService.findByProfile(profileId)
                 .map(identity -> StringUtils.isBlank(identity.getPassword()))

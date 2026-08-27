@@ -269,6 +269,14 @@ public class LoginController {
     /**
      * Reset password using the token sent via email
      */
+    @Operation(summary = "Reset a password with a verification code")
+    @PostMapping("/resetPasswordByCode")
+    @SwitchUser(SystemUser.REGISTERED_USER)
+    public ApiResponse<Void> resetPasswordByCode(@RequestBody @Valid ResetPasswordByCodeDTO dto) {
+        loginService.resetPasswordByCode(dto.getIdentifier(), dto.getCode(), dto.getNewPassword());
+        return ApiResponse.success();
+    }
+
     @PostMapping("/resetPassword")
     @SwitchUser(SystemUser.REGISTERED_USER)
     public ApiResponse<Void> resetPassword(@RequestBody @Valid ResetPasswordDTO resetPasswordDTO) {

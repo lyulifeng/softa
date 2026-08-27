@@ -171,8 +171,12 @@ public class UserIdentityServiceImpl extends EntityServiceImpl<UserIdentity, Lon
         String salt = PasswordUtils.generateSalt();
         identity.setPasswordSalt(salt);
         identity.setPassword(PasswordUtils.hashPassword(rawPassword, salt));
-        this.updateOne(identity);
-        // A new password ends the window: the guesses were against the old one.
+        // A new password ends the window AND the lock: the guesses were against the old password,
+        // and leaving the lock standing would mean someone who reset theirs still cannot use it.
+        // updateOne(entity, false) because clearing the lock means writing a null, which the
+        // default overload drops.
+        identity.setPasswordLockedUntil(null);
+        this.updateOne(identity, false);
         this.clearPasswordFailures(identityId);
     }
 

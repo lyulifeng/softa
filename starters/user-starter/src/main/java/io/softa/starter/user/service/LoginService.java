@@ -51,6 +51,19 @@ public interface LoginService {
     void sendJoinCode(String rawToken, String channel);
 
     /**
+     * Resets a password using a verification code instead of an emailed link.
+     *
+     * <p>The link flow can only reach an email address, which left an employee who was invited by
+     * work mobile — a normal case — with no way to reset at all. A code proves control of the
+     * identifier, which is the same thing the link proves, so this is not a weaker gate.
+     *
+     * <p>Unlike the first-password paths this one deliberately DOES overwrite an existing password:
+     * that is what a reset is. The proof is the code, verified here against the identifier the
+     * person named.
+     */
+    void resetPasswordByCode(String identifier, String code, String newPassword);
+
+    /**
      * Proves identity on the /join flow: verifies the code against the invitation's OWN address and
      * returns the person behind it, creating that person if this is their first company.
      *
