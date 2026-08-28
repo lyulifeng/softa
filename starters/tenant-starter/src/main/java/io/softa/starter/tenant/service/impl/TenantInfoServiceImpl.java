@@ -8,6 +8,7 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 import tools.jackson.core.type.TypeReference;
 
+import io.softa.framework.base.constant.BaseConstant;
 import io.softa.framework.base.constant.RedisConstant;
 import io.softa.framework.base.utils.Assert;
 import io.softa.framework.orm.jdbc.JdbcService;
@@ -26,13 +27,6 @@ import io.softa.starter.tenant.enums.TenantStatus;
 @Slf4j
 @Component
 public class TenantInfoServiceImpl extends EntityServiceImpl<TenantInfo, Long> implements TenantInfoService {
-
-    /**
-     * The platform tenant's own row ({@code tenant_info.id = -1}). It exists because the runtime rejects
-     * any account whose tenant is not active — including the platform admins' — so suspending or closing
-     * it would lock them out with no way back in.
-     */
-    private static final Long PLATFORM_TENANT_ID = -1L;
 
     @Autowired
     private CacheService cacheService;
@@ -125,7 +119,7 @@ public class TenantInfoServiceImpl extends EntityServiceImpl<TenantInfo, Long> i
     private void transitionTo(Long tenantId, TenantStatus target, TenantStatus... allowedFrom) {
         // Suspending or closing the platform tenant would lock the platform admins out permanently —
         // they could not log in to undo it, and there is no other path back.
-        Assert.notTrue(PLATFORM_TENANT_ID.equals(tenantId),
+        Assert.notTrue(BaseConstant.PLATFORM_TENANT_ID.equals(tenantId),
                 "The platform tenant's operational status cannot be changed.");
         TenantInfo tenant = this.getById(tenantId).orElse(null);
         Assert.notNull(tenant, "Tenant not found for tenantId: {0}", tenantId);
@@ -160,7 +154,7 @@ public class TenantInfoServiceImpl extends EntityServiceImpl<TenantInfo, Long> i
     public void markStatus(Long tenantId, TenantStatus status) {
         // Same guard as transitionTo, for the same reason: the platform tenant has no way back if it is
         // moved out of ACTIVE, because the admins who would move it back log in through it.
-        Assert.notTrue(PLATFORM_TENANT_ID.equals(tenantId),
+        Assert.notTrue(BaseConstant.PLATFORM_TENANT_ID.equals(tenantId),
                 "The platform tenant's status cannot be changed.");
         TenantInfo tenant = this.getById(tenantId).orElse(null);
         Assert.notNull(tenant, "Tenant not found for tenantId: {0}", tenantId);
