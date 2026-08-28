@@ -29,6 +29,10 @@ public class MinioClientService implements OssClientService {
 
     private MinioClient ossClient;
 
+    // Signs the URLs the browser fetches — see MinioConfig#minioPresignClient. Same instance as ossClient
+    // unless `oss.presign-endpoint` names a different address.
+    private MinioClient presignClient;
+
     private OSSProperties ossProperties;
 
     private String getBucketName() {
@@ -100,7 +104,7 @@ public class MinioClientService implements OssClientService {
     @Override
     public String getPreSignedUrl(String ossKey, int expirationInSeconds, String fileName) {
         try {
-            return ossClient.getPresignedObjectUrl(
+            return presignClient.getPresignedObjectUrl(
                     GetPresignedObjectUrlArgs.builder()
                             .method(Method.GET)
                             .bucket(getBucketName())
@@ -123,7 +127,7 @@ public class MinioClientService implements OssClientService {
     @Override
     public String getDownloadUrl(String ossKey, int expirationInSeconds, String fileName) {
         try {
-            return ossClient.getPresignedObjectUrl(
+            return presignClient.getPresignedObjectUrl(
                     GetPresignedObjectUrlArgs.builder()
                             .method(Method.GET)
                             .bucket(getBucketName())
