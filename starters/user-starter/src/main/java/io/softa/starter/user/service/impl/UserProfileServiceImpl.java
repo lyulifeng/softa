@@ -379,12 +379,15 @@ public class UserProfileServiceImpl extends EntityServiceImpl<UserProfile, Long>
 
     @SkipPermissionCheck
     @Override
+    @Transactional
     public Long createPersonForJoin(String identifier) {
         Assert.notBlank(identifier, "An identifier is required to create a person.");
         // @SkipPermissionCheck for the same reason registerUserProfile carries it: these are rows
         // this method mints itself, and on /join the caller has no session at all. Both models are
-        // global, so no @CrossTenant is needed; atomicity comes from the caller's transaction —
-        // a profile without its identity row would fail every later requireIdentity.
+        // global, so no @CrossTenant is needed. @Transactional on the unit itself, like
+        // registerUserProfile: a profile without its identity row fails every later
+        // requireIdentity, and relying on each caller to wrap it is one merge from that fault.
+        // REQUIRED propagation joins verifyJoinCode's transaction, so this is a no-op there.
         UserProfile profile = new UserProfile();
         Long profileId = this.createOne(profile);
 
