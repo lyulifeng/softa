@@ -3,13 +3,11 @@ package io.softa.starter.user.controller;
 import java.io.Serializable;
 import java.util.List;
 import java.util.Map;
-
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestParam;
 
-import io.softa.framework.orm.annotation.DataMask;
 import io.softa.framework.orm.entity.AbstractModel;
 import io.softa.framework.orm.enums.ConvertType;
 import io.softa.framework.orm.service.EntityService;
@@ -64,14 +62,12 @@ public abstract class SystemRoleGuardedController<S extends EntityService<T, K>,
     // ─────────────────────── create ───────────────────────
 
     @PostMapping("/createOne")
-    @DataMask
     public final ApiResponse<K> createOne(@RequestBody Map<String, Object> row) {
         writeGuard.guardCreate(modelName(), List.of(row));
         return ApiResponse.success(modelService.createOne(modelName(), row));
     }
 
     @PostMapping("/createOneAndFetch")
-    @DataMask
     public final ApiResponse<Map<String, Object>> createOneAndFetch(@RequestBody Map<String, Object> row) {
         writeGuard.guardCreate(modelName(), List.of(row));
         return ApiResponse.success(modelService.createOneAndFetch(modelName(), row, ConvertType.REFERENCE));
@@ -84,7 +80,6 @@ public abstract class SystemRoleGuardedController<S extends EntityService<T, K>,
     }
 
     @PostMapping("/createListAndFetch")
-    @DataMask
     public final ApiResponse<List<Map<String, Object>>> createListAndFetch(@RequestBody List<Map<String, Object>> rows) {
         writeGuard.guardCreate(modelName(), rows);
         return ApiResponse.success(modelService.createListAndFetch(modelName(), rows, ConvertType.REFERENCE));
@@ -93,14 +88,12 @@ public abstract class SystemRoleGuardedController<S extends EntityService<T, K>,
     // ─────────────────────── update ───────────────────────
 
     @PostMapping("/updateOne")
-    @DataMask
     public final ApiResponse<Boolean> updateOne(@RequestBody Map<String, Object> row) {
         writeGuard.guardUpdate(modelName(), List.of(row));
         return ApiResponse.success(modelService.updateOne(modelName(), row));
     }
 
     @PostMapping("/updateOneAndFetch")
-    @DataMask
     public final ApiResponse<Map<String, Object>> updateOneAndFetch(@RequestBody Map<String, Object> row) {
         writeGuard.guardUpdate(modelName(), List.of(row));
         return ApiResponse.success(modelService.updateOneAndFetch(modelName(), row, ConvertType.REFERENCE));
@@ -113,7 +106,6 @@ public abstract class SystemRoleGuardedController<S extends EntityService<T, K>,
     }
 
     @PostMapping("/updateListAndFetch")
-    @DataMask
     public final ApiResponse<List<Map<String, Object>>> updateListAndFetch(@RequestBody List<Map<String, Object>> rows) {
         writeGuard.guardUpdate(modelName(), rows);
         return ApiResponse.success(modelService.updateListAndFetch(modelName(), rows, ConvertType.REFERENCE));
@@ -159,28 +151,24 @@ public abstract class SystemRoleGuardedController<S extends EntityService<T, K>,
     }
 
     @PostMapping("/copyById")
-    @DataMask
     public final ApiResponse<K> copyById(@RequestParam K id) {
         writeGuard.guardByIds(modelName(), List.of(id));
         return ApiResponse.success(modelService.copyById(modelName(), id));
     }
 
     @PostMapping("/copyByIdAndFetch")
-    @DataMask
     public final ApiResponse<Map<String, Object>> copyByIdAndFetch(@RequestParam K id) {
         writeGuard.guardByIds(modelName(), List.of(id));
         return ApiResponse.success(modelService.copyByIdAndFetch(modelName(), id, ConvertType.REFERENCE));
     }
 
     @PostMapping("/copyByIds")
-    @DataMask
     public final ApiResponse<List<K>> copyByIds(@RequestParam List<K> ids) {
         writeGuard.guardByIds(modelName(), ids);
         return ApiResponse.success(modelService.copyByIds(modelName(), ids));
     }
 
     @PostMapping("/copyByIdsAndFetch")
-    @DataMask
     public final ApiResponse<List<Map<String, Object>>> copyByIdsAndFetch(@RequestParam List<K> ids) {
         writeGuard.guardByIds(modelName(), ids);
         return ApiResponse.success(modelService.copyByIdsAndFetch(modelName(), ids, ConvertType.REFERENCE));
