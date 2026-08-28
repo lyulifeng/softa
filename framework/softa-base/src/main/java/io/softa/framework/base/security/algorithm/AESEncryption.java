@@ -4,7 +4,9 @@ import java.security.SecureRandom;
 import java.util.Base64;
 import java.util.HashMap;
 import java.util.Map;
+import javax.crypto.BadPaddingException;
 import javax.crypto.Cipher;
+import javax.crypto.IllegalBlockSizeException;
 import javax.crypto.SecretKeyFactory;
 import javax.crypto.spec.IvParameterSpec;
 import javax.crypto.spec.PBEKeySpec;
@@ -12,6 +14,7 @@ import javax.crypto.spec.SecretKeySpec;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 
+import io.softa.framework.base.exception.SystemException;
 import io.softa.framework.base.security.Encryptor;
 
 @Slf4j
@@ -22,6 +25,7 @@ public class AESEncryption implements Encryptor {
     private static final String TRANSFORMATION = "AES/CBC/PKCS5Padding";
     private static final int KEY_SIZE = 256;
     private static final int IV_SIZE = 16;
+    private static final int BLOCK_SIZE = 16;
     private static final String CHARSET_NAME = "UTF-8";
     private static final String SECRET_KEY_FACTORY_ALGORITHM = "PBKDF2WithHmacSHA256";
     private static final int ITERATION_COUNT = 10000;
@@ -77,7 +81,8 @@ public class AESEncryption implements Encryptor {
 
     /**
      * Decrypts the provided data which was encrypted using AES 256.
-     * Return original string if it cannot be decrypted.
+     * Return the original string if it is not ciphertext at all - a plaintext value stored in an
+     * encrypted column - but fail fast if it is ciphertext that does not decrypt under this key.
      *
      * @param ciphertext The Base64-encoded encrypted data with IV.
      * @param password        The password used to generate the decryption key.
@@ -88,18 +93,18 @@ public class AESEncryption implements Encryptor {
         if (ciphertext == null || ciphertext.isEmpty()) {
             return ciphertext;
         }
-        byte[] encryptedIvTextBytes;
-        IvParameterSpec ivParameterSpec;
-        try {
-            // Decode Base64 data
-            encryptedIvTextBytes = Base64.getDecoder().decode(ciphertext);
-            // Extract IV
-            ivParameterSpec = extractIvFromCombinedData(encryptedIvTextBytes);
-        } catch (Exception e) {
-            // Return original string if it cannot be decrypted
-            log.error("Failed to decode or extract IV from ciphertext: {}", e.getMessage(), e);
+        if (!isCiphertext(ciphertext)) {
+            // Never produced by encrypt() - typically plaintext written straight into an encrypted
+            // column. Return it unchanged, before deriving an expensive key.
+            log.debug("Value is not AES ciphertext, returning it unchanged");
             return ciphertext;
         }
+
+        // Decode Base64 data
+        byte[] encryptedIvTextBytes = Base64.getDecoder().decode(ciphertext);
+
+        // Extract IV
+        IvParameterSpec ivParameterSpec = extractIvFromCombinedData(encryptedIvTextBytes);
 
         // Extract encrypted data
         byte[] encryptedBytes = extractEncryptedDataFromCombinedData(encryptedIvTextBytes);
@@ -110,10 +115,39 @@ public class AESEncryption implements Encryptor {
         // Initialize cipher for decryption
         Cipher cipher = Cipher.getInstance(TRANSFORMATION);
         cipher.init(Cipher.DECRYPT_MODE, secretKey, ivParameterSpec);
-        byte[] decryptedBytes = cipher.doFinal(encryptedBytes);
+
+        byte[] decryptedBytes;
+        try {
+            decryptedBytes = cipher.doFinal(encryptedBytes);
+        } catch (BadPaddingException | IllegalBlockSizeException e) {
+            // Well-formed ciphertext that does not decrypt under the configured key. Fail fast: returning
+            // it unchanged would show a Base64 blob to the caller, and encrypt it a second time on save.
+            throw new SystemException(
+                    "Ciphertext does not decrypt under the configured `security.encryption.password`.", e);
+        }
 
         // Convert decrypted bytes to string
         return new String(decryptedBytes, CHARSET_NAME);
+    }
+
+    /**
+     * Tells whether a stored value is AES ciphertext: Base64 of an IV followed by whole AES blocks.
+     * Reading it costs no key derivation, and it is the same test {@link #decrypt} applies.
+     *
+     * @param value The stored value.
+     * @return True if the value has the layout produced by {@link #encrypt}.
+     */
+    @Override
+    public boolean isCiphertext(String value) {
+        if (value == null || value.isEmpty()) {
+            return false;
+        }
+        try {
+            return hasCiphertextLayout(Base64.getDecoder().decode(value));
+        } catch (IllegalArgumentException e) {
+            // Not Base64 at all
+            return false;
+        }
     }
 
     /**
@@ -130,12 +164,14 @@ public class AESEncryption implements Encryptor {
         ciphertextIndexMap.forEach((index, ciphertext) -> {
             try {
                 String plaintext = decrypt(ciphertext, password);
-                // Discard the data that cannot be decrypted
+                // Values that are not ciphertext stay out of the map, so the caller keeps the stored value
                 if (plaintext != null && !plaintext.equals(ciphertext)) {
                     plaintextIndexMap.put(index, plaintext);
                 }
+            } catch (RuntimeException e) {
+                throw e;
             } catch (Exception e) {
-                throw new RuntimeException(e);
+                throw new SystemException("Decrypt exception!", e);
             }
         });
         return plaintextIndexMap;
@@ -154,6 +190,12 @@ public class AESEncryption implements Encryptor {
         System.arraycopy(iv, 0, combined, 0, IV_SIZE);
         System.arraycopy(encryptedData, 0, combined, IV_SIZE, encryptedData.length);
         return combined;
+    }
+
+    // Helper method to check the decoded data is an IV followed by whole AES blocks
+    private boolean hasCiphertextLayout(byte[] combinedData) {
+        int encryptedSize = combinedData.length - IV_SIZE;
+        return encryptedSize >= BLOCK_SIZE && encryptedSize % BLOCK_SIZE == 0;
     }
 
     // Helper method to extract IV from the combined data

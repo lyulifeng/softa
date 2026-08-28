@@ -5,11 +5,11 @@ import jakarta.validation.constraints.NotBlank;
 import lombok.Data;
 
 /**
- * Simple DTO of a modelName and a fieldName
+ * Request of the `fixUnencryptedData` toolkit operation: which field to encrypt, and how to run it.
  */
-@Schema(name = "Simple ModelField")
+@Schema(name = "FixUnencryptedDataParams")
 @Data
-public class ModelField {
+public class FixUnencryptedDataParams {
 
     @Schema(description = "Model name")
     @NotBlank(message = "The model name cannot be empty!")
@@ -18,5 +18,8 @@ public class ModelField {
     @Schema(description = "Field name")
     @NotBlank(message = "The field name cannot be empty!")
     private String field;
+
+    @Schema(description = "Report the rows that would be changed, without writing anything")
+    private boolean dryRun;
 
 }

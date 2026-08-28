@@ -18,15 +18,21 @@ import io.softa.starter.metadata.entity.SysField;
  * ({@link JdbcTypeReverse#primitiveClass}; the declared side enters through
  * {@link FieldType#getSqlType()}, TO_ONE FKs through their resolved {@code relatedFieldType}
  * mirror) — never by parsing engine type-name strings. Known imprecision degrades toward
- * {@link Verdict#INCOMPARABLE} (report, don't act), with one deliberate dialect allowance:
- * a declared BOOLEAN accepts an integer-class column (MySQL renders BOOLEAN as TINYINT and
- * its driver reports it back as an integer type).
+ * {@link Verdict#INCOMPARABLE} (report, don't act), with two allowances where the declared
+ * side's JDBC binding is not what the dialects actually render: a declared BOOLEAN accepts an
+ * integer-class column (MySQL renders BOOLEAN as TINYINT and its driver reports it back as an
+ * integer type), and a declared DOUBLE compares as BIG_DECIMAL — this framework's DOUBLE is
+ * the measurement-sized member of the <i>exact</i> decimal cluster, not an IEEE float
+ * ({@code BuiltinDdlMetadataResolver}: DOUBLE 24,2 / BIG_DECIMAL 32,8), so both dialects
+ * render it {@code DECIMAL} / {@code NUMERIC} while {@code FieldType.DOUBLE.getSqlType()}
+ * still reports {@code Types.DOUBLE} for the Java {@code Double} carrier.
  *
  * <p>Width rules: within the STRING class the declared width ({@code sys_field.length},
  * materialized to the real column width; JSON/DTO/TEXT are unbounded — they render TEXT-class)
  * compares against the observed width (LONGVARCHAR/CLOB-class observed types are unbounded);
  * an unknown side compares as {@link Verdict#EQUAL} — missing driver data must not cry wolf.
- * BIG_DECIMAL compares precision and scale (any shrinking dimension ⇒ {@link Verdict#NARROW}).
+ * BIG_DECIMAL — and DOUBLE, through the allowance above — compares precision and scale
+ * (any shrinking dimension ⇒ {@link Verdict#NARROW}).
  * Across numeric classes the INTEGER ⊂ LONG ⊂ BIG_DECIMAL lattice decides widen vs narrow.
  */
 public final class PhysicalTypeCompat {
@@ -71,6 +77,18 @@ public final class PhysicalTypeCompat {
         }
         if (declaredClass == FieldType.BOOLEAN && observedClass == FieldType.INTEGER) {
             return Verdict.EQUAL;   // MySQL BOOLEAN ⇄ TINYINT
+        }
+        if (declaredClass == FieldType.DOUBLE && observedClass == FieldType.BIG_DECIMAL) {
+            // The declared class above comes from the Java carrier's JDBC binding, which for
+            // DOUBLE alone disagrees with what the dialects render: DOUBLE is this framework's
+            // measurement-sized EXACT decimal (24,2), so the column it created is DECIMAL /
+            // NUMERIC and reads back as BIG_DECIMAL. Compare on the axis that column really
+            // has — precision and scale — instead of degrading to INCOMPARABLE, which no DDL
+            // can resolve: the convergence lane re-plans the same no-op MODIFY every boot (a
+            // table rebuild, on MySQL). Deliberately one-way — a declared BIG_DECIMAL over a
+            // physical float column IS drift, and a MODIFY to the declared shape fixes it
+            // (holiday_calendar_detail.days: BigDecimal(24,2) over a legacy DOUBLE(24,2)).
+            return decimalVerdict(declared, observed);
         }
         int declaredRank = NUMERIC_LATTICE.indexOf(declaredClass);
         int observedRank = NUMERIC_LATTICE.indexOf(observedClass);
