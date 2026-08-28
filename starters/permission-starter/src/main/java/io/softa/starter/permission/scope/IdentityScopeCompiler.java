@@ -9,8 +9,6 @@ import org.springframework.stereotype.Component;
 import lombok.extern.slf4j.Slf4j;
 
 import io.softa.framework.base.constant.EnvConstant;
-import io.softa.framework.base.context.Context;
-import io.softa.framework.base.context.ContextHolder;
 import io.softa.framework.base.context.EmpInfo;
 import io.softa.framework.orm.domain.Filters;
 import io.softa.starter.permission.spi.ScopeRule;
@@ -105,29 +103,10 @@ public class IdentityScopeCompiler {
         // throwing on an EMP_INFO token with no EmpInfo bound. Object-presence only
         // (keyed on the framework's EnvConstant sets — no value switch); the actual
         // value + any null-field handling stays with FilterUnitParser.
-        if (!contextSatisfies(ScopeFilterTemplates.envTokens(f))) {
+        if (!ScopeEnvGuard.contextSatisfies(f)) {
             return new Filters();
         }
         return f;
-    }
-
-    /** True if the bound context carries the backing object for every env token the
-     *  template needs (EMP_INFO tokens need an {@link EmpInfo}; {@code USER_ID} needs
-     *  a userId). NOW/TODAY/YESTERDAY are always resolvable. */
-    private static boolean contextSatisfies(Set<String> envTokens) {
-        if (envTokens.isEmpty()) {
-            return true;
-        }
-        Context ctx = ContextHolder.getContext();
-        for (String token : envTokens) {
-            if (EnvConstant.USER_ID.equals(token) && (ctx == null || ctx.getUserId() == null)) {
-                return false;
-            }
-            if (EnvConstant.EMP_INFO_PARAMS.contains(token) && (ctx == null || ctx.getEmpInfo() == null)) {
-                return false;
-            }
-        }
-        return true;
     }
 
     /** Lazy-load identity specs (only DataScopeType rows carrying a {@code filter}

@@ -5,6 +5,9 @@ import org.junit.jupiter.api.Test;
 import tools.jackson.databind.node.ArrayNode;
 import tools.jackson.databind.node.JsonNodeFactory;
 
+import io.softa.framework.base.context.Context;
+import io.softa.framework.base.context.ContextHolder;
+import io.softa.framework.base.context.EmpInfo;
 import io.softa.framework.orm.domain.Filters;
 import io.softa.starter.permission.spi.ScopeRule;
 import io.softa.starter.permission.spi.ScopeType;
@@ -93,14 +96,63 @@ class CustomScopeContributorTest {
         // An env-placeholder VALUE (USER_DEPT_ID) is NOT substituted here — that
         // is FilterUnitParser's job at SQL-build time. This contributor just
         // round-trips the authored array; the placeholder survives as data.
+        // Bound context carries the EmpInfo the placeholder resolves against, so the
+        // rule survives the fail-closed guard (see the next test for the other case).
         ArrayNode leaf = JSON.arrayNode();
         leaf.add("departmentId").add("=").add("USER_DEPT_ID");
         ArrayNode expr = JSON.arrayNode();
         expr.add(leaf);
 
-        Filters out = contributor.compile(new ScopeRule(ScopeType.CUSTOM, expr), "AnyModel");
+        Filters out = ContextHolder.callWith(ctxWithEmp(),
+                () -> contributor.compile(new ScopeRule(ScopeType.CUSTOM, expr), "AnyModel"));
 
         assertThat(Filters.isEmpty(out)).isFalse();
         assertThat(out).isEqualTo(Filters.of("[[\"departmentId\",\"=\",\"USER_DEPT_ID\"]]"));
+    }
+
+    @Test
+    void compile_envParamValue_noEmpInfo_failsClosed() {
+        // A pure user (no employee identity) cannot resolve USER_DEPT_ID. Drop the whole rule
+        // — contributing "no rows" — instead of letting it reach FilterUnitParser, which throws
+        // while the SQL is built and surfaces as a 500 on the page.
+        ArrayNode leaf = JSON.arrayNode();
+        leaf.add("departmentId").add("=").add("USER_DEPT_ID");
+        ArrayNode expr = JSON.arrayNode();
+        expr.add(leaf);
+
+        Context ctx = new Context();
+        ctx.setUserId(1L);   // no EmpInfo bound
+
+        Filters out = ContextHolder.callWith(ctx,
+                () -> contributor.compile(new ScopeRule(ScopeType.CUSTOM, expr), "AnyModel"));
+
+        assertThat(Filters.isEmpty(out)).isTrue();
+    }
+
+    @Test
+    void compile_timeParamValue_needsNoEmpInfo() {
+        // TODAY resolves off the clock, not the caller — a pure user keeps such a rule.
+        ArrayNode leaf = JSON.arrayNode();
+        leaf.add("hireDate").add("=").add("TODAY");
+        ArrayNode expr = JSON.arrayNode();
+        expr.add(leaf);
+
+        Context ctx = new Context();
+        ctx.setUserId(1L);
+
+        Filters out = ContextHolder.callWith(ctx,
+                () -> contributor.compile(new ScopeRule(ScopeType.CUSTOM, expr), "AnyModel"));
+
+        assertThat(Filters.isEmpty(out)).isFalse();
+    }
+
+    private static Context ctxWithEmp() {
+        EmpInfo info = new EmpInfo();
+        info.setEmpId(7L);
+        info.setDeptId(3L);
+        Context ctx = new Context();
+        ctx.setUserId(1L);
+        ctx.setEmpInfo(info);
+        return ctx;
     }
 }

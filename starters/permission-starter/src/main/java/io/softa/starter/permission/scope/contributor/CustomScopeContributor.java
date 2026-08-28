@@ -5,6 +5,7 @@ import tools.jackson.databind.JsonNode;
 import lombok.extern.slf4j.Slf4j;
 
 import io.softa.framework.orm.domain.Filters;
+import io.softa.starter.permission.scope.ScopeEnvGuard;
 import io.softa.starter.permission.spi.ScopeRule;
 import io.softa.starter.permission.spi.ScopeType;
 import io.softa.starter.permission.spi.ScopeContributor;
@@ -47,7 +48,16 @@ public class CustomScopeContributor implements ScopeContributor {
         if (expr == null || !expr.isArray() || expr.isEmpty()) return new Filters();
         try {
             Filters parsed = Filters.of(expr.toString());
-            return parsed == null ? new Filters() : parsed;
+            if (parsed == null) {
+                return new Filters();
+            }
+            // Fail closed when the caller lacks what a placeholder in the rule resolves against
+            // (a pure user has no EmpInfo): drop the rule so it contributes "no rows", instead of
+            // letting FilterUnitParser throw at SQL-build time. Same guard the identity scopes use.
+            if (!ScopeEnvGuard.contextSatisfies(parsed)) {
+                return new Filters();
+            }
+            return parsed;
         } catch (Throwable t) {
             log.warn("CustomScope — failed to parse scopeExpr; degrading to empty", t);
             return new Filters();
