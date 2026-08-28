@@ -20,7 +20,10 @@ import io.softa.framework.base.enums.Operator;
 import io.softa.framework.base.exception.BusinessException;
 import io.softa.framework.base.security.PasswordUtils;
 import io.softa.framework.base.utils.UUIDUtils;
-import io.softa.framework.orm.domain.Filters;
+import java.util.Map;
+import io.softa.framework.base.message.MailRequestMessage;
+import io.softa.framework.base.message.SmsRequestMessage;
+import io.softa.framework.base.message.MessageScope;
 import io.softa.framework.orm.service.CacheService;
 import io.softa.framework.orm.service.TenantInfoService;
 import io.softa.starter.user.dto.AuthenticationResult;
@@ -47,6 +50,10 @@ public class LoginServiceImpl implements LoginService {
 
     /** Mirrors UserIdentityServiceImpl's window, for the message the locked-out person sees. */
     private static final int LOCK_MINUTES = 30;
+    /** Verification-code template, one code for both channels (MailTemplate / SmsTemplate share it). */
+    private static final String TEMPLATE_CODE = "user.verification-code";
+    /** Code lifetime shown to the recipient; kept in step with VerificationCodeGuard.CODE_TTL_SECONDS. */
+    private static final int CODE_EXPIRY_MINUTES = VerificationCodeGuard.CODE_TTL_SECONDS / 60;
 
     @Autowired
     private CacheService cacheService;
@@ -69,6 +76,9 @@ public class LoginServiceImpl implements LoginService {
     /** Send / attempt limits for one-time codes (PRD D2) — see the class for why each exists. */
     @Autowired
     private VerificationCodeGuard codeGuard;
+
+    @Autowired
+    private org.springframework.context.ApplicationEventPublisher eventPublisher;
 
     /**
      * Tenant lifecycle gate at login: only ACTIVE tenants may log in. Enforced at the single
@@ -166,18 +176,21 @@ public class LoginServiceImpl implements LoginService {
 
     @Override
     public void sendEmailCode(String email) {
-        Filters filters = new Filters().eq(UserAccount::getEmail, email);
-        this.generateNumericCode(email);
-//        UserAccount userAccount = this.getUserByFilter(filters);
-        // TODO: Send email with the code
-        // emailService.sendEmail(email, "Verification Code", "Your verification code is: " + code);
+        String code = this.generateNumericCode(email);
+        // PLATFORM tier: a login / join code is requested BEFORE any session, so there is no tenant
+        // context to render a tenant-specific template from — the platform row is the code's copy.
+        // Absent message-starter this is a graceful no-op, same as every other request message.
+        eventPublisher.publishEvent(new MailRequestMessage(
+                List.of(email), TEMPLATE_CODE,
+                Map.of("code", code, "expiryMinutes", CODE_EXPIRY_MINUTES), null, MessageScope.PLATFORM));
     }
 
     @Override
     public void sendMobileCode(String mobile) {
-        Filters filters = new Filters().eq(UserAccount::getMobile, mobile);
-//        UserAccount userAccount = this.getUserByFilter(filters);
-        // TODO: Send SMS with the code
+        String code = this.generateNumericCode(mobile);
+        eventPublisher.publishEvent(new SmsRequestMessage(
+                List.of(mobile), TEMPLATE_CODE,
+                Map.of("code", code, "expiryMinutes", CODE_EXPIRY_MINUTES)));
     }
 
     @Override
