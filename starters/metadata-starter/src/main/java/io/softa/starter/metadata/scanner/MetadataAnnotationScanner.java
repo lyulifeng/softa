@@ -236,18 +236,28 @@ public class MetadataAnnotationScanner implements MetadataInitializer {
 
         // Parse the in-scope option-sets and merge with the already-parsed models.
         AnnotationScanResult enumsResult = pipeline.parse(List.of(), inScopeEnums);
+        // The merge must carry modelsResult's rename declarations forward: the 5-arg
+        // constructor substitutes RenameDeclarations.empty(), which silently turns every
+        // declared rename into ADD + warn-only DROP — a data divorce the parse-time
+        // guards do nothing to prevent (they fire during parse and validate only).
         AnnotationScanResult fromCode = new AnnotationScanResult(
                 modelsResult.models(), modelsResult.fields(),
                 enumsResult.optionSets(), enumsResult.optionItems(),
-                modelsResult.modelIndexes());
+                modelsResult.modelIndexes(), modelsResult.renames());
         log.info("MetadataAnnotationScanner: from-code = {} model(s), {} field(s), {} option set(s), "
                         + "{} option item(s), {} index(es)",
                 fromCode.models().size(), fromCode.fields().size(),
                 fromCode.optionSets().size(), fromCode.optionItems().size(),
                 fromCode.modelIndexes().size());
 
-        Set<String> inScopeModelNames = fromCode.models().stream()
-                .map(SysModel::getModelName).collect(Collectors.toSet());
+        Set<String> inScopeModelNames = new HashSet<>();
+        fromCode.models().forEach(m -> inScopeModelNames.add(m.getModelName()));
+        // A declared model rename claims its prior name: the old row (and its field /
+        // index rows, which the DiffEngine cascade re-keys) must survive confinement,
+        // or the pairing side of the rename is filtered away before the diff ever sees
+        // it — the model would CREATE empty instead of RENAME, divorcing the data. It
+        // is also not a code-less root: the renaming class is its code.
+        inScopeModelNames.addAll(fromCode.renames().modelOldNames().values());
         Set<String> inScopeOptionCodes = fromCode.optionSets().stream()
                 .map(SysOptionSet::getOptionSetCode).collect(Collectors.toSet());
 
