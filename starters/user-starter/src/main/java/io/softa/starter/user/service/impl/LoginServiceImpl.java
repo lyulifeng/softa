@@ -193,9 +193,27 @@ public class LoginServiceImpl implements LoginService {
                 Map.of("code", code, "expiryMinutes", CODE_EXPIRY_MINUTES)));
     }
 
+    /**
+     * Refuse to identify anyone from a contact shared by more than one account (finding #2).
+     *
+     * <p>A verification code proves control of the ADDRESS, not of a person. A work number used by
+     * several employees identifies none of them, so resolving it to whichever person happens to
+     * hold it as their login identifier lets a second holder sign in — or reset the password — as
+     * the first. Every code-and-identifier entry point (login, /join, reset) has to ask this;
+     * the password path does not, because knowing the password is itself the proof a shared
+     * contact cannot supply.
+     */
+    private void assertContactNotShared(String identifier) {
+        if (accountService.isWorkContactShared(identifier)) {
+            throw new BusinessException("This contact is shared by more than one account, so we "
+                    + "cannot confirm who you are. Please contact your HR.");
+        }
+    }
+
     @Override
     public AuthenticationResult authenticateByCode(String identifier, String code) {
         verifyCode(identifier, code);
+        assertContactNotShared(identifier);
         // Resolved by LOGIN IDENTIFIER on the person, not by a company's work contact: the code
         // was sent to an identifier, and that identifier is what identifies the human being.
         return this.afterAuthentication(this.resolveIdentity(identifier,
@@ -297,14 +315,9 @@ public class LoginServiceImpl implements LoginService {
         String address = invitationService.resolveJoinChannel(rawToken, channel);
         this.verifyCode(address, code);
 
-        // A verified code proves control of the ADDRESS, not of a person — and a work contact used
-        // by several accounts identifies no one. Resolving it to whichever person already holds it
-        // is how a second employee on a shared work number would sign in as the first. When the
-        // contact is shared, the invitee cannot be identified automatically; HR completes the bind.
-        if (accountService.isWorkContactShared(address)) {
-            throw new BusinessException("This contact is shared by more than one account, so we "
-                    + "cannot confirm who you are automatically. Please contact your HR.");
-        }
+        // A shared work contact identifies no one, so an invitee holding it cannot be resolved
+        // automatically — HR completes the bind. Same guard as login and reset.
+        assertContactNotShared(address);
 
         // Find-or-create by the address the invitation was sent to. Found = this person already
         // works somewhere and is being added to a second company, and they keep ONE person record
@@ -346,6 +359,7 @@ public class LoginServiceImpl implements LoginService {
         // Code first. Looking the person up before verifying would let a caller probe which
         // identifiers exist by watching which ones fail differently.
         this.verifyCode(identifier, code);
+        assertContactNotShared(identifier);
         UserIdentity identity = identityService.findByLoginIdentifier(identifier).orElseThrow(
                 () -> new BusinessException("Incorrect account or code."));
         // Strength rules and the lock reset both live inside setPassword — a reset must clear the
