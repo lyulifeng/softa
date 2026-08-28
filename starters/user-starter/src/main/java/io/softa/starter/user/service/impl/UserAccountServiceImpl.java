@@ -8,6 +8,7 @@ import jakarta.validation.constraints.NotNull;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.lang3.StringUtils;
 import org.springframework.beans.factory.annotation.Autowired;
+import java.time.LocalDateTime;
 import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -17,6 +18,7 @@ import io.softa.framework.base.context.ContextHolder;
 import io.softa.framework.base.context.UserInfo;
 import io.softa.framework.base.exception.BusinessException;
 import io.softa.framework.base.message.MailRequestMessage;
+import io.softa.framework.base.message.SmsRequestMessage;
 import io.softa.framework.base.message.MessageScope;
 import io.softa.framework.base.security.PasswordUtils;
 import io.softa.framework.base.utils.Assert;
@@ -54,6 +56,10 @@ public class UserAccountServiceImpl extends EntityServiceImpl<UserAccount, Long>
     /** Notifies the OLD address when work contacts are reset — see resetWorkContacts. */
     @Autowired
     private ApplicationEventPublisher eventPublisher;
+
+    /** Optional: the contact-change notice names the company; absent tenant-starter → blank. */
+    @Autowired(required = false)
+    private io.softa.framework.orm.service.TenantInfoService tenantInfoService;
 
     /**
      * Every single-entity account write funnels through here, so this is the one place that has to
@@ -311,13 +317,27 @@ public class UserAccountServiceImpl extends EntityServiceImpl<UserAccount, Long>
         // to reach somewhere they can still read; telling only the new address informs whoever now
         // holds it. Password and profileId are untouched, so there is nothing to re-accept — this
         // is a notification, not an invitation.
+        // Notify the OLD contacts on EVERY channel the account had, mail AND SMS — the same
+        // fan-out invitations use. A person reachable only by work mobile must still learn their
+        // sign-in was changed; telling only the email would leave exactly them uninformed. The
+        // variables match the user.contact-reset templates (M1): who the account belongs to, which
+        // company changed it, and when. nickname (already on the account) stands in for the name
+        // rather than loading the profile, which is more than a notification warrants.
+        Long tenantId = ContextHolder.getContext().getTenantId();
+        MessageScope scope = tenantId != null ? MessageScope.TENANT : MessageScope.PLATFORM;
+        String companyName = tenantId == null || tenantInfoService == null ? ""
+                : StringUtils.defaultString(tenantInfoService.getTenantName(tenantId));
+        Map<String, Object> vars = Map.of(
+                "employeeName", StringUtils.defaultString(account.getNickname()),
+                "companyName", companyName,
+                "time", LocalDateTime.now().toString());
         if (StringUtils.isNotBlank(previousEmail)) {
-            Long tenantId = ContextHolder.getContext().getTenantId();
             eventPublisher.publishEvent(new MailRequestMessage(
-                    List.of(previousEmail), TEMPLATE_CONTACT_RESET,
-                    Map.of("email", email == null ? "" : email,
-                            "mobile", mobile == null ? "" : mobile),
-                    tenantId, tenantId != null ? MessageScope.TENANT : MessageScope.PLATFORM));
+                    List.of(previousEmail), TEMPLATE_CONTACT_RESET, vars, tenantId, scope));
+        }
+        if (StringUtils.isNotBlank(previousMobile)) {
+            eventPublisher.publishEvent(new SmsRequestMessage(
+                    List.of(previousMobile), TEMPLATE_CONTACT_RESET, vars));
         }
         log.info("Work contacts of account {} reset. Reason: {}", userId, reason);
     }

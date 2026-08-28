@@ -9,6 +9,7 @@ import org.springframework.test.util.ReflectionTestUtils;
 
 import io.softa.framework.base.exception.BusinessException;
 import io.softa.framework.base.message.MailRequestMessage;
+import io.softa.framework.base.message.SmsRequestMessage;
 import io.softa.starter.user.entity.UserAccount;
 import io.softa.starter.user.entity.UserIdentity;
 import io.softa.starter.user.enums.AccountStatus;
@@ -156,16 +157,20 @@ class ResetWorkContactsTest {
     }
 
     @Test
-    void mailIsAddressedToTheOldChannelOnly_whenThereWasNoOldEmail() {
-        // Mobile-only account: no old email means no notification channel here. Silently skipping
-        // is right — publishing to an empty receiver list would be a message to nobody, logged as
-        // if it went out.
+    void aMobileOnlyAccount_isNotifiedBySms_notLeftUninformed() {
+        // The person reachable only by work mobile is exactly the one an email-only notice would
+        // leave in the dark. W6/W9 says notify the OLD contact; the old contact here is a number.
         given(null, "+8613800138000", PROFILE);
         when(identityService.findByProfile(PROFILE))
                 .thenReturn(Optional.of(identity(null, "+8613800138000")));
 
         accountService.resetWorkContacts(ACCOUNT, null, "+8613800138001", "Number changed");
 
+        var sms = forClass(SmsRequestMessage.class);
+        verify(eventPublisher).publishEvent(sms.capture());
+        assertThat(sms.getValue().to()).containsExactly("+8613800138000");
+        assertThat(sms.getValue().templateCode()).isEqualTo("user.contact-reset");
+        // No email channel existed, so no mail — but the person is not left uninformed.
         verify(eventPublisher, never()).publishEvent(any(MailRequestMessage.class));
     }
 }
