@@ -154,8 +154,21 @@ public class FilterUnitParser {
         Context context = ContextHolder.getContext();
         if (EnvConstant.USER_ID.equals(value)) {
             return context.getUserId();
-        } else if (EnvConstant.EMP_INFO_PARAMS.contains(value) && context.getEmpInfo() != null) {
+        } else if (EnvConstant.EMP_INFO_PARAMS.contains(value)) {
             EmpInfo empInfo = context.getEmpInfo();
+            if (empInfo == null) {
+                // Say what is actually wrong. The token IS supported; the caller simply has no
+                // employee identity bound, and the old "Not support the env parameter" sent people
+                // hunting for a typo in a name that was correct. Control flow is unchanged: the
+                // EMP_INFO / COMPANY / TIME token sets are disjoint, so a null EmpInfo always ended
+                // up throwing from the final branch anyway.
+                //
+                // Scope rules no longer reach this (ScopeEnvGuard drops such a rule while it is
+                // still a rule, contributing "no rows"); this covers the other placeholder
+                // consumers, e.g. macro substitution.
+                throw new IllegalArgumentException(
+                        "Env parameter {0} needs an employee context, but the current user has none! ", value);
+            }
             return switch (value) {
                 case EnvConstant.USER_EMP_ID -> empInfo.getEmpId();
                 case EnvConstant.USER_POSITION_ID -> empInfo.getPositionId();
