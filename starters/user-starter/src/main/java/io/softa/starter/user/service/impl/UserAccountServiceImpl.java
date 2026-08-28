@@ -442,7 +442,8 @@ public class UserAccountServiceImpl extends EntityServiceImpl<UserAccount, Long>
     public void changeMyPassword(String currentPassword, String newPassword) {
         Assert.notBlank(currentPassword, "Old password cannot be empty.");
         Assert.notBlank(newPassword, "New password cannot be empty.");
-        // TODO: Add password strength validation
+        // Strength (B7) is enforced inside identityService.setPassword, the choke point every
+        // password write passes through — not repeated here.
 
         Long userId = ContextHolder.getContext().getUserId();
         Assert.notNull(userId, "Cannot change password without logged-in user context.");
@@ -507,8 +508,7 @@ public class UserAccountServiceImpl extends EntityServiceImpl<UserAccount, Long>
     @Transactional
     public boolean forceResetPassword(Long userId, String newPassword) {
         Assert.notBlank(newPassword, "New password cannot be empty.");
-        // TODO: Add password strength validation
-
+        // Strength (B7) is enforced inside identityService.setPassword — see changeMyPassword.
         UserAccount user = this.getById(userId).orElseThrow(() -> new BusinessException("User not found."));
         identityService.setPassword(user, newPassword);
 
