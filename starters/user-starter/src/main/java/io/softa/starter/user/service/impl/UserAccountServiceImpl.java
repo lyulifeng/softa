@@ -325,6 +325,20 @@ public class UserAccountServiceImpl extends EntityServiceImpl<UserAccount, Long>
     @SkipPermissionCheck
     @CrossTenant
     @Override
+    public boolean isWorkContactShared(String contact) {
+        if (StringUtils.isBlank(contact)) {
+            return false;
+        }
+        // Counted across tenants: the same number handed to workers in two companies is still one
+        // number, and the ambiguity it creates is not confined to a tenant.
+        long asEmail = this.count(new Filters().eq(UserAccount::getEmail, contact));
+        long asMobile = this.count(new Filters().eq(UserAccount::getMobile, contact));
+        return asEmail + asMobile > 1;
+    }
+
+    @SkipPermissionCheck
+    @CrossTenant
+    @Override
     public boolean releaseLoginIdentifiers(UserAccount account) {
         if (account == null) {
             return false;

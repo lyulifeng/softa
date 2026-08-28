@@ -284,6 +284,15 @@ public class LoginServiceImpl implements LoginService {
         String address = invitationService.resolveJoinChannel(rawToken, channel);
         this.verifyCode(address, code);
 
+        // A verified code proves control of the ADDRESS, not of a person — and a work contact used
+        // by several accounts identifies no one. Resolving it to whichever person already holds it
+        // is how a second employee on a shared work number would sign in as the first. When the
+        // contact is shared, the invitee cannot be identified automatically; HR completes the bind.
+        if (accountService.isWorkContactShared(address)) {
+            throw new BusinessException("This contact is shared by more than one account, so we "
+                    + "cannot confirm who you are automatically. Please contact your HR.");
+        }
+
         // Find-or-create by the address the invitation was sent to. Found = this person already
         // works somewhere and is being added to a second company, and they keep ONE person record
         // (that is the whole point of the global profile). Not found = their first company.

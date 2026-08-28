@@ -104,6 +104,18 @@ public interface UserAccountService extends EntityService<UserAccount, Long> {
     boolean releaseLoginIdentifiers(UserAccount account);
 
     /**
+     * Whether this contact is used as the work email/mobile of more than one account.
+     *
+     * <p>A shared work number is ordinary as a CONTACT — a shop's phone, a shared floor handset, a
+     * manager's number entered for a worker who has none. What it cannot be is a way to IDENTIFY a
+     * person: a verification code sent there proves control of the number, not of any one holder.
+     * The /join flow asks this before it will resolve an invitee from an identifier, because
+     * resolving a shared contact to whichever person happens to hold it already is exactly how one
+     * employee signs in as another.
+     */
+    boolean isWorkContactShared(String contact);
+
+    /**
      * Prepare a membership for someone re-joining this company, reusing the closed row.
      *
      * <p>Re-hire revives rather than inserts, because {@code (tenantId, profileId)} is unique —
