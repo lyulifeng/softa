@@ -404,6 +404,12 @@ public class UserInvitationServiceImpl extends EntityServiceImpl<UserInvitation,
     @Override
     @Transactional
     public void acceptToken(String rawToken, String newPassword) {
+        // Reached only by the emailed-link reset (/login/resetPassword). Invitations no longer
+        // land here — they point at /join, whose verify → set-password → confirm replaces the old
+        // one-step "set password and activate". The INVITED/PENDING activation below is therefore
+        // dead for the invitation flow (a first-time invite's account has no profileId yet, so
+        // setPassword fails before reaching it); it is kept only as defence for a reset token that
+        // somehow targets a not-yet-active account, where activating it is the recoverable outcome.
         Assert.notBlank(rawToken, "This link is invalid.");
         Assert.notBlank(newPassword, "New password cannot be empty.");
         // Strength is checked inside credentialService.setPassword against the person's own
