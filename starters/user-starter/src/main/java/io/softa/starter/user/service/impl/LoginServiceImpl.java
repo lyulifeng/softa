@@ -8,6 +8,7 @@ import java.util.Objects;
 import java.util.Optional;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.lang3.RandomStringUtils;
+import io.softa.framework.base.utils.RandomUtils;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -54,6 +55,10 @@ public class LoginServiceImpl implements LoginService {
     private static final String TEMPLATE_CODE = "user.verification-code";
     /** Code lifetime shown to the recipient; kept in step with VerificationCodeGuard.CODE_TTL_SECONDS. */
     private static final int CODE_EXPIRY_MINUTES = VerificationCodeGuard.CODE_TTL_SECONDS / 60;
+    /** Entropy of the pre-auth token that bridges authentication and the company step. */
+    private static final int PREAUTH_TOKEN_BYTES = 32;
+    /** How long the person has to pick a company before re-authenticating. */
+    private static final int PREAUTH_TTL_SECONDS = 600;
 
     @Autowired
     private CacheService cacheService;
@@ -272,7 +277,7 @@ public class LoginServiceImpl implements LoginService {
     private AuthenticationResult afterAuthentication(UserIdentity identity) {
         Long profileId = identity.getProfileId();
         boolean mustSetPassword = StringUtils.isBlank(identity.getPassword());
-        List<MembershipOption> options = this.listCompanies(profileId);
+        List<MembershipOption> options = this.resolveMemberships(profileId);
         List<MembershipOption> enterable = options.stream()
                 .filter(MembershipOption::selectable).toList();
         if (options.size() == 1 && enterable.size() == 1) {
@@ -282,7 +287,31 @@ public class LoginServiceImpl implements LoginService {
         if (options.isEmpty()) {
             throw new BusinessException("Your account is not linked to any company. Please contact your HR.");
         }
-        return AuthenticationResult.choicePending(profileId, options, mustSetPassword);
+        // A choice is pending, so authentication succeeded but no session is issued yet. Mint a
+        // single-use token proving THIS person just authenticated; selectCompany reads the person
+        // from it, never from a client-supplied id — otherwise the company step would be an
+        // unauthenticated "issue me a session for profileId X".
+        return AuthenticationResult.choicePending(
+                profileId, options, mustSetPassword, issuePreAuthToken(profileId));
+    }
+
+    private static String preAuthKey(String token) {
+        return "login:preauth:" + token;
+    }
+
+    private String issuePreAuthToken(Long profileId) {
+        String token = RandomUtils.randomString(PREAUTH_TOKEN_BYTES);
+        cacheService.save(preAuthKey(token), profileId.toString(), PREAUTH_TTL_SECONDS);
+        return token;
+    }
+
+    /** The person a live pre-auth token stands for, or a refusal if it expired / never existed. */
+    private Long resolvePreAuthToken(String authToken) {
+        String value = StringUtils.isBlank(authToken) ? null : cacheService.get(preAuthKey(authToken));
+        if (value == null) {
+            throw new BusinessException("Your sign-in step expired. Please log in again.");
+        }
+        return Long.valueOf(value);
     }
 
 
@@ -375,7 +404,13 @@ public class LoginServiceImpl implements LoginService {
                 .orElse(Boolean.FALSE);
     }
     @Override
-    public List<MembershipOption> listCompanies(Long profileId) {
+    public List<MembershipOption> listCompanies(String authToken) {
+        // Reads the person from the token, not the request: listing another person's companies is
+        // a smaller leak than taking over their session, but it is the same unauthenticated call.
+        return resolveMemberships(resolvePreAuthToken(authToken));
+    }
+
+    private List<MembershipOption> resolveMemberships(Long profileId) {
         return accountService.listMembershipsOf(profileId).stream()
                 .map(account -> new MembershipOption(
                         account.getId(), account.getTenantId(),
@@ -390,7 +425,7 @@ public class LoginServiceImpl implements LoginService {
 
     @Override
     public Long resolveSingleMembership(Long profileId) {
-        List<MembershipOption> options = this.listCompanies(profileId);
+        List<MembershipOption> options = this.resolveMemberships(profileId);
         if (options.isEmpty()) {
             // Authenticated, but a member of nothing — the account was off-boarded everywhere, or
             // a profile exists with no membership yet. Either way there is nowhere to go.
@@ -408,17 +443,21 @@ public class LoginServiceImpl implements LoginService {
     }
 
     @Override
-    public Long selectCompany(Long profileId, Long accountId) {
-        MembershipOption chosen = this.listCompanies(profileId).stream()
+    public AuthenticationResult selectCompany(String authToken, Long accountId) {
+        Long profileId = resolvePreAuthToken(authToken);
+        MembershipOption chosen = this.resolveMemberships(profileId).stream()
                 .filter(option -> option.accountId().equals(accountId))
                 .findFirst()
-                // Ownership check, not a convenience: without it an authenticated person could name
-                // any accountId and be issued a session in a company they are not a member of.
+                // Ownership check: the membership must be one the token's person actually holds, or
+                // naming any accountId would mint a session in a company they are not a member of.
                 .orElseThrow(() -> new BusinessException("That company is not available for your account."));
         if (!chosen.selectable()) {
             throw new BusinessException(accountDeniedMessage(chosen.status()));
         }
-        return accountId;
+        // Single use: consume the token so a leaked one cannot be replayed into another session.
+        cacheService.clear(preAuthKey(authToken));
+        return AuthenticationResult.resolved(
+                profileId, profileService.getUserInfo(accountId), this.mustSetPassword(profileId));
     }
 
     /**

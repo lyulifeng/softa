@@ -231,8 +231,8 @@ public class LoginController {
     @Operation(summary = "List the companies this person can log into (multi-company login step)")
     @PostMapping("/listCompanies")
     @SwitchUser(SystemUser.REGISTERED_USER)
-    public ApiResponse<List<MembershipOption>> listCompanies(@RequestParam @NotNull Long profileId) {
-        return ApiResponse.success(loginService.listCompanies(profileId));
+    public ApiResponse<List<MembershipOption>> listCompanies(@RequestParam @NotNull String authToken) {
+        return ApiResponse.success(loginService.listCompanies(authToken));
     }
 
     /**
@@ -245,15 +245,11 @@ public class LoginController {
     @Operation(summary = "Enter the chosen company and issue the session")
     @PostMapping("/selectCompany")
     @SwitchUser(SystemUser.REGISTERED_USER)
-    public ApiResponse<AuthenticationResult> selectCompany(@RequestParam @NotNull Long profileId,
+    public ApiResponse<AuthenticationResult> selectCompany(@RequestParam @NotNull String authToken,
             @RequestParam @NotNull Long accountId, HttpServletResponse response) {
-        Long resolved = loginService.selectCompany(profileId, accountId);
-        // Same shape as the authentication endpoints, so the client has one response contract to
-        // handle rather than two — including mustSetPassword, which still applies after choosing.
-        return this.issueOrAskForCompany(
-                AuthenticationResult.resolved(profileId, profileService.getUserInfo(resolved),
-                        loginService.mustSetPassword(profileId)),
-                response);
+        // The person is read from the token inside the service, never from the request. Same
+        // response shape as the authentication endpoints, so the client has one contract to handle.
+        return this.issueOrAskForCompany(loginService.selectCompany(authToken, accountId), response);
     }
 
     /**

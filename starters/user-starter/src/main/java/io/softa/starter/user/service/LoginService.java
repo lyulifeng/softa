@@ -116,7 +116,7 @@ public interface LoginService {
      * @return their memberships, off-boarded ones excluded, non-ACTIVE ones listed but flagged
      *         unselectable (so a frozen company is visibly present rather than silently missing)
      */
-    List<MembershipOption> listCompanies(Long profileId);
+    List<MembershipOption> listCompanies(String authToken);
 
     /**
      * Resolve which membership an authenticated person lands in.
@@ -134,11 +134,13 @@ public interface LoginService {
      * Verify that this membership really belongs to this person, then hand back its account id
      * for session issuance.
      *
-     * <p>The ownership check is the security point: without it, anyone who authenticated as
-     * themselves could name someone else's accountId and be issued a session in a company they
-     * have no membership of.
+     * <p>Authorized by the pre-auth {@code authToken}, not by a client-supplied profileId: it
+     * names the person server-side, so the company step cannot be reached without having passed
+     * authentication. The membership must be one that person holds (the ownership check), or naming
+     * any accountId would mint a session in a company they are not a member of. Single-use — the
+     * token is consumed on success.
      */
-    Long selectCompany(Long profileId, Long accountId);
+    AuthenticationResult selectCompany(String authToken, Long accountId);
     /**
      * Forgot password — issue a self-service password-reset token and email the set-password link.
      *
