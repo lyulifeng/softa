@@ -17,6 +17,7 @@ import io.softa.framework.base.exception.BusinessException;
 import io.softa.framework.base.exception.IllegalArgumentException;
 import io.softa.framework.base.utils.Assert;
 import io.softa.framework.base.utils.LambdaUtils;
+import org.springframework.transaction.annotation.Transactional;
 import io.softa.framework.orm.annotation.SkipPermissionCheck;
 import io.softa.framework.orm.domain.Filters;
 import io.softa.framework.orm.domain.FlexQuery;
@@ -312,7 +313,15 @@ public class UserProfileServiceImpl extends EntityServiceImpl<UserProfile, Long>
      */
     @SkipPermissionCheck
     @Override
+    @Transactional
     public UserInfo registerUserProfile(Long userId, UserProfileDTO profileDTO) {
+        // @Transactional on the atomic unit itself, not just its callers: this writes a profile,
+        // links the account to it, and creates the credentials row — the three that together make a
+        // person able to log in. A partial failure (identity insert throws after the account is
+        // linked) leaves exactly the "account has a profileId but no identity" fault the class
+        // warns about, unrecoverable and login-breaking. Current callers are transactional, but an
+        // atomic unit that relies on every future caller remembering that is one bad merge from the
+        // fault. REQUIRED propagation joins an existing transaction, so this changes nothing for them.
         // Create user profile
         UserProfile userProfile = this.buildUserProfile(profileDTO);
         userProfile.setUserId(userId);
