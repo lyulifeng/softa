@@ -31,6 +31,7 @@ import io.softa.starter.user.dto.InvitationInfo;
 import io.softa.starter.user.dto.JoinContacts;
 import io.softa.starter.user.dto.JoinEntry;
 import io.softa.starter.user.entity.UserAccount;
+import io.softa.starter.user.entity.UserIdentity;
 import io.softa.starter.user.entity.UserInvitation;
 import io.softa.starter.user.enums.AccountStatus;
 import io.softa.starter.user.enums.InvitationPurpose;
@@ -491,6 +492,20 @@ public class UserInvitationServiceImpl extends EntityServiceImpl<UserInvitation,
         if (alreadyMember) {
             throw new BusinessException(
                     "You are already a member of this company. Please contact your HR.");
+        }
+
+        // The profileId is supplied by the CALLER (it came back from verifyJoinCode, but the
+        // /confirmJoin endpoint is anonymous and re-accepts it), so it has to be re-checked against
+        // the token here — otherwise a holder of any valid invitation could bind their account to
+        // someone else's person by naming that person's id. Same tie as setJoinPassword makes: the
+        // person's login identifier must be one the invitation was addressed to. A first-time
+        // invitee passes because createPersonForJoin seeded that identifier from this very address.
+        JoinContacts contacts = new JoinContacts(invitation.getEmail(), invitation.getMobile());
+        UserIdentity boundIdentity = identityService.findByProfile(profileId)
+                .orElseThrow(() -> new BusinessException("Person record not found."));
+        if (!contacts.includes(boundIdentity.getLoginEmail())
+                && !contacts.includes(boundIdentity.getLoginMobile())) {
+            throw new BusinessException("This link does not belong to that account.");
         }
 
         account.setProfileId(profileId);
