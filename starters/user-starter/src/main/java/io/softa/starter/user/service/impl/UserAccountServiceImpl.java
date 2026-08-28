@@ -406,16 +406,35 @@ public class UserAccountServiceImpl extends EntityServiceImpl<UserAccount, Long>
         if (profileId == null) {
             return Optional.empty();
         }
+        // Scoped to THIS company. @CrossTenant lets the query run before a membership is chosen, but
+        // a person may have left several companies — searching by profile alone would revive whichever
+        // closed row came first, possibly in another tenant. Re-hire happens inside one company's HR
+        // context, so that is the tenant this reuses.
+        Long tenantId = ContextHolder.getContext().getTenantId();
+        Assert.notNull(tenantId, "Re-hire must run within a company context.");
         Optional<UserAccount> closed = this.searchList(new Filters()
                         .eq(UserAccount::getProfileId, profileId)
+                        .eq(UserAccount::getTenantId, tenantId)
                         .eq(UserAccount::getStatus, AccountStatus.DEACTIVATED)).stream()
                 .findFirst();
         if (closed.isEmpty()) {
             return Optional.empty();
         }
         UserAccount account = closed.get();
+        // Refuse a work email another live account already holds, rather than letting the write hit
+        // uk_user_account_tenant_email — same guard resetWorkContacts and unbindAndReinvite make.
+        String email = StringUtils.trimToNull(workEmail);
+        if (email != null) {
+            this.getUserByEmail(email).filter(other -> !other.getId().equals(account.getId()))
+                    .ifPresent(other -> {
+                        throw new BusinessException("That work email already belongs to another account.");
+                    });
+        }
         reviveWith(account, workEmail, workMobile);
-        this.updateOne(account);
+        // updateOne(entity, false): reviveWith clears activationTime to null, which the default
+        // overload drops — the revived PENDING row would otherwise keep the previous stint's
+        // activation timestamp.
+        this.updateOne(account, false);
         log.info("Revived membership {} for profile {} — reset to PENDING, awaiting a new invitation.",
                 account.getId(), profileId);
         return Optional.of(account);
