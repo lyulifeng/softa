@@ -116,6 +116,16 @@ public interface UserAccountService extends EntityService<UserAccount, Long> {
     boolean isWorkContactShared(String contact);
 
     /**
+     * This person's membership of one company, WHATEVER its status — deactivated included.
+     *
+     * <p>Distinct from {@link #listMembershipsOf}, which hides deactivated rows: those rows still
+     * occupy the {@code (tenantId, profileId)} unique slot, so a caller about to bind a person to a
+     * company has to see a closed prior membership that {@code listMembershipsOf} would not report.
+     * At most one row exists, since the slot is unique.
+     */
+    Optional<UserAccount> findMembershipInTenant(Long tenantId, Long profileId);
+
+    /**
      * Prepare a membership for someone re-joining this company, reusing the closed row.
      *
      * <p>Re-hire revives rather than inserts, because {@code (tenantId, profileId)} is unique —

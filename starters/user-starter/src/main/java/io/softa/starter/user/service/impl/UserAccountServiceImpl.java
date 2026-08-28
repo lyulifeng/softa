@@ -345,6 +345,19 @@ public class UserAccountServiceImpl extends EntityServiceImpl<UserAccount, Long>
     @SkipPermissionCheck
     @CrossTenant
     @Override
+    public Optional<UserAccount> findMembershipInTenant(Long tenantId, Long profileId) {
+        if (tenantId == null || profileId == null) {
+            return Optional.empty();
+        }
+        return this.searchList(new Filters()
+                        .eq(UserAccount::getTenantId, tenantId)
+                        .eq(UserAccount::getProfileId, profileId)).stream()
+                .findFirst();
+    }
+
+    @SkipPermissionCheck
+    @CrossTenant
+    @Override
     public boolean isWorkContactShared(String contact) {
         if (StringUtils.isBlank(contact)) {
             return false;

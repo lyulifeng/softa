@@ -105,4 +105,25 @@ class ConfirmJoinAuthorizationTest {
 
         verify(accountService, never()).updateOne(any(UserAccount.class));
     }
+
+    @Test
+    void aReHireViaNewInvitation_isToldToUseReHire_notAConstraintError() {
+        // The person left this company before: their DEACTIVATED row still holds the (tenant,
+        // profile) slot. Binding here would hit the unique index; listMembershipsOf hides that row,
+        // so without this the operator sees a raw constraint error instead of "use re-hire".
+        givenPendingInvitationTo("alice@acme.com", null);
+        when(identityService.findByProfile(RIGHTFUL_PROFILE))
+                .thenReturn(Optional.of(identity("alice@acme.com", null)));
+        UserAccount closed = new UserAccount();
+        closed.setId(77L);
+        closed.setTenantId(TENANT);
+        closed.setStatus(AccountStatus.DEACTIVATED);
+        when(accountService.findMembershipInTenant(TENANT, RIGHTFUL_PROFILE))
+                .thenReturn(Optional.of(closed));
+
+        assertThatThrownBy(() -> service.confirmJoin(TOKEN, RIGHTFUL_PROFILE))
+                .isInstanceOf(BusinessException.class)
+                .hasMessageContaining("re-hire");
+        verify(accountService, never()).updateOne(any(UserAccount.class));
+    }
 }

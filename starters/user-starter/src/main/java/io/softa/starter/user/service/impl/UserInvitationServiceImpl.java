@@ -489,16 +489,22 @@ public class UserInvitationServiceImpl extends EntityServiceImpl<UserInvitation,
         UserAccount account = accountService.getById(invitation.getUserId())
                 .orElseThrow(() -> new BusinessException("Account not found."));
 
-        // Refuse if this person already holds a membership of this company (PRD §4.5 duplicate
-        // invitation). The unique index would refuse it too, but a clear message beats a
-        // constraint violation for something a person can actually be told about.
-        boolean alreadyMember = accountService.listMembershipsOf(profileId).stream()
-                .anyMatch(existing -> !existing.getId().equals(account.getId())
-                        && existing.getTenantId().equals(account.getTenantId()));
-        if (alreadyMember) {
-            throw new BusinessException(
-                    "You are already a member of this company. Please contact your HR.");
-        }
+        // Refuse if this person already occupies this company's (tenant, profile) slot (PRD §4.5).
+        // The unique index would refuse the bind too, but a constraint violation is not something a
+        // person can be told about — and a DEACTIVATED prior membership needs a DIFFERENT message:
+        // re-hiring reuses that row (reviveMembership), so a new invitation is the wrong tool and
+        // would only hit the index. listMembershipsOf hides deactivated rows, which is exactly the
+        // case that would otherwise surface as a raw constraint error, so this asks for all statuses.
+        accountService.findMembershipInTenant(account.getTenantId(), profileId)
+                .filter(existing -> !existing.getId().equals(account.getId()))
+                .ifPresent(existing -> {
+                    if (existing.getStatus() == AccountStatus.DEACTIVATED) {
+                        throw new BusinessException("This person previously left this company. Use "
+                                + "the re-hire flow rather than a new invitation.");
+                    }
+                    throw new BusinessException(
+                            "You are already a member of this company. Please contact your HR.");
+                });
 
         // The profileId is supplied by the CALLER (it came back from verifyJoinCode, but the
         // /confirmJoin endpoint is anonymous and re-accepts it), so it has to be re-checked against
