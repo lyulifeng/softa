@@ -212,43 +212,23 @@ public class LoginServiceImpl implements LoginService {
     }
 
     /**
-     * Find the PERSON behind a login identifier, healing the identifier as it goes.
+     * Find the PERSON behind a login identifier.
      *
-     * <p>Identifiers live on {@code UserIdentity} and are seeded when a person is created — but
-     * only since that seeding existed. Rows created before it have none, so resolving by
-     * identifier alone would lock every one of those people out of their own account. The fallback
-     * resolves the way login used to (by the ACCOUNT's work contact) and writes the identifier
-     * back, so the data converges on its own as people sign in: no migration script, no downtime,
-     * and no release where a subset of users simply cannot get in.
-     *
-     * <p>The fallback is sound only while {@code UserAccount.email} is globally unique — that is
-     * what makes "one account per address" true. Narrowing that index to {@code (tenantId, email)}
-     * must therefore wait for a LATER release, once this backfill has converged; doing both at
-     * once would make the fallback ambiguous exactly where it is still needed.
+     * <p>Identifiers are unique on {@code UserIdentity} and seeded when a person is created, so
+     * this is the whole of the lookup — there is deliberately no fallback to resolving the ACCOUNT
+     * by its work contact. Such a fallback existed while identifiers were being introduced, to heal
+     * rows created before the seeding; it also required {@code UserAccount.email} to stay globally
+     * unique, which is what kept the email index from being narrowed to {@code (tenantId, email)}.
+     * With no data predating the seeding, the fallback protects nobody and costs that narrowing.
      *
      * @param notFoundMessage what the caller may safely tell an anonymous stranger. Both reasons
-     *                        ("no such identifier", "identifier is not
-     *                        linked to a person") must report the same thing: a distinct message would confirm which accounts exist.
+     *                        ("no such identifier", "identifier is not linked to a person") must
+     *                        report the same thing: a distinct message would confirm which
+     *                        accounts exist.
      */
     private UserIdentity resolveIdentity(String identifier, String notFoundMessage) {
-        Optional<UserIdentity> byIdentifier = identityService.findByLoginIdentifier(identifier);
-        if (byIdentifier.isPresent()) {
-            return byIdentifier.get();
-        }
-        UserAccount account = accountService.getUserByEmail(identifier)
-                .or(() -> accountService.getUserByMobile(identifier))
+        return identityService.findByLoginIdentifier(identifier)
                 .orElseThrow(() -> new BusinessException(notFoundMessage));
-        UserIdentity identity;
-        try {
-            identity = identityService.requireIdentity(account);
-        } catch (BusinessException e) {
-            // A data fault inside, an ordinary failed login outside — see notFoundMessage.
-            log.error("Login blocked: account {} has no linked person; the credentials migration "
-                    + "did not cover it. Reporting a plain failure to the caller.", account.getId());
-            throw new BusinessException(notFoundMessage);
-        }
-        identityService.adoptIdentifier(identity, identifier);
-        return identity;
     }
 
     /**

@@ -44,16 +44,6 @@ public interface UserIdentityService extends EntityService<UserIdentity, Long> {
      */
     Optional<UserIdentity> findByProfile(Long profileId);
 
-    /**
-     * Record an identifier this person just proved they control, if it is not recorded yet.
-     *
-     * <p>Backfill for people whose identity row predates identifier seeding: they authenticate
-     * through the account's work contact, and this writes the identifier back so the next sign-in
-     * resolves them directly. A no-op when the slot already holds a value — an identifier already
-     * on file is not something a login may overwrite, or proving control of one address would let
-     * someone replace another.
-     */
-    void adoptIdentifier(UserIdentity identity, String identifier);
 
     /**
      * Whether this identifier is free to become someone's LOGIN identifier.

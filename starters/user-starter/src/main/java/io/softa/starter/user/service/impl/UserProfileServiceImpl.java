@@ -339,8 +339,8 @@ public class UserProfileServiceImpl extends EntityServiceImpl<UserProfile, Long>
         // their credentials row exists, and requireIdentity resolves through it.
         //
         // Login RESOLVES people by these identifiers now, so seeding them here is what makes a
-        // freshly created person able to sign in at all. Rows created before this seeding existed
-        // are healed lazily on their first sign-in (UserIdentityService.adoptIdentifier).
+        // freshly created person able to sign in at all — it is the only place a person created
+        // from an account gets one.
         UserIdentity identity = new UserIdentity();
         identity.setProfileId(profileId);
         // Seeded only when the value is not ALREADY someone's login identifier. A work contact and

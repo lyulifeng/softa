@@ -132,35 +132,6 @@ public class UserIdentityServiceImpl extends EntityServiceImpl<UserIdentity, Lon
                 .allMatch(other -> Objects.equals(other.getProfileId(), forProfileId));
     }
 
-    @SkipPermissionCheck
-    @CrossTenant
-    @Override
-    public void adoptIdentifier(UserIdentity identity, String identifier) {
-        if (identity == null || StringUtils.isBlank(identifier)) {
-            return;
-        }
-        boolean isEmail = identifier.contains("@");
-        if (isEmail ? StringUtils.isNotBlank(identity.getLoginEmail())
-                : StringUtils.isNotBlank(identity.getLoginMobile())) {
-            return;
-        }
-        if (!this.isIdentifierClaimable(identifier, identity.getProfileId())) {
-            // Someone else already logs in with this. Claiming it would take BOTH of them out —
-            // resolution refuses an identifier two people hold — so the one who had it keeps it,
-            // and this person signs in by their other channel until they get one of their own.
-            log.warn("Not adopting login identifier for identity {}: another person already holds "
-                    + "it. They keep their existing channels.", identity.getId());
-            return;
-        }
-        if (isEmail) {
-            identity.setLoginEmail(identifier);
-        } else {
-            identity.setLoginMobile(identifier);
-        }
-        this.updateOne(identity);
-        log.info("Backfilled the login {} of identity {} from the account's work contact.",
-                isEmail ? "email" : "mobile", identity.getId());
-    }
 
     @Override
     public boolean matchesPassword(UserIdentity identity, String rawPassword) {

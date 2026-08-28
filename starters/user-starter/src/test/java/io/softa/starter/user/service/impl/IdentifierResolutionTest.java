@@ -27,17 +27,14 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 /**
- * Login now resolves the PERSON by a login identifier rather than the company account by its work
- * email. Two properties of that switch are load-bearing:
+ * Login resolves the PERSON by a login identifier rather than the company account by its work
+ * email, and that is the WHOLE lookup — there is no fallback to the work contact. One existed while
+ * identifiers were being introduced; it required {@code UserAccount.email} to stay globally unique,
+ * which is precisely what blocked narrowing that index to {@code (tenantId, email)}.
  *
- * <ul>
- *   <li><b>nobody is locked out</b> — identity rows created before identifier seeding existed have
- *       no identifier at all, so resolution falls back to the account's work contact and writes the
- *       identifier back. Without the fallback, this release would simply refuse those people;</li>
- *   <li><b>no account-existence oracle</b> — "no such identifier", "identifier not linked to a
- *       person" and "wrong password" must be indistinguishable from outside, or an anonymous
- *       endpoint tells a stranger which addresses are registered.</li>
- * </ul>
+ * <p>What is load-bearing here is the absence of an account-existence oracle: "no such identifier"
+ * and "wrong password" must be indistinguishable from outside, or an anonymous endpoint tells a
+ * stranger which addresses are registered.
  */
 class IdentifierResolutionTest {
 
@@ -96,49 +93,25 @@ class IdentifierResolutionTest {
 
         assertThat(result.isResolved()).isTrue();
         assertThat(result.profileId()).isEqualTo(PROFILE);
-        // Nothing to heal, so nothing is written.
-        verify(identityService, never()).adoptIdentifier(any(), anyString());
     }
 
     @Test
-    void noIdentifierYet_fallsBackToTheWorkContact_andBackfillsIt() {
-        // The people this exists for: their identity row predates identifier seeding. Resolving by
-        // identifier alone would refuse them, on data they never had a chance to supply.
-        UserIdentity person = identity(null, "hash");
-        UserAccount account = membership();
+    void anUnknownIdentifier_isRefused_withNoFallbackToTheWorkContact() {
+        // There is deliberately no second lookup by the ACCOUNT's work contact. One existed while
+        // identifiers were being introduced, to heal rows created before the seeding; keeping it
+        // would require UserAccount.email to stay globally unique, which is exactly what blocks
+        // narrowing that index to (tenantId, email).
         when(identityService.findByLoginIdentifier(EMAIL)).thenReturn(Optional.empty());
-        when(accountService.getUserByEmail(EMAIL)).thenReturn(Optional.of(account));
-        when(identityService.requireIdentity(account)).thenReturn(person);
-        when(identityService.matchesPassword(person, PASSWORD)).thenReturn(true);
-        givenOneCompany();
-
-        AuthenticationResult result = loginService.authenticateByPassword(EMAIL, PASSWORD);
-
-        assertThat(result.isResolved()).isTrue();
-        // Written back, so the next sign-in resolves directly and the data converges on its own.
-        verify(identityService).adoptIdentifier(person, EMAIL);
-    }
-
-    @Test
-    void accountWithNoLinkedPerson_reportsAnOrdinaryFailedLogin() {
-        // A data fault inside; from outside it must look exactly like a wrong password, or the
-        // distinct message confirms the address is registered.
-        UserAccount account = membership();
-        when(identityService.findByLoginIdentifier(EMAIL)).thenReturn(Optional.empty());
-        when(accountService.getUserByEmail(EMAIL)).thenReturn(Optional.of(account));
-        when(identityService.requireIdentity(account))
-                .thenThrow(new BusinessException("This account is not linked to a person yet."));
 
         assertThatThrownBy(() -> loginService.authenticateByPassword(EMAIL, PASSWORD))
                 .isInstanceOf(BusinessException.class)
                 .hasMessageContaining(FAILED_LOGIN);
+        verify(accountService, never()).getUserByEmail(anyString());
     }
 
     @Test
     void unknownIdentifier_andWrongPassword_areIndistinguishable() {
         when(identityService.findByLoginIdentifier("nobody@acme.com")).thenReturn(Optional.empty());
-        when(accountService.getUserByEmail("nobody@acme.com")).thenReturn(Optional.empty());
-        when(accountService.getUserByMobile("nobody@acme.com")).thenReturn(Optional.empty());
 
         UserIdentity person = identity(EMAIL, "hash");
         when(identityService.findByLoginIdentifier(EMAIL)).thenReturn(Optional.of(person));
