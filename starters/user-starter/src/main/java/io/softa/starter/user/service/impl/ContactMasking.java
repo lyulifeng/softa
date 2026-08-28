@@ -15,20 +15,23 @@ final class ContactMasking {
     }
 
     /**
-     * {@code +8613800138000} → {@code +86 138****8000}. Numbers shorter than 7 digits keep only
-     * their last 3, since masking a short number to a fixed shape would reveal proportionally more.
+     * {@code +8613800138000} → {@code +861****8000} — first three and last four around a fixed
+     * mask, with the leading {@code +} kept so an international number still reads as one. Numbers
+     * shorter than 7 digits keep only their last 3, since masking a short number to a fixed shape
+     * would reveal proportionally more.
      */
     static String mobile(String value) {
         if (StringUtils.isBlank(value)) {
             return null;
         }
         String digits = value.replaceAll("[^0-9+]", "");
+        String prefix = digits.startsWith("+") ? "+" : "";
         String national = digits.startsWith("+") ? digits.substring(1) : digits;
         if (national.length() < 7) {
             int keep = Math.min(3, national.length());
-            return "****" + national.substring(national.length() - keep);
+            return prefix + "****" + national.substring(national.length() - keep);
         }
-        return national.substring(0, 3) + "****" + national.substring(national.length() - 4);
+        return prefix + national.substring(0, 3) + "****" + national.substring(national.length() - 4);
     }
 
     /** {@code alice@acme.com} → {@code a***@acme.com}; the domain stays so the company is evident. */

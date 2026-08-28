@@ -98,12 +98,13 @@ public class UserIdentityServiceImpl extends EntityServiceImpl<UserIdentity, Lon
     /**
      * One identity for this identifier, refusing loudly when several rows claim it.
      *
-     * <p>The identifier columns carry no unique index yet (see {@link UserIdentity}), so the
-     * database cannot rule this out. The raw {@code searchOne} does throw on more than one row,
-     * but as an {@code IllegalArgumentException} carrying the filter — which would surface at an
-     * anonymous login endpoint as a server error quoting somebody's address. Translated here so
-     * the caller reports a refusal instead: ambiguous is not "pick one", because picking would
-     * mean signing someone in as a person who merely shares their phone number.
+     * <p>The unique indexes on the identifier columns (see {@link UserIdentity}) make more than one
+     * row impossible at the database level, so this is defence-in-depth rather than the primary
+     * guard. If it ever did happen — a partially-applied migration, a manual write — the raw
+     * {@code searchOne} throws an {@code IllegalArgumentException} carrying the filter, which at an
+     * anonymous login endpoint would surface as a server error quoting somebody's address.
+     * Translated here to a refusal instead: ambiguous is not "pick one", because picking would mean
+     * signing someone in as a person who merely shares their phone number.
      */
     private Optional<UserIdentity> searchOneIdentifier(Filters filters, String identifier) {
         try {
@@ -126,8 +127,8 @@ public class UserIdentityServiceImpl extends EntityServiceImpl<UserIdentity, Lon
         Filters filters = isEmail
                 ? new Filters().eq(UserIdentity::getLoginEmail, identifier)
                 : new Filters().eq(UserIdentity::getLoginMobile, identifier);
-        // searchList, not searchOne: the point is to COUNT claimants, and searchOne throws on more
-        // than one — which is the very state this method exists to detect.
+        // searchList, not searchOne: the point is to COUNT claimants (0 = free, 1 = held, and if a
+        // migration ever left more than one, searchOne would throw rather than count them).
         return this.searchList(filters).stream()
                 .allMatch(other -> Objects.equals(other.getProfileId(), forProfileId));
     }

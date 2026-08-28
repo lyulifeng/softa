@@ -81,6 +81,22 @@ public class UserAccountServiceImpl extends EntityServiceImpl<UserAccount, Long>
         return updated;
     }
 
+    /**
+     * The null-preserving twin — used where a write must clear a column (off-board releasing a
+     * login identifier, unbind detaching a person, revive resetting activation). It has to evict
+     * the cached UserInfo for the SAME reason the single-arg override does: unbind flips an account
+     * to INVITED and detaches its person, but a stale cache would keep the mis-bound session alive
+     * and active for the cache's month-long TTL — defeating the whole point of unbinding.
+     */
+    @Override
+    public boolean updateOne(UserAccount entity, boolean ignoreNull) {
+        boolean updated = super.updateOne(entity, ignoreNull);
+        if (updated && entity != null) {
+            profileService.evictUserInfo(entity.getId());
+        }
+        return updated;
+    }
+
     // @CrossTenant: the company step runs BEFORE a tenant context exists — the whole point is to
     // list memberships ACROSS tenants so the person can pick one.
     @Override

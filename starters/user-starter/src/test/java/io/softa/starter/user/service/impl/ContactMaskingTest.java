@@ -13,14 +13,14 @@ class ContactMaskingTest {
 
     @Test
     void mobileKeepsEnoughToRecognise_andNotEnoughToDial() {
-        assertThat(ContactMasking.mobile("+8613800138000")).isEqualTo("861****8000");
+        assertThat(ContactMasking.mobile("+8613800138000")).isEqualTo("+861****8000");
         // Recognisable: the owner knows their last four. Unusable: the middle is gone.
         assertThat(ContactMasking.mobile("+8613800138000")).doesNotContain("13800138000");
     }
 
     @Test
     void mobileStripsFormatting() {
-        assertThat(ContactMasking.mobile("+86 138-0013-8000")).isEqualTo("861****8000");
+        assertThat(ContactMasking.mobile("+86 138-0013-8000")).isEqualTo("+861****8000");
     }
 
     @Test
