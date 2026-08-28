@@ -30,6 +30,10 @@ public class AliyunOSSClientService implements OssClientService {
 
     private OSS ossClient;
 
+    // Signs the URLs the browser fetches — see AliyunOSSConfig#presignOss. Same instance as ossClient
+    // unless `oss.presign-endpoint` names a different address.
+    private OSS presignClient;
+
     private OSSProperties ossProperties;
 
     private String getBucketName() {
@@ -87,7 +91,7 @@ public class AliyunOSSClientService implements OssClientService {
     public String getPreSignedUrl(String ossKey, int expirationInSeconds, String fileName) {
         try {
             Date expiration = new Date(System.currentTimeMillis() + expirationInSeconds * 1000L);
-            URL url = ossClient.generatePresignedUrl(getBucketName(), ossKey, expiration);
+            URL url = presignClient.generatePresignedUrl(getBucketName(), ossKey, expiration);
             return url.toString();
         } catch (Exception e) {
             throw new ExternalException("Error while generating the file URL {0}", fileName, e);
@@ -110,7 +114,7 @@ public class AliyunOSSClientService implements OssClientService {
             ResponseHeaderOverrides responseHeaders = new ResponseHeaderOverrides();
             responseHeaders.setContentDisposition(ATTACHMENT_VALUE);
             request.setResponseHeaders(responseHeaders);
-            URL url = ossClient.generatePresignedUrl(request);
+            URL url = presignClient.generatePresignedUrl(request);
             return url.toString();
         } catch (Exception e) {
             throw new ExternalException("Error while generating the download URL {0}", fileName, e);
