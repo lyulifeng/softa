@@ -22,6 +22,22 @@ public interface Encryptor {
     Map<Integer, String> encrypt(Map<Integer, String> plaintextIndexMap, String password) throws Exception;
 
     /**
+     * Tells whether a stored value is ciphertext of this algorithm, without decrypting it.
+     * Lets a caller skip values that are already encrypted, and find plaintext left in an encrypted
+     * column, with no key derivation involved.
+     *
+     * <p>The default is deliberately conservative: an implementation that cannot recognise its own
+     * output reports every value as ciphertext, so a repair job does nothing rather than encrypting
+     * a value a second time. Override it whenever the output has a recognisable layout.
+     *
+     * @param value The stored value.
+     * @return True if the value is ciphertext of this algorithm.
+     */
+    default boolean isCiphertext(String value) {
+        return true;
+    }
+
+    /**
      * Decrypts the provided data.
      * Return original string if it cannot be decrypted
      *

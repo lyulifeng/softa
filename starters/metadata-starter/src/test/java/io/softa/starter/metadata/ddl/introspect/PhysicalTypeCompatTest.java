@@ -113,6 +113,28 @@ class PhysicalTypeCompatTest {
                 observed(Types.DECIMAL, 10, 2)));
     }
 
+    @Test
+    void doubleComparesAgainstTheExactNumericColumnItRendersAs() {
+        // Both dialects render FieldType.DOUBLE as an exact numeric column (MySQL DECIMAL,
+        // PostgreSQL NUMERIC) at the builtin (24,2) default, and the driver reports it back
+        // as DECIMAL/NUMERIC. Comparing the class alone made every Double field permanently
+        // INCOMPARABLE against its own column — a drift no DDL could resolve, re-planned as
+        // a no-op MODIFY on every boot of the convergence lane (UAT, 2026-08: 7 columns).
+        assertEquals(Verdict.EQUAL, verdict(declared(FieldType.DOUBLE, 24, 2),
+                observed(Types.DECIMAL, 24, 2)));
+        assertEquals(Verdict.EQUAL, verdict(declared(FieldType.DOUBLE, 24, 2),
+                observed(Types.NUMERIC, 24, 2)));
+        // The precision/scale axis stays live, so real drift on a Double column still acts.
+        assertEquals(Verdict.WIDEN, verdict(declared(FieldType.DOUBLE, 24, 2),
+                observed(Types.DECIMAL, 10, 2)));
+        assertEquals(Verdict.NARROW, verdict(declared(FieldType.DOUBLE, 24, 1),
+                observed(Types.DECIMAL, 24, 2)));
+        // The reverse pairing is genuine, fixable drift (declared DECIMAL, physical DOUBLE)
+        // and keeps degrading to report-only.
+        assertEquals(Verdict.INCOMPARABLE, verdict(declared(FieldType.BIG_DECIMAL, 32, 8),
+                observed(Types.DOUBLE, 24, 2)));
+    }
+
     // ---- incomparable --------------------------------------------------------
 
     @Test

@@ -1,7 +1,6 @@
 package io.softa.framework.web.task.handlers;
 
 import java.util.*;
-import java.util.stream.Collectors;
 import com.google.common.collect.Sets;
 import org.apache.commons.lang3.StringUtils;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -18,6 +17,7 @@ import io.softa.framework.orm.service.ModelService;
 import io.softa.framework.web.task.AsyncTaskHandler;
 import io.softa.framework.web.task.AsyncTaskHandlerList;
 import io.softa.framework.web.task.params.RecomputeHandlerParams;
+import io.softa.framework.web.utils.RecomputeUtils;
 
 import static io.softa.framework.orm.constant.ModelConstant.ID;
 import static io.softa.framework.orm.constant.ModelConstant.SLICE_ID;
@@ -78,7 +78,7 @@ public class RecomputeModelFieldHandler implements AsyncTaskHandler<RecomputeHan
     @SkipPermissionCheck
     public void execute(RecomputeHandlerParams taskParams) {
         // Get the dependent fields for stored cascaded and computed fields
-        Set<String> dependedFields = this.getDependedFields(taskParams.getModel(), taskParams.getFields());
+        Set<String> dependedFields = RecomputeUtils.getDependedFields(taskParams.getModel(), taskParams.getFields());
         Assert.notEmpty(dependedFields,
                 "No stored cascaded or computed fields need recalculation for model {0}!", taskParams.getModel());
         dependedFields.addAll(ModelManager.isTimelineModel(taskParams.getModel()) ?
@@ -93,33 +93,5 @@ public class RecomputeModelFieldHandler implements AsyncTaskHandler<RecomputeHan
         if (!CollectionUtils.isEmpty(rows)) {
             modelService.updateList(taskParams.getModel(), rows);
         }
-    }
-
-    /**
-     * Get the dependent fields for stored cascaded and computed fields.
-     *
-     * @param model the name of the model
-     * @param fields a set of field names that need to be recalculated
-     * @return a set of dependent fields
-     */
-    private Set<String> getDependedFields(String model, Set<String> fields) {
-        Collection<MetaField> metaFields;
-        if (CollectionUtils.isEmpty(fields)) {
-            metaFields = ModelManager.getModelFields(model);
-        } else {
-            metaFields = fields.stream().map(field -> ModelManager.getModelField(model, field)).collect(Collectors.toList());
-        }
-        // Get the dependent fields for stored cascaded and computed fields
-        Set<String> dependedFields = new HashSet<>();
-        metaFields.stream()
-                .filter(metaField -> !metaField.isDynamic())
-                .forEach(metaField -> {
-                    if (StringUtils.isNotBlank(metaField.getCascadedField())) {
-                        dependedFields.add(metaField.getDependentFields().getFirst());
-                    } else if (metaField.isComputed()) {
-                        dependedFields.addAll(metaField.getDependentFields());
-                    }
-                });
-        return dependedFields;
     }
 }

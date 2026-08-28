@@ -58,8 +58,21 @@ public class EncryptUtils {
     }
 
     /**
+     * Tells whether a stored value is ciphertext, without decrypting it.
+     * Use it to skip values that are already encrypted, and to find plaintext left in an encrypted
+     * column - neither needs the encryption key. A blank value is never ciphertext.
+     *
+     * @param value the stored value
+     * @return true if the value is ciphertext
+     */
+    public static boolean isCiphertext(String value) {
+        return StringUtils.isNotBlank(value) && encryptor.isCiphertext(value);
+    }
+
+    /**
      * Single ciphertext decryption
-     * If decryption fails (such as plaintext passed in), the original text is returned.
+     * If the value is not ciphertext at all (such as plaintext passed in), the original text is
+     * returned; ciphertext that does not decrypt under the configured key raises an exception.
      *
      * @param ciphertext ciphertext
      * @return plaintext
@@ -68,6 +81,9 @@ public class EncryptUtils {
         if (StringUtils.isNotBlank(ciphertext)) {
             try {
                 return encryptor.decrypt(ciphertext, password);
+            } catch (SystemException e) {
+                // Already diagnosed by the algorithm, do not bury it under a second message
+                throw e;
             } catch (Exception e) {
                 throw new SystemException("Decrypt exception!", e);
             }
@@ -102,6 +118,9 @@ public class EncryptUtils {
         if (!CollectionUtils.isEmpty(ciphertextMap)) {
             try {
                 return encryptor.decrypt(ciphertextMap, password);
+            } catch (SystemException e) {
+                // Already diagnosed by the algorithm, do not bury it under a second message
+                throw e;
             } catch (Exception e) {
                 throw new SystemException("Batch decrypts exception!", e);
             }

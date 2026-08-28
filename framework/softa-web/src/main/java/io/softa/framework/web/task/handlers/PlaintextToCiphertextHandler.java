@@ -78,17 +78,21 @@ public class PlaintextToCiphertextHandler implements AsyncTaskHandler<PlaintextT
     @Override
     @SkipPermissionCheck
     public void execute(PlaintextToCiphertextParams taskParams) {
-        // Construct the pagination query for reading dependent fields.
-        Set<String> readFields = ModelManager.isTimelineModel(taskParams.getModel()) ?
+        // The fields an update has to carry to address a row, on top of the one being encrypted
+        Set<String> keyFields = ModelManager.isTimelineModel(taskParams.getModel()) ?
                 Sets.newHashSet(ID, SLICE_ID) : Sets.newHashSet(ID);
+        // Construct the pagination query for reading dependent fields.
+        Set<String> readFields = new HashSet<>(keyFields);
         readFields.addAll(taskParams.getFields());
         Filters filters = new Filters().in(ID, taskParams.getIds());
         FlexQuery flexQuery = new FlexQuery(readFields, filters).acrossTimelineData();
         // Get the original value from the database.
         flexQuery.setConvertType(ConvertType.ORIGINAL);
         List<Map<String, Object>> rows = modelService.searchList(taskParams.getModel(), flexQuery);
+        // Verify the configured key before the first write, never in the middle of the task
+        this.checkEncryptionKey(taskParams.getFields(), rows);
         taskParams.getFields().forEach(field -> {
-            List<Map<String, Object>> plaintextRows = this.getPlaintextRows(field, rows);
+            List<Map<String, Object>> plaintextRows = this.getPlaintextRows(keyFields, field, rows);
             if (!CollectionUtils.isEmpty(plaintextRows)) {
                 modelService.updateList(taskParams.getModel(), plaintextRows);
             }
@@ -96,28 +100,64 @@ public class PlaintextToCiphertextHandler implements AsyncTaskHandler<PlaintextT
     }
 
     /**
-     * Get the plaintext data.
+     * Decrypts one value that is already encrypted and discards the result. Encrypting the remaining rows
+     * under a key the existing data was not written with would leave the column half readable, so a
+     * mismatch has to stop the task before anything is written. One value answers it for the whole task -
+     * a successful decryption is proof of the key - and deriving a key costs 10000 hash rounds.
      *
-     * @param fieldName The name of the field that needs historical data correction.
-     * @param rows The paginated database rows.
-     * @return A list of plaintext data extracted from the specified field in the provided rows.
+     * @param fields The fields whose historical data is being corrected.
+     * @param rows The database rows read for those fields.
      */
-    private List<Map<String, Object>> getPlaintextRows(String fieldName, List<Map<String, Object>> rows) {
-        // Extract a map of ciphertext: index-ciphertext for batch decryption, ignoring null and empty strings.
-        Map<Integer, String> ciphertextMap = ListUtils.extractValueIndexMap(rows, fieldName);
-        if (!CollectionUtils.isEmpty(ciphertextMap)) {
-            // Perform batch decryption on the original values, obtaining a map of ciphertext-plaintext pairs.
-            // Values not in this map are plaintext
-            Map<Integer, String> decryptedValues = EncryptUtils.decrypt(ciphertextMap);
-            List<Map<String, Object>> plaintextRows = new ArrayList<>();
-            for (int i = 0; i < rows.size(); i++) {
-                if (!decryptedValues.containsKey(i)) {
-                    plaintextRows.add(rows.get(i));
+    private void checkEncryptionKey(Set<String> fields, List<Map<String, Object>> rows) {
+        for (String field : fields) {
+            for (String value : ListUtils.extractValueIndexMap(rows, field).values()) {
+                if (EncryptUtils.isCiphertext(value)) {
+                    EncryptUtils.decrypt(value);
+                    return;
                 }
             }
-            return plaintextRows;
-        } else {
-            return Collections.emptyList();
         }
+    }
+
+    /**
+     * Get the rows whose given field still holds a plaintext value, as an update carrying that field alone.
+     *
+     * @param keyFields The fields that address a row.
+     * @param fieldName The name of the field that needs historical data correction.
+     * @param rows The paginated database rows.
+     * @return A list of updates for the rows whose specified field holds a plaintext value.
+     */
+    private List<Map<String, Object>> getPlaintextRows(Set<String> keyFields, String fieldName,
+                                                       List<Map<String, Object>> rows) {
+        // Extract a map of index-value, ignoring null and empty strings: a row whose field holds no value
+        // has nothing to encrypt, and must not be rewritten.
+        Map<Integer, String> valueMap = ListUtils.extractValueIndexMap(rows, fieldName);
+        List<Map<String, Object>> plaintextRows = new ArrayList<>();
+        // Telling plaintext from ciphertext is a test on the stored layout, so it costs no key derivation
+        valueMap.forEach((index, value) -> {
+            if (!EncryptUtils.isCiphertext(value)) {
+                plaintextRows.add(this.toFieldUpdate(keyFields, fieldName, rows.get(index), value));
+            }
+        });
+        return plaintextRows;
+    }
+
+    /**
+     * Build the update for one row: the fields that address it, plus the single field being encrypted.
+     * Submitting the whole row would carry the other encrypted fields' stored ciphertext back into the
+     * write pipeline, which encrypts it a second time.
+     *
+     * @param keyFields The fields that address a row.
+     * @param fieldName The name of the field being encrypted.
+     * @param row The database row read with its original values.
+     * @param value The plaintext value of the field being encrypted.
+     * @return An update carrying the addressing fields and the field being encrypted.
+     */
+    private Map<String, Object> toFieldUpdate(Set<String> keyFields, String fieldName,
+                                              Map<String, Object> row, String value) {
+        Map<String, Object> update = new HashMap<>();
+        keyFields.forEach(keyField -> update.put(keyField, row.get(keyField)));
+        update.put(fieldName, value);
+        return update;
     }
 }

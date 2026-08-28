@@ -11,7 +11,7 @@ import org.springframework.web.bind.annotation.*;
 import io.softa.framework.base.placeholder.PlaceholderToken;
 import io.softa.framework.base.placeholder.PlaceholderUtils;
 import io.softa.framework.orm.compute.ComputeUtils;
-import io.softa.framework.web.dto.ModelField;
+import io.softa.framework.web.dto.FixUnencryptedDataParams;
 import io.softa.framework.web.dto.ModelFields;
 import io.softa.framework.web.response.ApiResponse;
 import io.softa.framework.web.service.ToolkitService;
@@ -44,15 +44,17 @@ public class ToolkitController {
     /**
      * Encrypts historical plaintext data after the field is set to `encrypted=true`.
      *
-     * @param modelField the model name and the field name for which historical data needs to be encrypted
-     * @return the number of rows fixed
+     * @param params the field whose historical data needs to be encrypted, and how to run it
+     * @return the number of rows fixed, or that a dry run would fix
      */
     @Operation(description = """
             After changing field to encrypted field, call this API to encrypt historical plaintext data.
-            The field name cannot be empty. Returns the number of rows fixed.""")
+            The field name cannot be empty. Set `dryRun` to report how many rows hold a plaintext value
+            without writing anything. Returns the number of rows fixed, or that a dry run would fix.""")
     @PostMapping("/fixUnencryptedData")
-    public ApiResponse<Long> fixUnencryptedData(@RequestBody @Valid ModelField modelField) {
-        Long result = toolkitService.fixUnencryptedData(modelField.getModel(), modelField.getField());
+    public ApiResponse<Long> fixUnencryptedData(@RequestBody @Valid FixUnencryptedDataParams params) {
+        Long result = toolkitService.fixUnencryptedData(
+                params.getModel(), params.getField(), params.isDryRun());
         return ApiResponse.success(result);
     }
 
