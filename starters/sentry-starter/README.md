@@ -82,9 +82,25 @@ Troubleshooting: set `SENTRY_DEBUG=true` and the SDK logs why events are (or are
 
 `send-default-pii` defaults to `false` and should stay that way for applications holding personal data. Exception *messages* still travel to Sentry — keep personal data out of them (this is good logging hygiene regardless). Server-side scrubbing rules on sentry.io are the second line of defense.
 
-## JDBC tracing overhead
+## JDBC tracing
 
-With the switch off, nothing is wrapped — zero overhead. With it on, every JDBC call goes through one extra proxy invocation (microseconds; relevant only in hot loops issuing thousands of tiny statements), and span objects are allocated only for requests selected by `traces-sample-rate`. Enable it on UAT freely; on production, decide based on the sample rate and statement volume.
+`softa.sentry.jdbc-tracing.enabled=true` wraps every `DataSource` bean in a P6Spy proxy. P6Spy's proxied statements fire events to registered `JdbcEventListener`s, and sentry-jdbc registers one over `META-INF/services`, which opens a child span per statement on the current transaction. Because the wrap sits on the `DataSource` bean, it covers everything that reaches the database through Spring — `JdbcProxy`/`JdbcTemplate`, framework internals, and a routing `DataSource` alike (a routing datasource is wrapped once, on the outside; its targets are not separate beans, so no statement is recorded twice).
+
+**Spans only, never logs.** P6Spy enables a statement-logging module of its own by default (`P6LogFactory`, appending to a `spy.log` FILE). That is switched off here — the module list is narrowed to the core factory — because a file inside the container is invisible to any stdout-based log pipeline, unrotated, and would duplicate SQL that the ORM already logs. The Sentry listener is unaffected: P6Spy composes module listeners and ServiceLoader listeners from two independent sources. An application that configures `p6spy.config.modulelist` itself keeps its own setup.
+
+**Relationship to the ORM's own SQL logging.** softa-orm logs SQL through `ExecuteSqlAspect`, gated per request on `Context.isDebug()` (the `X-Debug` header). The two are complementary, not redundant:
+
+| | ORM debug logging | Sentry JDBC spans |
+| --- | --- | --- |
+| Trigger | per request, `X-Debug` | global switch + trace sampling |
+| Layer | AOP around `@ExecuteSql` methods | JDBC driver proxy |
+| Content | SQL + **parameter values** + timing + result | SQL description + timing, placed in the request's span tree |
+| Destination | SLF4J (WARN) → stdout | Sentry transaction |
+| Answers | "what SQL did this request run, with what values" | "which statement is this request slow in" |
+
+⚠️ Because the ORM's log is WARN, it does not become a Sentry *event*, but it does become a **breadcrumb** on any error event later in the same request — carrying its parameter values with it. On a request that ran with `X-Debug`, personal data in those parameters would reach Sentry that way; `send-default-pii: false` does not cover it (that setting governs cookies, IP and request bodies). `X-Debug` is a deliberate per-request debugging tool rather than a steady state, which is what keeps the exposure narrow.
+
+**Overhead.** With the switch off, nothing is wrapped — zero cost. With it on, every JDBC call goes through one extra proxy invocation (microseconds; relevant only in hot loops issuing thousands of tiny statements), and span objects are allocated only for requests the sampler selected. Enable it freely on test environments; on production, decide based on the sample rate and statement volume.
 
 ## Distributed tracing
 
