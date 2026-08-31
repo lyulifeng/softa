@@ -71,13 +71,7 @@ public class UniqueConstraintValidator {
             }
             String message = buildDuplicateMessage(uniqueConstraints, existingKey);
             for (Map<String, Object> row : duplicateRows) {
-                if (!skipException) {
-                    throw new ValidationException(message);
-                }
-                String failedReason = row.containsKey(FileConstant.FAILED_REASON)
-                        ? row.get(FileConstant.FAILED_REASON) + "; " : "";
-                failedReason += message;
-                row.put(FileConstant.FAILED_REASON, failedReason);
+                markFailure(row, message, skipException);
             }
         }
     }
@@ -89,6 +83,69 @@ public class UniqueConstraintValidator {
      * @param uniqueConstraints the unique constraint field names
      * @return a list of field values, or null if any field value is null/empty
      */
+    /**
+     * Keeps only the first of any rows in this file that share a unique key.
+     *
+     * <p>The database check above answers "does this already exist"; it says nothing about the file
+     * itself. Two rows carrying the same key are not a database problem at all — under
+     * {@code CREATE_OR_UPDATE} the first creates the record and the second updates it, so the sheet
+     * quietly resolves to <b>last</b> wins. An operator who pasted a corrected row above the original
+     * gets the original.
+     *
+     * <p>First wins instead, and the rest come back in the failed-data file saying why. Silently
+     * dropping them would leave the operator believing every line landed.
+     *
+     * <p>Rows whose key is blank are never duplicates of one another: a blank key is what a new record
+     * looks like, and two new records are two records.
+     *
+     * <p>Runs for every import rule. {@code ONLY_CREATE} is the only one that checks the database, but
+     * every rule can be handed the same row twice.
+     *
+     * @param uniqueConstraints the fields that identify a record
+     * @param rows the import rows, in sheet order — which is what decides who is first
+     * @param skipException mark the later rows as failed, or fail the whole import
+     */
+    public void markInFileDuplicates(List<String> uniqueConstraints, List<Map<String, Object>> rows,
+                                     boolean skipException) {
+        if (CollectionUtils.isEmpty(uniqueConstraints) || CollectionUtils.isEmpty(rows)) {
+            return;
+        }
+        Set<List<Object>> seen = new HashSet<>();
+        for (Map<String, Object> row : rows) {
+            if (row.containsKey(FileConstant.FAILED_REASON)) {
+                continue;
+            }
+            List<Object> keyValues = extractKeyValues(row, uniqueConstraints);
+            if (keyValues == null) {
+                continue;
+            }
+            if (!seen.add(keyValues)) {
+                markFailure(row, buildInFileDuplicateMessage(uniqueConstraints, keyValues), skipException);
+            }
+        }
+    }
+
+    /** Fails one row, or the whole import, depending on what the template asked for. */
+    private void markFailure(Map<String, Object> row, String message, boolean skipException) {
+        if (!skipException) {
+            throw new ValidationException(message);
+        }
+        String failedReason = row.containsKey(FileConstant.FAILED_REASON)
+                ? row.get(FileConstant.FAILED_REASON) + "; " : "";
+        row.put(FileConstant.FAILED_REASON, failedReason + message);
+    }
+
+    private String buildInFileDuplicateMessage(List<String> uniqueConstraints, List<Object> keyValues) {
+        StringBuilder sb = new StringBuilder("An earlier row in this file already has ");
+        for (int i = 0; i < uniqueConstraints.size(); i++) {
+            if (i > 0) {
+                sb.append(", ");
+            }
+            sb.append(uniqueConstraints.get(i)).append("=").append(keyValues.get(i));
+        }
+        return sb.append("; only the first row with a given key takes effect.").toString();
+    }
+
     private List<Object> extractKeyValues(Map<String, Object> row, List<String> uniqueConstraints) {
         List<Object> values = new ArrayList<>(uniqueConstraints.size());
         for (String field : uniqueConstraints) {
