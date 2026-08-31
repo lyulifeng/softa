@@ -629,9 +629,6 @@ public class RelationLookupResolver {
     }
 
     /**
-     * Builds a human-readable not-found message for one business-key tuple.
-     */
-    /**
      * Why a lookup found nothing.
      *
      * <p>With one column the message speaks for itself: that value matches no row. With several it
@@ -655,8 +652,8 @@ public class RelationLookupResolver {
             }
             sb.append(lookupFields.get(i)).append("=").append(keyValues.get(i));
         }
-        if (group.lookupFields().size() > 1) {
-            sb.append(" — these must all describe the same ").append(group.relatedModel())
+        if (lookupFields.size() > 1) {
+            sb.append(" — these must all describe the same ").append(relatedModel)
                     .append("; no one record matches them together.");
         }
         return sb.toString();
