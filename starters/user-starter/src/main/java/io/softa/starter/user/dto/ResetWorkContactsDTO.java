@@ -1,6 +1,7 @@
 package io.softa.starter.user.dto;
 
 import io.swagger.v3.oas.annotations.media.Schema;
+import jakarta.validation.constraints.Size;
 import lombok.Data;
 
 /**
@@ -21,5 +22,6 @@ public class ResetWorkContactsDTO {
     private String mobile;
 
     @Schema(description = "Reason, recorded for auditing")
+    @Size(max = 500, message = "The reason cannot exceed 500 characters!")
     private String reason;
 }
