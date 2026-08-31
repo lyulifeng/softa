@@ -71,7 +71,37 @@ public class RelationLookupResolver {
      */
     public record LookupGroup(String rootField, String relatedModel, List<String> lookupFields,
                               List<String> dottedPaths, boolean ignoreEmpty, boolean toMany,
-                              boolean oneToOne, Filters relationFilters) {}
+                              boolean oneToOne, Filters relationFilters,
+                              List<NestedLookup> nestedLookups) {
+
+        /** The shape every group had before nested lookups existed; most still have no nested part. */
+        public LookupGroup(String rootField, String relatedModel, List<String> lookupFields,
+                           List<String> dottedPaths, boolean ignoreEmpty, boolean toMany,
+                           boolean oneToOne, Filters relationFilters) {
+            this(rootField, relatedModel, lookupFields, dottedPaths, ignoreEmpty, toMany, oneToOne,
+                    relationFilters, List.of());
+        }
+    }
+
+    /**
+     * One column of a one-to-one group that names a relation <b>inside</b> the sub-record by a
+     * business field — {@code employeeProfileId.idType.name}.
+     *
+     * <p>Exists because the sub-record's own relations were unreachable by anything readable. The
+     * two-segment form stops at the relation and the cell must hold the foreign key itself — fine
+     * while the target's id is a code ({@code SG_NRIC}), useless when it is a generated number, which
+     * is what every column reaching the time profile or the bank account was stuck with. The third
+     * segment names the field to look the target up by instead, and the resolved id is what lands in
+     * the nested map — the write pipeline sees exactly the shape it always has.
+     *
+     * @param nestedField the relation field on the sub-record, e.g. {@code idType}
+     * @param relatedModel the model that relation points at, e.g. {@code IdType}
+     * @param lookupField the business field on it the cell carries, e.g. {@code name}
+     * @param dottedPath the original template column, e.g. {@code employeeProfileId.idType.name}
+     * @param relationFilters the nested field's own {@code MetaField.filters}, same role as on the group
+     */
+    public record NestedLookup(String nestedField, String relatedModel, String lookupField,
+                               String dottedPath, Filters relationFilters) {}
 
     /**
      * Detect, validate and return the lookup groups from the import field list.
@@ -94,11 +124,11 @@ public class RelationLookupResolver {
             }
             // Has dot: validate relation lookup
             String[] parts = fieldName.split("\\.");
-            if (parts.length != 2) {
+            if (parts.length > 3) {
                 throw new IllegalArgumentException(
-                        "Import field `{0}` has more than one level of cascade. " +
-                        "Only single-level relation lookup is supported (e.g. deptId.code). " +
-                        "For deeper cascades, consider using a cascaded field.",
+                        "Import field `{0}` has more than two levels of cascade. " +
+                        "Supported forms are deptId.code, and employeeProfileId.idType.name where " +
+                        "the first hop is the row's own one-to-one sub-record.",
                         fieldName);
             }
 
@@ -114,6 +144,9 @@ public class RelationLookupResolver {
                 throw new IllegalArgumentException(
                         "Import field `{0}`: root field `{1}` must be a relation field, but is `{2}`.",
                         fieldName, rootField, rootMetaField.getFieldType());
+            }
+            if (parts.length == 3) {
+                validateNestedLookupPath(modelName, fieldName, rootMetaField, parts);
             }
             rootToDottedFields.computeIfAbsent(rootField, ignored -> new ArrayList<>()).add(field);
         }
@@ -147,10 +180,78 @@ public class RelationLookupResolver {
             boolean ignoreEmpty = Boolean.TRUE.equals(fieldDTOs.getFirst().getIgnoreEmpty());
             boolean toMany = FieldType.TO_MANY_TYPES.contains(rootMetaField.getFieldType());
             boolean oneToOne = FieldType.ONE_TO_ONE.equals(rootMetaField.getFieldType());
+            List<NestedLookup> nestedLookups = new ArrayList<>();
+            Set<String> nestedKeys = new HashSet<>();
+            for (String path : dottedPaths) {
+                String[] segments = path.split("\\.");
+                String key = segments[1];
+                if (!nestedKeys.add(key)) {
+                    // deptId.code twice is caught by column validation upstream; what arrives here is
+                    // employeeProfileId.idType next to employeeProfileId.idType.name — two columns
+                    // writing the same nested field, one of which would silently win.
+                    throw new IllegalArgumentException(
+                            "Import fields address `{0}.{1}` more than once; a sub-record field can " +
+                                    "be written by only one column.",
+                            rootField, key);
+                }
+                if (segments.length == 3) {
+                    MetaField nestedMetaField = ModelManager.getModelField(relatedModel, segments[1]);
+                    nestedLookups.add(new NestedLookup(segments[1], nestedMetaField.getRelatedModel(),
+                            segments[2], path, Filters.of(nestedMetaField.getFilters())));
+                }
+            }
             groups.add(new LookupGroup(rootField, relatedModel, lookupFields, dottedPaths, ignoreEmpty,
-                    toMany, oneToOne, Filters.of(rootMetaField.getFilters())));
+                    toMany, oneToOne, Filters.of(rootMetaField.getFilters()), List.copyOf(nestedLookups)));
         }
         return groups;
+    }
+
+    /**
+     * A three-segment path is allowed through exactly one shape, and this rejects every other.
+     *
+     * <p>The first hop must be the row's own one-to-one sub-record: its columns are folded into a
+     * nested value object rather than used as a business key, so there is a place for a resolved id
+     * to land. Through a many-to-one the two segments already are the business key of some other row,
+     * and a third would change what the column means. The middle field must be a many-to-one — that is
+     * the thing being named — and the leaf must be a plain field on its target, because the leaf is
+     * what the cell carries and a relation cannot be typed into a cell.
+     */
+    private void validateNestedLookupPath(String modelName, String fieldName, MetaField rootMetaField,
+                                          String[] parts) {
+        if (!FieldType.ONE_TO_ONE.equals(rootMetaField.getFieldType())) {
+            throw new IllegalArgumentException(
+                    "Import field `{0}`: a two-level path is only supported through the row's own " +
+                            "one-to-one sub-record, but `{1}` is `{2}`.",
+                    fieldName, parts[0], rootMetaField.getFieldType());
+        }
+        String subRecordModel = rootMetaField.getRelatedModel();
+        if (!ModelManager.existField(subRecordModel, parts[1])) {
+            throw new IllegalArgumentException(
+                    "Import field `{0}`: `{1}` does not exist in model `{2}`.",
+                    fieldName, parts[1], subRecordModel);
+        }
+        MetaField nestedMetaField = ModelManager.getModelField(subRecordModel, parts[1]);
+        if (!FieldType.MANY_TO_ONE.equals(nestedMetaField.getFieldType())) {
+            throw new IllegalArgumentException(
+                    "Import field `{0}`: `{1}.{2}` must be a many-to-one relation to be looked up by " +
+                            "`{3}`, but is `{4}`.",
+                    fieldName, subRecordModel, parts[1], parts[2], nestedMetaField.getFieldType());
+        }
+        String targetModel = nestedMetaField.getRelatedModel();
+        Assert.notBlank(targetModel,
+                "Import field `{0}`: `{1}.{2}` has no related model configured.",
+                fieldName, subRecordModel, parts[1]);
+        if (!ModelManager.existField(targetModel, parts[2])) {
+            throw new IllegalArgumentException(
+                    "Import field `{0}`: `{1}` does not exist in model `{2}`.",
+                    fieldName, parts[2], targetModel);
+        }
+        if (FieldType.RELATED_TYPES.contains(ModelManager.getModelField(targetModel, parts[2]).getFieldType())) {
+            throw new IllegalArgumentException(
+                    "Import field `{0}`: `{1}.{2}` is a relation itself and cannot be the value a " +
+                            "cell carries.",
+                    fieldName, targetModel, parts[2]);
+        }
     }
 
     /**
@@ -164,7 +265,7 @@ public class RelationLookupResolver {
     public void resolveRows(List<Map<String, Object>> rows, List<LookupGroup> lookupGroups, boolean skipException) {
         for (LookupGroup group : lookupGroups) {
             if (group.oneToOne()) {
-                resolveNestedOneToOneGroup(rows, group);
+                resolveNestedOneToOneGroup(rows, group, skipException);
             } else if (group.toMany()) {
                 resolveToManyGroup(rows, group, skipException);
             } else {
@@ -189,20 +290,80 @@ public class RelationLookupResolver {
      * belongs to the main row, so a create must still produce one (the owning FK is typically
      * required) and an update simply relinks the sub-row already there without touching a field.
      */
-    private void resolveNestedOneToOneGroup(List<Map<String, Object>> rows, LookupGroup group) {
+    private void resolveNestedOneToOneGroup(List<Map<String, Object>> rows, LookupGroup group,
+                                            boolean skipException) {
+        // Business values first, ids after: each nested lookup is one query across every row, the
+        // same bargain resolveToOneGroup strikes — per-row queries would turn a sheet into N calls.
+        Map<String, Map<List<Object>, ?>> resolvedByPath = resolveNestedLookupValues(rows, group);
         for (Map<String, Object> row : rows) {
             if (!row.containsKey(FileConstant.FAILED_REASON)) {
                 Map<String, Object> nested = new LinkedHashMap<>();
                 for (int i = 0; i < group.dottedPaths().size(); i++) {
+                    String lookupField = group.lookupFields().get(i);
+                    if (lookupField.contains(".")) {
+                        // A nested relation column; its resolved id is written below.
+                        continue;
+                    }
                     Object value = row.get(group.dottedPaths().get(i));
                     if (value != null && (!(value instanceof String text) || !text.isBlank())) {
-                        nested.put(group.lookupFields().get(i), value);
+                        nested.put(lookupField, value);
                     }
                 }
-                row.put(group.rootField(), nested);
+                boolean failed = false;
+                for (NestedLookup nestedLookup : group.nestedLookups()) {
+                    Object raw = row.get(nestedLookup.dottedPath());
+                    if (raw == null || (raw instanceof String text && text.isBlank())) {
+                        // Blank keeps the existing value, exactly like every other nested column.
+                        continue;
+                    }
+                    Object resolvedId = resolvedByPath.get(nestedLookup.dottedPath()).get(List.of(raw));
+                    if (resolvedId == null) {
+                        markFailure(row, buildNotFoundMessage(nestedLookup.relatedModel(),
+                                List.of(nestedLookup.lookupField()), List.of(raw)), skipException);
+                        failed = true;
+                        break;
+                    }
+                    nested.put(nestedLookup.nestedField(), resolvedId);
+                }
+                if (!failed) {
+                    row.put(group.rootField(), nested);
+                }
             }
             removeDottedPaths(row, group);
         }
+    }
+
+    /**
+     * One batched lookup per nested relation column, keyed by the column's dotted path.
+     *
+     * <p>The query goes through {@code getIdsByBusinessKeys} like every two-segment lookup, which is
+     * where the two guarantees come from: the value must match exactly one row — several matches fail
+     * the call loudly rather than picking one — and the search runs under the caller's access scopes,
+     * so a multi-country target is narrowed to the requesting company's country. {@code Passport}
+     * names a different row in every country that has one; without the narrowing this lookup would be
+     * wrong the day a second country seeds it.
+     */
+    private Map<String, Map<List<Object>, ?>> resolveNestedLookupValues(List<Map<String, Object>> rows,
+                                                                        LookupGroup group) {
+        Map<String, Map<List<Object>, ?>> resolvedByPath = new LinkedHashMap<>();
+        for (NestedLookup nestedLookup : group.nestedLookups()) {
+            Set<List<Object>> distinctKeys = new LinkedHashSet<>();
+            for (Map<String, Object> row : rows) {
+                if (row.containsKey(FileConstant.FAILED_REASON)) {
+                    continue;
+                }
+                Object raw = row.get(nestedLookup.dottedPath());
+                if (raw != null && (!(raw instanceof String text) || !text.isBlank())) {
+                    distinctKeys.add(List.of(raw));
+                }
+            }
+            resolvedByPath.put(nestedLookup.dottedPath(), distinctKeys.isEmpty()
+                    ? Map.of()
+                    : modelService.getIdsByBusinessKeys(nestedLookup.relatedModel(),
+                            List.of(nestedLookup.lookupField()), distinctKeys,
+                            nestedLookup.relationFilters()));
+        }
+        return resolvedByPath;
     }
 
     /**
@@ -481,13 +642,18 @@ public class RelationLookupResolver {
      * concludes the import is broken rather than that it just did its job.
      */
     private String buildNotFoundMessage(LookupGroup group, List<Object> keyValues) {
+        return buildNotFoundMessage(group.relatedModel(), group.lookupFields(), keyValues);
+    }
+
+    private String buildNotFoundMessage(String relatedModel, List<String> lookupFields,
+                                        List<Object> keyValues) {
         StringBuilder sb = new StringBuilder();
-        sb.append("Cannot find ").append(group.relatedModel()).append(" by ");
-        for (int i = 0; i < group.lookupFields().size(); i++) {
+        sb.append("Cannot find ").append(relatedModel).append(" by ");
+        for (int i = 0; i < lookupFields.size(); i++) {
             if (i > 0) {
                 sb.append(", ");
             }
-            sb.append(group.lookupFields().get(i)).append("=").append(keyValues.get(i));
+            sb.append(lookupFields.get(i)).append("=").append(keyValues.get(i));
         }
         if (group.lookupFields().size() > 1) {
             sb.append(" — these must all describe the same ").append(group.relatedModel())

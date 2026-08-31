@@ -302,6 +302,11 @@ public class OptionDropdownResolver {
                                      Map<String, List<Integer>> tenantSetToColumns,
                                      Map<ValueRequest, List<Integer>> entityRequestToColumns) {
         String[] parts = dottedFieldName.split("\\.");
+        if (parts.length == 3) {
+            resolveNestedDottedColumn(modelName, parts, country, columnIndex,
+                    optionsByColumn, entityRequestToColumns);
+            return;
+        }
         if (parts.length != 2) {
             return;
         }
@@ -355,6 +360,46 @@ public class OptionDropdownResolver {
         }
         ValueRequest request = new ValueRequest(relatedModel, leafField, rootField.getFilters(),
                 narrowingCountryFor(relatedModel, country));
+        entityRequestToColumns.computeIfAbsent(request, k -> new ArrayList<>()).add(columnIndex);
+    }
+
+    /**
+     * A three-segment column: through the row's own one-to-one sub-record, onto a relation inside it,
+     * addressed by a business field — {@code employeeProfileId.idType.name}.
+     *
+     * <p>Mirrors what the import side accepts, and only that: root one-to-one, middle many-to-one,
+     * leaf a plain field on its target. The dropdown offers the leaf's values from the target model —
+     * names, for every column this was built for — narrowed by the template's country the same way a
+     * two-segment entity column is. Anything shaped differently gets nothing, exactly as it would
+     * fail on the way back in.
+     */
+    private void resolveNestedDottedColumn(String modelName, String[] parts, String country,
+                                           int columnIndex,
+                                           Map<Integer, List<String>> optionsByColumn,
+                                           Map<ValueRequest, List<Integer>> entityRequestToColumns) {
+        MetaField rootField = ModelManager.getModelFieldOrNull(modelName, parts[0]);
+        if (rootField == null || rootField.getFieldType() != FieldType.ONE_TO_ONE
+                || StringUtils.isBlank(rootField.getRelatedModel())) {
+            return;
+        }
+        MetaField nestedField = ModelManager.getModelFieldOrNull(rootField.getRelatedModel(), parts[1]);
+        if (nestedField == null || nestedField.getFieldType() != FieldType.MANY_TO_ONE
+                || StringUtils.isBlank(nestedField.getRelatedModel())) {
+            return;
+        }
+        String targetModel = nestedField.getRelatedModel();
+        // The leaf may be option- or boolean-backed — answerable from metadata, no query.
+        List<String> fromMetadata = metadataValuesOf(targetModel, parts[2]);
+        if (!fromMetadata.isEmpty()) {
+            optionsByColumn.put(columnIndex, fromMetadata);
+            return;
+        }
+        MetaField leafField = ModelManager.getModelFieldOrNull(targetModel, parts[2]);
+        if (leafField == null || FieldType.RELATED_TYPES.contains(leafField.getFieldType())) {
+            return;
+        }
+        ValueRequest request = new ValueRequest(targetModel, parts[2], nestedField.getFilters(),
+                narrowingCountryFor(targetModel, country));
         entityRequestToColumns.computeIfAbsent(request, k -> new ArrayList<>()).add(columnIndex);
     }
 
