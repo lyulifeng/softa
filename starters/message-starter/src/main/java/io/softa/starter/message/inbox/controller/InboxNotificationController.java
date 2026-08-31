@@ -15,6 +15,7 @@ import io.softa.framework.orm.domain.Orders;
 import io.softa.framework.web.controller.EntityController;
 import io.softa.framework.web.response.ApiResponse;
 import io.softa.starter.message.inbox.entity.InboxNotification;
+import io.softa.framework.orm.annotation.SkipPermissionCheck;
 import io.softa.starter.message.inbox.service.InboxNotificationService;
 
 /**
@@ -50,15 +51,34 @@ public class InboxNotificationController
     }
 
     // ── Self-service (always scoped to the authenticated caller) ──────────
+    //
+    // Each of these carries @SkipPermissionCheck, and the annotation sits HERE rather than on the
+    // service methods below on purpose: this is the layer that takes the caller's id from the
+    // request context, so the bound the waiver relies on is visible in the same method. The service
+    // methods underneath take recipientId as a parameter and stay checked — waiving them would let
+    // whatever passes an id next read someone else's inbox.
+    //
+    // Why the waiver is needed at all: InboxNotification is anchorless — nothing a business role is
+    // granted references it — so PermissionServiceImpl.scopeWithoutGrant finds no referencer and
+    // fails closed to matchNone(). The filters below already pin every row to the caller, so row
+    // scope cannot narrow anything; it can only empty the result. And it does so silently: the bell
+    // reports zero unread and an empty list rather than an error, which is why this went unnoticed
+    // while the same defect on UserProfile surfaced as a 400.
+    //
+    // That these endpoints are open to any authenticated caller is already declared in the
+    // application's permission.authenticated-bypass-patterns (/InboxNotification/my*). That
+    // configuration only opens the endpoint gate; this answers the same question at the data layer.
 
     @Operation(summary = "Count unread notifications for the current user")
     @GetMapping("/myCountUnread")
+    @SkipPermissionCheck
     public ApiResponse<Integer> myCountUnread() {
         return ApiResponse.success(inboxNotificationService.countUnread(requireUserId()));
     }
 
     @Operation(summary = "List recent notifications for the current user")
     @GetMapping("/myRecent")
+    @SkipPermissionCheck
     public ApiResponse<List<InboxNotification>> myRecent(
             @RequestParam(defaultValue = "20") int limit) {
         int safeLimit = Math.clamp(limit, 1, 50);
@@ -69,6 +89,12 @@ public class InboxNotificationController
         return ApiResponse.success(inboxNotificationService.searchList(query));
     }
 
+    /**
+     * The one that reads by id rather than by the caller. {@code getById} below is reachable for any
+     * notification once row scope is waived, so the ownership test that follows is not a nicety —
+     * it is what replaces the check, and it must stay ahead of the mutation.
+     */
+    @SkipPermissionCheck
     @Operation(summary = "Mark one of the current user's notifications as read")
     @PostMapping("/myMarkAsRead")
     public ApiResponse<Void> myMarkAsRead(@RequestParam Long id) {
@@ -83,6 +109,7 @@ public class InboxNotificationController
 
     @Operation(summary = "Mark all of the current user's notifications as read")
     @PostMapping("/myMarkAllAsRead")
+    @SkipPermissionCheck
     public ApiResponse<Void> myMarkAllAsRead() {
         inboxNotificationService.markAllAsRead(requireUserId());
         return ApiResponse.success();

@@ -24,12 +24,35 @@ public interface UserProfileService extends EntityService<UserProfile, Long> {
     Map<String, Object> getCurrentUserProfileMap();
 
     /**
+     * Update the caller's own profile from the self-service DTO.
+     *
+     * <p>Lives on the service so the read-modify-write runs inside ONE row-scope waiver: the
+     * controller used to fetch via {@code getCurrentUserProfile()} and then call a bare
+     * {@code updateOne}, and since the waiver aspect restores the flag when the fetch returns, the
+     * write half still failed closed on this anchorless model — the dialog opened and the save
+     * bounced. The DTO is the write boundary: only the person's own display fields exist on it, so
+     * nothing tenant- or credential-shaped can arrive however the payload is crafted.
+     */
+    void saveMyProfile(UserProfileDTO myProfileDTO);
+
+    /**
      * Get UserInfo from cache or database
      *
      * @param userId User ID
      * @return UserInfo object
      */
     UserInfo getUserInfo(Long userId);
+
+    /**
+     * The caller's own {@link UserInfo}.
+     *
+     * <p>Exists so the self-service read can waive row scope without widening
+     * {@link #getUserInfo(Long)}, which takes the id as an argument. Every current caller of that
+     * method happens to pass the caller's own id, but nothing in its signature says so — waiving it
+     * would make "any person's UserInfo" readable the moment someone writes an admin-facing lookup
+     * and reuses it, and the result is cached for a month, so the leak would outlive the request.
+     */
+    UserInfo getMyUserInfo();
 
     /**
      * Drop a user's cached {@code UserInfo} so the next read rebuilds it from the database.

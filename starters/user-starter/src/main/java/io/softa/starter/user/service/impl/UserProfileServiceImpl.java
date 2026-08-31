@@ -65,7 +65,25 @@ public class UserProfileServiceImpl extends EntityServiceImpl<UserProfile, Long>
 
     /**
      * Get Current User Profile
+     *
+     * <p><b>Why {@code @SkipPermissionCheck}</b>: the filter below pins the row to
+     * {@code Context.getUserId()}, so the only thing row scope can still do is take that one row
+     * away. {@code UserProfile} is anchorless — a person has no department, no employee, nothing a
+     * scope rule can reach it through — so a role with no explicit rule on it fails closed to
+     * {@code matchNone()} and the caller cannot read their own profile. What authorizes this call is
+     * that the caller is authenticated, which is already asserted: {@code /UserProfile/getMy*} is
+     * listed in {@code permission.authenticated-bypass-patterns}, declaring these endpoints open to
+     * every logged-in user. That declaration only opened the endpoint gate; this closes the same
+     * question at the data layer, where it was still being answered "no".
+     *
+     * <p>The waiver is safe because it cannot be widened by input: the id comes from the request
+     * context, never from a parameter. Contrast {@link #getUserInfo(Long)}, which takes the id as an
+     * argument and therefore stays checked — see {@link #getMyUserInfo()}.
+     *
+     * <p>Note this is also the fetch step of {@link #saveMyProfile}, which carries its own waiver —
+     * the flag does not survive this method's return, so the write path cannot borrow this one.
      */
+    @SkipPermissionCheck
     @Override
     public UserProfile getCurrentUserProfile() {
         Long userId = ContextHolder.getContext().getUserId();
@@ -76,7 +94,13 @@ public class UserProfileServiceImpl extends EntityServiceImpl<UserProfile, Long>
 
     /**
      * Get Current User Profile as Map
+     *
+     * <p>Waived for the same reason as {@link #getCurrentUserProfile()}, and with the same bound:
+     * the filter is built from {@code Context.getUserId()}. Field masking goes with the row check,
+     * which is correct here — masking a person's own details from themselves has no reader to
+     * protect, and there is nothing secret left on this row anyway (see the note below).
      */
+    @SkipPermissionCheck
     @Override
     public Map<String, Object> getCurrentUserProfileMap() {
         Long userId = ContextHolder.getContext().getUserId();
@@ -92,10 +116,70 @@ public class UserProfileServiceImpl extends EntityServiceImpl<UserProfile, Long>
     }
 
     /**
-     * Get UserInfo from cache or database
+     * <p><b>Why {@code @SkipPermissionCheck}, and why the write moved here</b>: the waiver aspect
+     * restores the flag when the annotated method returns, so a controller that fetched through the
+     * waived {@link #getCurrentUserProfile()} and then called a bare {@code updateOne} had only half
+     * its work covered — the fetch succeeded and the save failed closed, on the same anchorless
+     * model, for the same caller-pinned row. One service method makes the read-modify-write a single
+     * waived span.
      *
-     * @param userId User ID
-     * @return UserInfo object
+     * <p>The waiver is bounded on both sides: the row is fetched by {@code Context.getUserId()}
+     * (never a parameter), and the field-copy below is the write whitelist — the DTO carries only
+     * the person's own display fields, so no tenant, membership or credential value can arrive
+     * through this endpoint however the payload is crafted. Credentials live on {@code UserIdentity}
+     * and are changed via {@code changeMyPassword}, which verifies the current password first.
+     */
+    @SkipPermissionCheck
+    @Override
+    public void saveMyProfile(UserProfileDTO myProfileDTO) {
+        UserProfile profile = getCurrentUserProfile();
+        profile.setFullName(myProfileDTO.getFullName());
+        profile.setChineseName(myProfileDTO.getChineseName());
+        profile.setBirthDate(myProfileDTO.getBirthDate());
+        profile.setBirthTime(myProfileDTO.getBirthTime());
+        profile.setBirthCity(myProfileDTO.getBirthCity());
+        profile.setGender(myProfileDTO.getGender());
+        profile.setPhotoId(myProfileDTO.getPhotoId());
+        profile.setLanguage(myProfileDTO.getLanguage());
+        profile.setTimezone(myProfileDTO.getTimezone());
+        // updateOne(profile, false) — nulls overwrite. The one-arg overload drops null keys before
+        // they reach the update (BeanTool.objectToMap(entity, true)), which is the right default when
+        // an entity is only partially populated: a Java object cannot tell "not supplied" from
+        // "clear this". Here it is wrong, because the entity above IS fully populated — every column
+        // is either the value just read or the value the caller sent — so a null can only mean the
+        // caller cleared the field. With the default, clearing silently does nothing: the avatar the
+        // helper text says appears "in the workspace header, comments, approvals, and people
+        // directories" cannot be removed, and the optional birth details cannot be taken back. Free
+        // text escaped it only by accident — the form sends "" for a cleared string, and "" is not
+        // null. Safe because the fetch selects every column: the three fields the DTO does not carry
+        // (id, userId, density) are written back exactly as read.
+        this.updateOne(profile, false);
+        // The cached UserInfo carries name / language / timezone / photo — all editable here.
+        this.evictUserInfo(profile.getUserId());
+    }
+
+    /**
+     * <p><b>Why {@code @SkipPermissionCheck}</b>: same reasoning as {@link #getCurrentUserProfile()}
+     * — the id comes from the request context, and the lookup this delegates to reads the caller's
+     * own {@code UserProfile}, which is anchorless and therefore fails closed without an explicit
+     * rule. This one matters most: {@code getUserInfo} sits on the login path, and its result is
+     * cached for a month, so the failure is delayed rather than immediate. A session established
+     * while the cache was warm keeps working and only the uncached reads (the personal-settings
+     * dialog) fail — until the entry expires, at which point login itself starts refusing the user.
+     */
+    @SkipPermissionCheck
+    @Override
+    public UserInfo getMyUserInfo() {
+        return this.getUserInfo(ContextHolder.getContext().getUserId());
+    }
+
+    /**
+     * Get UserInfo from cache or database.
+     *
+     * <p>Deliberately NOT waived: {@code userId} is a parameter. Self-service callers go through
+     * {@link #getMyUserInfo()}; the authenticated paths that legitimately pass another id
+     * (login, OAuth callback) run before a permission snapshot exists, which
+     * {@code PermissionServiceImpl} already treats as a bypass.
      */
     @Override
     public UserInfo getUserInfo(Long userId) {
