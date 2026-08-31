@@ -17,6 +17,9 @@ import io.softa.framework.orm.meta.ModelManager;
 import io.softa.framework.orm.service.CacheService;
 import io.softa.framework.orm.service.ModelService;
 
+// The real constant, not a local copy: a shadow literal is exactly how this test kept passing
+// against a renamed production model.
+import static io.softa.framework.orm.constant.ModelConstant.COMPANY_MODEL;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyInt;
@@ -36,10 +39,6 @@ import static org.mockito.Mockito.when;
  * Hence a test per path rather than one happy case.
  */
 class CompanyCountryEnricherTest {
-
-    // The real constant, not a local copy: a shadow literal is exactly how this test kept
-    // passing against a renamed production model.
-    private static final String COMPANY_MODEL = io.softa.framework.orm.constant.ModelConstant.COMPANY_MODEL;
 
     private MockedStatic<ModelManager> modelManager;
 
@@ -92,6 +91,14 @@ class CompanyCountryEnricherTest {
     void theModelNameIsTheConventionalOne() {
         // Pinned so a rename of the HR model does not silently disable the narrowing: the framework
         // hard-codes this name, so the two have to stay in step.
+        //
+        // The literal is deliberate, and it is the only line here that may be one. Everything below
+        // stubs and asserts through the constant, which makes the behaviour value-agnostic — both
+        // sides move together, so a renamed constant would keep this green and pin nothing. The
+        // framework cannot see the HR app's model, so asserting the value it hard-codes is the whole
+        // of what this test can contribute.
+        assertThat(COMPANY_MODEL).isEqualTo("Company");
+
         ModelService<Long> models = models();
         when(models.getById(eq(COMPANY_MODEL), eq(8712L))).thenReturn(Optional.of(Map.of("country", "SG")));
         Context context = contextWith(8712L);
