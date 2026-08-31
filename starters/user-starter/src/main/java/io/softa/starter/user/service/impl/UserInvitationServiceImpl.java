@@ -12,6 +12,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import io.softa.framework.base.context.ContextHolder;
+import io.softa.framework.base.context.ContextUtils;
 import io.softa.framework.base.exception.BusinessException;
 import io.softa.framework.base.message.MailRequestMessage;
 import io.softa.framework.base.message.MessageScope;
@@ -126,6 +127,21 @@ public class UserInvitationServiceImpl extends EntityServiceImpl<UserInvitation,
     private void issue(UserAccount account, InvitationPurpose purpose, Long invitedBy) {
         revokePending(account.getId());
 
+        // Who this invitation BELONGS to: the invitee's own tenant, never the caller's. It is a record
+        // of that person's account at that company, so it is that company's row — following whoever
+        // happened to click files it under a different company entirely whenever an operator can see
+        // across tenants. Provisioning agrees anyway: it creates the account inside
+        // inTenantContext(newTenantId) before inviting. Ambient is only the fallback for an account
+        // carrying no tenant of its own.
+        //
+        // Deliberately NOT the same value as the render tier chosen further down. Ownership and tier
+        // answer different questions, and on the public forgotPassword path they legitimately part
+        // ways: the row still belongs to the account's tenant, while the mail renders platform-tier
+        // because there is no context to trust and no cross-tier template fallback to catch a miss.
+        Long owningTenant = account.getTenantId() != null
+                ? account.getTenantId()
+                : ContextHolder.getContext().getTenantId();
+
         String rawToken = RandomUtils.randomString(TOKEN_BYTES);
         UserInvitation invitation = new UserInvitation();
         invitation.setUserId(account.getId());
@@ -137,7 +153,17 @@ public class UserInvitationServiceImpl extends EntityServiceImpl<UserInvitation,
         invitation.setExpiresAt(LocalDateTime.now().plusDays(EXPIRY_DAYS));
         // "sent" here = requested; the actual delivery + status is message-starter's (MailSendRecord).
         invitation.setSentAt(LocalDateTime.now());
-        this.createOne(invitation);
+        // Pinned rather than left to the ambient stamp. UserInvitation is multiTenant, and the ORM skips
+        // tenant stamping entirely while crossTenant is set — which UserAccountController.invite sets for
+        // a platform super-admin so it can reach a roster spanning tenants. The read needed that window;
+        // the write inherited it, and every invitation an operator sent landed with a null tenant_id.
+        // Those rows are invisible to the tenant whose member they are about: their User Invitations page
+        // filters on tenant_id, and null matches nothing — so the one case where someone acts on a
+        // tenant's behalf is the one case that left them no record of it.
+        //
+        // inTenantContext clears crossTenant and pins the id; createdId / createdBy survive because they
+        // come from Context.userId / Context.name, which it carries over.
+        ContextUtils.inTenantContext(owningTenant, () -> this.createOne(invitation));
 
         // Request the set-password / reset email. A framework MailRequestedEvent that message-starter
         // renders (its MailTemplate) + delivers (its outbox/MQ) — no message-starter dependency here
@@ -145,11 +171,23 @@ public class UserInvitationServiceImpl extends EntityServiceImpl<UserInvitation,
         // once this invitation has committed; if no message-starter is present it is a graceful no-op.
         String link = frontendBaseUrl.replaceAll("/+$", "") + "/set-password?token=" + rawToken;
         String template = purpose == InvitationPurpose.PASSWORD_RESET ? TEMPLATE_RESET : TEMPLATE_INVITE;
-        // Tier of the render: with a tenant context (invite / authed reset) the
-        // tenant's own template + wording; the public forgotPassword path has no
-        // tenant context, so it renders the platform-tier template — the platform
-        // row doubles as the copy source for tenants AND the platform's own sender.
-        Long tenantId = ContextHolder.getContext().getTenantId();
+        // Tier of the render: with a tenant context (invite / authed reset) the tenant's own template
+        // + wording; the public forgotPassword path has no tenant context, so it renders the
+        // platform-tier template — the platform row doubles as the copy source for tenants AND the
+        // platform's own sender.
+        //
+        // WHICH tenant, though, is the account's — not the ambient one. They differ exactly when an
+        // operator who can see across tenants clicks Invite: the ambient context is then the
+        // OPERATOR's company, and sourcing the tier from it renders another company's template and
+        // routes through another company's mail server for a mail about this person's account at
+        // theirs. On every other path the two already agree, since provisioning creates the account
+        // inside inTenantContext(newTenantId) before inviting.
+        //
+        // The no-context path deliberately stays platform-tier rather than reaching for the
+        // account's tenant: template resolution has no fallback across tiers any more, so a tenant
+        // whose copy of this template is missing or disabled would get an exception where the
+        // platform row always resolves.
+        Long tenantId = ContextHolder.getContext().getTenantId() != null ? account.getTenantId() : null;
         MessageScope scope = tenantId != null ? MessageScope.TENANT : MessageScope.PLATFORM;
         eventPublisher.publishEvent(new MailRequestMessage(
                 List.of(account.getEmail()), template, Map.of("link", link, "expiryDays", EXPIRY_DAYS),

@@ -7,6 +7,7 @@ import org.junit.jupiter.api.Test;
 import org.mockito.Mockito;
 import org.springframework.test.util.ReflectionTestUtils;
 
+import io.softa.framework.base.constant.BaseConstant;
 import io.softa.framework.base.constant.RedisConstant;
 import io.softa.framework.base.exception.IllegalArgumentException;
 import io.softa.framework.orm.service.CacheService;
@@ -128,8 +129,12 @@ class TenantInfoServiceImplTest {
         assertThrows(IllegalArgumentException.class, () -> svc.activate(PLATFORM_TENANT_ID));
     }
 
-    /** The tenant id the platform itself runs under, mirrored from the impl's own private constant. */
-    private static final Long PLATFORM_TENANT_ID = -1L;
+    /**
+     * The tenant the platform itself runs under. Referenced, not mirrored: this test used to copy the
+     * impl's private constant by hand, and hand-copying is what let the platform tier and the platform
+     * tenant sit on two different ids for as long as they did.
+     */
+    private static final Long PLATFORM_TENANT_ID = BaseConstant.PLATFORM_TENANT_ID;
 
     private CacheService cacheService;
 
