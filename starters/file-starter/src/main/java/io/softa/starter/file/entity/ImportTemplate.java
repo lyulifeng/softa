@@ -55,6 +55,21 @@ public class ImportTemplate extends AuditableModel {
     @Field(label = "Include Import Description")
     private Boolean includeDescription;
 
+    /**
+     * Country this template is written for, ISO 3166-1 alpha-2 (a to-one onto {@code CountryRegion}).
+     *
+     * <p><b>Null means every country</b>, and has to: the great majority of templates — job grades,
+     * cost centres, departments — have no country dimension at all, and there is no value that would
+     * be right for them. Null is also what every existing row holds the moment this column is added,
+     * so a list that filtered it out would come back empty for everyone on the release that ships it.
+     *
+     * <p>Referenced by name rather than by class: {@code CountryRegion} lives in reference-data-starter
+     * and file-starter does not depend on it. Same reason {@code Department.orgType} names
+     * {@code TenantOptionItem} as a string.
+     */
+    @Field(label = "Country", fieldType = FieldType.MANY_TO_ONE, relatedModelName = "CountryRegion")
+    private String country;
+
     @Field(length = 1000)
     private String description;
 
