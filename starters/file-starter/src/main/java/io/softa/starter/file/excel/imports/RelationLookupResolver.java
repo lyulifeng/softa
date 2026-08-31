@@ -461,6 +461,16 @@ public class RelationLookupResolver {
     /**
      * Builds a human-readable not-found message for one business-key tuple.
      */
+    /**
+     * Why a lookup found nothing.
+     *
+     * <p>With one column the message speaks for itself: that value matches no row. With several it
+     * does not. They are ANDed, so a row can fail while every value in it is perfectly real — they
+     * simply do not belong to one record. A template that asks for both a code and a name is asking
+     * for exactly that check: the name is there to catch a mistyped code, and "cannot find" is what
+     * catching it looks like. Left unexplained, the reader sees two values they know exist and
+     * concludes the import is broken rather than that it just did its job.
+     */
     private String buildNotFoundMessage(LookupGroup group, List<Object> keyValues) {
         StringBuilder sb = new StringBuilder();
         sb.append("Cannot find ").append(group.relatedModel()).append(" by ");
@@ -469,6 +479,10 @@ public class RelationLookupResolver {
                 sb.append(", ");
             }
             sb.append(group.lookupFields().get(i)).append("=").append(keyValues.get(i));
+        }
+        if (group.lookupFields().size() > 1) {
+            sb.append(" — these must all describe the same ").append(group.relatedModel())
+                    .append("; no one record matches them together.");
         }
         return sb.toString();
     }

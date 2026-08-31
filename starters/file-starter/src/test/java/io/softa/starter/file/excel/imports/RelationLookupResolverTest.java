@@ -181,6 +181,52 @@ class RelationLookupResolverTest {
 
     @Test
     @SuppressWarnings("unchecked")
+    void aMultiColumnLookupSaysTheColumnsHaveToAgree() {
+        // The employee child templates name the employee twice — by code and by name — so that a
+        // mistyped code is caught by the name beside it. The columns are ANDed, so catching one looks
+        // like "cannot find" over two values the reader knows both exist. Saying nothing more turns a
+        // working check into an apparent bug report.
+        RelationLookupResolver resolver = createResolver();
+        var group = new RelationLookupResolver.LookupGroup(
+                "employeeId", "Employee", List.of("code", "fullName"),
+                List.of("employeeId.code", "employeeId.fullName"), true, false, false, null);
+        Map<String, Object> row = new LinkedHashMap<>();
+        row.put("employeeId.code", "E1000123");
+        row.put("employeeId.fullName", "Someone Else");
+
+        ModelService<Long> typedService = (ModelService<Long>) getModelService(resolver);
+        when(typedService.getIdsByBusinessKeys(eq("Employee"), eq(List.of("code", "fullName")),
+                anyCollection(), any())).thenReturn(Map.of());
+
+        resolver.resolveRows(new ArrayList<>(List.of(row)), List.of(group), true);
+
+        String reason = row.get(FileConstant.FAILED_REASON).toString();
+        assertTrue(reason.contains("code=E1000123"), reason);
+        assertTrue(reason.contains("fullName=Someone Else"), reason);
+        assertTrue(reason.contains("must all describe the same Employee"), reason);
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void aSingleColumnLookupSaysNothingExtra() {
+        // One column matching nothing needs no explanation, and every template that has ever used one
+        // reads the message as it is today.
+        RelationLookupResolver resolver = createResolver();
+        var group = new RelationLookupResolver.LookupGroup(
+                "deptId", "Department", List.of("code"), List.of("deptId.code"), true, false, false, null);
+        Map<String, Object> row = new LinkedHashMap<>(Map.of("deptId.code", "D999"));
+
+        ModelService<Long> typedService = (ModelService<Long>) getModelService(resolver);
+        when(typedService.getIdsByBusinessKeys(eq("Department"), eq(List.of("code")), anyCollection(), any()))
+                .thenReturn(Map.of());
+
+        resolver.resolveRows(new ArrayList<>(List.of(row)), List.of(group), true);
+
+        assertEquals("Cannot find Department by code=D999", row.get(FileConstant.FAILED_REASON));
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
     void resolveRowsToManyMarksFailedWhenCodeNotFound() {
         RelationLookupResolver resolver = createResolver();
         var group = new RelationLookupResolver.LookupGroup(
