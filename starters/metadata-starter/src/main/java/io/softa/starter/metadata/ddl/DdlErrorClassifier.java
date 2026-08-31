@@ -17,9 +17,15 @@ import org.springframework.jdbc.BadSqlGrammarException;
  * <ul>
  *   <li>MySQL 1050 (table exists), 1060 (column exists), 1061 (duplicate key name)</li>
  *   <li>PostgreSQL 42P07 (duplicate_table), 42701 (duplicate_column), 42P11 (duplicate_index)</li>
- *   <li>H2 42101 (table exists), 42121 (duplicate column), 42111 (index exists) —
- *       H2 backs the test suite and lightweight dev runs; its vendor codes cannot
- *       collide with MySQL's (&lt; 10000) and PostgreSQL signals via SQLState</li>
+ *   <li>H2 42101 (table exists), 42121 (duplicate column), 42111 (index exists),
+ *       90045 (constraint exists) — H2 backs the test suite and lightweight dev runs;
+ *       its vendor codes cannot collide with MySQL's (&lt; 10000) and PostgreSQL signals
+ *       via SQLState.
+ *       <p>90045 is here because H2 answers {@code ALTER TABLE … ADD UNIQUE INDEX} with a
+ *       <em>constraint</em>, so a re-run reports a duplicate constraint rather than a duplicate
+ *       index — a different code for the same "already applied" state MySQL reports as 1061.
+ *       Without it, re-running unique-index DDL against H2 is a hard failure while the same
+ *       DDL degrades cleanly on MySQL, which is the one place the two must not disagree.</li>
  * </ul>
  *
  * <p><b>Rename re-runs</b>: a declared rename runs its DDL before the
@@ -45,7 +51,7 @@ public final class DdlErrorClassifier {
         if (code == 1050 || code == 1060 || code == 1061) {
             return true;
         }
-        if (code == 42101 || code == 42121 || code == 42111) {
+        if (code == 42101 || code == 42121 || code == 42111 || code == 90045) {
             return true;
         }
         String state = sqle.getSQLState();

@@ -5,6 +5,7 @@ import lombok.Data;
 import lombok.EqualsAndHashCode;
 
 import io.softa.framework.orm.annotation.Field;
+import io.softa.framework.orm.annotation.Index;
 import io.softa.framework.orm.annotation.Model;
 import io.softa.framework.orm.entity.AuditableModel;
 import io.softa.framework.base.enums.OptionItemIcon;
@@ -24,6 +25,27 @@ import io.softa.framework.orm.enums.FieldType;
         businessKey = {"optionSetCode", "itemCode"},
         description = "Metadata catalog of option items"
 )
+// The business key had no index behind it. An option set whose item codes repeat cannot do its job —
+// a stored code stops naming one item — and the reconciler, which matches rows by that key, has no
+// way to tell which of two it meant to update. Two retired sets had drifted into exactly that state.
+@Index(indexName = "uk_sys_option_item_code", fields = {"optionSetCode", "itemCode"},
+        unique = true, message = "This item code already exists in the option set.")
+// Names have to be unique too, because a name is what people type. Import columns are moving to
+// accept the displayed name rather than the code, and a name matching two items leaves the importer
+// nothing to choose between — both rows are valid answers to what it was asked.
+//
+// Scoped to the set alone, not to (app, set). An option set is addressed globally by its code:
+// SysOptionSet declares businessKey = {optionSetCode}, and OptionManager resolves items through
+// (optionSetCode, itemCode) and (optionSetCode, label), taking no appCode at all. Two apps defining
+// the same set code is therefore already unresolvable at runtime — keying the index by app would
+// permit that state rather than prevent it.
+//
+// Platform sets are flat, so whole-set uniqueness is the right scope here. Tenant-authored sets are
+// NOT: `ResignationReason` deliberately carries four items labelled "Others", one under each
+// `ResignationType`, and only one is ever visible at a time. Their uniqueness is per parent, which
+// needs a different index — see the wiki design note, not this file.
+@Index(indexName = "uk_sys_option_item_label", fields = {"optionSetCode", "label"},
+        unique = true, message = "This item name already exists in the option set.")
 public class SysOptionItem extends AuditableModel {
 
     @Serial

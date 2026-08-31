@@ -127,4 +127,43 @@ class SystemModelAnnotationTest {
                 .findFirst()
                 .orElseThrow(() -> new AssertionError("no field " + name));
     }
+
+    @Test
+    void optionItem_isUniqueByCodeAndByName_withinItsSet() {
+        // Both rules are load-bearing and neither is visible from reading the entity's fields.
+        //
+        // By code: this is the business key, and nothing enforced it until now. An option set whose
+        // item codes repeat cannot do its job — a stored code stops naming one item — and the
+        // reconciler, which matches rows by that key, cannot tell which of two it meant to update.
+        // Two retired sets had drifted into exactly that state before this index went in.
+        //
+        // By name: a name is what people type. Import columns are moving to accept the displayed
+        // name rather than the code, and a name matching two items leaves the importer nothing to
+        // choose between.
+        //
+        // Scoped to the set alone, not to (app, set): SysOptionSet declares
+        // businessKey = {optionSetCode}, and OptionManager resolves items through
+        // (optionSetCode, itemCode) / (optionSetCode, label), taking no appCode. Keying these by app
+        // would permit two apps to define one set code — a state the runtime cannot resolve.
+        List<SysModelIndex> indexes = parser.parse(SYSTEM_MODELS, List.of()).modelIndexes().stream()
+                .filter(i -> "SysOptionItem".equals(i.getModelName()))
+                .toList();
+
+        SysModelIndex byCode = indexNamed(indexes, "uk_sys_option_item_code");
+        assertEquals(Boolean.TRUE, byCode.getUniqueIndex());
+        assertEquals(List.of("optionSetCode", "itemCode"), byCode.getIndexFields());
+
+        SysModelIndex byLabel = indexNamed(indexes, "uk_sys_option_item_label");
+        assertEquals(Boolean.TRUE, byLabel.getUniqueIndex());
+        assertEquals(List.of("optionSetCode", "label"), byLabel.getIndexFields());
+    }
+
+    private static SysModelIndex indexNamed(List<SysModelIndex> indexes, String indexName) {
+        return indexes.stream()
+                .filter(i -> indexName.equals(i.getIndexName()))
+                .findFirst()
+                .orElseThrow(() -> new AssertionError(
+                        "no index named " + indexName + "; found "
+                                + indexes.stream().map(SysModelIndex::getIndexName).toList()));
+    }
 }

@@ -25,7 +25,24 @@ class DdlErrorClassifierTest {
         assertTrue(DdlErrorClassifier.isIdempotentDuplicate(error("42P07", 0)));  // PG table/index
         assertTrue(DdlErrorClassifier.isIdempotentDuplicate(error("42701", 0)));  // PG column
         assertTrue(DdlErrorClassifier.isIdempotentDuplicate(error(null, 42121))); // H2 column
+        assertTrue(DdlErrorClassifier.isIdempotentDuplicate(error(null, 42111))); // H2 index
+        assertTrue(DdlErrorClassifier.isIdempotentDuplicate(error(null, 90045))); // H2 constraint
         assertFalse(DdlErrorClassifier.isIdempotentDuplicate(error("42000", 1064)));
+    }
+
+    @Test
+    void h2ReportsARepeatedUniqueIndexAsADuplicateConstraint_notIndex() {
+        // H2 answers `ALTER TABLE … ADD UNIQUE INDEX` by creating a constraint, so re-running the
+        // statement raises CONSTRAINT_ALREADY_EXISTS (90045) where MySQL raises duplicate-key-name
+        // (1061). Both describe the same already-applied state, and both have to degrade the same
+        // way — otherwise DDL that converges on MySQL is a hard failure on H2, and the test suite
+        // reports a problem production does not have.
+        //
+        // This went unnoticed until the first index was declared on a sys_* catalog table: catalog
+        // genesis renders the index twice (inline on CREATE TABLE, then again as ALTER ADD), so the
+        // second one always lands on an index that already exists.
+        assertTrue(DdlErrorClassifier.isIdempotentDuplicate(error(null, 90045)),
+                "H2 CONSTRAINT_ALREADY_EXISTS_1 must count as already-applied, like MySQL 1061");
     }
 
     @Test
