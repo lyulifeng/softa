@@ -124,7 +124,11 @@ public class EmployeeContextEnricher implements ContextEnricher {
             // the split, Employee.legalEntityId still exists but names the signing entity, an
             // attribute rather than the axis.
             info.setCompanyId(coerceLong(me.get(ModelConstant.COMPANY_FIELD)));
-            info.setTenantId(coerceLong(me.get("tenantId")));
+            // Same reason as the axis field above, and the same class of name: the framework hard-codes
+            // "tenantId" elsewhere too, so a literal here is a second copy that can drift out of step.
+            // The plain literals around it name HCM's own columns — nothing else spells those, so
+            // there is no copy to keep aligned.
+            info.setTenantId(coerceLong(me.get(ModelConstant.TENANT_ID)));
             info.setManagedDeptIds(collectManagedDeptIds(info.getEmpId()));
             return info;
         } finally {
