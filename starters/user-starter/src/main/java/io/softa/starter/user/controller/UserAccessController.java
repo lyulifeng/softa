@@ -110,7 +110,8 @@ public class UserAccessController {
     }
 
     /** Resolve employeeId / departmentId / companyId per user by reading the
-     *  {@code Employee} model directly (约定读). Empty map when no {@code Employee}
+     *  {@code Employee} model directly, by convention rather than through a shared
+     *  contract. Empty map when no {@code Employee}
      *  model exists (non-HR deployment) or on error — degrades to "every user is
      *  pure". {@code /userAccess/*} is super-admin only, so the read is not
      *  scope-filtered (super-admin bypasses) and needs no permission skip. */
