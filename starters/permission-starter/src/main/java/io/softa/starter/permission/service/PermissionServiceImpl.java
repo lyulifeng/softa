@@ -104,7 +104,9 @@ public class PermissionServiceImpl implements PermissionService {
         // The company grant bounds every multi-company model, on its own axis: which legal entities a
         // role may reach is a property of the role, so it does not ride the per-model rules below and
         // is not waived by an ALL rule on some model. Admins are already past — a tenant admin sees
-        // every company in its tenant.
+        // every company in its tenant. The grant is unconditional: `selected ∧ granted`, so a header
+        // switch can never reach outside it — the switcher offers exactly the companies the role's
+        // step-2 selection holds, and nothing narrower or wider is expressible from the client.
         originalFilters = appendCompanyGrant(model, originalFilters, pi);
         if (hasExplicitRules(pi, model)) {
             Filters scope = scopeCompiler.compile(rulesFor(pi, model), model);
@@ -444,11 +446,25 @@ public class PermissionServiceImpl implements PermissionService {
      * <p>An empty grant means unrestricted. That is the opt-in convention, not an oversight: the
      * alternative empties every screen for every role that predates this table.
      *
-     * <p>Composes with the header selection by construction. {@code ModelServiceImpl.scopedAccess}
-     * applies that selection to the filters it passes in here, so by this point the caller's filters
-     * already carry {@code companyField = <selected>} and this ANDs {@code IN (<granted>)} on top:
-     * the selection narrows within the grant, and since the switcher only offers granted entities the
-     * result is one company rather than nothing.
+     * <p>Composes with the header selection, but does not mirror it. {@code MultiCompanyScope} exempts
+     * a read that names rows by {@code id} — a display expansion, a by-id read, a cascade resolving a
+     * stored value — and that exemption is right THERE: blanking a referenced row's label is not the
+     * same as denying access to it, and nothing bypasses the ORM layer, so it is the only place the
+     * exemption can live.
+     *
+     * <p>It is wrong HERE, and used to be duplicated anyway. The stated reason — display expansion —
+     * never reaches this method: {@code DataPipelineProxy.processReadData} carries
+     * {@code @SkipPermissionCheck}, so {@code shouldBypass()} returns before the grant is consulted.
+     * What the duplicate did reach was everything else that happens to name an id. Two of those
+     * matter. A caller could add {@code ["id", "&gt;", 0]} to a {@code searchList} body and read an
+     * ungranted company whole, no header required. And {@code checkIdsAccess} — the gate between a
+     * caller and {@code deleteByIds} / {@code updateList} — verifies its targets by counting them
+     * back with a filter that names {@code id}, so the grant dropped out of the write gate too: any
+     * holder of the model's delete permission could remove a row belonging to a company they were
+     * never granted, given its id.
+     *
+     * <p>So the grant applies to every read, id-named or not. The cost is that a by-id read of a row
+     * outside the grant comes back empty instead of returning the row. That is what a grant means.
      */
     // Package-private for test: the empty-grant default and the path-anchored case both fail silently.
     Filters appendCompanyGrant(String model, Filters filters, PermissionInfo pi) {
@@ -470,11 +486,6 @@ public class PermissionServiceImpl implements PermissionService {
         if (companyField == null) {
             return filters;
         }
-        if (Filters.containsField(filters, ModelConstant.ID)) {
-            // Same exemption the selection makes: a by-id read is a display expansion or a cascade
-            // resolving a stored value, and blanking a label is not the same as denying access to data.
-            return filters;
-        }
         if (granted.isEmpty()) {
             // Configured to reach no company — distinct from unconfigured, handled above. Matching
             // nothing is the point: a role written this way (a self-service employee role) must not
@@ -489,7 +500,7 @@ public class PermissionServiceImpl implements PermissionService {
     }
 
     /**
-     * The anchor a multi-company model reaches its company through, or null when it is not one.
+     * The anchor a model reaches its company through, or null when it has none.
      *
      * <p>The field name is fixed ({@link ModelConstant#COMPANY_FIELD}) and asserted at init, so this
      * only has to answer whether the model is on the company axis at all.
@@ -497,6 +508,7 @@ public class PermissionServiceImpl implements PermissionService {
     private String companyAnchorOf(String model) {
         return ModelManager.getModel(model).isMultiCompany() ? ModelConstant.COMPANY_FIELD : null;
     }
+
 
     private boolean hasExplicitRules(PermissionInfo pi, String model) {
         List<ScopeRule> r = rulesFor(pi, model);
