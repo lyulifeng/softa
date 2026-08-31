@@ -6,11 +6,18 @@ import io.swagger.v3.oas.annotations.tags.Tag;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.web.bind.annotation.*;
 
+import java.util.ArrayList;
+import java.util.List;
+
+import io.softa.framework.base.context.ContextHolder;
+import io.softa.framework.base.utils.Assert;
 import io.softa.framework.orm.domain.FlexQuery;
 import io.softa.framework.orm.dto.FileInfo;
 import io.softa.framework.web.response.ApiResponse;
 import io.softa.starter.file.service.ExportService;
+import io.softa.starter.file.dto.SheetInfo;
 import io.softa.starter.file.vo.ExportParams;
+import io.softa.starter.file.vo.MultiSheetExportParams;
 
 /**
  * ExportController
@@ -57,6 +64,47 @@ public class ExportController {
                                                   @RequestBody ExportParams exportParams) {
         FlexQuery flexQuery = ExportParams.convertParamsToFlexQuery(exportParams);
         return ApiResponse.success(exportService.exportByTemplate(exportTemplateId, flexQuery));
+    }
+
+    /**
+     * Export several objects into one workbook, a sheet each.
+     *
+     * <p>Exists because the objects hanging off a record are separate models: an employee's addresses,
+     * family members and contacts are three queries, and asking for "this employee and everything
+     * under them" means three sheets in one file rather than three downloads.
+     *
+     * <p>Each sheet should include its object's {@code code}, which is what an edited sheet is fed
+     * back in by — a code updates the row it names, a blank one creates a new one.
+     *
+     * @param multiSheetExportParams the file name and one entry per object
+     * @return fileInfo object with download URL
+     */
+    @Operation(description = "Export several models into one workbook, one sheet each.")
+    @PostMapping(value = "/dynamicExportMultiSheet")
+    public ApiResponse<FileInfo> dynamicExportMultiSheet(
+            @RequestBody MultiSheetExportParams multiSheetExportParams) {
+        Assert.notEmpty(multiSheetExportParams.getSheets(),
+                "A multi-sheet export needs at least one sheet.");
+        List<SheetInfo> sheetInfoList = new ArrayList<>();
+        for (MultiSheetExportParams.Sheet sheet : multiSheetExportParams.getSheets()) {
+            // The effective date belongs to the workbook. Left on a sheet it would be written to the
+            // request context here and overwritten by the next sheet, so only the last one would take
+            // effect — for every sheet. Said plainly rather than quietly ignored.
+            Assert.isTrue(sheet.getExportParams() == null
+                            || sheet.getExportParams().getEffectiveDate() == null,
+                    "Set effectiveDate on the request, not on a sheet: it applies to the whole "
+                            + "workbook and a per-sheet value cannot be honoured.");
+            SheetInfo sheetInfo = new SheetInfo();
+            sheetInfo.setModelName(sheet.getModelName());
+            sheetInfo.setSheetName(sheet.getSheetName());
+            sheetInfo.setFlexQuery(ExportParams.convertParamsToFlexQuery(sheet.getExportParams()));
+            sheetInfoList.add(sheetInfo);
+        }
+        // After the conversions, each of which cleared it: the queries all run later, so this is the
+        // value they will see.
+        ContextHolder.getContext().setEffectiveDate(multiSheetExportParams.getEffectiveDate());
+        return ApiResponse.success(exportService.dynamicExportMultiSheet(
+                multiSheetExportParams.getFileName(), sheetInfoList));
     }
 
 }
