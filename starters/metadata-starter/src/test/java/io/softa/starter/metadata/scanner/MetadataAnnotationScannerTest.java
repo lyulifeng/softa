@@ -51,7 +51,8 @@ class MetadataAnnotationScannerTest {
                 new MetadataProperties(List.of(), null, null),   // empty scope
                 systemConfig,
                 jdbc,
-                "jdbc:mysql://localhost/unused");
+                "jdbc:mysql://localhost/unused",
+                "");   // no PostgreSQL string collation
 
         // Ignore construction-time interactions (getDataSource); assert that
         // initialize() itself touches neither the DB nor the read pipeline.

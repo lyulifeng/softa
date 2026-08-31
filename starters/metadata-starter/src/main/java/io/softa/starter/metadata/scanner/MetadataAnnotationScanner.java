@@ -97,16 +97,24 @@ public class MetadataAnnotationScanner implements MetadataInitializer {
     private final DataSource lockDataSource;
     private final String datasourceUrl;
 
+    /**
+     * @param pgStringCollation PostgreSQL only: name of a collation the DDL generator stamps onto
+     *     every string column it creates, or blank to leave them at the database default. This is
+     *     the Spring-side entry point for the property — {@link DdlOrchestrator} is built by hand
+     *     below and cannot resolve it itself.
+     */
     @Autowired
     public MetadataAnnotationScanner(
             MetadataReadPipeline pipeline,
             MetadataProperties properties,
             SystemConfig systemConfig,
             JdbcTemplate jdbcTemplate,
-            @Value("${spring.datasource.url:}") String datasourceUrl) {
+            @Value("${spring.datasource.url:}") String datasourceUrl,
+            @Value("${system.metadata.ddl.postgres-string-collation:}") String pgStringCollation) {
         this(pipeline, properties, systemConfig.getAppCode(),
                 new SysJdbcWriter(jdbcTemplate, systemConfig.getAppCode(), datasourceUrl),
-                new DdlOrchestrator(jdbcTemplate, BuiltinDdlMetadataResolver.INSTANCE, datasourceUrl),
+                new DdlOrchestrator(jdbcTemplate, BuiltinDdlMetadataResolver.INSTANCE, datasourceUrl,
+                        pgStringCollation),
                 jdbcTemplate.getDataSource(), datasourceUrl);
     }
 

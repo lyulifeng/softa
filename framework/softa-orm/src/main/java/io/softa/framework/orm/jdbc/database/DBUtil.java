@@ -24,13 +24,36 @@ public class DBUtil {
     @Value("${spring.datasource.url:}")
     private String singleDbUrl;
 
+    /**
+     * Name of the nondeterministic ICU collation stamped onto PostgreSQL string columns, or
+     * blank when the columns are case-sensitive. Only its emptiness is read here — the name
+     * itself is the DDL generator's business; what this class needs to know is whether pattern
+     * matching has to fall back from {@code ILIKE} (rejected on such columns) to {@code LIKE}.
+     */
+    @Value("${system.metadata.ddl.postgres-string-collation:}")
+    private String pgStringCollation;
+
     private static DialectInterface singleDbDialect;
+
+    /**
+     * Static mirror of {@link #pgStringCollation}'s emptiness, so the static
+     * {@link #createDialect(DatabaseType)} can see it. Set in {@link #initDBType()} before any
+     * dialect is built on the single-datasource path.
+     *
+     * <p>Multi-datasource caveat: {@code DataSourceConfig} builds its dialects through the same
+     * factory, but if it initializes before this bean it sees the default ({@code false}, i.e.
+     * {@code ILIKE}). Case-insensitive collation is currently only wired for the single
+     * datasource; a dynamic-datasource deployment would need the flag per data source anyway,
+     * since two data sources can disagree about it.
+     */
+    private static volatile boolean pgCaseInsensitiveCollation;
 
     /**
      * Initialize dialect constant of single data source
      */
     @PostConstruct
     public void initDBType() {
+        pgCaseInsensitiveCollation = pgStringCollation != null && !pgStringCollation.isBlank();
         if (!enableMultiDataSource) {
             // Parse the database type from the JDBC URL, as the single datasource
             DatabaseType databaseType = parseDatabaseType(singleDbUrl);
@@ -66,7 +89,7 @@ public class DBUtil {
         if (DatabaseType.MYSQL.equals(databaseType)) {
             return new MySQLDialect();
         } else if (DatabaseType.POSTGRESQL.equals(databaseType)) {
-            return new PostgreSQLDialect();
+            return new PostgreSQLDialect(pgCaseInsensitiveCollation);
         } else if (DatabaseType.ORACLE.equals(databaseType)) {
             return new OracleDialect();
         } else if (DatabaseType.SQLSERVER.equals(databaseType)) {

@@ -5,6 +5,8 @@ import org.junit.jupiter.api.Test;
 import io.softa.starter.metadata.entity.SysField;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
  * The rename advisories print copy-paste SQL that converges the per-tenant
@@ -13,6 +15,20 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
  * combined model+field rename case where the two hints must chain.
  */
 class SysJdbcWriterSequenceAdvisoryTest {
+
+    /**
+     * {@code sys_field.auto_sequence} is a Boolean, hence a BOOLEAN column on PostgreSQL.
+     * The advisory's lookup used to compare it to the integer literal {@code 1} — legal on
+     * MySQL (TINYINT), fatal on PostgreSQL: {@code operator does not exist: boolean =
+     * integer}. It only fires on a declared model rename, so a normal boot never reached it
+     * and the breakage stayed hidden. Guard the literal against coming back.
+     */
+    @Test
+    void autoSequenceLookupComparesAgainstABooleanLiteral() {
+        String sql = SysJdbcWriter.SQL_AUTO_SEQUENCE_FIELDS;
+        assertTrue(sql.matches("(?is).*auto_sequence\\s*=\\s*true.*"), sql);
+        assertFalse(sql.matches("(?is).*auto_sequence\\s*=\\s*[01]\\b.*"), sql);
+    }
 
     private static SysField sysField(String modelName, String fieldName) {
         SysField field = new SysField();

@@ -120,13 +120,31 @@ public class DdlOrchestrator {
     private final JdbcTemplate jdbcTemplate;
     private final DdlMetadataResolver metadataResolver;
     private final String datasourceUrl;
+    private final String pgStringCollation;
 
     public DdlOrchestrator(JdbcTemplate jdbcTemplate,
                            DdlMetadataResolver metadataResolver,
                            @Value("${spring.datasource.url:}") String datasourceUrl) {
+        this(jdbcTemplate, metadataResolver, datasourceUrl, null);
+    }
+
+    /**
+     * This class is <b>not</b> a Spring bean — {@code MetadataAnnotationScanner} builds it by
+     * hand — so the property is resolved by the caller and handed in, not annotated here.
+     *
+     * @param pgStringCollation PostgreSQL only: collation stamped onto every generated string
+     *     column, blank to leave them case-sensitive. Enabling it goes hand in hand with
+     *     {@code PostgreSQLDialect}'s pattern-operator switch, which reads the same property —
+     *     see that class for why one without the other is broken either way.
+     */
+    public DdlOrchestrator(JdbcTemplate jdbcTemplate,
+                           DdlMetadataResolver metadataResolver,
+                           String datasourceUrl,
+                           String pgStringCollation) {
         this.jdbcTemplate = jdbcTemplate;
         this.metadataResolver = metadataResolver;
         this.datasourceUrl = datasourceUrl;
+        this.pgStringCollation = pgStringCollation;
     }
 
     // ---- metadata-only lane (no physical facts) ------------------------
@@ -905,6 +923,6 @@ public class DdlOrchestrator {
 
     private DdlDialect resolveDialect() {
         DatabaseType type = DBUtil.parseDatabaseType(datasourceUrl);
-        return DdlDialectFactory.create(type, metadataResolver);
+        return DdlDialectFactory.create(type, metadataResolver, pgStringCollation);
     }
 }

@@ -100,6 +100,26 @@ class PhysicalTypeCompatTest {
                 observed(Types.BOOLEAN, null, null)));
     }
 
+    @Test
+    void doubleComparesAsDecimalOnBothDialects() {
+        // Neither dialect renders DOUBLE as an approximate-numeric column: MySQL emits
+        // DECIMAL, PostgreSQL NUMERIC, and both drivers report it back in the BIG_DECIMAL
+        // class. Without the allowance every Double field is permanent drift on both engines.
+        assertEquals(Verdict.EQUAL, verdict(declared(FieldType.DOUBLE, 24, 2),
+                observed(Types.NUMERIC, 24, 2)));      // PostgreSQL
+        assertEquals(Verdict.EQUAL, verdict(declared(FieldType.DOUBLE, 24, 2),
+                observed(Types.DECIMAL, 24, 2)));      // MySQL
+        // Normalized to BIG_DECIMAL rather than short-circuited to EQUAL, so a later
+        // narrowing of the physical column is still caught.
+        assertEquals(Verdict.WIDEN, verdict(declared(FieldType.DOUBLE, 24, 2),
+                observed(Types.NUMERIC, 10, 2)));
+        assertEquals(Verdict.NARROW, verdict(declared(FieldType.DOUBLE, 10, 2),
+                observed(Types.NUMERIC, 24, 2)));
+        // A genuinely approximate physical column still matches on its own class.
+        assertEquals(Verdict.EQUAL, verdict(declared(FieldType.DOUBLE, 24, 2),
+                observed(Types.DOUBLE, 24, 2)));
+    }
+
     // ---- BIG_DECIMAL precision / scale --------------------------------------
 
     @Test

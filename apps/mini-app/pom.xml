@@ -32,6 +32,13 @@
             <groupId>com.mysql</groupId>
             <artifactId>mysql-connector-j</artifactId>
         </dependency>
+        <!-- PostgreSQL database. Both drivers are optional=true in softa-orm, so every
+             consuming app declares the ones it actually runs against; demo-app already
+             carries both. -->
+        <dependency>
+            <groupId>org.postgresql</groupId>
+            <artifactId>postgresql</artifactId>
+        </dependency>
     </dependencies>
 
     <build>

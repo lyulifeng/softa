@@ -1,7 +1,6 @@
 package io.softa.framework.orm.jdbc;
 
 import java.sql.PreparedStatement;
-import java.sql.Statement;
 import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
@@ -17,6 +16,7 @@ import io.softa.framework.base.utils.Cast;
 import io.softa.framework.orm.annotation.ExecuteSql;
 import io.softa.framework.orm.annotation.WriteOperation;
 import io.softa.framework.orm.jdbc.database.SqlParams;
+import io.softa.framework.orm.meta.ModelManager;
 
 /**
  * A proxy class for executing JDBC operations, offering parameterized methods,
@@ -32,6 +32,15 @@ public class JdbcProxy {
     /**
      * Inserts a new row and returns the auto-generated primary key (of type Long).
      *
+     * <p>The generated-key column is named explicitly rather than requesting
+     * {@code Statement.RETURN_GENERATED_KEYS}: pgjdbc rewrites that flag into
+     * {@code RETURNING *}, so the key holder comes back carrying <b>every</b> column of
+     * the inserted row and {@link KeyHolder#getKey()} throws
+     * {@code InvalidDataAccessApiUsageException} ("multiple keys"). Naming the column
+     * yields a single-entry key set on both flavors. The primary key is {@code slice_id}
+     * on a timeline model and {@code id} everywhere else — {@code ModelManager} resolves
+     * which, so this stays correct for both.
+     *
      * @param modelName identifies the model; can be used to switch the data source
      * @param sqlParams encapsulates the SQL statement and parameters
      * @return the generated primary key as a Long
@@ -39,9 +48,10 @@ public class JdbcProxy {
     @WriteOperation
     @ExecuteSql
     public Long insert(String modelName, SqlParams sqlParams) {
+        String pkColumn = ModelManager.getModelPrimaryKeyField(modelName).getColumnName();
         KeyHolder keyHolder = new GeneratedKeyHolder();
         jdbcTemplate.update(connection -> {
-            PreparedStatement ps = connection.prepareStatement(sqlParams.getSql(), Statement.RETURN_GENERATED_KEYS);
+            PreparedStatement ps = connection.prepareStatement(sqlParams.getSql(), new String[]{pkColumn});
             for (int i = 0; i < sqlParams.getArgs().size(); i++) {
                 ps.setObject(i + 1, sqlParams.getArgs().get(i));
             }
