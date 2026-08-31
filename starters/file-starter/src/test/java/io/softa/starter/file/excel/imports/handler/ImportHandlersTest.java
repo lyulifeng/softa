@@ -122,6 +122,31 @@ class ImportHandlersTest {
         assertEquals("SG", row.get("country"));
     }
 
+    /**
+     * A required cell reports the column the reader is looking at, not the sub-record behind it.
+     *
+     * <p>A dotted column is handled by its ROOT field's metadata, so every required column under one
+     * sub-record used to report that root's label: five blank columns produced "The field `Employee
+     * Profile` is required" five times, with nothing saying which five. The employee template has a
+     * dozen such columns.
+     */
+    @Test
+    void aRequiredCellNamesItsOwnColumn() {
+        ImportFieldDTO dto = new ImportFieldDTO();
+        dto.setRequired(true);
+        dto.setHeader("Personal Email");
+        DefaultHandler handler = new DefaultHandler(
+                metaField(FieldType.ONE_TO_ONE, "Employee Profile", "employeeProfileId", null), dto);
+
+        Map<String, Object> row = new LinkedHashMap<>();
+        row.put("employeeProfileId", "");
+
+        ValidationException failure =
+                assertThrows(ValidationException.class, () -> handler.handleRow(row));
+        assertEquals("The field `Personal Email` is required",
+                failure.getMessage().replace("{0}", "Personal Email"));
+    }
+
     @Test
     void aBlankRequiredCellWithNoDefaultStillFails() {
         // No default means the blank is genuinely missing — requiredness still bites.
