@@ -1,6 +1,7 @@
 package io.softa.framework.orm.service.impl;
 
 import java.util.List;
+import java.util.Set;
 
 import org.junit.jupiter.api.Test;
 
@@ -8,11 +9,14 @@ import io.softa.framework.base.context.Context;
 import io.softa.framework.base.context.ContextHolder;
 import io.softa.framework.base.exception.PermissionException;
 import io.softa.framework.orm.entity.FileRecord;
+import io.softa.framework.orm.service.FileService.OwnershipStatement;
 
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.ArgumentMatchers.anyList;
 import static org.mockito.Mockito.doReturn;
 import static org.mockito.Mockito.spy;
+import static org.mockito.Mockito.times;
+import static org.mockito.Mockito.verify;
 
 /**
  * {@code assertClaimable} is the single point where "which row owns this file" is enforced, and the
@@ -36,10 +40,16 @@ class FileClaimableTest {
     }
 
     private static void assertClaimable(FileServiceImpl service, String modelName, String rowId) {
+        assertClaimable(service, modelName, rowId, null);
+    }
+
+    private static void assertClaimable(FileServiceImpl service, String modelName, String rowId,
+                                        Long callerTenant) {
         Context ctx = new Context();
         ctx.setUserId(7L);
-        ContextHolder.runWith(ctx, () ->
-                service.assertClaimable(modelName, rowId, "attachment", List.of(9L)));
+        ctx.setTenantId(callerTenant);
+        ContextHolder.runWith(ctx, () -> service.assertClaimable(modelName,
+                List.of(new OwnershipStatement(rowId, "attachment", Set.of(9L)))));
     }
 
     private static FileServiceImpl serviceReturning(FileRecord... records) {
@@ -96,5 +106,55 @@ class FileClaimableTest {
     void anIdNamingNoRecordIsRefused() {
         FileServiceImpl service = serviceReturning();
         assertThrows(PermissionException.class, () -> assertClaimable(service, "EmpAttachment", "5"));
+    }
+
+    /**
+     * One write, one read: however many rows and File fields the write carries, every id is verified
+     * against a single batched fetch — the ownership cost of a bulk write must not grow with its row
+     * count.
+     */
+    @Test
+    void aWholeWriteIsVerifiedAgainstOneRead() {
+        FileServiceImpl service = spy(new FileServiceImpl());
+        doReturn(List.of(record(9L, "EmpAttachment", null), record(11L, "EmpAttachment", "5")))
+                .when(service).getByIds(anyList());
+        Context ctx = new Context();
+        ctx.setUserId(7L);
+
+        ContextHolder.runWith(ctx, () -> service.assertClaimable("EmpAttachment", List.of(
+                new OwnershipStatement(null, "attachment", Set.of(9L)),
+                new OwnershipStatement("5", "attachment", Set.of(11L)))));
+
+        verify(service, times(1)).getByIds(anyList());
+    }
+
+    private static FileRecord tenantRecord(Long tenantId) {
+        FileRecord record = record(9L, "EmpAttachment", null);
+        record.setTenantId(tenantId);
+        return record;
+    }
+
+    /**
+     * Unclaimed is bounded by tenant as well as model. Between upload and save a file is bound to no
+     * row, and same-model alone would let a leaked id be pulled into another tenant's row — the one
+     * claim theft the row-binding rule cannot see, because there is no binding yet.
+     */
+    @Test
+    void anUnclaimedFileOfAnotherTenantIsRefused() {
+        FileServiceImpl service = serviceReturning(tenantRecord(100L));
+        assertThrows(PermissionException.class,
+                () -> assertClaimable(service, "EmpAttachment", "5", 200L));
+    }
+
+    /** The pre-boarding flow: candidate and HR differ as users but share the tenant. */
+    @Test
+    void anUnclaimedFileOfTheSameTenantMayBeAttached() {
+        assertClaimable(serviceReturning(tenantRecord(100L)), "EmpAttachment", "5", 100L);
+    }
+
+    /** Records from before the tenant stamp carry null and stay claimable — forward-only. */
+    @Test
+    void aLegacyUnstampedFileIsNotLockedOut() {
+        assertClaimable(serviceReturning(tenantRecord(null)), "EmpAttachment", "5", 200L);
     }
 }

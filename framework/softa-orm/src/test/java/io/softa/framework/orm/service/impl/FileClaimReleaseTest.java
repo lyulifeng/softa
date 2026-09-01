@@ -1,6 +1,7 @@
 package io.softa.framework.orm.service.impl;
 
 import java.util.List;
+import java.util.Map;
 
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
@@ -39,7 +40,7 @@ class FileClaimReleaseTest {
     }
 
     private static void run(FileServiceImpl service, List<FileClaim> claims, List<FileSlot> slots) {
-        ContextHolder.runWith(new Context(), () -> service.claimFiles(claims, slots));
+        ContextHolder.runWith(new Context(), () -> service.claimFiles(claims, slots, Map.of()));
     }
 
     @Test
@@ -124,5 +125,25 @@ class FileClaimReleaseTest {
 
         verify(service, never()).searchList(any(Filters.class));
         verify(service, never()).updateList(anyList(), eq(false));
+    }
+
+    /**
+     * The paired validate already read the records this write names; the claim binds from that read
+     * rather than issuing a second one — reusing it is what makes a write's whole ownership overhead a
+     * single fetch.
+     */
+    @Test
+    void aPreloadedRecordIsBoundWithoutAReRead() {
+        FileServiceImpl service = spy(new FileServiceImpl());
+        doReturn(List.of()).when(service).searchList(any(Filters.class));
+        doReturn(true).when(service).updateList(anyList());
+
+        ContextHolder.runWith(new Context(), () -> service.claimFiles(
+                List.of(new FileClaim(9L, "EmpAttachment", "5", "attachment")),
+                List.of(new FileSlot("EmpAttachment", "5", "attachment")),
+                Map.of(9L, record(9L, null, null))));
+
+        verify(service, never()).getByIds(anyList());
+        verify(service).updateList(anyList());
     }
 }

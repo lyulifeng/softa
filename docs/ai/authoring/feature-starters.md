@@ -27,6 +27,7 @@ starters) — see [config.md](config.md):
 | `es-starter` | Elasticsearch CRUD + query | starters/es-starter README |
 | `user-starter` | User management | starters/user-starter README |
 | `tenant-starter` | Multi-tenancy | starters/tenant-starter README |
+| `sentry-starter` | Error tracking + performance tracing via Sentry — events tagged with the request's tenant / trace / user, ERROR logs captured automatically, optional JDBC spans. Inert until a DSN is set | [sentry-starter README](../../../starters/sentry-starter/README.md) |
 
 > The relative links above resolve inside the Softa repo. If you copied this
 > guide into a downstream app, find these READMEs in the Softa source or on the

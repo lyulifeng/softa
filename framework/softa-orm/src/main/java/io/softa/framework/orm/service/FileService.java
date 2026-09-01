@@ -4,11 +4,14 @@ import java.io.InputStream;
 import java.io.Serializable;
 import java.util.Collection;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 import org.springframework.web.multipart.MultipartFile;
 
 import io.softa.framework.orm.dto.FileInfo;
 import io.softa.framework.orm.dto.UploadFileDTO;
+import io.softa.framework.orm.entity.FileRecord;
 
 public interface FileService {
 
@@ -108,16 +111,21 @@ public interface FileService {
      *   <li><b>Already bound to this very row</b> — re-saving a record must not fail.</li>
      * </ul>
      *
-     * <p>Everything else — bound to another row, uploaded against another model, or no such record —
-     * throws. Silently dropping the value was considered and rejected: a dropped attachment looks to
-     * the user exactly like a saved one until they come back for it.
+     * <p>Everything else — bound to another row, uploaded against another model, uploaded by another
+     * tenant, or no such record — throws. Silently dropping the value was considered and rejected: a
+     * dropped attachment looks to the user exactly like a saved one until they come back for it.
+     *
+     * <p>Batch-shaped on purpose: one write hands over every File-field statement it carries, all ids
+     * are fetched in a single read, and each statement is checked against it in memory — the ownership
+     * cost of a write does not grow with its row count.
      *
      * @param modelName the model being written
-     * @param rowId the row being written, null on create (no id yet — only the unclaimed case can pass)
-     * @param fieldName the File field carrying the ids
-     * @param fileIds the ids that field is being set to
+     * @param statements one per (row, field) the write carries, each naming the ids the field is being
+     *        set to; a row being created carries a null rowId (only the unclaimed case can pass)
+     * @return the records the statements were verified against, keyed by file id — hand it to
+     *         {@link #claimFiles} so the paired claim does not read them a second time
      */
-    void assertClaimable(String modelName, Serializable rowId, String fieldName, Collection<Long> fileIds);
+    Map<Long, FileRecord> assertClaimable(String modelName, Collection<OwnershipStatement> statements);
 
     /**
      * Bind the files these rows now reference, and release the ones they no longer do.
@@ -131,16 +139,19 @@ public interface FileService {
      * <p>Releasing is the other half. A write that carried a File field is a complete statement about
      * that field, so a record still bound to it whose id is absent from the new value is no longer
      * referenced and its binding is cleared. Without this, removing an attachment left the record
-     * pointing at the row and {@link #getRowFiles} kept listing it — the file surviving its own
-     * removal. The binding is cleared, not the file.
+     * pointing at the row, and everyone who could read the row kept reaching a file it no longer
+     * showed — the file surviving its own removal. The binding is cleared, not the file.
      *
      * <p>Idempotent, and silent about ids it cannot find: a claim naming a file deleted between upload
      * and save is not worth failing a business write over.
      *
      * @param claims the bindings to apply; empty is a no-op
-     * @param slots the (model, row, field) triples the write actually carried
+     * @param slots the (model, row, field) triples the write actually carried; empty skips the release
+     *        half — an insert passes none, because its freshly minted row ids cannot be vacated slots
+     * @param preloaded the records the paired {@link #assertClaimable} already read, keyed by id; ids
+     *        outside it are read individually, so {@code Map.of()} is always safe
      */
-    void claimFiles(Collection<FileClaim> claims, Collection<FileSlot> slots);
+    void claimFiles(Collection<FileClaim> claims, Collection<FileSlot> slots, Map<Long, FileRecord> preloaded);
 
     /**
      * Give a second row its own record of the same stored file.
@@ -163,6 +174,16 @@ public interface FileService {
      * @return the new file id, or empty when the source file does not exist
      */
     Optional<Long> copyFileTo(Long fileId, String modelName, Serializable rowId, String fieldName);
+
+    /**
+     * One File field's write statement: the ids a (row, field) slot is being set to.
+     *
+     * @param rowId the row being written, null on create (no id yet)
+     * @param fieldName the File field carrying the ids
+     * @param fileIds the ids the field is being set to; never empty — an emptied field is a release,
+     *        which the claim side states through its slot, not a statement to verify
+     */
+    record OwnershipStatement(String rowId, String fieldName, Set<Long> fileIds) {}
 
     /**
      * One file's binding to the row and field that reference it.

@@ -88,3 +88,11 @@ No SQL seeding is required: on an empty database the boot reconciler first creat
 
 # 7. Production Environment
 It is highly recommended that the production environment be deployed using a pipeline and Kubernetes for containerization.
+
+## 7.1 Observability
+
+The compose files in this directory are development stacks: each pins the `json-file` driver with rotation, because Docker's default never rotates and a long-running local stack will fill the disk.
+
+On a server, do **not** pin the driver per service. Docker validates log options per driver, so one `logging:` block cannot serve both a laptop and a log platform, and making it conditional forces an overlay file that has to be remembered on every manual `up`. Configure `/etc/docker/daemon.json` instead — one setting per host, covering every container on it, with nothing to forget. Any driver that ships logs off-host must also set `mode: non-blocking` with a `max-buffer-size`: the default is *blocking*, so a slow destination stalls the container's writes and takes application threads with it.
+
+The application side — ECS-structured JSON logs, the `traceId` / `tenantId` / `userId` fields the framework puts in the MDC, error tracking and tracing through `sentry-starter` — is documented in the Observability guide (`docs/backend_dev/observability` on the documentation site), together with both `daemon.json` recipes.

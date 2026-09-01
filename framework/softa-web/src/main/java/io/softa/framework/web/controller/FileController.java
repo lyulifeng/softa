@@ -52,6 +52,20 @@ public class FileController {
         permissionService.checkIdAccess(modelName, IdUtils.formatId(modelName, rowId), AccessType.UPDATE);
     }
 
+    /**
+     * Authorize a create-form upload — no row exists yet, so only the "whether at all" half of
+     * {@link #assertCanAttach} can be asked. CREATE or UPDATE both qualify, because both kinds of form
+     * upload before their save carries a row id. Without this gate, any signed-in user could pour
+     * bytes into storage against any model: the files stay unreadable (unclaimed, reachable through no
+     * row), but storage is spent all the same.
+     */
+    private void assertMayUploadFor(String modelName) {
+        if (!permissionService.hasModelActionGrant(modelName, AccessType.CREATE)
+                && !permissionService.hasModelActionGrant(modelName, AccessType.UPDATE)) {
+            throw new PermissionException("You may not attach files to " + modelName + ".");
+        }
+    }
+
     // No read endpoint by design. A file is never fetched by its own id or by (model, row) over HTTP —
     // both would be a direct object reference the row-derived model cannot authorize (a bare id names
     // no row; a row id an admin passes skips the tenant predicate). Business callers read the owning
@@ -109,11 +123,14 @@ public class FileController {
         Assert.notTrue(file.isEmpty(), "The file to upload cannot be empty!");
         if (rowId != null) {
             assertCanAttach(modelName, rowId);
+        } else {
+            // The create-form case: the record does not exist yet, so there is no row to check
+            // against — but whether this caller may write the model at all is still answerable. What
+            // bounds ACCESS is the save: the file only enters business data when a row references it,
+            // and that write runs FileOwnership.validate, which refuses an id this model does not
+            // own. Until then the record is unclaimed and reachable through no row at all.
+            assertMayUploadFor(modelName);
         }
-        // A null rowId is the create-form case: the record does not exist yet, so there is no row to
-        // check against. What bounds it is the save — the file only enters business data when a row
-        // references it, and that write runs FileOwnership.validate, which refuses an id this model
-        // does not own. Until then the record is unclaimed and reachable through no row at all.
         return ApiResponse.success(service.uploadFile(modelName, rowId, fieldName, file));
     }
 }

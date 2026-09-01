@@ -63,7 +63,9 @@ softa-parent (root pom.xml)
 │   ├── reference-data-starter   # ISO 3166-1 countries, ISO 4217 currencies, ISO 3166-2 subdivisions
 │   ├── studio-starter           # Metadata control plane: cross-env governance + DDL rendering (Pebble)
 │   ├── user-starter             # User management
-│   └── tenant-starter           # Multi-tenancy
+│   ├── permission-starter       # Endpoint / row / field permission enforcement
+│   ├── tenant-starter           # Multi-tenancy
+│   └── sentry-starter           # Sentry error tracking + tracing, Context-enriched
 └── apps/               # Example applications
     ├── demo-app        # Full-featured demo of all capabilities
     └── mini-app        # Minimal starter app

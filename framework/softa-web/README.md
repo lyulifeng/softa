@@ -1,5 +1,21 @@
 # Softa Web
 
+## Request Context and MDC
+
+`ContextScopeFilter` (order `HIGHEST_PRECEDENCE`) resolves the caller and binds a `Context` for the whole filter chain, so anything downstream reads the request identity through `ContextHolder` rather than passing it around. The `Context` lives in a `ScopedValue`, which the logging system cannot see — so the same filter also mirrors three fields of it into SLF4J's **MDC** for the duration of the scope:
+
+| MDC key | Source | Present when |
+|---|---|---|
+| `traceId` | `Context.traceId` — taken from the caller's trace header, or generated | always, inside a bound scope |
+| `tenantId` | `Context.tenantId` | multi-tenant requests |
+| `userId` | `Context.userId` | authenticated requests |
+
+The keys are declared as constants in `MdcKeys` (softa-base) — reference them instead of repeating the literals. They are removed in a `finally`, so nothing leaks past the request onto a reused thread.
+
+What this buys, with no application code involved: **every log line written inside a request carries the request identity**. Turn on structured logging (`logging.structured.format.console=ecs`) and they become queryable JSON fields, so a log platform can filter by tenant or follow one `traceId` through a request; any MDC-aware integration picks them up too (`sentry-starter` attaches them to error events, which is what lets an issue in Sentry be cross-referenced with the matching log lines).
+
+Requests that skip context binding have no MDC either — `IdentifyType.NONE` and `OPENAPI` endpoints run outside a bound scope by design.
+
 ## Option Sets
 Option sets provide a shared, ordered list of selectable values. The web module exposes an API to read option items
 and the ORM layer caches them for fast lookup.

@@ -3,28 +3,21 @@ package io.softa.framework.orm.service.impl;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.Serializable;
-import java.util.ArrayList;
-import java.util.Collection;
-import java.util.LinkedHashMap;
-import java.util.List;
-import java.util.Map;
-import java.util.Objects;
-import java.util.Optional;
-import java.util.Set;
+import java.util.*;
 import java.util.stream.Collectors;
-import org.springframework.transaction.annotation.Transactional;
-import org.springframework.util.CollectionUtils;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.lang3.StringUtils;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+import org.springframework.util.CollectionUtils;
 import org.springframework.web.multipart.MultipartFile;
 
 import io.softa.framework.base.config.SystemConfig;
 import io.softa.framework.base.context.Context;
 import io.softa.framework.base.context.ContextHolder;
-import io.softa.framework.base.exception.PermissionException;
 import io.softa.framework.base.exception.IllegalArgumentException;
+import io.softa.framework.base.exception.PermissionException;
 import io.softa.framework.base.exception.SystemException;
 import io.softa.framework.base.utils.DateUtils;
 import io.softa.framework.orm.constant.FileConstant;
@@ -34,15 +27,12 @@ import io.softa.framework.orm.dto.DownloadFileDTO;
 import io.softa.framework.orm.dto.FileInfo;
 import io.softa.framework.orm.dto.UploadFileDTO;
 import io.softa.framework.orm.entity.FileRecord;
-import io.softa.framework.orm.enums.AccessType;
 import io.softa.framework.orm.enums.FileSource;
 import io.softa.framework.orm.enums.FileType;
 import io.softa.framework.orm.oss.OSSProperties;
 import io.softa.framework.orm.oss.OssClientService;
 import io.softa.framework.orm.service.FileService;
-import io.softa.framework.orm.service.PermissionService;
 import io.softa.framework.orm.utils.FileUtils;
-import io.softa.framework.orm.utils.IdUtils;
 import io.softa.framework.orm.utils.HttpDownloadUtils;
 import io.softa.framework.orm.utils.IDGenerator;
 
@@ -53,14 +43,12 @@ import io.softa.framework.orm.utils.IDGenerator;
 @Slf4j
 public class FileServiceImpl extends EntityServiceImpl<FileRecord, Long> implements FileService {
 
+    @SuppressWarnings("SpringJavaInjectionPointsAutowiringInspection")
     @Autowired
     private OssClientService ossClientService;
 
     @Autowired
     private OSSProperties ossProperties;
-
-    @Autowired
-    private PermissionService permissionService;
 
     /**
      * Generate an OSS key for the file
@@ -367,29 +355,39 @@ public class FileServiceImpl extends EntityServiceImpl<FileRecord, Long> impleme
     // ─────────────────────── ownership: written once, trusted everywhere ───────────────────────
 
     @Override
-    public void assertClaimable(String modelName, Serializable rowId, String fieldName,
-                                Collection<Long> fileIds) {
-        if (CollectionUtils.isEmpty(fileIds)) {
-            return;
+    public Map<Long, FileRecord> assertClaimable(String modelName, Collection<OwnershipStatement> statements) {
+        if (CollectionUtils.isEmpty(statements)) {
+            return Map.of();
         }
-        List<Long> ids = fileIds.stream().filter(Objects::nonNull).distinct().toList();
+        // One read for the whole write, whatever its row count — the per-statement checks below are
+        // pure in-memory comparisons against it.
+        List<Long> ids = statements.stream()
+                .flatMap(statement -> statement.fileIds().stream())
+                .filter(Objects::nonNull)
+                .distinct()
+                .toList();
         if (ids.isEmpty()) {
-            return;
+            return Map.of();
         }
         Map<Long, FileRecord> byId = bypassFileRecordScope(() -> this.getByIds(ids)).stream()
                 .collect(Collectors.toMap(FileRecord::getId, r -> r, (a, b) -> a));
-        String row = rowId == null ? null : rowId.toString();
-        for (Long fileId : ids) {
-            FileRecord record = byId.get(fileId);
-            if (record == null) {
-                throw new PermissionException("File {0} does not exist.", fileId);
-            }
-            if (!isClaimableBy(record, modelName, row)) {
-                // Deliberately says nothing about whose it is: the caller supplied this id, and
-                // confirming what it belongs to would answer a question they were not entitled to ask.
-                throw new PermissionException("File {0} is not yours to attach.", fileId);
+        for (OwnershipStatement statement : statements) {
+            for (Long fileId : statement.fileIds()) {
+                if (fileId == null) {
+                    continue;
+                }
+                FileRecord record = byId.get(fileId);
+                if (record == null) {
+                    throw new PermissionException("File {0} does not exist.", fileId);
+                }
+                if (!isClaimableBy(record, modelName, statement.rowId())) {
+                    // Deliberately says nothing about whose it is: the caller supplied this id, and
+                    // confirming what it belongs to would answer a question they were not entitled to ask.
+                    throw new PermissionException("File {0} is not yours to attach.", fileId);
+                }
             }
         }
+        return byId;
     }
 
     /**
@@ -402,16 +400,36 @@ public class FileServiceImpl extends EntityServiceImpl<FileRecord, Long> impleme
      */
     private boolean isClaimableBy(FileRecord record, String modelName, String rowId) {
         if (StringUtils.isBlank(record.getRowId())) {
-            return StringUtils.isBlank(record.getModelName())
-                    || Objects.equals(record.getModelName(), modelName);
+            return sameTenantAsCaller(record)
+                    && (StringUtils.isBlank(record.getModelName())
+                            || Objects.equals(record.getModelName(), modelName));
         }
         return Objects.equals(record.getModelName(), modelName)
                 && Objects.equals(record.getRowId(), rowId);
     }
 
+    /**
+     * An unclaimed file may only be claimed within the tenant that uploaded it — between upload and
+     * save it is bound to no row, and same-model alone would let a leaked id be pulled into another
+     * tenant's row. Compared by tenant, not by user: the pre-boarding flow has a candidate upload what
+     * HR later saves. Enforced only when both sides are known — records from before the stamp (and
+     * system writes outside any tenant) carry null and stay claimable, forward-only. The bound branch
+     * above needs no tenant check: row ids are globally unique, so (model, rowId) cannot collide
+     * across tenants.
+     */
+    private boolean sameTenantAsCaller(FileRecord record) {
+        Long uploadedTenant = record.getTenantId();
+        Long callerTenant = ContextHolder.getContext().getTenantId();
+        if (uploadedTenant == null || callerTenant == null) {
+            return true;
+        }
+        return Objects.equals(uploadedTenant, callerTenant);
+    }
+
     @Override
     @Transactional(rollbackFor = Exception.class)
-    public void claimFiles(Collection<FileClaim> claims, Collection<FileSlot> slots) {
+    public void claimFiles(Collection<FileClaim> claims, Collection<FileSlot> slots,
+                           Map<Long, FileRecord> preloaded) {
         releaseVacatedSlots(claims, slots);
         Map<Long, FileClaim> claimById = new LinkedHashMap<>();
         if (claims != null) {
@@ -424,7 +442,7 @@ public class FileServiceImpl extends EntityServiceImpl<FileRecord, Long> impleme
         if (claimById.isEmpty()) {
             return;
         }
-        List<FileRecord> records = bypassFileRecordScope(() -> this.getByIds(new ArrayList<>(claimById.keySet())));
+        List<FileRecord> records = resolveClaimRecords(claimById.keySet(), preloaded);
         List<FileRecord> toUpdate = new ArrayList<>(records.size());
         for (FileRecord record : records) {
             FileClaim claim = claimById.get(record.getId());
@@ -440,6 +458,29 @@ public class FileServiceImpl extends EntityServiceImpl<FileRecord, Long> impleme
         if (!toUpdate.isEmpty()) {
             bypassFileRecordScope(() -> this.updateList(toUpdate));
         }
+    }
+
+    /**
+     * The records to bind, taken from what validate already read for this very write. Same thread,
+     * same transaction, and nothing between the two calls touches file_record — a re-read would fetch
+     * the identical rows. Ids the preload does not cover (a value filled in after validate ran, e.g. a
+     * metadata default) are read individually; none exist on the standard path.
+     */
+    private List<FileRecord> resolveClaimRecords(Collection<Long> ids, Map<Long, FileRecord> preloaded) {
+        List<FileRecord> records = new ArrayList<>(ids.size());
+        List<Long> missing = new ArrayList<>();
+        for (Long id : ids) {
+            FileRecord preloadedRecord = preloaded == null ? null : preloaded.get(id);
+            if (preloadedRecord != null) {
+                records.add(preloadedRecord);
+            } else {
+                missing.add(id);
+            }
+        }
+        if (!missing.isEmpty()) {
+            records.addAll(bypassFileRecordScope(() -> this.getByIds(missing)));
+        }
+        return records;
     }
 
     /** True when the record already carries exactly this binding. */
@@ -514,6 +555,11 @@ public class FileServiceImpl extends EntityServiceImpl<FileRecord, Long> impleme
      * here for the skip to widen.
      */
     private Long persistFileRecord(FileRecord fileRecord) {
+        // Stamp the uploading tenant. FileRecord is not multiTenant, so the write pipeline does not
+        // fill tenantId; the unclaimed-claim check (sameTenantAsCaller) is what reads it back.
+        if (fileRecord.getTenantId() == null) {
+            fileRecord.setTenantId(ContextHolder.getContext().getTenantId());
+        }
         return bypassFileRecordScope(() -> this.createOne(fileRecord));
     }
 
