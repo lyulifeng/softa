@@ -11,6 +11,7 @@ import org.springframework.util.CollectionUtils;
 
 import io.softa.framework.base.utils.SpringContextUtils;
 import io.softa.framework.orm.constant.ModelConstant;
+import io.softa.framework.orm.entity.FileRecord;
 import io.softa.framework.orm.enums.FieldType;
 import io.softa.framework.orm.meta.MetaField;
 import io.softa.framework.orm.meta.ModelManager;
@@ -32,13 +33,14 @@ import io.softa.framework.orm.service.FileService;
  *   <li>{@link #validate} runs <b>before</b> the row is written and rejects an id this row may not
  *       point at. This is what makes the column trustworthy, and therefore what makes the bypass on
  *       the read side sound.</li>
- *   <li>{@link #claim} runs <b>after</b>, once the id exists, and records the binding on the
- *       FileRecord — which is what step 1 consults next time. Without it no file is ever owned, every
- *       file looks unclaimed, and validation has nothing to enforce.</li>
+ *   <li>{@link #claimCreated} / {@link #claimUpdated} run <b>after</b>, once the id exists, and record
+ *       the binding on the FileRecord — which is what step 1 consults next time. Without it no file is
+ *       ever owned, every file looks unclaimed, and validation has nothing to enforce.</li>
  * </ol>
  *
  * <p>Neither half stands alone. They are one mechanism, split by the fact that a row's id does not
- * exist until it has been inserted.
+ * exist until it has been inserted — and validate hands what it read to the claim through a
+ * {@link Plan}, so a write's whole ownership overhead is one batched read.
  *
  * <p><b>Coverage, and its one boundary.</b> Both hang off {@code JdbcServiceImpl.insertList} and
  * {@code updateList}, so they reach every write that flows through them — everything via
@@ -55,31 +57,81 @@ public class FileOwnership {
     private FileOwnership() {}
 
     /**
-     * Reject a write pointing a File field at a file the row does not own. Throws before anything is
-     * written, so a refused attachment fails the save rather than being silently dropped.
+     * What {@link #validate} read, carried to the paired claim so it is not read again.
      *
-     * @param modelName the model being written
-     * @param rows the rows about to be written; on create they carry no id yet
+     * <p>The two calls bracket one row write on one thread in one transaction, and nothing between
+     * them touches file_record — so the records validate loaded are exactly what the claim would
+     * load. Keyed by file id, never by row: on create the row ids do not exist yet when validate runs.
      */
-    public static void validate(String modelName, List<Map<String, Object>> rows) {
-        forEachWrittenFileField(modelName, rows, (row, fileField, fileIds) -> {
-            Object rowId = row.get(ModelConstant.ID);
-            SpringContextUtils.getBeanByClass(FileService.class).assertClaimable(
-                    modelName,
-                    rowId == null ? null : rowId.toString(),
-                    fileField.getFieldName(),
-                    fileIds);
-        });
+    public static final class Plan {
+
+        private static final Plan EMPTY = new Plan(Map.of());
+
+        private final Map<Long, FileRecord> records;
+
+        private Plan(Map<Long, FileRecord> records) {
+            this.records = records;
+        }
     }
 
     /**
-     * Bind every file these rows reference to the row referencing it, and release the ones they
-     * stopped referencing.
+     * Reject a write pointing a File field at a file the row does not own. Throws before anything is
+     * written, so a refused attachment fails the save rather than being silently dropped.
+     *
+     * <p>Every id the write carries is verified against one batched read, and that read rides the
+     * returned {@link Plan} into {@link #claimCreated} / {@link #claimUpdated}.
+     *
+     * @param modelName the model being written
+     * @param rows the rows about to be written; on create they carry no id yet
+     * @return the ownership records this write was validated against, for the paired claim
+     */
+    public static Plan validate(String modelName, List<Map<String, Object>> rows) {
+        List<FileService.OwnershipStatement> statements = new ArrayList<>();
+        forEachWrittenFileField(modelName, rows, (row, fileField, fileIds) -> {
+            if (fileIds.isEmpty()) {
+                // A cleared field states "no files": nothing to verify, and the claim side does not
+                // need a record to release its slot.
+                return;
+            }
+            Object rowId = row.get(ModelConstant.ID);
+            statements.add(new FileService.OwnershipStatement(
+                    rowId == null ? null : rowId.toString(), fileField.getFieldName(), fileIds));
+        });
+        if (statements.isEmpty()) {
+            return Plan.EMPTY;
+        }
+        return new Plan(SpringContextUtils.getBeanByClass(FileService.class)
+                .assertClaimable(modelName, statements));
+    }
+
+    /**
+     * Bind the files freshly inserted rows reference.
+     *
+     * <p>No release half here: these row ids were minted by this very insert, so no stale binding can
+     * point at them — the vacated-slot query would scan for rows that cannot exist.
      *
      * @param modelName the model the rows belong to
      * @param rows rows that have already been written, each carrying its id
+     * @param plan what the paired {@link #validate} read
      */
-    public static void claim(String modelName, List<Map<String, Object>> rows) {
+    public static void claimCreated(String modelName, List<Map<String, Object>> rows, Plan plan) {
+        claim(modelName, rows, plan, false);
+    }
+
+    /**
+     * Bind what updated rows now reference, and release what they stopped referencing — a cleared
+     * attachment must stop being reachable through the row it used to hang on.
+     *
+     * @param modelName the model the rows belong to
+     * @param rows rows that have already been written, each carrying its id
+     * @param plan what the paired {@link #validate} read
+     */
+    public static void claimUpdated(String modelName, List<Map<String, Object>> rows, Plan plan) {
+        claim(modelName, rows, plan, true);
+    }
+
+    private static void claim(String modelName, List<Map<String, Object>> rows, Plan plan,
+                              boolean releaseVacated) {
         List<FileService.FileClaim> claims = new ArrayList<>();
         List<FileService.FileSlot> writtenSlots = new ArrayList<>();
         forEachWrittenFileField(modelName, rows, (row, fileField, fileIds) -> {
@@ -92,9 +144,12 @@ public class FileOwnership {
                 claims.add(new FileService.FileClaim(fileId, modelName, rowId.toString(), fileField.getFieldName()));
             }
         });
-        if (!writtenSlots.isEmpty()) {
-            SpringContextUtils.getBeanByClass(FileService.class).claimFiles(claims, writtenSlots);
+        // Without the release half, a write whose file fields were all cleared has nothing left to do.
+        if (releaseVacated ? writtenSlots.isEmpty() : claims.isEmpty()) {
+            return;
         }
+        SpringContextUtils.getBeanByClass(FileService.class).claimFiles(
+                claims, releaseVacated ? writtenSlots : List.of(), plan.records);
     }
 
     /** What to do with one row's one File field and the ids it was set to. */

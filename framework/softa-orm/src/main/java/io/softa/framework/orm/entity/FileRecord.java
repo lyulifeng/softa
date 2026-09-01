@@ -5,6 +5,7 @@ import lombok.Data;
 import lombok.EqualsAndHashCode;
 
 import io.softa.framework.orm.annotation.Field;
+import io.softa.framework.orm.annotation.Index;
 import io.softa.framework.orm.annotation.Model;
 import io.softa.framework.orm.enums.FileSource;
 import io.softa.framework.orm.enums.FileType;
@@ -19,6 +20,9 @@ import io.softa.framework.orm.enums.IdStrategy;
         idStrategy = IdStrategy.DISTRIBUTED_LONG,
         softDelete = true
 )
+// Serves the vacated-slot release read on every attachment-carrying update
+// (model_name = ? AND field_name = ? AND row_id IN ...) — this table grows with every upload and export.
+@Index(fields = {"modelName", "rowId"})
 public class FileRecord extends AuditableModel {
 
     @Serial
