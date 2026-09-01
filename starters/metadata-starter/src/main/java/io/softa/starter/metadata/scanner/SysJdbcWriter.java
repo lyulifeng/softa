@@ -168,6 +168,15 @@ public final class SysJdbcWriter {
     }
 
     /**
+     * {@code sys_field.auto_sequence} is a {@code Boolean}, so it renders BOOLEAN on
+     * PostgreSQL. Comparing it to the integer literal {@code 1} — which MySQL accepts, its
+     * column being TINYINT — fails there with {@code operator does not exist: boolean =
+     * integer}. {@code TRUE} is the portable literal: MySQL reads it as 1.
+     */
+    static final String SQL_AUTO_SEQUENCE_FIELDS =
+            "SELECT field_name FROM sys_field WHERE model_name = ? AND auto_sequence = TRUE";
+
+    /**
      * Model-rename twin of {@link #warnSequenceCodeOnFieldRename}. Runs after
      * the child-row cascade (so {@code sys_field.model_name} already carries the
      * new name) and before the field diffs (so {@code field_name} is still the
@@ -175,8 +184,7 @@ public final class SysJdbcWriter {
      */
     private void warnSequenceCodeOnModelRename(String oldModelName, String newModelName) {
         List<String> sequenceFields = jdbcTemplate.queryForList(
-                "SELECT field_name FROM sys_field WHERE model_name = ? AND auto_sequence = 1",
-                String.class, newModelName);
+                SQL_AUTO_SEQUENCE_FIELDS, String.class, newModelName);
         for (String fieldName : sequenceFields) {
             log.warn("SysJdbcWriter: model {} (renamed from {}) has autoSequence field `{}` — sys_sequence "
                             + "rows are tenant data and are NOT auto-updated; converge them with:\n{}",
