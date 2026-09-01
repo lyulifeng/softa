@@ -184,9 +184,12 @@ public class FilterUnitParser {
             return switch (value) {
                 case EnvConstant.COMPANY_ID -> context.getCompanyId();
                 // Only ever the *selected* company's country, hence the guard: the context may carry a
-                // country with nothing selected, because a caller with no company at all falls back to
-                // its own (CompanyCountryEnricher). That fallback exists to narrow multi-country
-                // value domains, and must not leak into a scope rule — a rule written
+                // country with nothing selected, from either of two sources — a caller with no company
+                // at all falling back to its own (CompanyCountryEnricher), or a request that named a
+                // country outright while deliberately sending no company (X-Company-Country). Neither
+                // is a selection, and the second is caller-supplied with no grant behind it, so this
+                // guard is the reason accepting that header is safe at all. Both exist to narrow
+                // multi-country value domains, and must not leak into a scope rule — a rule written
                 // ["country","=","SELECTED_COMP_COUNTRY"] matches nothing today when nothing is
                 // selected, and would silently start matching the caller's own country instead,
                 // widening a data scope that was configured against the header.

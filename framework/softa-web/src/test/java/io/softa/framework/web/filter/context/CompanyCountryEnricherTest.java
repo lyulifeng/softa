@@ -285,4 +285,22 @@ class CompanyCountryEnricherTest {
         verify(cache, never()).save(anyString(), any(), anyInt());
     }
 
+    @Test
+    void aCountryTheRequestAlreadyNamedIsNotOverwritten() {
+        // X-Company-Country lets a screen say "across my companies, but within this country" — the
+        // one thing the absence of a company id cannot say. ContextBuilder puts it on the context
+        // before the enrichers run, so by the time this executes the question has been answered and
+        // the fallback below is answering a different one: "nobody told me, so use where the caller
+        // works". Overwriting turns an explicit request into the caller's own country silently, which
+        // on a role-configuration screen means quietly configuring against the wrong country.
+        ModelService<Long> models = models();
+        Context context = contextWith(null);
+        context.setCompanyCountry("SG");
+        context.setEmpInfo(empInfoWithCompany(4242L));
+
+        new CompanyCountryEnricher(models, mock(CacheService.class)).enrich(context);
+
+        assertThat(context.getCompanyCountry()).isEqualTo("SG");
+        verifyNoInteractions(models);
+    }
 }
