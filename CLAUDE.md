@@ -206,9 +206,15 @@ public enum CustomerTier {
 
 - `multiCountry` / `multiCompany` (**request-scoped narrowing**): mark a model whose rows are
   partitioned by country / belong to one employing company, and the ORM narrows every read to the
-  country / company selected for the current request. One input drives both — the client sends only a
-  company id (`X-Company-Id`), the country is resolved server-side from it and is **never** taken from
-  the client. The anchor field is **fixed by name, never declared**: `country` (a to-one onto
+  country / company selected for the current request. One input normally drives both — the client sends
+  a company id (`X-Company-Id`), the country is resolved server-side from it and is **never** taken from
+  the client while one is selected. A request that deliberately sends **no** company may name the country
+  itself (`X-Company-Country`): a screen configuring across the caller's companies needs to say "not this
+  company, but this country", which the absence of a company id cannot express. Sending both is not a
+  third mode — the company wins. That header is a view preference, not a permission input: nothing bounds
+  a country the way the grant bounds a company, so what keeps it safe is that `SELECTED_COMP_COUNTRY`
+  stays null without a *selected* company and a CUSTOM rule naming it cannot be steered by a client.
+  The anchor field is **fixed by name, never declared**: `country` (a to-one onto
   `CountryRegion`) / `legalEntityId` (a to-one onto `LegalEntity`), asserted at boot. Fixing the name is
   what separates the axis from an attribute — a model may reference a country or a company for other
   reasons (`PayGroup.payingEntityId` names who pays a group, it does not make the group belong to them),

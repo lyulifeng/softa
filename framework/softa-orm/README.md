@@ -453,7 +453,9 @@ Important rule:
 
 Tenant isolation is not the only read narrowing the ORM applies on its own. Two more are driven by **which company the caller selected for this request**, declared per model with `@Model(multiCountry = true)` and `@Model(multiCompany = true)`.
 
-One input, two axes. The client sends only a company id (`X-Company-Id`); the country is resolved server-side from that company and is never taken from the client. A company therefore decides both *whose records* these are (itself) and *which statutory rules* apply (its country) — and the two cannot be collapsed into one mechanism, because two companies in the same country share their value domains but not their records.
+One input, two axes. The client normally sends only a company id (`X-Company-Id`); the country is resolved server-side from that company and is **never** taken from the client while one is selected. A company therefore decides both *whose records* these are (itself) and *which statutory rules* apply (its country) — and the two cannot be collapsed into one mechanism, because two companies in the same country share their value domains but not their records.
+
+A request that deliberately sends **no** company may name the country itself (`X-Company-Country`) — see *Naming a country without a company* below. Sending both is not a third mode: the company wins and the country header is ignored, because a context asserting a Singapore company and a Malaysian country would be believed by everything downstream.
 
 ```
 X-Company-Id: 8712
@@ -465,6 +467,11 @@ no header, EmpInfo.companyId = 4242            ← a role granted no company: no
    └─ (no Context.companyId) ────────────────────────────→ MultiCompanyScope  → skipped
         └─ CompanyCountryEnricher (fallback)
              └─ Context.companyCountry ────────────────→ MultiCountryScope  → country = 'SG'  ← the value, not the placeholder
+
+X-Company-Country: MY                          ← configuring across companies, within one country
+   └─ (no Context.companyId) ────────────────────────────→ MultiCompanyScope  → skipped
+        └─ CompanyCountryEnricher stands aside (the question was answered)
+             └─ Context.companyCountry ────────────────→ MultiCountryScope  → country = 'MY'  ← the value, not the placeholder
 ```
 
 `ModelServiceImpl` applies both on every read, then the role data scope on top:
@@ -543,6 +550,40 @@ A role granted no company selects none — the switcher has nothing to offer, so
 | a company is selected | 8712 | `SG` | `country = 'SG'` | `SG` |
 | nothing to select, own company known | `null` | `SG` | `country = 'SG'` | **`null`** |
 | nothing to select, no affiliation | `null` | `null` | skipped | `null` |
+| **company dropped on purpose, country named** | `null` | `MY` | `country = 'MY'` | **`null`** |
+
+### Naming a country without a company
+
+The fallback above answers "nobody told me, so use where the caller works". A screen that must reach
+**across** the caller's companies asks a different question, and the absence of a company id cannot
+express it: a client that has never sent the header and a screen that drops it deliberately are the
+same request here. `X-Company-Country` says the second half out loud — *do not narrow by company, do
+narrow by this country* — and `CompanyCountryEnricher` stands aside rather than overwriting an answer
+that was given.
+
+The case it exists for is configuring rather than viewing. A role's data scope applies wherever the
+role is assigned, so offering its values through the one company on screen configures the wrong
+thing: an administrator granted companies in two countries, looking at Singapore, would pick Malaysian
+employees against Singaporean value domains without either side saying so.
+
+**It is not a permission input, and the reason is worth stating precisely.** The company id is safe to
+accept unvalidated because `appendCompanyGrant` bounds it — a forged one reaches nothing new. Nothing
+plays that role for a country: there is no granted-countries list. What keeps this header a view
+preference is that it never reaches authorization — `{{SELECTED_COMP_COUNTRY}}` is guarded on a
+*selected* company (`FilterUnitParser`), so with none it stays `null` and a CUSTOM rule naming it keeps
+matching what it matched when it was written, rather than following whatever the client asked for. That
+guard predates this header, so `FilterUnitParserEnvTest` pins it against this second source explicitly —
+a property held by coincidence is one a refactor is free to drop.
+
+The residual exposure is bounded and worth knowing: a country value domain (`multiCountry` and *not*
+`multiTenant`) skips row scope by design, so the country is its only gate, and a forged header reads
+another country's reference data — pass types, ID types. Business data stays bounded by the company
+grant either way.
+
+**Models with no country axis are unaffected.** `Department` and `Employee` belong to a company, not a
+country, so nothing here narrows them; a caller that wants them by country declares the anchor as a
+`dynamic` cascaded field (`companyId.country`) and names it in its own filters — the field grants the
+ability, `multiCountry` would impose it on every read.
 | selected, but its row has no country | 8712 | `null` | skipped (WARN) | `null` |
 
 The third column and the fourth deliberately disagree in row two. Per-country partitioning is data correctness — another country's pass types do not *apply*, whoever you are — whereas a scope rule is authorization, and a rule someone wrote against the header (`["country","=","SELECTED_COMP_COUNTRY"]`) must keep matching what it matched when they wrote it. Had the placeholder followed the fallback, that rule would go from matching nothing to matching the caller's own country, widening a configured data scope with nothing in the configuration having changed. So `FilterUnitParser` guards the placeholder on `companyId` rather than on the country being present, and `MultiCountryScope` — the one consumer that wants the fallback — emits the resolved value instead of the placeholder when there is no selection. Both are one line, and they have to agree: emitting the placeholder under the fallback would compile to `country = NULL` and match nothing, which is how an empty required dropdown gets shipped.
