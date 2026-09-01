@@ -26,17 +26,6 @@ public final class DdlDialectFactory {
     }
 
     public static DdlDialect create(DatabaseType databaseType, DdlMetadataResolver metadataResolver) {
-        return create(databaseType, metadataResolver, null);
-    }
-
-    /**
-     * @param stringCollation PostgreSQL only: name of a collation to stamp onto string columns,
-     *     or blank/null to leave them at the database default. Ignored by every other dialect —
-     *     MySQL gets its case-insensitivity from the table collation, so it has nothing to add
-     *     per column.
-     */
-    public static DdlDialect create(DatabaseType databaseType, DdlMetadataResolver metadataResolver,
-                                    String stringCollation) {
         if (databaseType == null) {
             throw new ConfigurationException("Database type must not be null");
         }
@@ -45,7 +34,7 @@ public final class DdlDialectFactory {
         }
         return switch (databaseType) {
             case MYSQL -> new MySqlDdlDialect(metadataResolver);
-            case POSTGRESQL -> new PostgreSqlDdlDialect(metadataResolver, stringCollation);
+            case POSTGRESQL -> new PostgreSqlDdlDialect(metadataResolver);
             default -> throw new ConfigurationException("DDL dialect of database {0} is not currently supported!",
                     databaseType);
         };
