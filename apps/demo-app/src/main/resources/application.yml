@@ -62,6 +62,16 @@ logging:
     org.apache.fontbox.ttf.CmapSubtable: error
     org.springframework.jdbc.core.JdbcTemplate: info
 
+# Sentry (sentry-starter). Disabled until SENTRY_DSN is set, so this block costs
+# nothing here — it is the recommended policy baseline an application should carry:
+# what varies per environment (DSN, environment label, sample rates) belongs in the
+# environment, what does not belongs in version control. See the starter README.
+sentry:
+  # Data-protection red line — never attach cookies, user IP or request bodies.
+  send-default-pii: false
+  # Release identifier: set it to the deployed image tag so issues map to versions.
+  release: ${APP_IMAGE_TAG:}
+
 springdoc:
   writer-with-order-by-keys: true
   api-docs:
