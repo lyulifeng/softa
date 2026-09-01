@@ -233,7 +233,12 @@ public enum CustomerTier {
   the *selection* (`Context.companyId`, from `X-Company-Id`): which of my companies am I looking at. What
   bounds the set it picks from is the role's *grant* (`PermissionInfo.grantedCompanyIds`, applied by
   `PermissionServiceImpl.appendCompanyGrant`), and they compose as `selected ∧ granted`, so a header
-  switch can never reach outside the grant. The grant has **no store of its own**: it is the role's data
+  switch can never reach outside the grant. The switcher offers exactly the companies the role's data
+  scope on the company model holds, so the selection is always a subset and never empties a screen the
+  user was allowed to open. The grant is keyed on the **field name**, not on `multiCompany`: a model
+  carrying `companyId` without the flag (a pay group) is bounded by the grant while staying indifferent
+  to the header — grant follows the field, selection follows the flag. The grant has **no store of its
+  own**: it is the role's data
   scope on the company model (`role_data_scope` where `model = 'LegalEntity'`), resolved into ids by
   `DefaultPermissionSnapshotProvider.readGrantedCompanyIds` — one row bounds both the company switcher
   and every model belonging to a company, because two stores for one boundary can disagree (that was
