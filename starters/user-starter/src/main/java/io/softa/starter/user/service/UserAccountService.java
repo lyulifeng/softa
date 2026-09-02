@@ -70,6 +70,14 @@ public interface UserAccountService extends EntityService<UserAccount, Long> {
     UserInfo registerInvitedUser(String email, String mobile, String fullName);
 
     /**
+     * The reason a new account with these contacts must be refused in the current tenant, or
+     * {@code null} when it may be created (possibly by linking to an existing person or reviving
+     * their closed membership). Same rules {@link #registerInvitedUser} applies — one source, so an
+     * import pre-check and the create path cannot disagree.
+     */
+    String newAccountRefusal(String email, String mobile);
+
+    /**
      * Off-board a membership: close it and strip what must not outlive it (A7 / S3, PRD W6).
      *
      * <p>Three things happen together because leaving any one of them out is a real defect:

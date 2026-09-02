@@ -216,55 +216,16 @@ public class UserAccountServiceImpl extends EntityServiceImpl<UserAccount, Long>
     @Override
     @Transactional
     public UserInfo registerInvitedUser(String email, String mobile, String fullName) {
-        // Does this identifier already belong to somebody? If so this is their SECOND company, not
-        // a duplicate: one person keeps one person record, and the account created below is linked
-        // to it instead of minting a rival. Refusing here is what used to make "a person in two
-        // companies" unreachable through the product at all — every creation path funnels here, so
-        // the /join flow's own find-or-create could never fire either: it needs an account carrying
-        // the person's identifier, and that account was exactly what could not be created.
-        Long existingPerson = identityService.findByLoginIdentifier(
-                        StringUtils.isNotBlank(email) ? email : mobile)
-                .map(UserIdentity::getProfileId)
-                .orElse(null);
-        // A second identifier pointing at a DIFFERENT person is not a second company — it is two
-        // people's credentials on one account, which no later step could untangle.
-        if (existingPerson != null && StringUtils.isNotBlank(email) && StringUtils.isNotBlank(mobile)) {
-            identityService.findByLoginIdentifier(mobile)
-                    .map(UserIdentity::getProfileId)
-                    .filter(other -> !other.equals(existingPerson))
-                    .ifPresent(other -> {
-                        throw new BusinessException("This email and mobile belong to two different "
-                                + "people. Enter contacts for one person.");
-                    });
+        NewAccountDecision decision = this.decideNewAccount(email, mobile);
+        if (decision.refusal() != null) {
+            throw new BusinessException(decision.refusal());
         }
-
-        // Within ONE tenant the identifiers stay unique — that is what uk_user_account_tenant_email
-        // enforces, and a person already holding a membership here is a duplicate rather than a
-        // second company (uk_user_account_tenant_profile). Only the CROSS-tenant form of this rule
-        // was relaxed.
-        //
-        // The membership is resolved BEFORE the contact checks because a closed one changes what
-        // they mean: a leaver's own old work address still sits on their DEACTIVATED row, and
-        // counting it would refuse the very re-hire that row exists to be reused for.
-        Long tenantId = ContextHolder.getContext() == null ? null : ContextHolder.getContext().getTenantId();
-        UserAccount membershipHere = existingPerson == null ? null
-                : this.findMembershipInTenant(tenantId, existingPerson).orElse(null);
-        Long closedRow = membershipHere != null && membershipHere.getStatus() == AccountStatus.DEACTIVATED
-                ? membershipHere.getId() : null;
-        if (StringUtils.isNotBlank(email) && this.findContactHolderInTenant(email, closedRow).isPresent()) {
-            throw new BusinessException("Email already exists: " + email);
-        }
-        if (StringUtils.isNotBlank(mobile) && this.findContactHolderInTenant(mobile, closedRow).isPresent()) {
-            throw new BusinessException("Mobile already exists: " + mobile);
-        }
-        if (membershipHere != null && closedRow == null) {
-            throw new BusinessException("This person is already a member of this company.");
-        }
+        Long existingPerson = decision.existingPerson();
 
         // A leaver coming back: (tenantId, profileId) is unique, so a second row cannot be inserted
         // — the closed one is revived instead. The row is reset to PENDING with the new contacts,
         // so from here the person is treated exactly like any other fresh create: invite, /join.
-        if (closedRow != null) {
+        if (decision.closedRow() != null) {
             UserAccount revived = this.reviveMembership(existingPerson, email, mobile)
                     .orElseThrow(() -> new BusinessException("This person is already a member of this company."));
             return profileService.getUserInfo(revived.getId());
@@ -300,6 +261,82 @@ public class UserAccountServiceImpl extends EntityServiceImpl<UserAccount, Long>
             return profileService.linkAccountToPerson(userId, existingPerson);
         }
         return profileService.registerUserProfile(userId, profileInfo);
+    }
+
+    /**
+     * What {@link #decideNewAccount} found: the person the contacts resolve to (or null), their
+     * closed membership here when the create should revive it rather than insert, and the reason to
+     * refuse — exactly one of which the create path needs at each step.
+     */
+    private record NewAccountDecision(Long existingPerson, Long closedRow, String refusal) {
+        static NewAccountDecision refuse(String reason) {
+            return new NewAccountDecision(null, null, reason);
+        }
+    }
+
+    // @SkipPermissionCheck: the pre-check half of registerInvitedUser, asked by the same callers
+    // (an import validating rows before it creates anything) with the same grants.
+    @SkipPermissionCheck
+    @Override
+    public String newAccountRefusal(String email, String mobile) {
+        return this.decideNewAccount(email, mobile).refusal();
+    }
+
+    /**
+     * The one place that decides whether an account with these contacts may be created here.
+     *
+     * <p>Does this identifier already belong to somebody? If so this is their SECOND company, not a
+     * duplicate: one person keeps one person record, and the account is linked to it instead of
+     * minting a rival. Refusing that is what used to make "a person in two companies" unreachable
+     * through the product at all — every creation path funnels here, so the /join flow's own
+     * find-or-create could never fire either: it needs an account carrying the person's identifier,
+     * and that account was exactly what could not be created.
+     *
+     * <p>Within ONE tenant the identifiers stay unique — that is what uk_user_account_tenant_email
+     * enforces, and a person already holding a live membership here is a duplicate rather than a
+     * second company (uk_user_account_tenant_profile). Only the CROSS-tenant form of this rule was
+     * relaxed.
+     *
+     * <p>The membership is resolved BEFORE the contact checks because a closed one changes what
+     * they mean: a leaver's own old work address still sits on their DEACTIVATED row, and counting
+     * it would refuse the very re-hire that row exists to be reused for.
+     */
+    private NewAccountDecision decideNewAccount(String email, String mobile) {
+        Long byEmail = this.personHolding(email);
+        Long byMobile = this.personHolding(mobile);
+        // A second identifier pointing at a DIFFERENT person is not a second company — it is two
+        // people's credentials on one account, which no later step could untangle.
+        if (byEmail != null && byMobile != null && !byEmail.equals(byMobile)) {
+            return NewAccountDecision.refuse("This email and mobile belong to two different "
+                    + "people. Enter contacts for one person.");
+        }
+        Long existingPerson = byEmail != null ? byEmail : byMobile;
+
+        Long tenantId = ContextHolder.getContext() == null ? null : ContextHolder.getContext().getTenantId();
+        UserAccount membershipHere = existingPerson == null ? null
+                : this.findMembershipInTenant(tenantId, existingPerson).orElse(null);
+        Long closedRow = membershipHere != null && membershipHere.getStatus() == AccountStatus.DEACTIVATED
+                ? membershipHere.getId() : null;
+        if (StringUtils.isNotBlank(email) && this.findContactHolderInTenant(email, closedRow).isPresent()) {
+            return NewAccountDecision.refuse("Email already exists: " + email);
+        }
+        if (StringUtils.isNotBlank(mobile) && this.findContactHolderInTenant(mobile, closedRow).isPresent()) {
+            return NewAccountDecision.refuse("Mobile already exists: " + mobile);
+        }
+        if (membershipHere != null && closedRow == null) {
+            return NewAccountDecision.refuse("This person is already a member of this company.");
+        }
+        return new NewAccountDecision(existingPerson, closedRow, null);
+    }
+
+    /** The person a login identifier resolves to, or null when blank or unknown. */
+    private Long personHolding(String identifier) {
+        if (StringUtils.isBlank(identifier)) {
+            return null;
+        }
+        return identityService.findByLoginIdentifier(identifier)
+                .map(UserIdentity::getProfileId)
+                .orElse(null);
     }
 
     // @SkipPermissionCheck for the mirror of registerInvitedUser's reason. That one pairs an
