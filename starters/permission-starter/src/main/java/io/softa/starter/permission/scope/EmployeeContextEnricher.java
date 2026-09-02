@@ -7,6 +7,7 @@ import io.softa.framework.base.context.EmpInfo;
 import io.softa.framework.base.enums.Operator;
 import io.softa.framework.orm.domain.Filters;
 import io.softa.framework.orm.domain.FlexQuery;
+import io.softa.framework.orm.constant.ModelConstant;
 import io.softa.framework.orm.meta.ModelManager;
 import io.softa.framework.orm.service.CacheService;
 import io.softa.framework.orm.service.ModelService;
@@ -119,8 +120,15 @@ public class EmployeeContextEnricher implements ContextEnricher {
             info.setPhone(asString(me.get("workPhone")));
             info.setDeptId(coerceLong(me.get("departmentId")));
             info.setPositionId(coerceLong(me.get("jobPositionId")));
-            info.setCompanyId(coerceLong(me.get("legalEntityId")));
-            info.setTenantId(coerceLong(me.get("tenantId")));
+            // The org affiliation feeds USER_COMP_ID, so it reads the company AXIS field — after
+            // the split, Employee.legalEntityId still exists but names the signing entity, an
+            // attribute rather than the axis.
+            info.setCompanyId(coerceLong(me.get(ModelConstant.COMPANY_FIELD)));
+            // Same reason as the axis field above, and the same class of name: the framework hard-codes
+            // "tenantId" elsewhere too, so a literal here is a second copy that can drift out of step.
+            // The plain literals around it name HCM's own columns — nothing else spells those, so
+            // there is no copy to keep aligned.
+            info.setTenantId(coerceLong(me.get(ModelConstant.TENANT_ID)));
             info.setManagedDeptIds(collectManagedDeptIds(info.getEmpId()));
             return info;
         } finally {

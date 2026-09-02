@@ -66,6 +66,13 @@ public class CompanyCountryEnricher implements ContextEnricher {
         if (!modelPresent()) {
             return;
         }
+        // A country already on the context came from the request naming one without a company
+        // (ContextBuilder), which is a deliberate "look across my companies, within this country".
+        // The fallback below answers a different question — "nobody told me, so use where the caller
+        // works" — and must not overwrite an answer that was given.
+        if (context.getCompanyId() == null && StringUtils.isNotBlank(context.getCompanyCountry())) {
+            return;
+        }
         Long companyId = context.getCompanyId() != null ? context.getCompanyId() : ownCompanyId(context);
         if (companyId == null) {
             return;

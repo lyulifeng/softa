@@ -104,6 +104,10 @@ public class ContextBuilder implements SmartInitializingSingleton {
         // resolves this id to its country, which the per-country narrowing of multi-country models
         // depends on. Only the id comes from the client — never the country.
         this.setCompanyFromRequest(request, context);
+        // After the company (it decides whether this one is read at all) and before the enrichers
+        // (one of them resolves a selected company to its country, and falls back to the caller's own
+        // when nothing is selected — a country named here is what that fallback must not overwrite).
+        this.setCompanyCountryFromRequest(request, context);
         // HTTP requests for users are never allowed to use cross-tenant mode
         context.setCrossTenant(false);
         this.setDebugModeFromRequest(request, context);
@@ -232,6 +236,43 @@ public class ContextBuilder implements SmartInitializingSingleton {
         } catch (NumberFormatException e) {
             log.warn("Ignoring malformed {} header: {}", BaseConstant.COMPANY_ID_HEADER, raw);
         }
+    }
+
+    /**
+     * Read the country a company-less request wants to be narrowed by.
+     *
+     * <p>Three shapes, and only the middle one is new:
+     *
+     * <ul>
+     *   <li><b>company present</b> — this header is ignored and the country is resolved from that
+     *       company by {@code CompanyCountryEnricher}. One source of truth: a context claiming a
+     *       Singapore company and a Malaysian country would be believed by everything downstream.</li>
+     *   <li><b>no company, country sent</b> — narrow by the country, do not narrow by company. The
+     *       header is the request saying "I am deliberately looking across my companies", which the
+     *       absence of a company id cannot say on its own: a client that never sends one and a screen
+     *       that drops it on purpose are indistinguishable at this layer.</li>
+     *   <li><b>neither</b> — unchanged. The enricher falls back to the country of the caller's own
+     *       company, so a self-service employee still sees only their country's value domains.</li>
+     * </ul>
+     *
+     * <p><b>Not a permission input.</b> Business data stays bounded by the company grant, which this
+     * cannot widen. {@code SELECTED_COMP_COUNTRY} — which a CUSTOM scope rule may name — deliberately
+     * does NOT follow it: {@code FilterUnitParser} guards that placeholder on a selected company, so
+     * with none it stays null and a configured data scope keeps matching what it matched when it was
+     * written. That guard is what makes a caller-supplied country safe to accept at all, so it is
+     * pinned by a test rather than left as a property this happens to have.
+     */
+    // Package-private for its test: the public entry point is buildUserContext, which resolves a user
+    // first, so driving this through it would test the login path instead of the three header shapes.
+    void setCompanyCountryFromRequest(HttpServletRequest request, Context context) {
+        if (context.getCompanyId() != null) {
+            return;
+        }
+        String raw = request.getHeader(BaseConstant.COMPANY_COUNTRY_HEADER);
+        if (StringUtils.isBlank(raw)) {
+            return;
+        }
+        context.setCompanyCountry(raw.trim());
     }
 
     /**

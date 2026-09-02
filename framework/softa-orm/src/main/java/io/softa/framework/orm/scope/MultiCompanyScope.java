@@ -19,17 +19,24 @@ import lombok.extern.slf4j.Slf4j;
  * {@code ALL} rule, and for a model with no explicit rule, so a condition added inside would not
  * reach much of what this exists for.
  *
- * <p><b>Why it is not the same thing as the permission layer's LEGAL_ENTITY scope.</b> That scope
- * answers "which company's rows is this user allowed to see", anchored on the caller's own employee
- * record, and it is a grant. This answers "which company is the user looking at right now", anchored
- * on the header selection, and it is a view.
+ * <p><b>Why it is not the same thing as the permission layer's company grant.</b> The grant answers
+ * "which companies is this role allowed to reach at all" and lives on the role
+ * ({@code PermissionInfo.grantedCompanyIds}, applied by {@code PermissionServiceImpl.appendCompanyGrant}).
+ * This answers "which company is the user looking at right now", anchored on the header selection, and
+ * it is a view. A per-holder company scope type once blurred the two — {@code ScopeType.LEGAL_ENTITY},
+ * compiling to the caller's <i>own</i> company so one role behaved differently per holder; it is retired.
  *
- * <p>They cannot contradict each other, and the mechanism that guarantees it is the
- * already-constrained check below: a LEGAL_ENTITY rule compiles to a condition on this same field, so
- * by the time this runs the field is taken and the selection is not applied on top. The grant wins,
- * which is the only safe resolution — AND-ing a granted company with a different selected one yields
- * nothing, and a user whose grant pins one company would see empty lists whenever the header sat
- * elsewhere. The selection can therefore never widen what the grant allows, nor empty it.
+ * <p><b>The selection never widens the grant, and never empties a screen either.</b> It is fed to the
+ * permission call as its input, so whatever this appends is bounded by whatever the grant appends
+ * around it — {@code selected ∧ granted}, and the selection is always the subset. That holds because
+ * the switcher is populated from the same grant: it offers exactly the companies the role's data scope
+ * on the company model holds, so a selection outside it is not reachable through the UI. A crafted one
+ * is, and it yields nothing — which is the correct answer, not a bug to work around here. Authorization
+ * is the permission layer's, and this class must not be read as a second opinion on it.
+ *
+ * <p>The already-constrained check below is a separate concern from either: a caller that names the
+ * anchor field itself keeps its own condition, which is what lets a form scope its dropdowns by the
+ * company picked <i>in the form</i> rather than the one in the header.
  *
  * <p><b>It narrows a choice, never a lookup.</b> Same id-targeted exemption as
  * {@link MultiCountryScope}, for the same reason: {@code XToOneGroupProcessor} expands a stored

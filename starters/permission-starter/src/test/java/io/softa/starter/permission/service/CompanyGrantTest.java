@@ -104,7 +104,7 @@ class CompanyGrantTest {
 
         Filters result = service().appendCompanyGrant("Department", new Filters(), grant(GRANTED));
 
-        assertThat(Filters.containsField(result, "legalEntityId")).isTrue();
+        assertThat(Filters.containsField(result, "companyId")).isTrue();
         assertThat(result.toString()).contains("8712", "9001");
     }
 
@@ -112,7 +112,7 @@ class CompanyGrantTest {
     void boundsAModelThatReachesItsCompanyThroughAnother() {
         // A per-department statistic has no company column of its own — it declares one as a dynamic
         // cascaded field, so the grant is bounded on a plain field name and WhereBuilder rewrites it
-        // back to deptId.legalEntityId. Reading the anchor off the metadata rather than assuming it is
+        // back to deptId.companyId. Reading the anchor off the metadata rather than assuming it is
         // what keeps such a report bounded at all: hard-coding a name it did not have would leave every
         // company's aggregates visible with nothing on screen saying so.
         model("DeptHeadcountStats", true);
@@ -129,7 +129,7 @@ class CompanyGrantTest {
         // ANDs the grant on top: selected ∧ granted. A subset, so never empty for a company the
         // switcher was allowed to offer.
         model("Department", true);
-        Filters selected = Filters.of("legalEntityId", Operator.EQUAL, 8712L);
+        Filters selected = Filters.of("companyId", Operator.EQUAL, 8712L);
 
         Filters result = service().appendCompanyGrant("Department", selected, grant(GRANTED));
 
@@ -152,18 +152,24 @@ class CompanyGrantTest {
     }
 
     @Test
-    void doesNotBoundACompanyReadThatNamesRowsById() {
-        // A stored reference being expanded for display. Blanking a label is not the same as denying
-        // access to data, and the row that referenced it was already subject to the grant.
+    void boundsACompanyReadEvenWhenItNamesRowsById() {
+        // The inverse of what this asserted before. Naming rows by id used to waive the grant here,
+        // on the argument that a by-id read is a display expansion — but display expansion never
+        // reaches this method (DataPipelineProxy.processReadData is @SkipPermissionCheck), so the
+        // exemption only ever applied to callers who put an id in their own filters, and to the
+        // write gate's own count. MultiCompanyScope keeps the exemption, which is where it belongs:
+        // the SELECTION should not blank a referenced label, the GRANT should still say no.
         modelManager.when(() -> ModelManager.existModel(ModelConstant.COMPANY_MODEL)).thenReturn(true);
         Filters byId = Filters.of(ModelConstant.ID, Operator.IN, java.util.List.of(9999L));
 
-        assertThat(service().appendCompanyGrant(ModelConstant.COMPANY_MODEL, byId, grant(GRANTED)))
-                .isSameAs(byId);
+        Filters result = service().appendCompanyGrant(
+                ModelConstant.COMPANY_MODEL, byId, grant(GRANTED));
+
+        assertThat(result).isNotSameAs(byId);
+        assertThat(result.toString()).contains("8712", "9001");
     }
 
     @Test
-    @Disabled("Known gap — enable together with dropping the id exemption from appendCompanyGrant.")
     void theWriteGateItsOwnFilterIsBoundedByTheGrant() {
         // checkIdsAccess is what stands between a caller and `deleteByIds` / `updateList` on a row it
         // may not touch. It verifies the ids by counting them back — count(model, id IN (…)) — and
@@ -191,10 +197,8 @@ class CompanyGrantTest {
         // caching, for a filter that is on every read of every multi-company model.
         model("Department", true);
 
-        String first = service().appendCompanyGrant("Department", new Filters(),
-                grant(new java.util.HashSet<>(java.util.List.of(9001L, 8712L, 9002L)))).toString();
-        String second = service().appendCompanyGrant("Department", new Filters(),
-                grant(new java.util.HashSet<>(java.util.List.of(9002L, 8712L, 9001L)))).toString();
+        String first = service().appendCompanyGrant("Department", new Filters(), grant(new java.util.HashSet<>(java.util.List.of(9001L, 8712L, 9002L)))).toString();
+        String second = service().appendCompanyGrant("Department", new Filters(), grant(new java.util.HashSet<>(java.util.List.of(9002L, 8712L, 9001L)))).toString();
 
         assertThat(first).isEqualTo(second);
     }
@@ -229,9 +233,9 @@ class CompanyGrantTest {
         // Two roles granting the same entity must not produce a duplicated IN list.
         model("Department", true);
 
-        Filters result = service().appendCompanyGrant("Department", new Filters(),
-                grant(Set.of(8712L)));
+        Filters result = service().appendCompanyGrant("Department", new Filters(), grant(Set.of(8712L)));
 
         assertThat(result.toString().split("8712", -1).length - 1).isEqualTo(1);
     }
+
 }

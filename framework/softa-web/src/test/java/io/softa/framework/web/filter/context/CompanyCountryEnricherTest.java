@@ -17,6 +17,9 @@ import io.softa.framework.orm.meta.ModelManager;
 import io.softa.framework.orm.service.CacheService;
 import io.softa.framework.orm.service.ModelService;
 
+// The real constant, not a local copy: a shadow literal is exactly how this test kept passing
+// against a renamed production model.
+import static io.softa.framework.orm.constant.ModelConstant.COMPANY_MODEL;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyInt;
@@ -36,8 +39,6 @@ import static org.mockito.Mockito.when;
  * Hence a test per path rather than one happy case.
  */
 class CompanyCountryEnricherTest {
-
-    private static final String COMPANY_MODEL = "LegalEntity";
 
     private MockedStatic<ModelManager> modelManager;
 
@@ -90,8 +91,16 @@ class CompanyCountryEnricherTest {
     void theModelNameIsTheConventionalOne() {
         // Pinned so a rename of the HR model does not silently disable the narrowing: the framework
         // hard-codes this name, so the two have to stay in step.
+        //
+        // The literal is deliberate, and it is the only line here that may be one. Everything below
+        // stubs and asserts through the constant, which makes the behaviour value-agnostic — both
+        // sides move together, so a renamed constant would keep this green and pin nothing. The
+        // framework cannot see the HR app's model, so asserting the value it hard-codes is the whole
+        // of what this test can contribute.
+        assertThat(COMPANY_MODEL).isEqualTo("Company");
+
         ModelService<Long> models = models();
-        when(models.getById(eq("LegalEntity"), eq(8712L))).thenReturn(Optional.of(Map.of("country", "SG")));
+        when(models.getById(eq(COMPANY_MODEL), eq(8712L))).thenReturn(Optional.of(Map.of("country", "SG")));
         Context context = contextWith(8712L);
 
         new CompanyCountryEnricher(models, mock(CacheService.class)).enrich(context);
@@ -276,4 +285,22 @@ class CompanyCountryEnricherTest {
         verify(cache, never()).save(anyString(), any(), anyInt());
     }
 
+    @Test
+    void aCountryTheRequestAlreadyNamedIsNotOverwritten() {
+        // X-Company-Country lets a screen say "across my companies, but within this country" — the
+        // one thing the absence of a company id cannot say. ContextBuilder puts it on the context
+        // before the enrichers run, so by the time this executes the question has been answered and
+        // the fallback below is answering a different one: "nobody told me, so use where the caller
+        // works". Overwriting turns an explicit request into the caller's own country silently, which
+        // on a role-configuration screen means quietly configuring against the wrong country.
+        ModelService<Long> models = models();
+        Context context = contextWith(null);
+        context.setCompanyCountry("SG");
+        context.setEmpInfo(empInfoWithCompany(4242L));
+
+        new CompanyCountryEnricher(models, mock(CacheService.class)).enrich(context);
+
+        assertThat(context.getCompanyCountry()).isEqualTo("SG");
+        verifyNoInteractions(models);
+    }
 }

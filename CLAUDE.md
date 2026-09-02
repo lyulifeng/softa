@@ -208,9 +208,15 @@ public enum CustomerTier {
 
 - `multiCountry` / `multiCompany` (**request-scoped narrowing**): mark a model whose rows are
   partitioned by country / belong to one employing company, and the ORM narrows every read to the
-  country / company selected for the current request. One input drives both — the client sends only a
-  company id (`X-Company-Id`), the country is resolved server-side from it and is **never** taken from
-  the client. The anchor field is **fixed by name, never declared**: `country` (a to-one onto
+  country / company selected for the current request. One input normally drives both — the client sends
+  a company id (`X-Company-Id`), the country is resolved server-side from it and is **never** taken from
+  the client while one is selected. A request that deliberately sends **no** company may name the country
+  itself (`X-Company-Country`): a screen configuring across the caller's companies needs to say "not this
+  company, but this country", which the absence of a company id cannot express. Sending both is not a
+  third mode — the company wins. That header is a view preference, not a permission input: nothing bounds
+  a country the way the grant bounds a company, so what keeps it safe is that `SELECTED_COMP_COUNTRY`
+  stays null without a *selected* company and a CUSTOM rule naming it cannot be steered by a client.
+  The anchor field is **fixed by name, never declared**: `country` (a to-one onto
   `CountryRegion`) / `legalEntityId` (a to-one onto `LegalEntity`), asserted at boot. Fixing the name is
   what separates the axis from an attribute — a model may reference a country or a company for other
   reasons (`PayGroup.payingEntityId` names who pays a group, it does not make the group belong to them),
@@ -235,7 +241,12 @@ public enum CustomerTier {
   the *selection* (`Context.companyId`, from `X-Company-Id`): which of my companies am I looking at. What
   bounds the set it picks from is the role's *grant* (`PermissionInfo.grantedCompanyIds`, applied by
   `PermissionServiceImpl.appendCompanyGrant`), and they compose as `selected ∧ granted`, so a header
-  switch can never reach outside the grant. The grant has **no store of its own**: it is the role's data
+  switch can never reach outside the grant. The switcher offers exactly the companies the role's data
+  scope on the company model holds, so the selection is always a subset and never empties a screen the
+  user was allowed to open. The grant is keyed on the **field name**, not on `multiCompany`: a model
+  carrying `companyId` without the flag (a pay group) is bounded by the grant while staying indifferent
+  to the header — grant follows the field, selection follows the flag. The grant has **no store of its
+  own**: it is the role's data
   scope on the company model (`role_data_scope` where `model = 'LegalEntity'`), resolved into ids by
   `DefaultPermissionSnapshotProvider.readGrantedCompanyIds` — one row bounds both the company switcher
   and every model belonging to a company, because two stores for one boundary can disagree (that was

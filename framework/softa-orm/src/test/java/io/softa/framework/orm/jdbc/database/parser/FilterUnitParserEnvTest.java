@@ -61,6 +61,20 @@ class FilterUnitParserEnvTest {
         assertThat(resolve(context, EnvConstant.COMPANY_COUNTRY)).isNull();
     }
 
+    @Test
+    void aCountryTheREQUESTNamedDoesNotReachThePlaceholderEither() {
+        // Same context shape, second source, and the one that makes this guard load-bearing rather
+        // than tidy: X-Company-Country lets a request name a country while deliberately sending no
+        // company. Unlike the company id — bounded by appendCompanyGrant — nothing bounds a country,
+        // so if this placeholder followed it, any holder of a CUSTOM rule naming SELECTED_COMP_COUNTRY
+        // could point that rule at any country by setting a header. It resolving to null is what keeps
+        // the header a view preference instead of an authorization input.
+        Context context = new Context();
+        context.setCompanyCountry("MY");
+
+        assertThat(resolve(context, EnvConstant.COMPANY_COUNTRY)).isNull();
+    }
+
     // ---- the caller's own company ----------------------------------------
 
     @Test

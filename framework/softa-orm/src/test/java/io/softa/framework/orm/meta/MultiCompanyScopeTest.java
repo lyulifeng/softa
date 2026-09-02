@@ -74,7 +74,7 @@ class MultiCompanyScopeTest {
         // Holding two references to a company is normal — one says the rows belong to it, the other
         // records something about them. A pay group belongs to the entity it is set up under and names
         // a second as the one that pays it. Requiring the name is what keeps the second from ever
-        // being mistaken for the axis; without legalEntityId present at all, boot fails rather than
+        // being mistaken for the axis; without companyId present at all, boot fails rather than
         // narrowing by whichever reference happened to be found first.
         Object good = snapshotField().get(null);
         try {
@@ -95,7 +95,7 @@ class MultiCompanyScopeTest {
     void aDynamicJoinedReferenceIsAnAnchorLikeAnyOther() throws Exception {
         // How a per-department statistic satisfies the required anchor without a column of its own:
         // declare legalEntityId as a dynamic cascaded field. The emitted condition names the field and
-        // WhereBuilder rewrites it back to deptId.legalEntityId, so the narrowing compiles to a LEFT
+        // WhereBuilder rewrites it back to deptId.companyId, so the narrowing compiles to a LEFT
         // JOIN. A real column would be the other option and the worse one: it goes stale the moment a
         // department is re-parented onto another entity.
         Object good = snapshotField().get(null);
@@ -125,7 +125,7 @@ class MultiCompanyScopeTest {
         // company list is the one thing that must never be narrowed by the selection.
         Object good = snapshotField().get(null);
         try {
-            MetaModel selfScoped = multiCompany(ModelConstant.COMPANY_MODEL, "legal_entity");
+            MetaModel selfScoped = multiCompany(ModelConstant.COMPANY_MODEL, "company");
             RuntimeException e = assertThrows(RuntimeException.class, () -> initWith(
                     new ArrayList<>(List.of(selfScoped)),
                     new ArrayList<>(List.of(
@@ -169,7 +169,7 @@ class MultiCompanyScopeTest {
         Filters result = withCompany(8712L,
                 () -> MultiCompanyScope.append("Department", Filters.of("active", Operator.EQUAL, true)));
 
-        assertTrue(Filters.containsField(result, "legalEntityId"));
+        assertTrue(Filters.containsField(result, "companyId"));
         // The bound value stays a placeholder: FilterUnitParser substitutes it when building SQL, so
         // the compiled Filters must carry the token rather than the resolved id.
         assertTrue(result.toString().contains(EnvConstant.COMPANY_ID), result.toString());
@@ -179,7 +179,7 @@ class MultiCompanyScopeTest {
     void narrowsAStatisticThroughItsJoinedCompany() {
         // A per-department statistic has no company of its own; the dynamic cascaded field is what
         // makes it filterable without a column. The condition names the field — WhereBuilder rewrites
-        // it back to deptId.legalEntityId and joins.
+        // it back to deptId.companyId and joins.
         Filters result = withCompany(8712L, () -> MultiCompanyScope.append("DeptStats", new Filters()));
 
         assertTrue(Filters.containsField(result, ModelConstant.COMPANY_FIELD));
@@ -242,7 +242,7 @@ class MultiCompanyScopeTest {
     void doesNotOverrideACompanyTheCallerAlreadyPassed() {
         // What lets a form scope its dropdowns by the company picked in the form rather than the one
         // in the header. AND-ing would compare two different ids and always match nothing.
-        Filters callerScoped = Filters.of("legalEntityId", Operator.EQUAL, 99L);
+        Filters callerScoped = Filters.of("companyId", Operator.EQUAL, 99L);
 
         Filters result = withCompany(8712L, () -> MultiCompanyScope.append("Department", callerScoped));
 
@@ -265,7 +265,7 @@ class MultiCompanyScopeTest {
         // The composition that decides whether the company switch works at all for a role granted
         // several companies. ModelServiceImpl.scopedAccess feeds these selections INTO
         // appendScopeAccessFilters instead of wrapping its result, precisely so this holds: at the
-        // point the selection runs, a grant like `legalEntityId IN (A, B, C)` has not been added yet.
+        // point the selection runs, a grant like `companyId IN (A, B, C)` has not been added yet.
         //
         // Wrapping the output instead would make that grant indistinguishable from a caller that
         // already picked a company — the selection would skip, and the user would see all three
@@ -275,7 +275,7 @@ class MultiCompanyScopeTest {
         Filters selected = withCompany(8712L, () -> MultiCompanyScope.append("Department", callerFilters));
         // Then the permission layer ANDs the grant on top, exactly as scopedAccess does.
         Filters granted = Filters.and(selected,
-                Filters.of("legalEntityId", Operator.IN, List.of(8712L, 9001L, 9002L)));
+                Filters.of("companyId", Operator.IN, List.of(8712L, 9001L, 9002L)));
 
         assertTrue(granted.toString().contains(EnvConstant.COMPANY_ID), granted.toString());
         // Both terms present: the selection is a subset of the grant, so this resolves to one company
@@ -294,7 +294,7 @@ class MultiCompanyScopeTest {
                 MultiCompanyScope.append("BothScoped",
                         io.softa.framework.orm.scope.MultiCountryScope.append("BothScoped", new Filters())));
 
-        assertTrue(Filters.containsField(result, "legalEntityId"), result.toString());
+        assertTrue(Filters.containsField(result, "companyId"), result.toString());
         assertTrue(Filters.containsField(result, "country"), result.toString());
     }
 
@@ -346,7 +346,7 @@ class MultiCompanyScopeTest {
     private static List<MetaField> fields() {
         return new ArrayList<>(List.of(
                 field("Department", "id", "id", FieldType.LONG),
-                companyRef("Department", "legalEntityId"),
+                companyRef("Department", "companyId"),
                 field("Department", "active", "active", FieldType.BOOLEAN),
                 field("DeptStats", "id", "id", FieldType.LONG),
                 deptRef("DeptStats", "deptId"),
@@ -355,12 +355,12 @@ class MultiCompanyScopeTest {
                 dynamicCompanyRef("DeptStats", ModelConstant.COMPANY_FIELD,
                         "deptId." + ModelConstant.COMPANY_FIELD),
                 field("BothScoped", "id", "id", FieldType.LONG),
-                companyRef("BothScoped", "legalEntityId"),
+                companyRef("BothScoped", "companyId"),
                 countryRef("BothScoped", "country"),
                 // An unscoped model may carry a company reference too — it records which company the
                 // row relates to, and must not be mistaken for one whose rows belong to a company.
                 field("Unscoped", "id", "id", FieldType.LONG),
-                companyRef("Unscoped", "legalEntityId"),
+                companyRef("Unscoped", "companyId"),
                 field("Unscoped", "active", "active", FieldType.BOOLEAN),
                 field(ModelConstant.COMPANY_MODEL, "id", "id", FieldType.LONG),
                 field(ModelConstant.COUNTRY_REGION_MODEL, "id", "id", FieldType.STRING)));
@@ -381,7 +381,7 @@ class MultiCompanyScopeTest {
     }
 
     private static MetaModel legalEntity() {
-        return model(ModelConstant.COMPANY_MODEL, "legal_entity");
+        return model(ModelConstant.COMPANY_MODEL, "company");
     }
 
     private static MetaField field(String modelName, String fieldName, String columnName, FieldType type) {
