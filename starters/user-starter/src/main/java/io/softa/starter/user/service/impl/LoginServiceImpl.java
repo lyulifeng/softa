@@ -454,10 +454,16 @@ public class LoginServiceImpl implements LoginService {
         if (!chosen.selectable()) {
             throw new BusinessException(accountDeniedMessage(chosen.status()));
         }
-        // Single use: consume the token so a leaked one cannot be replayed into another session.
-        cacheService.clear(preAuthKey(authToken));
-        return AuthenticationResult.resolved(
+        AuthenticationResult result = AuthenticationResult.resolved(
                 profileId, profileService.getUserInfo(accountId), this.mustSetPassword(profileId));
+        // Single use: consume the token so a leaked one cannot be replayed into another session.
+        // Consumed only once the session is actually minted, not before: a token burned by a failed
+        // attempt leaves the person facing "could not enter that company, please try again" over a
+        // step that can no longer succeed — the retry reports the sign-in as expired and they must
+        // start the whole login over. A failed attempt mints nothing, so leaving its token alive
+        // costs no replay safety.
+        cacheService.clear(preAuthKey(authToken));
+        return result;
     }
 
     /**

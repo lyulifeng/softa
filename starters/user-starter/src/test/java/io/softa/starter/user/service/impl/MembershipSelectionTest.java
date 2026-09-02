@@ -20,6 +20,7 @@ import io.softa.starter.user.service.UserProfileService;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -144,6 +145,22 @@ class MembershipSelectionTest {
         assertThat(result.profileId()).isEqualTo(PROFILE);
         // Single use: the token is consumed so a leaked one cannot be replayed into a session.
         verify(cacheService).clear("login:preauth:" + TOKEN);
+    }
+
+    @Test
+    void aFailedSelectionLeavesTheTokenUsable() {
+        // The token used to be consumed BEFORE the session was built, so any failure past that
+        // point burned it: the page said "could not enter that company, please try again" and the
+        // retry answered "your sign-in step expired" — the advice was impossible to follow and the
+        // person had to restart the whole login. Nothing is minted on this path, so nothing is
+        // replayable.
+        givenMemberships(membership(100L, 1L, AccountStatus.ACTIVE));
+        when(profileService.getUserInfo(100L)).thenThrow(new BusinessException("boom"));
+
+        assertThatThrownBy(() -> loginService.selectCompany(TOKEN, 100L))
+                .isInstanceOf(BusinessException.class);
+
+        verify(cacheService, never()).clear("login:preauth:" + TOKEN);
     }
 
     @Test
