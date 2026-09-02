@@ -4,14 +4,12 @@ import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.servlet.http.HttpServletResponse;
 import jakarta.validation.Valid;
-import jakarta.validation.constraints.NotNull;
 import java.util.List;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
-import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
 import io.softa.framework.base.constant.BaseConstant;
@@ -30,6 +28,11 @@ import io.softa.starter.user.service.OAuth2Service;
 /**
  * Login Controller
  * login, register, forget password, reset password, force-reset password
+ *
+ * <p>Every token these endpoints take (pre-auth, invitation) travels in the request body, never in
+ * the URL: a query string is copied into access logs, proxies and browser history, and each of
+ * these tokens mints a session or binds a person — the invite link itself is the one unavoidable
+ * URL carrier, and the follow-up calls must not repeat it.
  */
 @Slf4j
 @Tag(name = "Login")
@@ -119,16 +122,15 @@ public class LoginController {
 
 
     /**
-     * Login by email and password
+     * Login by identifier (login email or login mobile) and password
      * Set cookie with session id
      */
     @PostMapping("/loginByPassword")
     @SwitchUser(SystemUser.REGISTERED_USER)
-    public ApiResponse<AuthenticationResult> loginByPassword(@RequestBody @Valid EmailPasswordDTO userNameLoginDTO,
+    public ApiResponse<AuthenticationResult> loginByPassword(@RequestBody @Valid IdentifierPasswordDTO dto,
             HttpServletResponse response) {
         return this.issueOrAskForCompany(
-                loginService.authenticateByPassword(userNameLoginDTO.getEmail(),
-                        userNameLoginDTO.getPassword()), response);
+                loginService.authenticateByPassword(dto.getIdentifier(), dto.getPassword()), response);
     }
 
     /**
@@ -140,8 +142,8 @@ public class LoginController {
     @Operation(summary = "Check an invitation link and return what the join page should show")
     @PostMapping("/joinEntry")
     @SwitchUser(SystemUser.REGISTERED_USER)
-    public ApiResponse<JoinEntry> joinEntry(@RequestParam @NotNull String token) {
-        return ApiResponse.success(invitationService.inspectJoinToken(token));
+    public ApiResponse<JoinEntry> joinEntry(@RequestBody @Valid JoinTokenDTO dto) {
+        return ApiResponse.success(invitationService.inspectJoinToken(dto.getToken()));
     }
 
     /**
@@ -152,9 +154,8 @@ public class LoginController {
     @Operation(summary = "Send a verification code to the invitation's own email or mobile")
     @PostMapping("/sendJoinCode")
     @SwitchUser(SystemUser.REGISTERED_USER)
-    public ApiResponse<Void> sendJoinCode(@RequestParam @NotNull String token,
-            @RequestParam @NotNull String channel) {
-        loginService.sendJoinCode(token, channel);
+    public ApiResponse<Void> sendJoinCode(@RequestBody @Valid JoinCodeRequestDTO dto) {
+        loginService.sendJoinCode(dto.getToken(), dto.getChannel());
         return ApiResponse.success();
     }
 
@@ -165,9 +166,8 @@ public class LoginController {
     @Operation(summary = "Verify the join code and return the person behind the invitation")
     @PostMapping("/verifyJoinCode")
     @SwitchUser(SystemUser.REGISTERED_USER)
-    public ApiResponse<JoinVerification> verifyJoinCode(@RequestParam @NotNull String token,
-            @RequestParam @NotNull String channel, @RequestParam @NotNull String code) {
-        return ApiResponse.success(loginService.verifyJoinCode(token, channel, code));
+    public ApiResponse<JoinVerification> verifyJoinCode(@RequestBody @Valid VerifyJoinCodeDTO dto) {
+        return ApiResponse.success(loginService.verifyJoinCode(dto.getToken(), dto.getChannel(), dto.getCode()));
     }
 
     /**
@@ -178,9 +178,8 @@ public class LoginController {
     @Operation(summary = "Set the first password during the join flow")
     @PostMapping("/setJoinPassword")
     @SwitchUser(SystemUser.REGISTERED_USER)
-    public ApiResponse<Void> setJoinPassword(@RequestParam @NotNull String token,
-            @RequestParam @NotNull Long profileId, @RequestBody @Valid SetFirstPasswordDTO dto) {
-        loginService.setJoinPassword(token, profileId, dto.getNewPassword());
+    public ApiResponse<Void> setJoinPassword(@RequestBody @Valid SetJoinPasswordDTO dto) {
+        loginService.setJoinPassword(dto.getToken(), dto.getProfileId(), dto.getNewPassword());
         return ApiResponse.success();
     }
 
@@ -193,12 +192,12 @@ public class LoginController {
     @Operation(summary = "Accept the invitation: bind the person, activate the membership, sign in")
     @PostMapping("/confirmJoin")
     @SwitchUser(SystemUser.REGISTERED_USER)
-    public ApiResponse<AuthenticationResult> confirmJoin(@RequestParam @NotNull String token,
-            @RequestParam @NotNull Long profileId, HttpServletResponse response) {
-        invitationService.confirmJoin(token, profileId);
+    public ApiResponse<AuthenticationResult> confirmJoin(@RequestBody @Valid ConfirmJoinDTO dto,
+            HttpServletResponse response) {
+        invitationService.confirmJoin(dto.getToken(), dto.getProfileId());
         // Re-runs the company resolution rather than assuming the just-joined membership is the
         // only one: the person may already belong elsewhere, in which case they must still choose.
-        return this.issueOrAskForCompany(loginService.afterJoin(profileId), response);
+        return this.issueOrAskForCompany(loginService.afterJoin(dto.getProfileId()), response);
     }
 
     /**
@@ -231,8 +230,8 @@ public class LoginController {
     @Operation(summary = "List the companies this person can log into (multi-company login step)")
     @PostMapping("/listCompanies")
     @SwitchUser(SystemUser.REGISTERED_USER)
-    public ApiResponse<List<MembershipOption>> listCompanies(@RequestParam @NotNull String authToken) {
-        return ApiResponse.success(loginService.listCompanies(authToken));
+    public ApiResponse<List<MembershipOption>> listCompanies(@RequestBody @Valid AuthTokenDTO dto) {
+        return ApiResponse.success(loginService.listCompanies(dto.getAuthToken()));
     }
 
     /**
@@ -245,11 +244,12 @@ public class LoginController {
     @Operation(summary = "Enter the chosen company and issue the session")
     @PostMapping("/selectCompany")
     @SwitchUser(SystemUser.REGISTERED_USER)
-    public ApiResponse<AuthenticationResult> selectCompany(@RequestParam @NotNull String authToken,
-            @RequestParam @NotNull Long accountId, HttpServletResponse response) {
+    public ApiResponse<AuthenticationResult> selectCompany(@RequestBody @Valid SelectCompanyDTO dto,
+            HttpServletResponse response) {
         // The person is read from the token inside the service, never from the request. Same
         // response shape as the authentication endpoints, so the client has one contract to handle.
-        return this.issueOrAskForCompany(loginService.selectCompany(authToken, accountId), response);
+        return this.issueOrAskForCompany(
+                loginService.selectCompany(dto.getAuthToken(), dto.getAccountId()), response);
     }
 
     /**
