@@ -66,6 +66,21 @@ public interface UserInvitationService extends EntityService<UserInvitation, Lon
      */
     JoinContacts resolveJoinContacts(String rawToken);
 
+    /**
+     * The membership a usable invitation is for — so /join can see whether the account already
+     * belongs to a person before it goes looking for one by address.
+     *
+     * <p>Exists for the re-hired leaver: their revived row still carries their profileId, while
+     * the address on the invitation resolves to nobody (off-boarding released it from their
+     * identity). Find-or-create by address would then mint a second person and confirmJoin would
+     * hand the row to it, orphaning the real one — password, other-company memberships and all.
+     * The row already knows who it is for; this is how the flow asks it.
+     *
+     * <p>Server-internal, same reasoning as {@link #resolveJoinChannel}. Empty when the token is
+     * not usable — callers that already passed the gate treat that as a race, not as "unbound".
+     */
+    java.util.Optional<io.softa.starter.user.entity.UserAccount> resolveJoinAccount(String rawToken);
+
     void confirmJoin(String rawToken, Long profileId);
 
     /**

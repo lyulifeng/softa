@@ -481,6 +481,15 @@ public class UserInvitationServiceImpl extends EntityServiceImpl<UserInvitation,
         UserAccount account = accountService.getById(invitation.getUserId())
                 .orElseThrow(() -> new BusinessException("Account not found."));
 
+        // A row that already belongs to a person (a re-hired leaver's revived membership) is not
+        // reassigned by whoever holds the link. verifyJoinCode returns that person for such a row,
+        // so a mismatch here is either a stale client or a caller naming a profileId of their own
+        // choosing — and overwriting would orphan the real person: their password and their other
+        // companies stay on the old profileId while this row walks off with a new one.
+        if (account.getProfileId() != null && !account.getProfileId().equals(profileId)) {
+            throw new BusinessException("This link does not belong to that account.");
+        }
+
         // Refuse if this person already occupies this company's (tenant, profile) slot (PRD §4.5).
         // The unique index would refuse the bind too, but a constraint violation is not something a
         // person can be told about — and a DEACTIVATED prior membership needs a DIFFERENT message:
@@ -537,6 +546,20 @@ public class UserInvitationServiceImpl extends EntityServiceImpl<UserInvitation,
                         .eq(UserInvitation::getTokenHash, EncryptUtils.computeSha256(rawToken)))
                 .orElseThrow(() -> new BusinessException("This invitation link is no longer usable."));
         return new JoinContacts(invitation.getEmail(), invitation.getMobile());
+    }
+
+    @SkipPermissionCheck
+    @CrossTenant
+    @Override
+    public Optional<UserAccount> resolveJoinAccount(String rawToken) {
+        // The gate runs again for the same reason resolveJoinContacts runs it: the caller is about
+        // to act on the invitation, and it may have been revoked or re-sent since the page loaded.
+        if (!this.inspectJoinToken(rawToken).usable()) {
+            return Optional.empty();
+        }
+        return this.searchOne(new Filters()
+                        .eq(UserInvitation::getTokenHash, EncryptUtils.computeSha256(rawToken)))
+                .flatMap(invitation -> accountService.getById(invitation.getUserId()));
     }
 
     /**

@@ -107,6 +107,43 @@ class ConfirmJoinAuthorizationTest {
     }
 
     @Test
+    void aMembershipAlreadyBoundToAPerson_isNotHandedToAnotherProfileId() {
+        // A re-hired leaver's revived row carries their profileId. verifyJoinCode returns that
+        // person, so a different id here is a stale client or a link-holder choosing one — and
+        // writing it would orphan the real person (their password and other companies stay on the
+        // old id). The bound id is asserted, never overwritten.
+        givenPendingInvitationTo("alice@acme.com", null);
+        UserAccount revived = accountService.getById(ACCOUNT_ID).orElseThrow();
+        revived.setProfileId(RIGHTFUL_PROFILE);
+        when(identityService.findByProfile(ATTACKER_TARGET_PROFILE))
+                .thenReturn(Optional.of(identity("alice@acme.com", null)));
+
+        assertThatThrownBy(() -> service.confirmJoin(TOKEN, ATTACKER_TARGET_PROFILE))
+                .isInstanceOf(BusinessException.class)
+                .hasMessageContaining("does not belong");
+
+        assertThat(revived.getProfileId()).isEqualTo(RIGHTFUL_PROFILE);
+        verify(accountService, never()).updateOne(any(UserAccount.class));
+    }
+
+    @Test
+    void theBoundPerson_confirmsTheirRevivedMembership() {
+        givenPendingInvitationTo("alice@acme.com", null);
+        UserAccount revived = accountService.getById(ACCOUNT_ID).orElseThrow();
+        revived.setProfileId(RIGHTFUL_PROFILE);
+        when(identityService.findByProfile(RIGHTFUL_PROFILE))
+                .thenReturn(Optional.of(identity("alice@acme.com", null)));
+        // Their own row is the membership in this tenant; it is not a second slot.
+        when(accountService.findMembershipInTenant(TENANT, RIGHTFUL_PROFILE))
+                .thenReturn(Optional.of(revived));
+
+        service.confirmJoin(TOKEN, RIGHTFUL_PROFILE);
+
+        assertThat(revived.getStatus()).isEqualTo(AccountStatus.ACTIVE);
+        verify(accountService).updateOne(revived);
+    }
+
+    @Test
     void aReHireViaNewInvitation_isToldToUseReHire_notAConstraintError() {
         // The person left this company before: their DEACTIVATED row still holds the (tenant,
         // profile) slot. Binding here would hit the unique index; listMembershipsOf hides that row,

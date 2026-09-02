@@ -382,6 +382,20 @@ public class LoginServiceImpl implements LoginService {
         // automatically — HR completes the bind. Same guard as login and reset.
         assertContactNotShared(address);
 
+        // A membership that already belongs to a person — a re-hired leaver's revived row — has
+        // answered "who is this?" before the address is consulted. Their work address was released
+        // from their identity at off-boarding, so find-or-create by address would see nobody, mint
+        // a second person, and confirmJoin would hand the row to it: the real person keeps their
+        // password and their other companies on a profileId nothing points at any more.
+        UserAccount account = invitationService.resolveJoinAccount(rawToken)
+                .orElseThrow(() -> new BusinessException("This invitation link is no longer usable."));
+        if (account.getProfileId() != null) {
+            UserIdentity known = identityService.findByProfile(account.getProfileId())
+                    .orElseThrow(() -> new BusinessException("Person record not found."));
+            this.reclaimLoginIdentifier(known, address);
+            return new JoinVerification(known.getProfileId(), StringUtils.isBlank(known.getPassword()));
+        }
+
         // Find-or-create by the address the invitation was sent to. Found = this person already
         // works somewhere and is being added to a second company, and they keep ONE person record
         // (that is the whole point of the global profile). Not found = their first company.
@@ -394,6 +408,30 @@ public class LoginServiceImpl implements LoginService {
         // Constructed through the profile service, which is the one waived choke point where a
         // person and their credentials row are minted together.
         return new JoinVerification(profileService.createPersonForJoin(address), true);
+    }
+
+    /**
+     * Put a verified address back onto the person's identity as a login identifier, when it can be.
+     *
+     * <p>This is the released work contact coming home: off-boarding cleared it so the address could
+     * be reissued, and the person who just proved control of it through a code is the one who lost
+     * it. Bound only if the channel is still empty (a personal identifier is not overwritten by a
+     * work one) and nobody else has claimed the address meanwhile — {@code isIdentifierClaimable}
+     * answers that, and when it says no the identity is left as it was rather than made ambiguous.
+     */
+    private void reclaimLoginIdentifier(UserIdentity identity, String address) {
+        boolean isEmail = address.contains("@");
+        String current = isEmail ? identity.getLoginEmail() : identity.getLoginMobile();
+        if (StringUtils.isNotBlank(current)
+                || !identityService.isIdentifierClaimable(address, identity.getProfileId())) {
+            return;
+        }
+        if (isEmail) {
+            identity.setLoginEmail(address);
+        } else {
+            identity.setLoginMobile(address);
+        }
+        identityService.updateOne(identity);
     }
 
     @Override

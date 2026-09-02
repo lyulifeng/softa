@@ -7,6 +7,7 @@ import org.springframework.test.util.ReflectionTestUtils;
 
 import io.softa.framework.base.exception.BusinessException;
 import io.softa.starter.user.dto.JoinVerification;
+import io.softa.starter.user.entity.UserAccount;
 import io.softa.starter.user.entity.UserIdentity;
 import io.softa.starter.user.service.UserAccountService;
 import io.softa.starter.user.service.UserIdentityService;
@@ -71,6 +72,8 @@ class VerifyJoinCodeSharedContactTest {
         String personal = "alice@personal.com";
         when(invitationService.resolveJoinChannel(TOKEN, "email")).thenReturn(personal);
         when(accountService.isWorkContactShared(personal)).thenReturn(false);
+        // The membership belongs to nobody yet, so the person is resolved by the address.
+        when(invitationService.resolveJoinAccount(TOKEN)).thenReturn(Optional.of(new UserAccount()));
         UserIdentity alice = new UserIdentity();
         alice.setProfileId(7L);
         alice.setPassword("hash");
