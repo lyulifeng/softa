@@ -4,6 +4,7 @@ import java.util.List;
 import java.util.Optional;
 
 import org.junit.jupiter.api.Test;
+import org.mockito.ArgumentCaptor;
 import org.springframework.test.util.ReflectionTestUtils;
 
 import io.softa.framework.base.context.Context;
@@ -17,10 +18,13 @@ import io.softa.starter.user.entity.UserIdentity;
 import io.softa.starter.user.enums.AccountStatus;
 import io.softa.starter.user.service.UserIdentityService;
 import io.softa.starter.user.service.UserProfileService;
+import io.softa.starter.user.service.UserRoleRelService;
 
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyBoolean;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.argThat;
@@ -28,6 +32,7 @@ import static org.mockito.Mockito.doReturn;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.spy;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -51,12 +56,15 @@ class RehireTest {
 
     private final UserIdentityService identityService = mock(UserIdentityService.class);
     private final UserProfileService profileService = mock(UserProfileService.class);
+    private final UserRoleRelService roleRelService = mock(UserRoleRelService.class);
     private final UserAccountServiceImpl accountService = spy(new UserAccountServiceImpl());
 
     RehireTest() {
         ReflectionTestUtils.setField(accountService, "identityService", identityService);
         ReflectionTestUtils.setField(accountService, "profileService", profileService);
+        ReflectionTestUtils.setField(accountService, "roleRelService", roleRelService);
         doReturn(1L).when(accountService).createOne(any(UserAccount.class));
+        doReturn(true).when(accountService).updateOne(any(UserAccount.class), anyBoolean());
         doReturn(List.of()).when(accountService).searchList(any(Filters.class));
         doReturn(Optional.empty()).when(accountService).findMembershipInTenant(any(), any());
         when(profileService.registerUserProfile(anyLong(), any(UserProfileDTO.class)))
@@ -257,15 +265,74 @@ class RehireTest {
     // ─── the explicit action ───
 
     @Test
-    void reHireReopensTheClosedRowForItsOwnPersonWithItsOwnContacts() {
-        UserAccount closed = closedRowInTenant(THIS_TENANT, PERSON, OLD_EMAIL, MOBILE);
+    void reHireReopensTheRowItWasAskedToReopen_inThatRowsTenant() {
+        // Re-hire is reached from a roster a platform super-admin works across tenants, so the
+        // ambient tenant (2) is theirs while the row named sits in company 9. Re-querying by
+        // (profileId, ambient tenant) found nothing there — or, had Ada also left company 2, her
+        // closed row THERE. The loaded row is the one revived, and every uniqueness question is
+        // asked of ITS company.
+        UserAccount closed = closedRowInTenant(9L, PERSON, OLD_EMAIL, MOBILE);
         doReturn(Optional.of(closed)).when(accountService).getById(CLOSED_ROW);
-        doReturn(Optional.of(closed)).when(accountService).reviveMembership(PERSON, OLD_EMAIL, MOBILE);
 
         inThisTenant(() -> assertThatCode(() -> accountService.rehire(CLOSED_ROW)).doesNotThrowAnyException());
 
         // The row's OWN values — the person is named by the row, never inferred from a contact.
-        verify(accountService).reviveMembership(PERSON, OLD_EMAIL, MOBILE);
+        assertThat(closed.getStatus()).isEqualTo(AccountStatus.PENDING);
+        assertThat(closed.getProfileId()).isEqualTo(PERSON);
+        assertThat(closed.getEmail()).isEqualTo(OLD_EMAIL);
+        assertThat(closed.getMobile()).isEqualTo(MOBILE);
+        verify(accountService).updateOne(closed, false);
+        verify(accountService, never()).reviveMembership(any(), any(), any());
+        // Load-bearing: the holder checks name tenant 9, the row's, and never the operator's 2.
+        ArgumentCaptor<Filters> holderQueries = ArgumentCaptor.forClass(Filters.class);
+        verify(accountService, times(4)).searchList(holderQueries.capture());
+        assertThat(holderQueries.getAllValues()).allSatisfy(f -> assertThat(f.toString())
+                .contains("[\"tenantId\",\"=\",9]")
+                .doesNotContain("[\"tenantId\",\"=\"," + THIS_TENANT + "]"));
+    }
+
+    @Test
+    void aMobileAnotherAccountInTheRowsTenantHolds_refusesTheReHire() {
+        // The mobile is a work contact on the same footing as the email, and only the email is
+        // covered by an index. Reviving a row whose number a colleague's live row now carries would
+        // leave a code sent there naming two people.
+        UserAccount closed = closedRowInTenant(THIS_TENANT, PERSON, OLD_EMAIL, MOBILE);
+        doReturn(Optional.of(closed)).when(accountService).getById(CLOSED_ROW);
+        UserAccount colleague = new UserAccount();
+        colleague.setId(555L);
+        colleague.setTenantId(THIS_TENANT);
+        colleague.setMobile(MOBILE);
+        doReturn(List.of(colleague)).when(accountService)
+                .searchList(argThat((Filters f) -> f != null && f.toString().contains("\"" + MOBILE + "\"")));
+
+        inThisTenant(() -> assertThatThrownBy(() -> accountService.rehire(CLOSED_ROW))
+                .isInstanceOf(BusinessException.class)
+                .hasMessage("That work mobile already belongs to another account."));
+
+        assertThat(closed.getStatus()).isEqualTo(AccountStatus.DEACTIVATED);
+        verify(accountService, never()).updateOne(any(UserAccount.class), anyBoolean());
+    }
+
+    @Test
+    void revivingThroughCreate_refusesAMobileAnotherAccountHolds_notJustTheEmail() {
+        // The same rule on the create-path shape: it shares the revive with rehire(), so a number
+        // held elsewhere in this company is refused here too instead of only the email.
+        UserAccount closed = closedRowInTenant(THIS_TENANT, PERSON, OLD_EMAIL, null);
+        doReturn(List.of(closed)).when(accountService)
+                .searchList(argThat((Filters f) -> f != null && f.toString().contains("\"profileId\"")));
+        UserAccount colleague = new UserAccount();
+        colleague.setId(555L);
+        colleague.setTenantId(THIS_TENANT);
+        colleague.setMobile(MOBILE);
+        doReturn(List.of(colleague)).when(accountService)
+                .searchList(argThat((Filters f) -> f != null && f.toString().contains("\"" + MOBILE + "\"")));
+
+        inThisTenant(() -> assertThatThrownBy(() -> accountService.reviveMembership(PERSON, NEW_EMAIL, MOBILE))
+                .isInstanceOf(BusinessException.class)
+                .hasMessage("That work mobile already belongs to another account."));
+
+        assertThat(closed.getStatus()).isEqualTo(AccountStatus.DEACTIVATED);
+        verify(accountService, never()).updateOne(any(UserAccount.class), anyBoolean());
     }
 
     @Test

@@ -387,12 +387,20 @@ public class UserAccountServiceImpl extends EntityServiceImpl<UserAccount, Long>
         if (account.getStatus() != AccountStatus.DEACTIVATED) {
             throw new BusinessException("Only a closed account can be re-hired.");
         }
+        if (account.getProfileId() == null) {
+            throw new BusinessException(
+                    "This closed account is not linked to a person, so there is nobody to re-hire.");
+        }
         // The row's own contacts, not fresh ones: what is being reopened is THIS person's membership
         // as it was closed. HR corrects the contacts afterwards (Reset User) if they have changed,
         // and sends the invitation as a separate, visible step — reopening contacts nobody.
-        this.reviveMembership(account.getProfileId(), account.getEmail(), account.getMobile())
-                .orElseThrow(() -> new BusinessException(
-                        "This closed account is not linked to a person, so there is nobody to re-hire."));
+        //
+        // The LOADED row is revived, not one re-queried by (profileId, ambient tenant). Re-hire is
+        // reached from the roster, where a platform super-admin's ambient tenant is their own while
+        // the row they named may sit in another company: the re-query found nothing there ("not
+        // linked to a person") or, when the same person had also left the admin's company, revived
+        // THAT closed row instead of the one asked for.
+        this.revive(account, account.getEmail(), account.getMobile());
     }
 
     // @SkipPermissionCheck for the mirror of registerInvitedUser's reason. That one pairs an
@@ -571,8 +579,17 @@ public class UserAccountServiceImpl extends EntityServiceImpl<UserAccount, Long>
     @CrossTenant
     @Override
     public Optional<UserAccount> findContactHolderInTenant(String contact, Long exceptAccountId) {
-        String value = StringUtils.trimToNull(contact);
         Long tenantId = ContextHolder.getContext() == null ? null : ContextHolder.getContext().getTenantId();
+        return this.contactHolderInTenant(tenantId, contact, exceptAccountId);
+    }
+
+    /**
+     * The tenant-explicit form of {@link #findContactHolderInTenant}, for a caller holding a row
+     * whose tenant is not the ambient one (re-hire from a roster spanning tenants). Same question,
+     * asked of the company the ROW belongs to rather than the company the operator is working in.
+     */
+    private Optional<UserAccount> contactHolderInTenant(Long tenantId, String contact, Long exceptAccountId) {
+        String value = StringUtils.trimToNull(contact);
         if (value == null || tenantId == null) {
             // No tenant means no scope to be unique within, so nothing is taken.
             return Optional.empty();
@@ -737,27 +754,40 @@ public class UserAccountServiceImpl extends EntityServiceImpl<UserAccount, Long>
                         .eq(UserAccount::getTenantId, tenantId)
                         .eq(UserAccount::getStatus, AccountStatus.DEACTIVATED)).stream()
                 .findFirst();
-        if (closed.isEmpty()) {
-            return Optional.empty();
-        }
-        UserAccount account = closed.get();
-        // Refuse a work email another live account already holds, rather than letting the write hit
-        // uk_user_account_tenant_email — same guard resetWorkContacts and unbindAndReinvite make.
-        String email = StringUtils.trimToNull(workEmail);
-        if (email != null) {
-            this.findContactHolderInTenant(email, account.getId())
-                    .ifPresent(other -> {
-                        throw new BusinessException("That work email already belongs to another account.");
-                    });
-        }
+        return closed.map(account -> this.revive(account, workEmail, workMobile));
+    }
+
+    /**
+     * Revive an already-loaded closed membership, checked and written within ITS company.
+     *
+     * <p>The one path both re-hire shapes share, so the rules cannot drift between them. The tenant
+     * is the row's, not the operator's: {@link #reviveMembership} has already scoped its lookup, and
+     * {@link #rehire} holds a row that may belong to another company than the ambient one.
+     *
+     * <p>BOTH contacts are checked against other holders in that company. A work mobile is a
+     * contact on the same footing as the email — Reset User already refuses a number another account
+     * holds — and reviving a row with a number a colleague's row carries would leave a code sent
+     * there naming two people. Refused here rather than at the index, which only covers the email.
+     */
+    private UserAccount revive(UserAccount account, String workEmail, String workMobile) {
+        Long tenantId = account.getTenantId();
+        Assert.notNull(tenantId, "A membership must belong to a company to be revived.");
+        this.contactHolderInTenant(tenantId, workEmail, account.getId())
+                .ifPresent(other -> {
+                    throw new BusinessException("That work email already belongs to another account.");
+                });
+        this.contactHolderInTenant(tenantId, workMobile, account.getId())
+                .ifPresent(other -> {
+                    throw new BusinessException("That work mobile already belongs to another account.");
+                });
         reviveWith(account, workEmail, workMobile);
         // updateOne(entity, false): reviveWith clears activationTime to null, which the default
         // overload drops — the revived PENDING row would otherwise keep the previous stint's
         // activation timestamp.
         this.updateOne(account, false);
         log.info("Revived membership {} for profile {} — reset to PENDING, awaiting a new invitation.",
-                account.getId(), profileId);
-        return Optional.of(account);
+                account.getId(), account.getProfileId());
+        return account;
     }
 
     /**
