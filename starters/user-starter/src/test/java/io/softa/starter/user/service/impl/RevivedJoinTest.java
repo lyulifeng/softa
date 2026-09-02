@@ -95,6 +95,22 @@ class RevivedJoinTest {
     }
 
     @Test
+    void theReclaimedAddress_isStoredInCanonicalForm_notAsTheInvitationSpeltIt() {
+        // The invitation carries the work contact as HR typed it; the identifier is what login
+        // looks up, so it comes home in the form login will ask for it.
+        when(invitationService.resolveJoinChannel(TOKEN, "email")).thenReturn(" Ada@Acme.com ");
+        invitationIsFor(ADA);
+        UserIdentity ada = identityOf(ADA, null, null);
+        when(identityService.findByProfile(ADA)).thenReturn(Optional.of(ada));
+        when(identityService.isIdentifierClaimable(RELEASED_WORK_EMAIL, ADA)).thenReturn(true);
+
+        loginService.verifyJoinCode(TOKEN, "email", "123456");
+
+        verify(codeGuard).verify(RELEASED_WORK_EMAIL, "123456");
+        assertThat(ada.getLoginEmail()).isEqualTo(RELEASED_WORK_EMAIL);
+    }
+
+    @Test
     void anAddressSomeoneElseClaimedMeanwhile_isNotReboundOntoThePerson() {
         // The address was reissued and another identity holds it now. Binding it to Ada as well
         // would make the identifier ambiguous for both; her person still resolves from the row.

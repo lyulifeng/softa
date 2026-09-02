@@ -109,7 +109,7 @@ public interface UserIdentityService extends EntityService<UserIdentity, Long> {
      * <p>Without this, an unknown identifier is an oracle: the real counter starts naming the
      * remaining attempts from the seventh failure, so whoever sees a countdown after seven tries
      * has learned the identifier exists, and whoever never sees one has learned it does not. The
-     * submitted identifier is therefore counted too — keyed by a digest of its lowercased form, so
+     * submitted identifier is therefore counted too — keyed by a digest of its canonical form (LoginIdentifiers), so
      * the cache never holds the raw guesses — in the same window and to the same threshold, and the
      * login path words its refusal from this count exactly as it does from the real one.
      *

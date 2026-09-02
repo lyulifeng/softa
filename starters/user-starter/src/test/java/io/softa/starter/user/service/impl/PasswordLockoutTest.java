@@ -326,6 +326,55 @@ class PasswordLockoutTest {
     }
 
     @Test
+    void everySpellingOfOneIdentifier_sharesOneUnknownCounterKey() {
+        // Trimmed AND lowercased before hashing — the same normalisation the known branch's lookup
+        // applies, so " x", "x" and "X" are one identifier on both sides of the branch.
+        when(cacheService.increment(anyString(), anyLong())).thenReturn(1L);
+
+        identityImpl.recordUnknownIdentifierFailure(" nobody@acme.com");
+        identityImpl.recordUnknownIdentifierFailure(NOBODY);
+        identityImpl.recordUnknownIdentifierFailure("NOBODY@acme.com");
+
+        ArgumentCaptor<String> keys = ArgumentCaptor.forClass(String.class);
+        verify(cacheService, times(3)).increment(keys.capture(), eq(30L * 60));
+        assertThat(keys.getAllValues()).hasSize(3).containsOnly(keys.getAllValues().get(0));
+    }
+
+    @Test
+    void aLeadingSpace_cannotTellAKnownIdentifierFromAnUnknownOne() {
+        // The oracle this closes: the known branch used to query the RAW identifier while the
+        // unknown branch hashed a trimmed one, so " x" always counted as unknown. Seven tries at
+        // " x" then one at "x": for an unknown x the eighth continued the same counter and showed
+        // the countdown; for a known x it landed on the person's fresh counter and did not. The
+        // difference was a yes/no on "does x exist", independent of any collation — the space never
+        // reached the database.
+        UserIdentity person = identity(null);
+        when(identityService.findByLoginIdentifier(EMAIL)).thenReturn(Optional.of(person));
+        when(identityService.isPasswordLocked(person)).thenReturn(false);
+        when(identityService.matchesPassword(person, "wrong")).thenReturn(false);
+        long[] knownCount = {0};
+        when(identityService.recordPasswordFailure(person)).thenAnswer(inv -> ++knownCount[0]);
+        long[] unknownCount = {0};
+        when(identityService.recordUnknownIdentifierFailure(NOBODY)).thenAnswer(inv -> ++unknownCount[0]);
+
+        String known = null;
+        String unknown = null;
+        for (int i = 0; i < 7; i++) {
+            known = messageFor(" ALICE@acme.com");
+            unknown = messageFor(" NOBODY@acme.com");
+        }
+        assertThat(messageFor(EMAIL)).as("eighth try, known").isEqualTo(messageFor(NOBODY));
+        assertThat(known).as("seventh try, known").isEqualTo(unknown);
+
+        // Load-bearing: the known branch was REACHED with the canonical identifier every time, so
+        // the misspelt tries counted against the person, not against a made-up unknown string.
+        verify(identityService, times(8)).findByLoginIdentifier(EMAIL);
+        verify(identityService, never()).findByLoginIdentifier(" ALICE@acme.com");
+        verify(identityService, times(8)).recordPasswordFailure(person);
+        verify(identityService, times(8)).recordUnknownIdentifierFailure(NOBODY);
+    }
+
+    @Test
     void theUnknownCounter_neverHoldsTheGuessItself_andIgnoresCase() {
         // The key is a digest of the lowercased identifier: a cache full of raw guesses would be a
         // list of every address anyone tried, and two spellings of one address are one guess.

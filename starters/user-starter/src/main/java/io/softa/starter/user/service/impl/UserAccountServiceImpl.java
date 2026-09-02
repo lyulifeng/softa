@@ -490,14 +490,17 @@ public class UserAccountServiceImpl extends EntityServiceImpl<UserAccount, Long>
         // personal login email is not ours to rewrite, so it compares before writing. Leaving it
         // behind would mean the person signs in with an address this company no longer knows, while
         // the recycled one becomes a route into their account for whoever receives it next.
+        //
+        // The identifier is written in LoginIdentifiers' canonical form while the account keeps the
+        // contact as HR typed it: the account value is displayed, the identity value is looked up.
         identityService.findByProfile(account.getProfileId()).ifPresent(identity -> {
             boolean moved = false;
-            if (previousEmail != null && previousEmail.equalsIgnoreCase(identity.getLoginEmail())) {
-                identity.setLoginEmail(email);
+            if (isSameLoginIdentifier(previousEmail, identity.getLoginEmail())) {
+                identity.setLoginEmail(LoginIdentifiers.normalize(email));
                 moved = true;
             }
-            if (previousMobile != null && previousMobile.equals(identity.getLoginMobile())) {
-                identity.setLoginMobile(mobile);
+            if (isSameLoginIdentifier(previousMobile, identity.getLoginMobile())) {
+                identity.setLoginMobile(LoginIdentifiers.normalize(mobile));
                 moved = true;
             }
             if (moved) {
@@ -635,7 +638,10 @@ public class UserAccountServiceImpl extends EntityServiceImpl<UserAccount, Long>
     @CrossTenant
     @Override
     public boolean isWorkContactShared(String contact) {
-        if (StringUtils.isBlank(contact)) {
+        // The callers hold a login identifier (already canonical); the question is asked of the
+        // work contacts, so it is asked in the same form the identifier was compared in.
+        contact = LoginIdentifiers.normalize(contact);
+        if (contact == null) {
             return false;
         }
         // Counts PEOPLE, not accounts. One person employed by two companies has two accounts
@@ -681,13 +687,11 @@ public class UserAccountServiceImpl extends EntityServiceImpl<UserAccount, Long>
         }
         return identityService.findByProfile(account.getProfileId()).map(identity -> {
             boolean released = false;
-            if (StringUtils.isNotBlank(account.getEmail())
-                    && account.getEmail().equalsIgnoreCase(identity.getLoginEmail())) {
+            if (isSameLoginIdentifier(account.getEmail(), identity.getLoginEmail())) {
                 identity.setLoginEmail(null);
                 released = true;
             }
-            if (StringUtils.isNotBlank(account.getMobile())
-                    && account.getMobile().equals(identity.getLoginMobile())) {
+            if (isSameLoginIdentifier(account.getMobile(), identity.getLoginMobile())) {
                 identity.setLoginMobile(null);
                 released = true;
             }
@@ -700,6 +704,19 @@ public class UserAccountServiceImpl extends EntityServiceImpl<UserAccount, Long>
             }
             return released;
         }).orElse(false);
+    }
+
+    /**
+     * Whether a work contact and a login identifier name the same address.
+     *
+     * <p>Compared in LoginIdentifiers' canonical form on BOTH sides: the contact is stored as HR
+     * typed it, the identifier as the seeding wrote it, and a comparison that trusted either
+     * spelling would leave an identifier this company issued in place when the contact moves or the
+     * membership closes — a live login route into an address about to be handed to someone else.
+     */
+    private static boolean isSameLoginIdentifier(String workContact, String loginIdentifier) {
+        String contact = LoginIdentifiers.normalize(workContact);
+        return contact != null && contact.equals(LoginIdentifiers.normalize(loginIdentifier));
     }
 
     @Override

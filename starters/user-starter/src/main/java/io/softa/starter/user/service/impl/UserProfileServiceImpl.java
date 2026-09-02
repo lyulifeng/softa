@@ -422,7 +422,9 @@ public class UserProfileServiceImpl extends EntityServiceImpl<UserProfile, Long>
 
     /** The work contact, or null when it is already someone else's login identifier. */
     private String claimable(String contact, Long profileId) {
-        String value = StringUtils.trimToNull(contact);
+        // Stored in LoginIdentifiers' canonical form — the form login looks it up in. The account
+        // keeps the contact as typed; only the identifier is normalised.
+        String value = LoginIdentifiers.normalize(contact);
         return value != null && identityService.isIdentifierClaimable(value, profileId) ? value : null;
     }
 
@@ -430,6 +432,7 @@ public class UserProfileServiceImpl extends EntityServiceImpl<UserProfile, Long>
     @Override
     @Transactional
     public Long createPersonForJoin(String identifier) {
+        identifier = LoginIdentifiers.normalize(identifier);
         Assert.notBlank(identifier, "An identifier is required to create a person.");
         // @SkipPermissionCheck for the same reason registerUserProfile carries it: these are rows
         // this method mints itself, and on /join the caller has no session at all. Both models are

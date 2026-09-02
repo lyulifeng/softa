@@ -5,7 +5,6 @@ import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.time.LocalDateTime;
 import java.util.HexFormat;
-import java.util.Locale;
 import java.util.Objects;
 import java.util.Optional;
 
@@ -85,7 +84,9 @@ public class UserIdentityServiceImpl extends EntityServiceImpl<UserIdentity, Lon
     @CrossTenant
     @Override
     public Optional<UserIdentity> findByLoginIdentifier(String identifier) {
-        if (StringUtils.isBlank(identifier)) {
+        // Same spelling the seeding wrote and the unknown counter hashes — see LoginIdentifiers.
+        identifier = LoginIdentifiers.normalize(identifier);
+        if (identifier == null) {
             return Optional.empty();
         }
         // Both are tried rather than guessing by shape ("@" or "+"): a caller that guessed wrong
@@ -128,7 +129,8 @@ public class UserIdentityServiceImpl extends EntityServiceImpl<UserIdentity, Lon
     @CrossTenant
     @Override
     public boolean isIdentifierClaimable(String identifier, Long forProfileId) {
-        if (StringUtils.isBlank(identifier)) {
+        identifier = LoginIdentifiers.normalize(identifier);
+        if (identifier == null) {
             return false;
         }
         boolean isEmail = identifier.contains("@");
@@ -218,7 +220,7 @@ public class UserIdentityServiceImpl extends EntityServiceImpl<UserIdentity, Lon
 
     @Override
     public long recordUnknownIdentifierFailure(String identifier) {
-        String value = StringUtils.trimToNull(identifier);
+        String value = LoginIdentifiers.normalize(identifier);
         if (value == null) {
             return 0;
         }
@@ -241,7 +243,7 @@ public class UserIdentityServiceImpl extends EntityServiceImpl<UserIdentity, Lon
 
     @Override
     public boolean isUnknownIdentifierLocked(String identifier) {
-        String value = StringUtils.trimToNull(identifier);
+        String value = LoginIdentifiers.normalize(identifier);
         return value != null && cacheService.hasKey(unknownLockKey(unknownDigest(value)));
     }
 
@@ -255,12 +257,13 @@ public class UserIdentityServiceImpl extends EntityServiceImpl<UserIdentity, Lon
 
     private static String unknownDigest(String identifier) {
         // Hashed rather than stored: the key would otherwise be a list of every identifier ever
-        // guessed at the login form. Lowercased so case variants of one guess share a count: they
-        // name the same mailbox, and a counter that split them would hand out a window per spelling.
+        // guessed at the login form. The input is already in LoginIdentifiers' canonical form and
+        // is hashed as-is: any further transformation here is one the known branch's lookup would
+        // not make, and a difference between the two is the oracle this counter exists to close.
         byte[] digest;
         try {
             digest = MessageDigest.getInstance("SHA-256")
-                    .digest(identifier.toLowerCase(Locale.ROOT).getBytes(StandardCharsets.UTF_8));
+                    .digest(identifier.getBytes(StandardCharsets.UTF_8));
         } catch (NoSuchAlgorithmException e) {
             throw new IllegalStateException("SHA-256 is a mandatory JCA algorithm.", e);
         }

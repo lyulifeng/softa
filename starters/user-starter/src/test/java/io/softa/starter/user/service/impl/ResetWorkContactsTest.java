@@ -104,6 +104,23 @@ class ResetWorkContactsTest {
     }
 
     @Test
+    void theLoginIdentifierIsStoredInCanonicalForm_whileTheContactKeepsItsSpelling() {
+        // The record holds the address as HR typed it, and the account displays it that way. The
+        // identifier is what login looks up, so it is written the way login asks — otherwise the
+        // person could sign in only by reproducing HR's capitalisation.
+        UserAccount account = given("Old@Acme.com", null, PROFILE);
+        UserIdentity person = identity("old@acme.com", null);
+        when(identityService.findByProfile(PROFILE)).thenReturn(Optional.of(person));
+
+        archive(" New@Acme.com ", null);
+        accountService.resetWorkContacts(ACCOUNT, "Address changed");
+
+        assertThat(account.getEmail()).isEqualTo(" New@Acme.com ");
+        assertThat(person.getLoginEmail()).isEqualTo("new@acme.com");
+        verify(identityService).updateOne(person, false);
+    }
+
+    @Test
     void aPersonalLoginEmailIsLeftAlone() {
         // The work email and the login email need not be the same value. Only the address this
         // company issued may be rewritten.

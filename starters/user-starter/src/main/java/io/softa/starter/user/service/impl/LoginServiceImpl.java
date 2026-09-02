@@ -189,6 +189,10 @@ public class LoginServiceImpl implements LoginService {
 
     @Override
     public void sendEmailCode(String email) {
+        // Normalised once, here, and the normalised value is what the code is keyed by AND sent to:
+        // the verify step normalises its identifier the same way, so the two meet on one key
+        // however the person spelt the address on either screen.
+        email = LoginIdentifiers.normalize(email);
         String code = this.generateNumericCode(email);
         // PLATFORM tier: a login / join code is requested BEFORE any session, so there is no tenant
         // context to render a tenant-specific template from — the platform row is the code's copy.
@@ -200,6 +204,7 @@ public class LoginServiceImpl implements LoginService {
 
     @Override
     public void sendMobileCode(String mobile) {
+        mobile = LoginIdentifiers.normalize(mobile);
         String code = this.generateNumericCode(mobile);
         eventPublisher.publishEvent(new SmsRequestMessage(
                 List.of(mobile), TEMPLATE_CODE,
@@ -225,6 +230,7 @@ public class LoginServiceImpl implements LoginService {
 
     @Override
     public AuthenticationResult authenticateByCode(String identifier, String code) {
+        identifier = LoginIdentifiers.normalize(identifier);
         verifyCode(identifier, code);
         assertContactNotShared(identifier);
         // Resolved by LOGIN IDENTIFIER on the person, not by a company's work contact: the code
@@ -240,6 +246,12 @@ public class LoginServiceImpl implements LoginService {
         // failure, so an identifier that never counted down would have confirmed its non-existence
         // just as surely as a distinct message. The unknown branch therefore counts the submitted
         // identifier in the same window and words its refusal from that count.
+        //
+        // Normalised BEFORE the branch, so both branches see the same string. The unknown counter
+        // already hashed a trimmed, lowercased form; the lookup here used the raw one, so " x"
+        // always fell into the unknown branch while "x" could resolve — and whether the eighth try
+        // continued the countdown or started afresh said whether x existed (see LoginIdentifiers).
+        identifier = LoginIdentifiers.normalize(identifier);
         Optional<UserIdentity> resolved = identityService.findByLoginIdentifier(identifier);
         if (resolved.isEmpty()) {
             // Same ORDER as the real branch below: locked is answered first and is not counted.
@@ -381,7 +393,9 @@ public class LoginServiceImpl implements LoginService {
     public JoinVerification verifyJoinCode(String rawToken, String channel, String code) {
         // Resolving the address from the token (not from the caller) is what keeps this from being
         // a way to verify a code against an address of the caller's choosing.
-        String address = invitationService.resolveJoinChannel(rawToken, channel);
+        // Normalised because the invitation stores the WORK contact as HR typed it, while the code
+        // was keyed by (sendEmailCode) and the identity is looked up / seeded with the login form.
+        String address = LoginIdentifiers.normalize(invitationService.resolveJoinChannel(rawToken, channel));
         this.verifyCode(address, code);
 
         // A shared work contact identifies no one, so an invitee holding it cannot be resolved
@@ -465,6 +479,7 @@ public class LoginServiceImpl implements LoginService {
     public void resetPasswordByCode(String identifier, String code, String newPassword) {
         // Code first. Looking the person up before verifying would let a caller probe which
         // identifiers exist by watching which ones fail differently.
+        identifier = LoginIdentifiers.normalize(identifier);
         this.verifyCode(identifier, code);
         assertContactNotShared(identifier);
         UserIdentity identity = identityService.findByLoginIdentifier(identifier).orElseThrow(
