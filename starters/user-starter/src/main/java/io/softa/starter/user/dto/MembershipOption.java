@@ -1,5 +1,7 @@
 package io.softa.starter.user.dto;
 
+import com.fasterxml.jackson.annotation.JsonProperty;
+
 import io.softa.starter.user.enums.AccountStatus;
 
 /**
@@ -18,7 +20,16 @@ import io.softa.starter.user.enums.AccountStatus;
  */
 public record MembershipOption(Long accountId, Long tenantId, String tenantName, AccountStatus status) {
 
-    /** Whether this option can actually be entered. */
+    /**
+     * Whether this option can actually be entered.
+     *
+     * <p>{@code @JsonProperty} is required, not decoration: the name is neither a record component
+     * nor a {@code getX}/{@code isX} getter, so Jackson does not discover it and the field simply
+     * never reaches the client — where every option then reads as unselectable and the picker
+     * refuses every company it just listed. {@code isResolved()} on AuthenticationResult is carried
+     * only because that name happens to match the convention.
+     */
+    @JsonProperty("selectable")
     public boolean selectable() {
         return status == AccountStatus.ACTIVE;
     }
