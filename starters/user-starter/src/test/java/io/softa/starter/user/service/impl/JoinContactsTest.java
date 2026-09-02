@@ -30,6 +30,24 @@ class JoinContactsTest {
     }
 
     @Test
+    void matchesTheStoredIdentifier_whenHRTypedTheContactWithSurroundingWhitespace() {
+        // The invitation keeps HR's spelling; the identifier compared against it was stored
+        // canonical (trimmed, lowercased). This is the first-time invitee who passed the code and
+        // was then refused at setJoinPassword and confirmJoin with "does not belong".
+        JoinContacts contacts = new JoinContacts(" Ada@Acme.com ", " +6591234567 ");
+        assertThat(contacts.includes("ada@acme.com")).isTrue();
+        assertThat(contacts.includes("+6591234567")).isTrue();
+        // And the other way round: a spelt-out candidate against a canonical invitation.
+        assertThat(new JoinContacts("ada@acme.com", null).includes(" ADA@acme.com ")).isTrue();
+    }
+
+    @Test
+    void aBlankAddress_neverMatches_evenABlankChannel() {
+        // Normalisation turns "  " into null on both sides; two nulls must not read as equal.
+        assertThat(new JoinContacts("  ", null).includes("  ")).isFalse();
+    }
+
+    @Test
     void rejectsAnythingElse() {
         JoinContacts contacts = new JoinContacts("alice@acme.com", "+8613800138000");
         assertThat(contacts.includes("bob@acme.com")).isFalse();

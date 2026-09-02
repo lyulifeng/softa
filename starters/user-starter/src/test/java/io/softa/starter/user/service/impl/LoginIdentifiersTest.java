@@ -12,6 +12,7 @@ import io.softa.framework.orm.service.CacheService;
 import io.softa.starter.user.entity.UserIdentity;
 import io.softa.starter.user.entity.UserProfile;
 import io.softa.starter.user.service.UserIdentityService;
+import io.softa.starter.user.util.LoginIdentifiers;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;

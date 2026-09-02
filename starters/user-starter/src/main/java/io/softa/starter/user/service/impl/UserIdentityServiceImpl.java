@@ -23,6 +23,7 @@ import io.softa.framework.orm.service.impl.EntityServiceImpl;
 import io.softa.starter.user.entity.UserAccount;
 import io.softa.starter.user.entity.UserIdentity;
 import io.softa.starter.user.service.UserIdentityService;
+import io.softa.starter.user.util.LoginIdentifiers;
 
 /**
  * {@link UserIdentityService} — the person's credentials, stored and verified here.

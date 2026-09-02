@@ -44,6 +44,7 @@ import io.softa.starter.user.service.UserAccountService;
 import io.softa.starter.user.service.UserIdentityService;
 import io.softa.starter.user.service.UserRoleRelService;
 import io.softa.starter.user.service.UserProfileService;
+import io.softa.starter.user.util.LoginIdentifiers;
 
 /**
  * UserAccount Model Service Implementation

@@ -36,6 +36,7 @@ import io.softa.starter.user.enums.AccountStatus;
 import io.softa.starter.user.service.UserAccountService;
 import io.softa.starter.user.service.UserIdentityService;
 import io.softa.starter.user.service.UserProfileService;
+import io.softa.starter.user.util.LoginIdentifiers;
 
 /**
  * UserProfile Model Service Implementation

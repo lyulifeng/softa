@@ -1,4 +1,4 @@
-package io.softa.starter.user.service.impl;
+package io.softa.starter.user.util;
 
 import java.util.Locale;
 
@@ -18,15 +18,16 @@ import org.apache.commons.lang3.StringUtils;
  * <p>Lowercasing is what makes two spellings of one mailbox one identifier; for a dial-code mobile
  * it is a no-op. Work contacts ({@code UserAccount.email} / {@code mobile}) are display values and
  * are deliberately NOT passed through here — only login identifiers, and the strings compared
- * against them.
+ * against them (which is why this lives in {@code util}: the invitation's {@code JoinContacts} in
+ * {@code dto} compares against a stored identifier and must apply the identical rule, not a copy).
  */
-final class LoginIdentifiers {
+public final class LoginIdentifiers {
 
     private LoginIdentifiers() {
     }
 
     /** The canonical form, or null for a blank input. */
-    static String normalize(String identifier) {
+    public static String normalize(String identifier) {
         String value = StringUtils.trimToNull(identifier);
         return value == null ? null : value.toLowerCase(Locale.ROOT);
     }
