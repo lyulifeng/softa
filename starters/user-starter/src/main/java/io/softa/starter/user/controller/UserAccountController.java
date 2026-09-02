@@ -442,7 +442,7 @@ public class UserAccountController extends EntityController<UserAccountService, 
             + "its previous work contacts; send a new invitation afterwards")
     @PostMapping("/rehire")
     public ApiResponse<Void> rehire(@RequestParam @NotNull Long id) {
-        onRosterAccounts(List.of(id), () -> service.rehire(id));
+        onOwnRosterAccount(id, () -> service.rehire(id));
         return ApiResponse.success();
     }
 
@@ -463,7 +463,7 @@ public class UserAccountController extends EntityController<UserAccountService, 
     @PostMapping("/resetWorkContacts")
     public ApiResponse<Void> resetWorkContacts(@RequestParam @NotNull Long id,
             @RequestBody @Valid ResetWorkContactsDTO dto) {
-        onRosterAccounts(List.of(id), () -> service.resetWorkContacts(id, dto.getReason()));
+        onOwnRosterAccount(id, () -> service.resetWorkContacts(id, dto.getReason()));
         return ApiResponse.success();
     }
 
@@ -477,7 +477,7 @@ public class UserAccountController extends EntityController<UserAccountService, 
         // was themselves bound to the wrong membership is exactly who needs this.
         Long currentUserId = ContextHolder.getContext() == null ? null
                 : ContextHolder.getContext().getUserId();
-        onRosterAccounts(List.of(id), () -> invitationService.unbindAndReinvite(
+        onOwnRosterAccount(id, () -> invitationService.unbindAndReinvite(
                 id, dto.getReason(), currentUserId));
         return ApiResponse.success();
     }
@@ -496,8 +496,10 @@ public class UserAccountController extends EntityController<UserAccountService, 
      * resolved their target inside the caller's own tenant, so Lock / Unlock / Invite on any row
      * from another tenant failed with "User not found" (#686 — the operation twin of the getById
      * fix above). Same window, same bounds: the super-admin reaches roster members only, and an id
-     * outside the roster gets the same answer as a nonexistent one; every other caller runs
-     * tenant-locally, exactly as before.
+     * outside the roster gets the same answer as a nonexistent one. Every other caller stays outside
+     * the window, so an operation that resolves its row through the ORM's tenant filter runs
+     * tenant-locally — but a service method annotated {@code @CrossTenant} resolves its row WITHOUT
+     * that filter whoever calls it, and needs {@link #onOwnRosterAccount} on top.
      */
     private void onRosterAccounts(List<Long> ids, Runnable op) {
         this.onRosterAccounts(ids, () -> {
@@ -517,6 +519,32 @@ public class UserAccountController extends EntityController<UserAccountService, 
                 }
             }
             return op.get();
+        });
+    }
+
+    /**
+     * Run a by-id operation whose service method is {@code @CrossTenant} — {@code rehire},
+     * {@code resetWorkContacts}, {@code unbindAndReinvite} — bounded to a row the caller administers.
+     *
+     * <p>The annotation is there so the platform super-admin can act on a roster row that sits in
+     * another company, but it waives the ORM's tenant filter for EVERY caller: the service loads
+     * the row by id with no tenant clause, so a tenant HR holding the grant could post another
+     * tenant's account id and reopen, re-address or unbind that membership. {@link
+     * #onRosterAccounts} bounds only the super-admin (to the roster); this bounds everyone else to
+     * their own tenant, by loading the row first and comparing its tenant to the caller's. The
+     * refusal is the same "User not found." a nonexistent id gets, so the check does not confirm
+     * that the id exists elsewhere.
+     */
+    private void onOwnRosterAccount(Long id, Runnable op) {
+        onRosterAccounts(List.of(id), () -> {
+            UserAccount row = service.getById(id)
+                    .orElseThrow(() -> new BusinessException("User not found."));
+            // Objects.equals: single-tenant deployments carry null on both sides.
+            if (!isPlatformSuperAdmin()
+                    && !Objects.equals(row.getTenantId(), ContextHolder.getContext().getTenantId())) {
+                throw new BusinessException("User not found.");
+            }
+            op.run();
         });
     }
 

@@ -14,6 +14,7 @@ import org.mockito.Mockito;
 import org.springframework.test.util.ReflectionTestUtils;
 
 import io.softa.framework.base.config.SystemConfig;
+import io.softa.framework.base.exception.BusinessException;
 import io.softa.framework.base.context.Context;
 import io.softa.framework.base.context.ContextHolder;
 import io.softa.framework.orm.service.ModelService;
@@ -21,14 +22,18 @@ import io.softa.framework.orm.utils.IdUtils;
 import io.softa.framework.orm.domain.Filters;
 import io.softa.framework.web.response.ApiResponse;
 import io.softa.starter.user.constant.RoleConstant;
+import io.softa.starter.user.dto.ResetWorkContactsDTO;
+import io.softa.starter.user.dto.UnbindAndReinviteDTO;
 import io.softa.starter.user.dto.UserAccountDTO;
 import io.softa.starter.user.entity.UserAccount;
 import io.softa.starter.user.service.PermissionCacheInvalidator;
 import io.softa.starter.user.service.RoleService;
 import io.softa.starter.user.service.UserAccountService;
+import io.softa.starter.user.service.UserInvitationService;
 import io.softa.starter.user.service.UserRoleRelService;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import org.mockito.ArgumentCaptor;
 
 import static org.mockito.ArgumentMatchers.any;
@@ -236,5 +241,94 @@ class UserAccountControllerTest {
         assertThat(written.getValue().getNickname()).isEqualTo("New Name");
         assertThat(written.getValue().getEmail()).isEqualTo("alice@acme.com");
         assertThat(written.getValue().getMobile()).isEqualTo("+6591234567");
+    }
+
+    // ─── @CrossTenant operations are bounded to the caller's own tenant ───
+
+    /**
+     * rehire / resetWorkContacts / unbindAndReinvite are {@code @CrossTenant} on the service so the
+     * platform super-admin can reach a roster row in another company. The annotation waives the
+     * ORM's tenant filter for every caller, and onRosterAccounts bounds only the super-admin — so a
+     * tenant HR holding the grant could post another tenant's account id. The service mock here
+     * returns the row whatever the caller's tenant, exactly as the un-filtered load does.
+     */
+    private UserAccountService accountServiceHolding(Long accountId, Long tenantId) {
+        UserAccountService accountService = mock(UserAccountService.class);
+        UserAccount row = new UserAccount();
+        row.setId(accountId);
+        row.setTenantId(tenantId);
+        when(accountService.getById(accountId)).thenReturn(java.util.Optional.of(row));
+        ReflectionTestUtils.setField(controller, "service", accountService);
+        return accountService;
+    }
+
+    private static void asCallerIn(Long tenantId, Set<String> roleCodes, Runnable action) {
+        Context ctx = new Context();
+        ctx.setUserId(1L);
+        ctx.setTenantId(tenantId);
+        ctx.setRoleCodes(roleCodes);
+        ContextHolder.runWith(ctx, action);
+    }
+
+    @Test
+    void rehire_byATenantHR_onAnotherTenantsRow_isRefused_andTheServiceIsNeverInvoked() {
+        UserAccountService accountService = accountServiceHolding(7L, 9L);
+
+        assertThatThrownBy(() -> asCallerIn(2L, Set.of("HR"), () -> controller.rehire(7L)))
+                .isInstanceOf(BusinessException.class)
+                .hasMessage("User not found.");   // same answer as a nonexistent id: no existence leak
+
+        verify(accountService, never()).rehire(any());
+    }
+
+    @Test
+    void resetWorkContacts_byATenantHR_onAnotherTenantsRow_isRefused() {
+        UserAccountService accountService = accountServiceHolding(7L, 9L);
+        ResetWorkContactsDTO dto = new ResetWorkContactsDTO();
+        dto.setReason("moved");
+
+        assertThatThrownBy(() -> asCallerIn(2L, Set.of("HR"), () -> controller.resetWorkContacts(7L, dto)))
+                .isInstanceOf(BusinessException.class)
+                .hasMessage("User not found.");
+
+        verify(accountService, never()).resetWorkContacts(any(), any());
+    }
+
+    @Test
+    void unbindAndReinvite_byATenantHR_onAnotherTenantsRow_isRefused() {
+        accountServiceHolding(7L, 9L);
+        UserInvitationService invitationService = mock(UserInvitationService.class);
+        ReflectionTestUtils.setField(controller, "invitationService", invitationService);
+        UnbindAndReinviteDTO dto = new UnbindAndReinviteDTO();
+        dto.setReason("wrong person");
+
+        assertThatThrownBy(() -> asCallerIn(2L, Set.of("HR"), () -> controller.unbindAndReinvite(7L, dto)))
+                .isInstanceOf(BusinessException.class)
+                .hasMessage("User not found.");
+
+        verify(invitationService, never()).unbindAndReinvite(any(), any(), any());
+    }
+
+    @Test
+    void rehire_byATenantHR_onItsOwnTenantsRow_reachesTheService() {
+        UserAccountService accountService = accountServiceHolding(7L, 2L);
+
+        asCallerIn(2L, Set.of("HR"), () -> controller.rehire(7L));
+
+        verify(accountService).rehire(7L);
+    }
+
+    @Test
+    void rehire_byThePlatformSuperAdmin_onARosterRowInAnotherTenant_reachesTheService() {
+        // The case the annotation exists for: the super-admin works a roster that spans tenants, and
+        // the roster check (not the caller's tenant) is what bounds it.
+        UserAccountService accountService = accountServiceHolding(7L, 9L);
+        ReflectionTestUtils.setField(controller, "roleService", roleServiceReturningNoAdminRoles());
+        ReflectionTestUtils.setField(controller, "userRoleRelService", mock(UserRoleRelService.class));
+        when(modelService.count(eq("UserAccount"), any())).thenReturn(1L);
+
+        asCallerIn(2L, Set.of(RoleConstant.CODE_SUPER_ADMIN), () -> controller.rehire(7L));
+
+        verify(accountService).rehire(7L);
     }
 }
