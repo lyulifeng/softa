@@ -377,6 +377,17 @@ public class UserAccountServiceImpl extends EntityServiceImpl<UserAccount, Long>
     // @SkipPermissionCheck / @CrossTenant for the same reasons offBoard carries them: re-hire is the
     // mirror of off-boarding, reached from HR's roster with whatever grants that role holds, and the
     // row is named by id from a roster that may span tenants.
+    //
+    // Residual, by design — the reissued contact. The revived row keeps the contacts it was closed
+    // with, and the invitation HR sends next goes to them. If the person's identity is FULLY
+    // released (no login identifier on either channel), /join rebinds the address that receives the
+    // code onto that identity as a login identifier — so whoever now holds a reissued address (a
+    // pool phone handed on, an old work mailbox) can claim the leaver's identity and every company
+    // it still belongs to. An identity holding any live identifier is not rebound (see
+    // LoginServiceImpl.reclaimLoginIdentifier), which leaves exactly the fully-released case open,
+    // because there is no other evidence of who the person is. Mitigations are procedural: HR
+    // corrects the row's contacts through Reset User BEFORE inviting, and the invitation is
+    // HR-initiated — nobody can trigger it against a row they do not administer.
     @SkipPermissionCheck
     @Override
     @CrossTenant

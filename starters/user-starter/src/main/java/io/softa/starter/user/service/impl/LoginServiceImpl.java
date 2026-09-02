@@ -388,6 +388,18 @@ public class LoginServiceImpl implements LoginService {
         }
     }
 
+    /*
+     * Residual, by design — the reissued contact on a FULLY released identity. For a bound row this
+     * rebinds the address that received the code onto the person's identity only when that identity
+     * holds no login identifier at all (reclaimLoginIdentifier). In that one case the address is the
+     * only evidence of who the person is, so whoever now holds a reissued address — a pool phone
+     * handed to the next hire, a mailbox HR mistyped onto the revived row — passes the code, gets the
+     * address as a login identifier, and from then on signs in by code into the leaver's profile and
+     * every company it still belongs to. Not closed here because nothing in the data distinguishes
+     * the returning leaver from the stranger; the mitigations are procedural and sit with HR: correct
+     * the row's contacts through Reset User BEFORE inviting, and only HR can issue the invitation.
+     * The same note stands on UserAccountServiceImpl.rehire, where the row is reopened.
+     */
     @Override
     @Transactional
     public JoinVerification verifyJoinCode(String rawToken, String channel, String code) {

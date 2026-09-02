@@ -218,6 +218,24 @@ public class UserIdentityServiceImpl extends EntityServiceImpl<UserIdentity, Lon
         return failures;
     }
 
+    /*
+     * What remains distinguishable BY DESIGN between a known and an unknown identifier, once the
+     * messages, counts, clocks and spelling agree:
+     *
+     *  - The real counter is per PERSON, this one per STRING. A person's email and mobile lock
+     *    together (ten wrong passwords split across them lock both), while two unknown strings never
+     *    share a count. An observer who can pair two identifiers and spend the window on them can
+     *    learn that they belong to one real person. Accepted: keying the real counter per string
+     *    would hand a person with two identifiers twenty guesses, and the pairing already requires
+     *    knowing both of someone's contacts.
+     *  - The storage medium differs. The real lock is persisted on the identity row so a cache flush
+     *    cannot unlock it; the unknown lock lives only in the cache. A flush therefore frees unknown
+     *    identifiers and not real ones — observable only by whoever can cause the flush.
+     *  - Timing. Both branches run the same two identifier queries, but the real branch then hashes
+     *    a password and writes a row on the tenth failure, the unknown one increments a cache key.
+     *    Sub-millisecond, and below what the network jitter of an anonymous form exposes; not
+     *    equalised further.
+     */
     @Override
     public long recordUnknownIdentifierFailure(String identifier) {
         String value = LoginIdentifiers.normalize(identifier);
