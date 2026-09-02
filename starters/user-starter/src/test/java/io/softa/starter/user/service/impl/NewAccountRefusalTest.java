@@ -139,9 +139,24 @@ class NewAccountRefusalTest {
     }
 
     @Test
-    void anIdentityOnOneSideAndAClosedRowOnTheOtherNamingTwoPeopleIsStillTwoPeople() {
-        // The rule does not care HOW each contact found its person: the email is a live login
-        // identifier of one person, the mobile sits on somebody else's DEACTIVATED row here.
+    void aContactStillOnAFormerEmployeesClosedRowIsRefusedWithTheReHireRemedy() {
+        // Off-boarding released the work email from the identity, so no identity resolves and the
+        // only thing carrying the address is a DEACTIVATED row here. The pre-check does not read
+        // that row as "this is the person" — it says who held the address LAST, which may not be
+        // who the import row describes — so it refuses, and names the explicit action instead.
+        UserAccount closed = membershipHere(AccountStatus.DEACTIVATED);
+        doReturn(List.of(closed)).when(accountService).searchList(any(Filters.class));
+
+        assertThat(refusalInThisTenant(EMAIL, null))
+                .isEqualTo("A former employee's closed account still holds this contact. "
+                        + "Re-hire that account instead of creating a new one.");
+    }
+
+    @Test
+    void aClosedRowHoldingTheMobileIsRefusedTheSameWay_evenWhenTheEmailNamesSomeoneElse() {
+        // The email is a live identifier of one person; the mobile sits on somebody else's closed
+        // row. That row is not read as a second person (it names an address, not a human), so this
+        // is not "two people" — it is a contact HR must free up or re-hire, and it is told which.
         identifierBelongsTo(EMAIL, PERSON);
         UserAccount closed = new UserAccount();
         closed.setId(998L);
@@ -152,21 +167,11 @@ class NewAccountRefusalTest {
         doReturn(List.of(closed)).when(accountService).searchList(any(Filters.class));
 
         assertThat(refusalInThisTenant(EMAIL, MOBILE))
-                .isEqualTo("This email and mobile belong to two different people. Enter contacts for one person.");
+                .isEqualTo("A former employee's closed account still holds this contact. "
+                        + "Re-hire that account instead of creating a new one.");
     }
 
     // ─── allowed ───
-
-    @Test
-    void aLeaverWhoseLoginIdentifierWasReleasedIsAllowed() {
-        // Off-boarding released the work email from the identity, so no identity resolves; the
-        // pre-check must still read the closed row as theirs, or the import refuses the re-hire the
-        // create path would have accepted.
-        UserAccount closed = membershipHere(AccountStatus.DEACTIVATED);
-        doReturn(List.of(closed)).when(accountService).searchList(any(Filters.class));
-
-        assertThat(refusalInThisTenant(EMAIL, null)).isNull();
-    }
 
     @Test
     void freshContactsAreAllowed() {

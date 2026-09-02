@@ -99,6 +99,20 @@ public interface UserAccountService extends EntityService<UserAccount, Long> {
     void offBoard(Long accountId);
 
     /**
+     * Re-hire: reopen a closed membership as {@code PENDING}, for its own person and with the work
+     * contacts it already carries. Sends nothing — HR follows with the ordinary Send Invitation.
+     *
+     * <p>An explicit action rather than something the create path infers from a contact. A closed
+     * row still holding an address says only who held the address LAST: work emails and pool phones
+     * are reissued, so treating the row as "this is the person being created" would revive the
+     * leaver's membership under a newcomer's details and surface the leaver's identity to whoever
+     * typed them. Naming the row by id states the intent instead of guessing it.
+     *
+     * @throws io.softa.framework.base.exception.BusinessException unless the row is DEACTIVATED
+     */
+    void rehire(Long accountId);
+
+    /**
      * Release from the person's login identifiers whatever THIS company issued them.
      *
      * <p>Shared by the two operations that end a binding — off-boarding and unbind-and-re-invite —

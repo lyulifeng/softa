@@ -176,6 +176,26 @@ class ResetWorkContactsTest {
     }
 
     @Test
+    void aMobileAnotherAccountHolds_isRefused_notJustTheEmail() {
+        // The mobile is a login identifier as much as the email is. Checking only the email let a
+        // reset move a number onto this account while a colleague's row still held it, so a code
+        // sent there named two people.
+        given("old@acme.com", "+8613800138000", PROFILE);
+        UserAccount other = new UserAccount();
+        other.setId(999L);
+        doReturn(Optional.of(other)).when(accountService)
+                .findContactHolderInTenant("+8613899999999", ACCOUNT);
+
+        archive("old@acme.com", "+8613899999999");
+
+        assertThatThrownBy(() -> accountService.resetWorkContacts(ACCOUNT, "x"))
+                .isInstanceOf(BusinessException.class)
+                .hasMessageContaining("already belongs to another account");
+        verify(identityService, never()).updateOne(any(UserIdentity.class), any(Boolean.class));
+        verify(accountService, never()).updateOne(any(UserAccount.class), any(Boolean.class));
+    }
+
+    @Test
     void aMobileOnlyAccount_isNotifiedBySms_notLeftUninformed() {
         // The person reachable only by work mobile is exactly the one an email-only notice would
         // leave in the dark. W6/W9 says notify the OLD contact; the old contact here is a number.

@@ -438,6 +438,14 @@ public class UserAccountController extends EntityController<UserAccountService, 
         return ApiResponse.success();
     }
 
+    @Operation(summary = "Re-hire a former employee — reopens their closed account as Pending with "
+            + "its previous work contacts; send a new invitation afterwards")
+    @PostMapping("/rehire")
+    public ApiResponse<Void> rehire(@RequestParam @NotNull Long id) {
+        onRosterAccounts(List.of(id), () -> service.rehire(id));
+        return ApiResponse.success();
+    }
+
     @Operation(summary = "The work contacts this account's employee record holds — what Reset User "
             + "and Unbind & Re-invite will carry onto the membership")
     @GetMapping("/archiveWorkContacts")
