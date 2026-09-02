@@ -225,6 +225,9 @@ public class UserAccountServiceImpl extends EntityServiceImpl<UserAccount, Long>
         // A leaver coming back: (tenantId, profileId) is unique, so a second row cannot be inserted
         // — the closed one is revived instead. The row is reset to PENDING with the new contacts,
         // so from here the person is treated exactly like any other fresh create: invite, /join.
+        // The person may have been found through that closed row alone (see decideNewAccount):
+        // off-boarding released their work contact from the identity, so it is the row, not the
+        // login identifier, that still knows who they are.
         if (decision.closedRow() != null) {
             UserAccount revived = this.reviveMembership(existingPerson, email, mobile)
                     .orElseThrow(() -> new BusinessException("This person is already a member of this company."));
@@ -300,20 +303,34 @@ public class UserAccountServiceImpl extends EntityServiceImpl<UserAccount, Long>
      * <p>The membership is resolved BEFORE the contact checks because a closed one changes what
      * they mean: a leaver's own old work address still sits on their DEACTIVATED row, and counting
      * it would refuse the very re-hire that row exists to be reused for.
+     *
+     * <p>A contact names a person through their login identifier FIRST, and failing that through a
+     * membership they closed HERE. The second step is not a fallback for stale data: off-boarding
+     * releases the work contact from the person's identity on purpose (so the address can be
+     * reissued), which means the canonical leaver — one whose only identifier was their work email
+     * — no longer resolves through {@code UserIdentity} at all. Their DEACTIVATED row is then the
+     * only thing still tying the contact to the person, and without reading it the re-hire would
+     * refuse them for holding their own old address.
      */
     private NewAccountDecision decideNewAccount(String email, String mobile) {
-        Long byEmail = this.personHolding(email);
-        Long byMobile = this.personHolding(mobile);
+        Long tenantId = ContextHolder.getContext() == null ? null : ContextHolder.getContext().getTenantId();
+        ContactAnchor byEmail = this.anchorOf(tenantId, email);
+        ContactAnchor byMobile = this.anchorOf(tenantId, mobile);
         // A second identifier pointing at a DIFFERENT person is not a second company — it is two
-        // people's credentials on one account, which no later step could untangle.
-        if (byEmail != null && byMobile != null && !byEmail.equals(byMobile)) {
+        // people's credentials on one account, which no later step could untangle. It holds however
+        // each contact resolved: a live identity on one side and a closed row on the other are still
+        // two people.
+        if (byEmail.person() != null && byMobile.person() != null && !byEmail.person().equals(byMobile.person())) {
             return NewAccountDecision.refuse("This email and mobile belong to two different "
                     + "people. Enter contacts for one person.");
         }
-        Long existingPerson = byEmail != null ? byEmail : byMobile;
+        ContactAnchor anchor = byEmail.person() != null ? byEmail : byMobile;
+        Long existingPerson = anchor.person();
 
-        Long tenantId = ContextHolder.getContext() == null ? null : ContextHolder.getContext().getTenantId();
+        // A closed row that anchored IS the person's membership here — (tenant, person) is unique,
+        // so there is nothing further to look up.
         UserAccount membershipHere = existingPerson == null ? null
+                : anchor.closedRow() != null ? anchor.closedRow()
                 : this.findMembershipInTenant(tenantId, existingPerson).orElse(null);
         Long closedRow = membershipHere != null && membershipHere.getStatus() == AccountStatus.DEACTIVATED
                 ? membershipHere.getId() : null;
@@ -329,14 +346,53 @@ public class UserAccountServiceImpl extends EntityServiceImpl<UserAccount, Long>
         return new NewAccountDecision(existingPerson, closedRow, null);
     }
 
-    /** The person a login identifier resolves to, or null when blank or unknown. */
-    private Long personHolding(String identifier) {
-        if (StringUtils.isBlank(identifier)) {
-            return null;
+    /**
+     * How one contact names a person: {@code person} is who it resolves to (null when nobody), and
+     * {@code closedRow} is set only when that resolution came through a DEACTIVATED membership in
+     * this tenant rather than through the person's login identifier.
+     */
+    private record ContactAnchor(Long person, UserAccount closedRow) {
+        static final ContactAnchor NONE = new ContactAnchor(null, null);
+    }
+
+    private ContactAnchor anchorOf(Long tenantId, String contact) {
+        if (StringUtils.isBlank(contact)) {
+            return ContactAnchor.NONE;
         }
-        return identityService.findByLoginIdentifier(identifier)
+        Long person = identityService.findByLoginIdentifier(contact)
                 .map(UserIdentity::getProfileId)
                 .orElse(null);
+        if (person != null) {
+            return new ContactAnchor(person, null);
+        }
+        return this.closedMembershipHolding(tenantId, contact)
+                .map(row -> new ContactAnchor(row.getProfileId(), row))
+                .orElse(ContactAnchor.NONE);
+    }
+
+    /**
+     * The DEACTIVATED membership in {@code tenantId} still carrying {@code contact} as its work
+     * email or mobile, provided it names a person — a row with no profile has nobody to revive.
+     *
+     * <p>Deliberately not {@link #findMembershipInTenant} (keyed by person, which is exactly what is
+     * unknown here) and not {@link #findContactHolderInTenant} (which reports ANY holder, live rows
+     * included — those are duplicates, not anchors). Tenant and status are filtered explicitly for
+     * the same reason findContactHolderInTenant gives: the class runs {@code @CrossTenant}, so the
+     * ambient scope cannot be relied on to keep another company's leaver out of this one's re-hire.
+     */
+    private Optional<UserAccount> closedMembershipHolding(Long tenantId, String contact) {
+        if (tenantId == null) {
+            return Optional.empty();
+        }
+        Filters holdsContact = Filters.or(
+                new Filters().eq(UserAccount::getEmail, contact),
+                new Filters().eq(UserAccount::getMobile, contact));
+        return this.searchList(new Filters()
+                        .eq(UserAccount::getTenantId, tenantId)
+                        .eq(UserAccount::getStatus, AccountStatus.DEACTIVATED)
+                        .and(holdsContact)).stream()
+                .filter(row -> row.getProfileId() != null)
+                .findFirst();
     }
 
     // @SkipPermissionCheck for the mirror of registerInvitedUser's reason. That one pairs an

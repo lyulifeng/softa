@@ -138,7 +138,35 @@ class NewAccountRefusalTest {
                 .isEqualTo("This person is already a member of this company.");
     }
 
+    @Test
+    void anIdentityOnOneSideAndAClosedRowOnTheOtherNamingTwoPeopleIsStillTwoPeople() {
+        // The rule does not care HOW each contact found its person: the email is a live login
+        // identifier of one person, the mobile sits on somebody else's DEACTIVATED row here.
+        identifierBelongsTo(EMAIL, PERSON);
+        UserAccount closed = new UserAccount();
+        closed.setId(998L);
+        closed.setTenantId(THIS_TENANT);
+        closed.setProfileId(SOMEBODY_ELSE);
+        closed.setStatus(AccountStatus.DEACTIVATED);
+        closed.setMobile(MOBILE);
+        doReturn(List.of(closed)).when(accountService).searchList(any(Filters.class));
+
+        assertThat(refusalInThisTenant(EMAIL, MOBILE))
+                .isEqualTo("This email and mobile belong to two different people. Enter contacts for one person.");
+    }
+
     // ─── allowed ───
+
+    @Test
+    void aLeaverWhoseLoginIdentifierWasReleasedIsAllowed() {
+        // Off-boarding released the work email from the identity, so no identity resolves; the
+        // pre-check must still read the closed row as theirs, or the import refuses the re-hire the
+        // create path would have accepted.
+        UserAccount closed = membershipHere(AccountStatus.DEACTIVATED);
+        doReturn(List.of(closed)).when(accountService).searchList(any(Filters.class));
+
+        assertThat(refusalInThisTenant(EMAIL, null)).isNull();
+    }
 
     @Test
     void freshContactsAreAllowed() {

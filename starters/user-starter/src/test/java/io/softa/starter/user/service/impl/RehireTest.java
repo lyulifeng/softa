@@ -23,6 +23,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.argThat;
 import static org.mockito.Mockito.doReturn;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
@@ -142,6 +143,94 @@ class RehireTest {
                 .doesNotThrowAnyException());
 
         verify(accountService).reviveMembership(PERSON, OLD_EMAIL, null);
+    }
+
+    // ─── the canonical leaver: their login identifier was released at off-boarding ───
+
+    private static UserAccount closedRowInTenant(Long tenantId, Long profileId, String email, String mobile) {
+        UserAccount row = new UserAccount();
+        row.setId(CLOSED_ROW);
+        row.setTenantId(tenantId);
+        row.setProfileId(profileId);
+        row.setStatus(AccountStatus.DEACTIVATED);
+        row.setEmail(email);
+        row.setMobile(mobile);
+        return row;
+    }
+
+    /** Only a query that names THIS tenant gets an answer; anything wider sees the other tenant's row. */
+    private static boolean namesThisTenant(Filters filters) {
+        return filters != null && filters.toString().contains("[\"tenantId\",\"=\"," + THIS_TENANT + "]");
+    }
+
+    @Test
+    void aLeaverWhoseLoginEmailWasReleasedIsStillRevivedFromTheirClosedRow() {
+        // offBoardWith → releaseLoginIdentifiers nulls identity.loginEmail when it equals the work
+        // email, so the identity lookup finds nobody. The DEACTIVATED row still carries the address
+        // AND the person — it is what must anchor the re-hire, or the leaver's own old address reads
+        // as "Email already exists".
+        when(identityService.findByLoginIdentifier(anyString())).thenReturn(Optional.empty());
+        UserAccount closed = closedRowInTenant(THIS_TENANT, PERSON, OLD_EMAIL, null);
+        doReturn(List.of(closed)).when(accountService).searchList(any(Filters.class));
+        doReturn(Optional.of(closed)).when(accountService).reviveMembership(PERSON, OLD_EMAIL, MOBILE);
+
+        inThisTenant(() -> assertThatCode(() -> accountService.registerInvitedUser(OLD_EMAIL, MOBILE, "Ada L"))
+                .doesNotThrowAnyException());
+
+        verify(accountService).reviveMembership(PERSON, OLD_EMAIL, MOBILE);
+        verify(profileService).getUserInfo(CLOSED_ROW);
+        verify(accountService, never()).createOne(any(UserAccount.class));
+        verify(profileService, never()).registerUserProfile(anyLong(), any(UserProfileDTO.class));
+        verify(profileService, never()).linkAccountToPerson(anyLong(), anyLong());
+    }
+
+    @Test
+    void aReleasedLeaverCanBeAnchoredByTheirOldMobileWhileGettingANewEmail() {
+        // HR re-hires under a new work address but the same phone: the mobile finds the closed row,
+        // and the new email is then checked for same-tenant holders EXCLUDING that row.
+        when(identityService.findByLoginIdentifier(anyString())).thenReturn(Optional.empty());
+        UserAccount closed = closedRowInTenant(THIS_TENANT, PERSON, OLD_EMAIL, MOBILE);
+        doReturn(List.of(closed)).when(accountService).searchList(any(Filters.class));
+        doReturn(Optional.of(closed)).when(accountService).reviveMembership(PERSON, NEW_EMAIL, MOBILE);
+
+        inThisTenant(() -> assertThatCode(() -> accountService.registerInvitedUser(NEW_EMAIL, MOBILE, "Ada L"))
+                .doesNotThrowAnyException());
+
+        verify(accountService).reviveMembership(PERSON, NEW_EMAIL, MOBILE);
+        verify(accountService, never()).createOne(any(UserAccount.class));
+    }
+
+    @Test
+    void aClosedRowInAnotherTenantDoesNotAnchorTheReHire() {
+        // The leaver of company 9 is a stranger to company 2: re-hire is scoped to the HR context's
+        // tenant, and a lookup that forgot to say so would revive (or refuse on) another company's row.
+        when(identityService.findByLoginIdentifier(anyString())).thenReturn(Optional.empty());
+        UserAccount elsewhere = closedRowInTenant(9L, PERSON, OLD_EMAIL, MOBILE);
+        doReturn(List.of(elsewhere)).when(accountService)
+                .searchList(argThat((Filters f) -> !namesThisTenant(f)));
+
+        inThisTenant(() -> assertThatCode(() -> accountService.registerInvitedUser(OLD_EMAIL, MOBILE, "Ada L"))
+                .doesNotThrowAnyException());
+
+        // A fresh person is minted here, exactly as for any unknown contact.
+        verify(accountService, never()).reviveMembership(any(), any(), any());
+        verify(accountService).createOne(any(UserAccount.class));
+        verify(profileService).registerUserProfile(anyLong(), any(UserProfileDTO.class));
+    }
+
+    @Test
+    void aClosedRowWithoutAPersonDoesNotAnchor() {
+        // Nobody to revive: the row is then just another holder of the address, and it refuses like one.
+        when(identityService.findByLoginIdentifier(anyString())).thenReturn(Optional.empty());
+        UserAccount orphan = closedRowInTenant(THIS_TENANT, null, OLD_EMAIL, null);
+        doReturn(List.of(orphan)).when(accountService).searchList(any(Filters.class));
+
+        inThisTenant(() -> assertThatThrownBy(() -> accountService.registerInvitedUser(OLD_EMAIL, null, "Ada L"))
+                .isInstanceOf(BusinessException.class)
+                .hasMessageContaining("Email already exists"));
+
+        verify(accountService, never()).reviveMembership(any(), any(), any());
+        verify(accountService, never()).createOne(any(UserAccount.class));
     }
 
     @Test
