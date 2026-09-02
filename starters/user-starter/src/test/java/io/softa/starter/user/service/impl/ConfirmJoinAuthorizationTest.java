@@ -144,6 +144,30 @@ class ConfirmJoinAuthorizationTest {
     }
 
     @Test
+    void theBoundPerson_whoKeptAPersonalLoginEmail_confirmsTheirRevivedMembership() {
+        // Ada left, kept ada@personal.com as her login, and was re-hired; the invitation went to the
+        // work address on her revived row. verifyJoinCode returned her person without rebinding that
+        // address (she still holds a live identifier — see RevivedJoinTest's takeover case), so her
+        // identity carries no contact the invitation names. The row's profileId equalling hers IS
+        // the tie for a bound row: the invitation was issued for this very row, and she proved
+        // control of the address it went to. Tying her to the contact instead refused exactly the
+        // person the invitation was for.
+        givenPendingInvitationTo("alice@acme.com", null);
+        UserAccount revived = accountService.getById(ACCOUNT_ID).orElseThrow();
+        revived.setProfileId(RIGHTFUL_PROFILE);
+        when(identityService.findByProfile(RIGHTFUL_PROFILE))
+                .thenReturn(Optional.of(identity("alice.personal@gmail.com", null)));
+        when(accountService.findMembershipInTenant(TENANT, RIGHTFUL_PROFILE))
+                .thenReturn(Optional.of(revived));
+
+        service.confirmJoin(TOKEN, RIGHTFUL_PROFILE);
+
+        assertThat(revived.getStatus()).isEqualTo(AccountStatus.ACTIVE);
+        assertThat(revived.getProfileId()).isEqualTo(RIGHTFUL_PROFILE);
+        verify(accountService).updateOne(revived);
+    }
+
+    @Test
     void aReHireViaNewInvitation_isToldToUseReHire_notAConstraintError() {
         // The person left this company before: their DEACTIVATED row still holds the (tenant,
         // profile) slot. Binding here would hit the unique index; listMembershipsOf hides that row,

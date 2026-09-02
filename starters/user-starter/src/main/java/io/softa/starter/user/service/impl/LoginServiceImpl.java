@@ -412,6 +412,9 @@ public class LoginServiceImpl implements LoginService {
         if (account.getProfileId() != null) {
             UserIdentity known = identityService.findByProfile(account.getProfileId())
                     .orElseThrow(() -> new BusinessException("Person record not found."));
+            // The address comes home as a LOGIN identifier only when the identity is fully released;
+            // otherwise the person keeps signing in with what they hold and confirmJoin admits them
+            // on the row's profileId. See reclaimLoginIdentifier for the takeover this prevents.
             this.reclaimLoginIdentifier(known, address);
             return new JoinVerification(known.getProfileId(), StringUtils.isBlank(known.getPassword()));
         }
@@ -434,16 +437,36 @@ public class LoginServiceImpl implements LoginService {
      * Put a verified address back onto the person's identity as a login identifier, when it can be.
      *
      * <p>This is the released work contact coming home: off-boarding cleared it so the address could
-     * be reissued, and the person who just proved control of it through a code is the one who lost
-     * it. Bound only if the channel is still empty (a personal identifier is not overwritten by a
-     * work one) and nobody else has claimed the address meanwhile — {@code isIdentifierClaimable}
-     * answers that, and when it says no the identity is left as it was rather than made ambiguous.
+     * be reissued, and — when the identity holds nothing else — the person who just proved control
+     * of it through a code is the one who lost it. Bound only if the identity is fully released and
+     * nobody else has claimed the address meanwhile — {@code isIdentifierClaimable} answers that,
+     * and when it says no the identity is left as it was rather than made ambiguous.
      */
     private void reclaimLoginIdentifier(UserIdentity identity, String address) {
+        if (StringUtils.isNotBlank(identity.getLoginEmail())
+                || StringUtils.isNotBlank(identity.getLoginMobile())) {
+            // Identity takeover, refused. The row is bound, so the code proved control of a WORK
+            // contact that is not currently anyone's login identifier — and a work contact is
+            // reissued: a pool phone handed to the next hire, an address HR mistyped onto the
+            // revived row. Whoever now physically holds it can pass the code, and rebinding it here
+            // would make it a LOGIN identifier for the leaver's identity: from then on the stranger
+            // signs in BY CODE to that address and lands in the leaver's profile, with every company
+            // the leaver still belongs to. While the identity holds any live identifier, the person
+            // has a way in that the stranger does not — they keep signing in with what they have,
+            // and confirmJoin admits the bound person on the row's own profileId rather than on this
+            // contact. Both channels are checked, not just the one the address would land on: a
+            // held mobile proves the person is reachable exactly as much as a held email does.
+            return;
+        }
+        // Fully released: no identifier on either channel. Nobody else can prove ownership of this
+        // person's login (there is nothing left to send a code to), and the row's contacts were the
+        // person's own at off-boarding, so the one address that reaches the row is the best evidence
+        // available of who this is. Rebinding it is what lets the returning leaver sign in at all.
+        // The residual — a reissued contact reaching a stranger who then claims a fully released
+        // identity — is documented on this method's caller; the mitigation is procedural: HR
+        // corrects the row's contacts (Reset User) BEFORE inviting, and the invite is HR-initiated.
         boolean isEmail = address.contains("@");
-        String current = isEmail ? identity.getLoginEmail() : identity.getLoginMobile();
-        if (StringUtils.isNotBlank(current)
-                || !identityService.isIdentifierClaimable(address, identity.getProfileId())) {
+        if (!identityService.isIdentifierClaimable(address, identity.getProfileId())) {
             return;
         }
         if (isEmail) {

@@ -76,9 +76,10 @@ class RevivedJoinTest {
     }
 
     @Test
-    void aRevivedMembership_resolvesToItsOwnPerson_andGetsTheReleasedIdentifierBack() {
+    void aRevivedMembership_resolvesToItsOwnPerson_andAFullyReleasedIdentityGetsTheAddressBack() {
         invitationIsFor(ADA);
-        UserIdentity ada = identityOf(ADA, null, "+6591234567");
+        // Fully released: off-boarding took the work email, and she never had a personal one.
+        UserIdentity ada = identityOf(ADA, null, null);
         when(identityService.findByProfile(ADA)).thenReturn(Optional.of(ada));
         when(identityService.isIdentifierClaimable(RELEASED_WORK_EMAIL, ADA)).thenReturn(true);
 
@@ -88,10 +89,30 @@ class RevivedJoinTest {
         assertThat(result.mustSetPassword()).isFalse();   // she still has her password
         // No second Ada.
         verify(profileService, never()).createPersonForJoin(anyString());
-        // The work address comes home as her login identifier: she proved control of it by code,
-        // and she is the person who lost it at off-boarding.
+        // The work address comes home as her login identifier: nobody could prove ownership of an
+        // identity with no identifier at all, and the row's contacts were hers at off-boarding.
         assertThat(ada.getLoginEmail()).isEqualTo(RELEASED_WORK_EMAIL);
         verify(identityService).updateOne(ada);
+    }
+
+    @Test
+    void anIdentityStillHoldingAnyLiveIdentifier_isNotRebound_evenOnTheEmptyChannel() {
+        // The takeover: the row is bound and the invitation went to its WORK address — a contact
+        // that is reissued (a pool phone, an HR typo). Whoever now holds that address passes the
+        // code. Before this, an empty email channel was enough to rebind the address onto the
+        // leaver's identity as a LOGIN identifier, after which the stranger signs in by code to that
+        // address and lands in the leaver's profile. Ada still holds her mobile, so she has a way
+        // in that the stranger does not; the address stays a work contact and nothing more.
+        invitationIsFor(ADA);
+        UserIdentity ada = identityOf(ADA, null, "+6591234567");
+        when(identityService.findByProfile(ADA)).thenReturn(Optional.of(ada));
+
+        JoinVerification result = loginService.verifyJoinCode(TOKEN, "email", "123456");
+
+        assertThat(result.profileId()).isEqualTo(ADA);
+        assertThat(ada.getLoginEmail()).isNull();
+        verify(identityService, never()).isIdentifierClaimable(anyString(), any());
+        verify(identityService, never()).updateOne(any(UserIdentity.class));
     }
 
     @Test
@@ -127,11 +148,14 @@ class RevivedJoinTest {
 
     @Test
     void aPersonalLoginEmail_isNotOverwrittenByTheWorkOne() {
+        // She signs in with ada@personal.com; the invitation went to ada@acme.com on her revived
+        // row. Her person is returned and her identity is not touched — confirmJoin then admits her
+        // on the row's own profileId, not on the address (ConfirmJoinAuthorizationTest).
         invitationIsFor(ADA);
         UserIdentity ada = identityOf(ADA, "ada@personal.com", null);
         when(identityService.findByProfile(ADA)).thenReturn(Optional.of(ada));
 
-        loginService.verifyJoinCode(TOKEN, "email", "123456");
+        assertThat(loginService.verifyJoinCode(TOKEN, "email", "123456").profileId()).isEqualTo(ADA);
 
         assertThat(ada.getLoginEmail()).isEqualTo("ada@personal.com");
         verify(identityService, never()).isIdentifierClaimable(anyString(), any());

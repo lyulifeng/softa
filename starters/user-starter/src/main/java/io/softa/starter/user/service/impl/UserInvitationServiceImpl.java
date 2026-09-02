@@ -508,17 +508,29 @@ public class UserInvitationServiceImpl extends EntityServiceImpl<UserInvitation,
                 });
 
         // The profileId is supplied by the CALLER (it came back from verifyJoinCode, but the
-        // /confirmJoin endpoint is anonymous and re-accepts it), so it has to be re-checked against
-        // the token here — otherwise a holder of any valid invitation could bind their account to
-        // someone else's person by naming that person's id. Same tie as setJoinPassword makes: the
+        // /confirmJoin endpoint is anonymous and re-accepts it), so it has to be tied to the token
+        // here — otherwise a holder of any valid invitation could bind their account to someone
+        // else's person by naming that person's id.
+        //
+        // For a row that already belongs to a person, the equality asserted above IS the tie: the
+        // invitation was issued for this very row, and verifyJoinCode proved control of the address
+        // it was sent to. The contact comparison below would refuse exactly the person it exists to
+        // admit — a re-hired leaver who kept a personal login email (ada@personal.com) while the
+        // invitation went to the work address on her revived row (ada@acme.com), an address
+        // off-boarding released from her identity and which verifyJoinCode deliberately does not
+        // always rebind (see its takeover note). So the contact check is made for UNBOUND rows only.
+        //
+        // For an unbound row the contact IS the tie, the same one setJoinPassword makes: the
         // person's login identifier must be one the invitation was addressed to. A first-time
         // invitee passes because createPersonForJoin seeded that identifier from this very address.
-        JoinContacts contacts = new JoinContacts(invitation.getEmail(), invitation.getMobile());
-        UserIdentity boundIdentity = identityService.findByProfile(profileId)
-                .orElseThrow(() -> new BusinessException("Person record not found."));
-        if (!contacts.includes(boundIdentity.getLoginEmail())
-                && !contacts.includes(boundIdentity.getLoginMobile())) {
-            throw new BusinessException("This link does not belong to that account.");
+        if (account.getProfileId() == null) {
+            JoinContacts contacts = new JoinContacts(invitation.getEmail(), invitation.getMobile());
+            UserIdentity boundIdentity = identityService.findByProfile(profileId)
+                    .orElseThrow(() -> new BusinessException("Person record not found."));
+            if (!contacts.includes(boundIdentity.getLoginEmail())
+                    && !contacts.includes(boundIdentity.getLoginMobile())) {
+                throw new BusinessException("This link does not belong to that account.");
+            }
         }
 
         account.setProfileId(profileId);
