@@ -285,6 +285,14 @@ public class UserAccountServiceImpl extends EntityServiceImpl<UserAccount, Long>
         return profileService.registerUserProfile(userId, profileInfo);
     }
 
+    // @SkipPermissionCheck for the mirror of registerInvitedUser's reason. That one pairs an
+    // employee with a login; this one unpairs them, and it is reached from HR approving a
+    // resignation — a role granted "approve resignation", and nothing on the user models, which the
+    // role wizard does not require it to hold. Left checked, the resignation would write the
+    // employee's exit and then fail closed on the person behind it, leaving the membership Active
+    // and its work address still a live login route: exactly the hole off-boarding exists to close.
+    // What authorized this is the resignation approval, checked where it happened.
+    @SkipPermissionCheck
     @Override
     @CrossTenant
     @Transactional
