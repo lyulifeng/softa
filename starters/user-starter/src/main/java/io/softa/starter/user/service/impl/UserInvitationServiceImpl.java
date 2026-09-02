@@ -89,7 +89,7 @@ public class UserInvitationServiceImpl extends EntityServiceImpl<UserInvitation,
      * (so the caller only writes when there is something to write).
      *
      * <p>Create→invite is decoupled: creating a user contacts nobody — this explicit Invite
-     * does, and it is what advances {@code PENDING → INVITED}. {@code acceptToken} then flips
+     * does, and it is what advances {@code PENDING → INVITED}. {@code confirmJoin} then flips
      * {@code INVITED → ACTIVE}, giving the three-state axis the account list renders.
      *
      * <p>The gate is "has no password yet", not "is PENDING", for two reasons:
@@ -408,12 +408,11 @@ public class UserInvitationServiceImpl extends EntityServiceImpl<UserInvitation,
     @Override
     @Transactional
     public void acceptToken(String rawToken, String newPassword) {
-        // Reached only by the emailed-link reset (/login/resetPassword). Invitations no longer
-        // land here — they point at /join, whose verify → set-password → confirm replaces the old
-        // one-step "set password and activate". The INVITED/PENDING activation below is therefore
-        // dead for the invitation flow (a first-time invite's account has no profileId yet, so
-        // setPassword fails before reaching it); it is kept only as defence for a reset token that
-        // somehow targets a not-yet-active account, where activating it is the recoverable outcome.
+        // Reached only by the emailed-link reset (/login/resetPassword). Invitations do not land
+        // here — they point at /join, whose verify → set-password → confirm is what activates a
+        // membership. So this endpoint changes the PASSWORD only and leaves the account's status
+        // alone: a reset token's account already has a password, and activating anything from a
+        // reset link would make "I forgot my password" a way to skip the confirm step.
         Assert.notBlank(rawToken, "This link is invalid.");
         Assert.notBlank(newPassword, "New password cannot be empty.");
         // Strength is checked inside credentialService.setPassword against the person's own
@@ -434,20 +433,9 @@ public class UserInvitationServiceImpl extends EntityServiceImpl<UserInvitation,
 
         UserAccount account = accountService.getById(invitation.getUserId())
                 .orElseThrow(() -> new BusinessException("Account not found."));
-// The password goes on the PERSON, so accepting an invitation from company B when you
+        // The password goes on the PERSON, so accepting an invitation from company B when you
         // already work at company A replaces one global credential rather than minting a second.
         identityService.setPassword(account, newPassword);
-        // PENDING is accepted alongside INVITED defensively: today every token comes from
-        // invite() (which has already flipped to INVITED) or forgotPassword() (the account
-        // has a password and stays as it is), so PENDING-with-a-token is unreachable. Were a
-        // future path to issue a token without flipping, the account would otherwise receive
-        // a password and stay unable to log in — a silent lockout that looks like a bad
-        // password rather than a wrong status.
-        if (account.getStatus() == AccountStatus.INVITED || account.getStatus() == AccountStatus.PENDING) {
-            account.setStatus(AccountStatus.ACTIVE);
-            account.setActivationTime(LocalDateTime.now());
-        }
-        accountService.updateOne(account);
 
         invitation.setStatus(InvitationStatus.ACCEPTED);
         invitation.setAcceptedAt(LocalDateTime.now());
