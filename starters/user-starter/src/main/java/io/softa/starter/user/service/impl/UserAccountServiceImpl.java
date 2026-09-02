@@ -242,15 +242,32 @@ public class UserAccountServiceImpl extends EntityServiceImpl<UserAccount, Long>
         // enforces, and a person already holding a membership here is a duplicate rather than a
         // second company (uk_user_account_tenant_profile). Only the CROSS-tenant form of this rule
         // was relaxed.
+        //
+        // The membership is resolved BEFORE the contact checks because a closed one changes what
+        // they mean: a leaver's own old work address still sits on their DEACTIVATED row, and
+        // counting it would refuse the very re-hire that row exists to be reused for.
         Long tenantId = ContextHolder.getContext() == null ? null : ContextHolder.getContext().getTenantId();
-        if (StringUtils.isNotBlank(email) && this.findContactHolderInTenant(email, null).isPresent()) {
+        UserAccount membershipHere = existingPerson == null ? null
+                : this.findMembershipInTenant(tenantId, existingPerson).orElse(null);
+        Long closedRow = membershipHere != null && membershipHere.getStatus() == AccountStatus.DEACTIVATED
+                ? membershipHere.getId() : null;
+        if (StringUtils.isNotBlank(email) && this.findContactHolderInTenant(email, closedRow).isPresent()) {
             throw new BusinessException("Email already exists: " + email);
         }
-        if (StringUtils.isNotBlank(mobile) && this.findContactHolderInTenant(mobile, null).isPresent()) {
+        if (StringUtils.isNotBlank(mobile) && this.findContactHolderInTenant(mobile, closedRow).isPresent()) {
             throw new BusinessException("Mobile already exists: " + mobile);
         }
-        if (existingPerson != null && this.findMembershipInTenant(tenantId, existingPerson).isPresent()) {
+        if (membershipHere != null && closedRow == null) {
             throw new BusinessException("This person is already a member of this company.");
+        }
+
+        // A leaver coming back: (tenantId, profileId) is unique, so a second row cannot be inserted
+        // — the closed one is revived instead. The row is reset to PENDING with the new contacts,
+        // so from here the person is treated exactly like any other fresh create: invite, /join.
+        if (closedRow != null) {
+            UserAccount revived = this.reviveMembership(existingPerson, email, mobile)
+                    .orElseThrow(() -> new BusinessException("This person is already a member of this company."));
+            return profileService.getUserInfo(revived.getId());
         }
 
         UserAccountDTO accountInfo = new UserAccountDTO();
@@ -597,7 +614,7 @@ public class UserAccountServiceImpl extends EntityServiceImpl<UserAccount, Long>
         // a person may have left several companies — searching by profile alone would revive whichever
         // closed row came first, possibly in another tenant. Re-hire happens inside one company's HR
         // context, so that is the tenant this reuses.
-        Long tenantId = ContextHolder.getContext().getTenantId();
+        Long tenantId = ContextHolder.getContext() == null ? null : ContextHolder.getContext().getTenantId();
         Assert.notNull(tenantId, "Re-hire must run within a company context.");
         Optional<UserAccount> closed = this.searchList(new Filters()
                         .eq(UserAccount::getProfileId, profileId)
