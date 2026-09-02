@@ -30,6 +30,7 @@ import io.softa.framework.orm.service.impl.EntityServiceImpl;
 import io.softa.starter.user.dto.InvitationInfo;
 import io.softa.starter.user.dto.JoinContacts;
 import io.softa.starter.user.dto.JoinEntry;
+import io.softa.starter.user.dto.WorkContacts;
 import io.softa.starter.user.entity.UserAccount;
 import io.softa.starter.user.entity.UserIdentity;
 import io.softa.starter.user.entity.UserInvitation;
@@ -148,14 +149,17 @@ public class UserInvitationServiceImpl extends EntityServiceImpl<UserInvitation,
     @CrossTenant
     @Override
     @Transactional
-    public void unbindAndReinvite(Long userId, String newEmail, String newMobile, String reason,
-            Long operatedBy) {
+    public void unbindAndReinvite(Long userId, String reason, Long operatedBy) {
         Assert.notNull(userId, "userId is required");
         Assert.notBlank(reason, "A reason is required to unbind this account.");
         Assert.isTrue(reason.trim().length() <= MAX_REASON_LENGTH,
                 "The reason cannot exceed " + MAX_REASON_LENGTH + " characters.");
-        String email = StringUtils.trimToNull(newEmail);
-        String mobile = StringUtils.trimToNull(newMobile);
+        // From the employee record, not the caller (S-B / D23): the corrected contact is HR's edit
+        // to the record, and this operation carries it onto the membership. A typo is fixed where
+        // it lives rather than retyped here, so the two cannot end up disagreeing.
+        WorkContacts archive = accountService.archiveWorkContacts(userId);
+        String email = archive.email();
+        String mobile = archive.mobile();
         if (email == null && mobile == null) {
             throw new BusinessException(
                     "Enter the correct work email or work mobile before re-inviting.");

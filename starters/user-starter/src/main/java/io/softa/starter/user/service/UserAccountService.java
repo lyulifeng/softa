@@ -8,6 +8,7 @@ import io.softa.framework.base.context.UserInfo;
 import io.softa.framework.orm.service.EntityService;
 import io.softa.starter.user.dto.UserAccountDTO;
 import io.softa.starter.user.dto.UserProfileDTO;
+import io.softa.starter.user.dto.WorkContacts;
 import io.softa.starter.user.entity.UserAccount;
 
 /**
@@ -144,6 +145,27 @@ public interface UserAccountService extends EntityService<UserAccount, Long> {
     Optional<UserAccount> findContactHolderInTenant(String contact, Long exceptAccountId);
 
     /**
+     * The work contacts this membership's EMPLOYEE RECORD currently holds (S-B / D23).
+     *
+     * <p>The record is the single source of contact details, so the two operations that move them —
+     * Reset User and Unbind &amp; Re-invite — read them from here rather than from their caller, and
+     * their dialogs echo these read-only. To change a number, HR edits the record and comes back;
+     * that is what makes "the account follows the record" true without a second writer.
+     *
+     * <p>Read generically by model name, the way {@code UserAccessController} and the framework's
+     * {@code EmployeeContextEnricher} already do — no corehr dependency, and
+     * {@link io.softa.framework.orm.meta.ModelManager#existModel} makes it a no-op in a deployment
+     * with no {@code Employee} model at all.
+     *
+     * <p>The ACCOUNT's own contacts are deliberately not consulted: they still hold the value being
+     * replaced, which is what Reset User notifies. Reading the new value from the record and the old
+     * one from the account is the whole reason both are available at once.
+     *
+     * @return the record's contacts, or {@link WorkContacts#none()} when there is no record
+     */
+    WorkContacts archiveWorkContacts(Long userId);
+
+    /**
      * Prepare a membership for someone re-joining this company, reusing the closed row.
      *
      * <p>Re-hire revives rather than inserts, because {@code (tenantId, profileId)} is unique —
@@ -243,5 +265,5 @@ public interface UserAccountService extends EntityService<UserAccount, Long> {
      * the message reaches where they can still read it. Telling only the new address would inform
      * whoever now holds it.
      */
-    void resetWorkContacts(Long userId, String newEmail, String newMobile, String reason);
+    void resetWorkContacts(Long userId, String reason);
 }

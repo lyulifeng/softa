@@ -18,6 +18,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import io.softa.framework.base.config.SystemConfig;
+import io.softa.framework.base.context.Context;
 import io.softa.framework.base.context.ContextHolder;
 import io.softa.framework.base.utils.SFunction;
 import io.softa.framework.base.context.UserInfo;
@@ -30,9 +31,12 @@ import io.softa.framework.base.utils.Assert;
 import io.softa.framework.orm.annotation.CrossTenant;
 import io.softa.framework.orm.annotation.SkipPermissionCheck;
 import io.softa.framework.orm.domain.Filters;
+import io.softa.framework.orm.domain.FlexQuery;
+import io.softa.framework.orm.meta.ModelManager;
 import io.softa.framework.orm.service.impl.EntityServiceImpl;
 import io.softa.starter.user.dto.UserAccountDTO;
 import io.softa.starter.user.dto.UserProfileDTO;
+import io.softa.starter.user.dto.WorkContacts;
 import io.softa.starter.user.entity.UserIdentity;
 import io.softa.starter.user.entity.UserAccount;
 import io.softa.starter.user.enums.AccountStatus;
@@ -47,6 +51,13 @@ import io.softa.starter.user.service.UserProfileService;
 @Slf4j
 @Service
 public class UserAccountServiceImpl extends EntityServiceImpl<UserAccount, Long> implements UserAccountService {
+
+    /** The employee record, read by model name rather than through a shared contract — same
+     *  convention as {@code UserAccessController} and the framework's EmployeeContextEnricher. */
+    private static final String ARCHIVE_MODEL = "Employee";
+    private static final String ARCHIVE_USER_FIELD = "userId";
+    private static final String ARCHIVE_EMAIL_FIELD = "workEmail";
+    private static final String ARCHIVE_MOBILE_FIELD = "workPhone";
 
     @Autowired
     private UserProfileService profileService;
@@ -319,12 +330,20 @@ public class UserAccountServiceImpl extends EntityServiceImpl<UserAccount, Long>
     @CrossTenant
     @Override
     @Transactional
-    public void resetWorkContacts(Long userId, String newEmail, String newMobile, String reason) {
+    public void resetWorkContacts(Long userId, String reason) {
         Assert.notNull(userId, "userId is required");
-        String email = StringUtils.trimToNull(newEmail);
-        String mobile = StringUtils.trimToNull(newMobile);
-        if (email == null && mobile == null) {
-            throw new BusinessException("An account needs a work email or a work mobile.");
+        // Read from the employee record, never from the caller (S-B / D23). Two things follow from
+        // that, and the second is why it matters: the value cannot be whatever a client chose to
+        // post, and the ACCOUNT still holds the value being replaced — which is exactly what gets
+        // notified below. Propagating on the record's own edit instead would destroy that: by the
+        // time HR pressed Confirm the old address would be gone, and the warning meant for whoever
+        // still holds it would go to the new one.
+        WorkContacts archive = this.archiveWorkContacts(userId);
+        String email = archive.email();
+        String mobile = archive.mobile();
+        if (!archive.any()) {
+            throw new BusinessException("This employee's record has no work email or work mobile — "
+                    + "add one there first, then reset.");
         }
 
         UserAccount account = this.getById(userId)
@@ -437,6 +456,49 @@ public class UserAccountServiceImpl extends EntityServiceImpl<UserAccount, Long>
                 .flatMap(Optional::stream)
                 .filter(other -> exceptAccountId == null || !other.getId().equals(exceptAccountId))
                 .findFirst();
+    }
+
+    @SkipPermissionCheck
+    @Override
+    public WorkContacts archiveWorkContacts(Long userId) {
+        // No Employee model at all (a deployment that is not an HR one) → nothing to follow.
+        if (userId == null || !ModelManager.existModel(ARCHIVE_MODEL)) {
+            return WorkContacts.none();
+        }
+        // Read past row scope on purpose: what is being read is the contact detail of the very
+        // account the caller is already operating on, resolved from its id — not a search. A role
+        // that may reset an account but holds nothing on Employee would otherwise see two blanks
+        // and be told the record has no contacts.
+        Context ctx = ContextHolder.existContext() ? ContextHolder.getContext() : null;
+        boolean previous = ctx != null && ctx.isSkipPermissionCheck();
+        if (ctx != null) {
+            ctx.setSkipPermissionCheck(true);
+        }
+        try {
+            Map<String, Object> row = modelService.searchOne(ARCHIVE_MODEL,
+                    new FlexQuery(new Filters().eq(ARCHIVE_USER_FIELD, userId))).orElse(null);
+            if (row == null) {
+                return WorkContacts.none();
+            }
+            return new WorkContacts(
+                    StringUtils.trimToNull(asString(row.get(ARCHIVE_EMAIL_FIELD))),
+                    StringUtils.trimToNull(asString(row.get(ARCHIVE_MOBILE_FIELD))));
+        } catch (Throwable t) {
+            // Degrade to "no record" rather than failing the operation that asked: the caller
+            // refuses on its own when there is nothing to reach the person on, with a message that
+            // says so, which is a better answer than a stack trace about a model they never named.
+            log.warn("Employee read failed while resolving work contacts for account {}; "
+                    + "treating as no employee record", userId, t);
+            return WorkContacts.none();
+        } finally {
+            if (ctx != null) {
+                ctx.setSkipPermissionCheck(previous);
+            }
+        }
+    }
+
+    private static String asString(Object value) {
+        return value == null ? null : value.toString();
     }
 
     private Optional<UserAccount> contactHolder(Long tenantId, SFunction<UserAccount, ?> field, String value) {
