@@ -15,6 +15,7 @@ import io.softa.framework.orm.meta.MetaField;
 import io.softa.framework.orm.meta.ModelManager;
 import io.softa.starter.file.dto.ExportResult;
 import io.softa.starter.file.dto.SheetInfo;
+import io.softa.starter.file.entity.ExportHistory;
 import io.softa.starter.file.excel.export.ExcelSheetData;
 import io.softa.starter.file.excel.export.support.ExcelUploadService;
 import io.softa.starter.file.excel.export.support.ExportDataFetcher;
@@ -25,6 +26,9 @@ import io.softa.starter.file.excel.export.support.ExportDataFetcher;
 @Slf4j
 @Component
 public class ExportByDynamic implements ExportStrategy {
+
+    /** The model that HOLDS an exported file — the history row, not the model exported. */
+    private static final String HISTORY_MODEL = ExportHistory.class.getSimpleName();
 
     @Autowired
     private ExportDataFetcher exportDataFetcher;
@@ -46,7 +50,10 @@ public class ExportByDynamic implements ExportStrategy {
         List<List<Object>> rowsTable = this.extractDataTableFromDB(modelName, flexQuery, headers);
         String modelLabel = ModelManager.getModel(modelName).getLabel();
         ExcelSheetData sheetData = new ExcelSheetData(modelLabel, headers, rowsTable, null);
-        FileInfo fileInfo = excelUploadService.generateFileAndUpload(modelName, modelLabel, sheetData);
+        // Stamped with the model that will HOLD it — the ExportHistory row — not the model whose
+        // rows it contains. FileRecord.modelName decides who may claim the file, and stamping the
+        // exported model has ExportHistory.fileId refused as "not yours to attach".
+        FileInfo fileInfo = excelUploadService.generateFileAndUpload(HISTORY_MODEL, modelLabel, sheetData);
         return new ExportResult(fileInfo, rowsTable.size());
     }
 
@@ -78,7 +85,10 @@ public class ExportByDynamic implements ExportStrategy {
                     : sheetInfo.getModelName();
             sheetDataList.add(new ExcelSheetData(sheetName, headers, rowsTable, null));
         }
-        return excelUploadService.generateFileAndUpload("", fileName, sheetDataList);
+        // Multi-sheet exports record no history, so this file is attached to nothing and stays
+        // unclaimed. Stamped anyway: an unclaimed record with a blank model may be claimed by ANY
+        // model, and "claimable by nobody in particular" is not what we want to leave lying around.
+        return excelUploadService.generateFileAndUpload(HISTORY_MODEL, fileName, sheetDataList);
     }
 
     /**
