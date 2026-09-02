@@ -1,16 +1,24 @@
 package io.softa.starter.user.service.impl;
 
+import java.util.ArrayList;
 import java.util.List;
 
 import org.junit.jupiter.api.Test;
+import org.mockito.ArgumentCaptor;
+import org.springframework.test.util.ReflectionTestUtils;
 
 import io.softa.framework.orm.domain.Filters;
 import io.softa.starter.user.entity.UserAccount;
+import io.softa.starter.user.service.UserRoleRelService;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.doReturn;
+import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.spy;
+import static org.mockito.Mockito.times;
+import static org.mockito.Mockito.verify;
 
 /**
  * "Shared work contact" counts PEOPLE, not accounts.
@@ -83,6 +91,44 @@ class WorkContactSharedTest {
         givenMatches(same);
 
         assertThat(accountService.isWorkContactShared("same-value")).isFalse();
+    }
+
+    @Test
+    void theQueryCarriesTheTrimmedContact_inTheFormTheColumnsHold() {
+        // What reaches the database is what the write paths store: trimmed, case kept. Lowercasing
+        // the query would not help (the column is not lowercased); case-folding is the collation's.
+        givenMatches();
+
+        accountService.isWorkContactShared(" Ada@Acme.com ");
+
+        ArgumentCaptor<Filters> filters = ArgumentCaptor.forClass(Filters.class);
+        verify(accountService, times(2)).searchList(filters.capture());
+        assertThat(filters.getAllValues())
+                .allSatisfy(f -> assertThat(f.toString()).contains("\"Ada@Acme.com\""));
+    }
+
+    @Test
+    void twoAccountsHoldingOneAddress_readAsShared_evenWhenHRTypedOneWithASpace() {
+        // The guard's bypass: HR typed " ada@acme.com" onto one row and "ada@acme.com" onto another.
+        // The query is exact (a leading space is a different string to the database), so an
+        // untrimmed stored value never matched — a genuinely shared address read as unshared, and a
+        // code sent to it identified "one" person. Trimming at write time is what closes it, so the
+        // rows are written through a write path and the store answers by exact equality.
+        ReflectionTestUtils.setField(accountService, "roleRelService", mock(UserRoleRelService.class));
+        List<UserAccount> store = new ArrayList<>();
+        doAnswer(inv -> {
+            String query = inv.getArgument(0).toString();
+            return store.stream().filter(a -> query.contains("\"" + a.getEmail() + "\"")).toList();
+        }).when(accountService).searchList(any(Filters.class));
+
+        UserAccount first = account(1L, 7L);
+        accountService.reviveWith(first, " ada@acme.com", null);
+        UserAccount second = account(2L, null);
+        accountService.reviveWith(second, "ada@acme.com", null);
+        store.add(first);
+        store.add(second);
+
+        assertThat(accountService.isWorkContactShared("ada@acme.com")).isTrue();
     }
 
     @Test

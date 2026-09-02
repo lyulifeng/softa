@@ -158,8 +158,10 @@ public class UserInvitationServiceImpl extends EntityServiceImpl<UserInvitation,
         // to the record, and this operation carries it onto the membership. A typo is fixed where
         // it lives rather than retyped here, so the two cannot end up disagreeing.
         WorkContacts archive = accountService.archiveWorkContacts(userId);
-        String email = archive.email();
-        String mobile = archive.mobile();
+        // Trimmed, case kept — the form UserAccount.email / mobile hold everywhere, so the equality
+        // queries behind the shared-contact guard find this row (see UserAccountServiceImpl.workContact).
+        String email = StringUtils.trimToNull(archive.email());
+        String mobile = StringUtils.trimToNull(archive.mobile());
         if (email == null && mobile == null) {
             throw new BusinessException(
                     "Enter the correct work email or work mobile before re-inviting.");

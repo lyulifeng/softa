@@ -157,10 +157,25 @@ public class UserAccountServiceImpl extends EntityServiceImpl<UserAccount, Long>
         }
     }
 
+    /**
+     * A work contact as it is written to {@code UserAccount.email} / {@code mobile}: trimmed, case
+     * kept. Every write path goes through here.
+     *
+     * <p>Trimmed because the columns are queried by equality — {@link #isWorkContactShared} and
+     * {@link #findContactHolderInTenant} — with a value that has been trimmed, and a stored stray
+     * space made the match miss: two accounts genuinely holding one address read as unshared, and
+     * the shared-contact guard on code login, /join and reset let the address through. Case is kept
+     * because the value is displayed as HR typed it; the equality queries rely on the columns'
+     * MySQL {@code *_ci} collation to fold it.
+     */
+    private static String workContact(String contact) {
+        return StringUtils.trimToNull(contact);
+    }
+
     private UserAccount buildUserAccount(UserAccountDTO accountInfo) {
         UserAccount userAccount = new UserAccount();
-        userAccount.setEmail(accountInfo.getEmail());
-        userAccount.setMobile(accountInfo.getMobile());
+        userAccount.setEmail(workContact(accountInfo.getEmail()));
+        userAccount.setMobile(workContact(accountInfo.getMobile()));
         userAccount.setUsername(accountInfo.getUsername());
         userAccount.setNickname(accountInfo.getNickname());
         userAccount.setStatus(AccountStatus.ACTIVE);
@@ -477,8 +492,8 @@ public class UserAccountServiceImpl extends EntityServiceImpl<UserAccount, Long>
         // time HR pressed Confirm the old address would be gone, and the warning meant for whoever
         // still holds it would go to the new one.
         WorkContacts archive = this.archiveWorkContacts(userId);
-        String email = archive.email();
-        String mobile = archive.mobile();
+        String email = workContact(archive.email());
+        String mobile = workContact(archive.mobile());
         if (!archive.any()) {
             throw new BusinessException("This employee's record has no work email or work mobile — "
                     + "add one there first, then reset.");
@@ -601,7 +616,10 @@ public class UserAccountServiceImpl extends EntityServiceImpl<UserAccount, Long>
      * asked of the company the ROW belongs to rather than the company the operator is working in.
      */
     private Optional<UserAccount> contactHolderInTenant(Long tenantId, String contact, Long exceptAccountId) {
-        String value = StringUtils.trimToNull(contact);
+        // Trimmed to the form the columns hold (workContact). Not lowercased: case-insensitivity of
+        // this equality is the MySQL *_ci collation of the email / mobile columns — a known,
+        // accepted dependency, the same one every other equality on these columns already has.
+        String value = workContact(contact);
         if (value == null || tenantId == null) {
             // No tenant means no scope to be unique within, so nothing is taken.
             return Optional.empty();
@@ -668,8 +686,11 @@ public class UserAccountServiceImpl extends EntityServiceImpl<UserAccount, Long>
     @Override
     public boolean isWorkContactShared(String contact) {
         // The callers hold a login identifier (already canonical); the question is asked of the
-        // work contacts, so it is asked in the same form the identifier was compared in.
-        contact = LoginIdentifiers.normalize(contact);
+        // work contacts, which are stored trimmed with HR's case (workContact). Trimming here keeps
+        // both sides in that form; case-insensitivity of the equality is the MySQL *_ci collation
+        // of the email / mobile columns — a known, accepted dependency, not something this method
+        // could supply by lowercasing the query (the stored value is not lowercased).
+        contact = workContact(contact);
         if (contact == null) {
             return false;
         }
@@ -810,8 +831,8 @@ public class UserAccountServiceImpl extends EntityServiceImpl<UserAccount, Long>
      * carry over lives on the employee record, which is created anew.
      */
     void reviveWith(UserAccount account, String workEmail, String workMobile) {
-        account.setEmail(workEmail);
-        account.setMobile(workMobile);
+        account.setEmail(workContact(workEmail));
+        account.setMobile(workContact(workMobile));
         account.setStatus(AccountStatus.PENDING);
         account.setActivationTime(null);
         clearRoleGrants(account);
