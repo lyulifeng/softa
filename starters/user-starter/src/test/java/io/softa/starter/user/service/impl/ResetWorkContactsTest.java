@@ -147,7 +147,10 @@ class ResetWorkContactsTest {
         given("old@acme.com", null, PROFILE);
         UserAccount other = new UserAccount();
         other.setId(999L);
-        doReturn(Optional.of(other)).when(accountService).getUserByEmail("taken@acme.com");
+        // Scoped to THIS company, not globally: the same work email in ANOTHER company is one
+        // person working at two, which is now allowed to exist and must stay editable.
+        doReturn(Optional.of(other)).when(accountService)
+                .findContactHolderInTenant("taken@acme.com", ACCOUNT);
 
         assertThatThrownBy(() ->
                 accountService.resetWorkContacts(ACCOUNT, "taken@acme.com", null, "x"))

@@ -126,6 +126,24 @@ public interface UserAccountService extends EntityService<UserAccount, Long> {
     Optional<UserAccount> findMembershipInTenant(Long tenantId, Long profileId);
 
     /**
+     * Another account in the CURRENT company holding this work contact, if any.
+     *
+     * <p>Scoped to one tenant because that is the scope of the rule: work contacts are unique per
+     * company ({@code uk_user_account_tenant_email}), not globally. One person working at two
+     * companies legitimately carries the same work email in both, and the global form of this check
+     * is what used to make that impossible — refusing the second company's account, and then
+     * refusing to let HR edit or re-hire it.
+     *
+     * <p>What IS globally unique is the LOGIN identifier on {@code UserIdentity}, guarded separately
+     * (see {@code isIdentifierClaimable} and {@code assertContactNotShared}): a shared work contact
+     * simply never becomes a login route, rather than being banned.
+     *
+     * @param contact work email or work mobile; null/blank finds nothing
+     * @param exceptAccountId the account being written, excluded from the search; may be null
+     */
+    Optional<UserAccount> findContactHolderInTenant(String contact, Long exceptAccountId);
+
+    /**
      * Prepare a membership for someone re-joining this company, reusing the closed row.
      *
      * <p>Re-hire revives rather than inserts, because {@code (tenantId, profileId)} is unique —

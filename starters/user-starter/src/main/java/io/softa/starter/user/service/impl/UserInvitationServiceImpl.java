@@ -171,7 +171,7 @@ public class UserInvitationServiceImpl extends EntityServiceImpl<UserInvitation,
         }
         // Refused here rather than at the unique index: "this email is already registered" from a
         // constraint violation names no account and arrives after the unbind has been written.
-        accountService.getUserByEmail(email).filter(other -> !other.getId().equals(userId))
+        accountService.findContactHolderInTenant(email, userId)
                 .ifPresent(other -> {
                     throw new BusinessException(
                             "That work email already belongs to another account.");

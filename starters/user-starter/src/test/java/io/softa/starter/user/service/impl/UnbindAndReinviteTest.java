@@ -170,7 +170,9 @@ class UnbindAndReinviteTest {
         given(AccountStatus.ACTIVE);
         UserAccount other = new UserAccount();
         other.setId(999L);
-        when(accountService.getUserByEmail("taken@acme.com")).thenReturn(Optional.of(other));
+        // Scoped to THIS company — see ResetWorkContactsTest for why the global form had to go.
+        when(accountService.findContactHolderInTenant("taken@acme.com", ACCOUNT))
+                .thenReturn(Optional.of(other));
 
         assertThatThrownBy(() -> invitationService.unbindAndReinvite(
                 ACCOUNT, "taken@acme.com", null, "Wrong hire", OPERATOR))

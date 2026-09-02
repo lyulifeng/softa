@@ -7,6 +7,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.stream.Stream;
 import jakarta.validation.constraints.NotNull;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.lang3.StringUtils;
@@ -18,6 +19,7 @@ import org.springframework.transaction.annotation.Transactional;
 
 import io.softa.framework.base.config.SystemConfig;
 import io.softa.framework.base.context.ContextHolder;
+import io.softa.framework.base.utils.SFunction;
 import io.softa.framework.base.context.UserInfo;
 import io.softa.framework.base.exception.BusinessException;
 import io.softa.framework.base.message.MailRequestMessage;
@@ -203,17 +205,43 @@ public class UserAccountServiceImpl extends EntityServiceImpl<UserAccount, Long>
     @Override
     @Transactional
     public UserInfo registerInvitedUser(String email, String mobile, String fullName) {
-        // Both identifiers are login credentials, so both are checked ACROSS tenants (the lookups
-        // are @CrossTenant — same reasoning as AdminProvisioningService's email check). Email is
-        // also backed by uk_user_account_email, but a mobile-only account has no unique index
-        // behind it: without this check, importing two employees with the same phone and no email
-        // silently minted two accounts for one credential.
-        if (StringUtils.isNotBlank(email) && this.getUserByEmail(email).isPresent()) {
+        // Does this identifier already belong to somebody? If so this is their SECOND company, not
+        // a duplicate: one person keeps one person record, and the account created below is linked
+        // to it instead of minting a rival. Refusing here is what used to make "a person in two
+        // companies" unreachable through the product at all — every creation path funnels here, so
+        // the /join flow's own find-or-create could never fire either: it needs an account carrying
+        // the person's identifier, and that account was exactly what could not be created.
+        Long existingPerson = identityService.findByLoginIdentifier(
+                        StringUtils.isNotBlank(email) ? email : mobile)
+                .map(UserIdentity::getProfileId)
+                .orElse(null);
+        // A second identifier pointing at a DIFFERENT person is not a second company — it is two
+        // people's credentials on one account, which no later step could untangle.
+        if (existingPerson != null && StringUtils.isNotBlank(email) && StringUtils.isNotBlank(mobile)) {
+            identityService.findByLoginIdentifier(mobile)
+                    .map(UserIdentity::getProfileId)
+                    .filter(other -> !other.equals(existingPerson))
+                    .ifPresent(other -> {
+                        throw new BusinessException("This email and mobile belong to two different "
+                                + "people. Enter contacts for one person.");
+                    });
+        }
+
+        // Within ONE tenant the identifiers stay unique — that is what uk_user_account_tenant_email
+        // enforces, and a person already holding a membership here is a duplicate rather than a
+        // second company (uk_user_account_tenant_profile). Only the CROSS-tenant form of this rule
+        // was relaxed.
+        Long tenantId = ContextHolder.getContext() == null ? null : ContextHolder.getContext().getTenantId();
+        if (StringUtils.isNotBlank(email) && this.findContactHolderInTenant(email, null).isPresent()) {
             throw new BusinessException("Email already exists: " + email);
         }
-        if (StringUtils.isNotBlank(mobile) && this.getUserByMobile(mobile).isPresent()) {
+        if (StringUtils.isNotBlank(mobile) && this.findContactHolderInTenant(mobile, null).isPresent()) {
             throw new BusinessException("Mobile already exists: " + mobile);
         }
+        if (existingPerson != null && this.findMembershipInTenant(tenantId, existingPerson).isPresent()) {
+            throw new BusinessException("This person is already a member of this company.");
+        }
+
         UserAccountDTO accountInfo = new UserAccountDTO();
         UserProfileDTO profileInfo = new UserProfileDTO();
         accountInfo.setEmail(email);
@@ -235,6 +263,14 @@ public class UserAccountServiceImpl extends EntityServiceImpl<UserAccount, Long>
         userAccount.setStatus(AccountStatus.PENDING);
         Long userId = this.createOne(userAccount);
 
+        // Their second company: link, do not mint. Note what is NOT carried over — the display name
+        // stays whatever this caller supplied. Reading the existing person's name back would turn a
+        // create form into a lookup for "who owns this address?", answerable by anyone who can
+        // create an account. The account lands PENDING either way, so the person still has to
+        // accept through /join before it becomes usable.
+        if (existingPerson != null) {
+            return profileService.linkAccountToPerson(userId, existingPerson);
+        }
         return profileService.registerUserProfile(userId, profileInfo);
     }
 
@@ -299,7 +335,7 @@ public class UserAccountServiceImpl extends EntityServiceImpl<UserAccount, Long>
             throw new BusinessException(
                     "This account is not linked to a person yet — invite it instead.");
         }
-        this.getUserByEmail(email).filter(other -> !other.getId().equals(userId))
+        this.findContactHolderInTenant(email, userId)
                 .ifPresent(other -> {
                     throw new BusinessException("That work email already belongs to another account.");
                 });
@@ -372,6 +408,41 @@ public class UserAccountServiceImpl extends EntityServiceImpl<UserAccount, Long>
                         .eq(UserAccount::getTenantId, tenantId)
                         .eq(UserAccount::getProfileId, profileId)).stream()
                 .findFirst();
+    }
+
+    /**
+     * <p>The tenant is filtered EXPLICITLY rather than left to the ORM's ambient stamp. This class
+     * carries {@code @CrossTenant} on the credential lookups, and {@code UserAccountController}
+     * sets the flag for a platform super-admin working a roster that spans tenants — while it is
+     * set the ORM skips tenant filtering entirely, so an ambient-scoped query here would quietly
+     * widen back into the cross-tenant check this narrows.
+     *
+     * <p>A contact is looked for under BOTH columns: HR moving an address between the email and
+     * mobile fields of two accounts is the same collision, and checking only the matching column
+     * would let the write reach the index instead.
+     */
+    @SkipPermissionCheck
+    @CrossTenant
+    @Override
+    public Optional<UserAccount> findContactHolderInTenant(String contact, Long exceptAccountId) {
+        String value = StringUtils.trimToNull(contact);
+        Long tenantId = ContextHolder.getContext() == null ? null : ContextHolder.getContext().getTenantId();
+        if (value == null || tenantId == null) {
+            // No tenant means no scope to be unique within, so nothing is taken.
+            return Optional.empty();
+        }
+        return Stream.of(
+                        this.contactHolder(tenantId, UserAccount::getEmail, value),
+                        this.contactHolder(tenantId, UserAccount::getMobile, value))
+                .flatMap(Optional::stream)
+                .filter(other -> exceptAccountId == null || !other.getId().equals(exceptAccountId))
+                .findFirst();
+    }
+
+    private Optional<UserAccount> contactHolder(Long tenantId, SFunction<UserAccount, ?> field, String value) {
+        return this.searchList(new Filters()
+                .eq(UserAccount::getTenantId, tenantId)
+                .eq(field, value)).stream().findFirst();
     }
 
     @SkipPermissionCheck
@@ -471,7 +542,7 @@ public class UserAccountServiceImpl extends EntityServiceImpl<UserAccount, Long>
         // uk_user_account_tenant_email — same guard resetWorkContacts and unbindAndReinvite make.
         String email = StringUtils.trimToNull(workEmail);
         if (email != null) {
-            this.getUserByEmail(email).filter(other -> !other.getId().equals(account.getId()))
+            this.findContactHolderInTenant(email, account.getId())
                     .ifPresent(other -> {
                         throw new BusinessException("That work email already belongs to another account.");
                     });
