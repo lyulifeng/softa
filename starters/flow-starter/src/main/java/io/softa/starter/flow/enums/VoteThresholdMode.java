@@ -1,6 +1,5 @@
 package io.softa.starter.flow.enums;
 
-import com.fasterxml.jackson.annotation.JsonCreator;
 import com.fasterxml.jackson.annotation.JsonValue;
 import io.softa.framework.base.annotation.OptionSet;
 import lombok.AllArgsConstructor;
@@ -21,14 +20,4 @@ public enum VoteThresholdMode {
 
     @JsonValue
     private final String type;
-
-    @JsonCreator
-    public static VoteThresholdMode fromValue(String value) {
-        for (VoteThresholdMode mode : values()) {
-            if (mode.type.equalsIgnoreCase(value) || mode.name().equalsIgnoreCase(value)) {
-                return mode;
-            }
-        }
-        throw new IllegalArgumentException("Unsupported vote threshold mode: " + value);
-    }
 }
