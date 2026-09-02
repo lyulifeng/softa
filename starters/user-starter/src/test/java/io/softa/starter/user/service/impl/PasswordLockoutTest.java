@@ -142,14 +142,62 @@ class PasswordLockoutTest {
         verify(identityService).clearPasswordFailures(IDENTITY);
     }
 
+    // ── what the person is told (PRD L3) ────────────────────────────
+
+    private void givenWrongPasswordIsFailureNumber(UserIdentity person, long count) {
+        when(identityService.findByLoginIdentifier(EMAIL)).thenReturn(Optional.of(person));
+        when(identityService.isPasswordLocked(person)).thenReturn(false);
+        when(identityService.matchesPassword(person, "wrong")).thenReturn(false);
+        when(identityService.recordPasswordFailure(person)).thenReturn(count);
+    }
+
+    @Test
+    void earlyFailures_getThePlainRefusal() {
+        // No countdown for the first guesses: it would tell an attacker exactly how much room is
+        // left, and only the legitimate owner gains from it — once a lock is actually near.
+        givenWrongPasswordIsFailureNumber(identity(null), 6);
+
+        assertThatThrownBy(() -> loginService.authenticateByPassword(EMAIL, "wrong"))
+                .isInstanceOf(BusinessException.class)
+                .hasMessage("Incorrect account or password.");
+    }
+
+    @Test
+    void fromTheSeventhFailure_theRemainingAttemptsAreNamed() {
+        givenWrongPasswordIsFailureNumber(identity(null), 7);
+
+        assertThatThrownBy(() -> loginService.authenticateByPassword(EMAIL, "wrong"))
+                .hasMessage("Incorrect account or password. 3 attempt(s) remaining before password login is locked.");
+    }
+
+    @Test
+    void theNinthFailure_warnsOfTheLastAttempt() {
+        givenWrongPasswordIsFailureNumber(identity(null), 9);
+
+        assertThatThrownBy(() -> loginService.authenticateByPassword(EMAIL, "wrong"))
+                .hasMessage("Incorrect account or password. 1 attempt(s) remaining before password login is locked.");
+    }
+
+    @Test
+    void theTenthFailure_isAnsweredWithTheLock() {
+        // The guess that locks says so itself, instead of a plain "incorrect" followed by an
+        // unexplained "locked" on the next try.
+        givenWrongPasswordIsFailureNumber(identity(null), 10);
+
+        assertThatThrownBy(() -> loginService.authenticateByPassword(EMAIL, "wrong"))
+                .hasMessageContaining("Too many failed attempts")
+                .hasMessageContaining("locked for 30 minutes");
+    }
+
     // ── the counter and the lock itself ─────────────────────────────
 
     @Test
-    void belowTheThreshold_nothingIsWritten() {
-        // Wrong guesses must not be a way to generate row writes on demand.
+    void belowTheThreshold_nothingIsWritten_andTheCountIsReported() {
+        // Wrong guesses must not be a way to generate row writes on demand. The count still comes
+        // back, because the login path words its refusal from it.
         when(cacheService.increment(anyString(), anyLong())).thenReturn(3L);
 
-        identityImpl.recordPasswordFailure(identity(null));
+        assertThat(identityImpl.recordPasswordFailure(identity(null))).isEqualTo(3L);
 
         verify(identityImpl, never()).updateOne(any(UserIdentity.class));
     }
@@ -162,7 +210,7 @@ class PasswordLockoutTest {
         when(cacheService.increment(anyString(), anyLong())).thenReturn(10L);
         doReturn(true).when(identityImpl).updateOne(person);
 
-        identityImpl.recordPasswordFailure(person);
+        assertThat(identityImpl.recordPasswordFailure(person)).isEqualTo(10L);
 
         assertThat(person.getPasswordLockedUntil()).isAfter(LocalDateTime.now().plusMinutes(29));
         verify(identityImpl).updateOne(person);

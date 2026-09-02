@@ -40,7 +40,6 @@ public class UserIdentityServiceImpl extends EntityServiceImpl<UserIdentity, Lon
         implements UserIdentityService {
 
     /** Consecutive wrong passwords that lock the password path (PRD D5). */
-    private static final int FAILURES_BEFORE_LOCK = 10;
     /** How long it stays locked. */
     private static final int LOCK_MINUTES = 30;
 
@@ -187,13 +186,16 @@ public class UserIdentityServiceImpl extends EntityServiceImpl<UserIdentity, Lon
     @SkipPermissionCheck
     @CrossTenant
     @Override
-    public void recordPasswordFailure(UserIdentity identity) {
+    public long recordPasswordFailure(UserIdentity identity) {
         if (identity == null || identity.getId() == null) {
-            return;
+            return 0;
         }
         Long failures = cacheService.increment(failureKey(identity.getId()), LOCK_MINUTES * 60L);
-        if (failures == null || failures < FAILURES_BEFORE_LOCK) {
-            return;
+        if (failures == null) {
+            return 0;
+        }
+        if (failures < FAILURES_BEFORE_LOCK) {
+            return failures;
         }
         identity.setPasswordLockedUntil(LocalDateTime.now().plusMinutes(LOCK_MINUTES));
         this.updateOne(identity);
@@ -202,6 +204,7 @@ public class UserIdentityServiceImpl extends EntityServiceImpl<UserIdentity, Lon
         this.clearPasswordFailures(identity.getId());
         log.warn("Password login locked for {} minutes after {} consecutive failures (identity {}).",
                 LOCK_MINUTES, failures, identity.getId());
+        return failures;
     }
 
     @Override

@@ -87,6 +87,9 @@ public interface UserIdentityService extends EntityService<UserIdentity, Long> {
      */
     boolean isPasswordLocked(UserIdentity identity);
 
+    /** Consecutive wrong passwords that lock the password route (PRD D5). */
+    int FAILURES_BEFORE_LOCK = 10;
+
     /**
      * Count one wrong password, locking the person out once too many land in a row.
      *
@@ -94,8 +97,11 @@ public interface UserIdentityService extends EntityService<UserIdentity, Long> {
      * and writing the row on every wrong guess would let anyone generate write load at will. Only
      * the lock itself is persisted, because it must survive a cache flush — otherwise clearing the
      * cache would be an unlock.
+     *
+     * @return the failure count in the current window, this one included; on the failure that
+     *         locks, the count that locked (the login path words its refusal from it)
      */
-    void recordPasswordFailure(UserIdentity identity);
+    long recordPasswordFailure(UserIdentity identity);
 
     /** Forget the failure count — a successful login, or a new password, ends the window. */
     void clearPasswordFailures(Long identityId);

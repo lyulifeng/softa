@@ -51,6 +51,14 @@ public class LoginServiceImpl implements LoginService {
 
     /** Mirrors UserIdentityServiceImpl's window, for the message the locked-out person sees. */
     private static final int LOCK_MINUTES = 30;
+
+    /**
+     * The first wrong password that is answered with a remaining-attempts count (PRD L3). Early
+     * guesses get the bare refusal, because a countdown from the first attempt tells whoever is
+     * guessing exactly how many tries they have left; the warning appears only once a lock is
+     * near, when its value is to the legitimate owner who mistyped.
+     */
+    private static final int WARN_FROM_FAILURE = 7;
     /** Verification-code template, one code for both channels (MailTemplate / SmsTemplate share it). */
     private static final String TEMPLATE_CODE = "user.verification-code";
     /** Code lifetime shown to the recipient; kept in step with VerificationCodeGuard.CODE_TTL_SECONDS. */
@@ -235,16 +243,34 @@ public class LoginServiceImpl implements LoginService {
         // Only the password path is locked — code login stays open, because what is under attack
         // is the password and locking the person out entirely would complete the attack for it.
         if (identityService.isPasswordLocked(identity)) {
-            throw new BusinessException("Too many failed attempts. Password login is locked for "
-                    + LOCK_MINUTES + " minutes. You can still log in with a verification code.");
+            throw new BusinessException(lockedMessage());
         }
         if (!identityService.matchesPassword(identity, password)) {
             // Counted per PERSON, so switching company buys no extra tries.
-            identityService.recordPasswordFailure(identity);
-            throw new BusinessException("Incorrect account or password.");
+            long failures = identityService.recordPasswordFailure(identity);
+            throw new BusinessException(wrongPasswordMessage(failures));
         }
         identityService.clearPasswordFailures(identity.getId());
         return this.afterAuthentication(identity);
+    }
+
+    private static String lockedMessage() {
+        return "Too many failed attempts. Password login is locked for " + LOCK_MINUTES
+                + " minutes. You can still log in with a verification code.";
+    }
+
+    /** The refusal for the {@code failures}-th consecutive wrong password. */
+    private static String wrongPasswordMessage(long failures) {
+        if (failures >= UserIdentityService.FAILURES_BEFORE_LOCK) {
+            // This guess is the one that locked: say so, rather than a plain "incorrect" followed
+            // by an unexplained "locked" on the next try.
+            return lockedMessage();
+        }
+        if (failures >= WARN_FROM_FAILURE) {
+            return "Incorrect account or password. " + (UserIdentityService.FAILURES_BEFORE_LOCK - failures)
+                    + " attempt(s) remaining before password login is locked.";
+        }
+        return "Incorrect account or password.";
     }
 
     /**
