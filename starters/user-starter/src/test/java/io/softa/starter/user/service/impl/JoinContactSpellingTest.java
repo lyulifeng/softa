@@ -72,8 +72,16 @@ class JoinContactSpellingTest {
         assertThat(ada.getLoginEmail()).isEqualTo("ada@acme.com");
         when(identityService.findByProfile(PROFILE)).thenReturn(Optional.of(ada));
 
+        // The unbound row the invitation was issued for.
+        UserAccount account = new UserAccount();
+        account.setId(ACCOUNT_ID);
+        account.setTenantId(TENANT);
+        account.setStatus(AccountStatus.INVITED);
+        account.setEmail(AS_HR_TYPED_IT);
+        when(invitationService.resolveJoinAccount(TOKEN)).thenReturn(Optional.of(account));
+
         // ② setJoinPassword ties the person to the invitation, which still spells the contact as
-        // HR did. Load-bearing: at HEAD this threw "This link does not belong to that account."
+        // HR did. Load-bearing: compared raw this threw "This link does not belong to that account."
         when(invitationService.resolveJoinContacts(TOKEN)).thenReturn(new JoinContacts(AS_HR_TYPED_IT, null));
         loginService.setJoinPassword(TOKEN, PROFILE, "Str0ng!Passw0rd");
         verify(identityService).setPassword(11L, "Str0ng!Passw0rd");
@@ -87,11 +95,6 @@ class JoinContactSpellingTest {
         invitation.setExpiresAt(LocalDateTime.now().plusDays(1));
         doReturn(Optional.of(invitation)).when(realInvitationService).searchOne(any(Filters.class));
         doReturn(true).when(realInvitationService).updateOne(any(UserInvitation.class));
-        UserAccount account = new UserAccount();
-        account.setId(ACCOUNT_ID);
-        account.setTenantId(TENANT);
-        account.setStatus(AccountStatus.INVITED);
-        account.setEmail(AS_HR_TYPED_IT);
         when(accountService.getById(ACCOUNT_ID)).thenReturn(Optional.of(account));
         when(accountService.listMembershipsOf(any())).thenReturn(List.of());
 

@@ -493,15 +493,33 @@ public class LoginServiceImpl implements LoginService {
     @Override
     @Transactional
     public void setJoinPassword(String rawToken, Long profileId, String newPassword) {
-        JoinContacts contacts = invitationService.resolveJoinContacts(rawToken);
+        UserAccount account = invitationService.resolveJoinAccount(rawToken)
+                .orElseThrow(() -> new BusinessException("This invitation link is no longer usable."));
         UserIdentity identity = identityService.findByProfile(profileId)
                 .orElseThrow(() -> new BusinessException("Person record not found."));
 
         // Both checks matter. The first ties the person to THIS invitation, so holding a link
         // cannot reach an unrelated person. The second keeps it a first-password path rather than
         // a reset — someone who already has a password must prove it, or arrive by code.
-        if (!contacts.includes(identity.getLoginEmail()) && !contacts.includes(identity.getLoginMobile())) {
-            throw new BusinessException("This link does not belong to that account.");
+        //
+        // The tie mirrors confirmJoin's. For a row that already belongs to a person (a re-hired
+        // leaver's revived membership) the row's profileId IS the tie: verifyJoinCode returned that
+        // person after the code proved control of the address, so any other id here is a stale
+        // client or a link-holder choosing one. Tying a bound row to the contact instead dead-ended
+        // exactly the person the invitation was for — one who kept a personal login identifier
+        // (ada@personal.com) and has no password: verifyJoinCode sent them here, and the identity
+        // carried no contact the invitation names, so the password could never be set.
+        // For an unbound row the contact is the tie, as at confirmJoin: the person's login
+        // identifier must be one the invitation was addressed to.
+        if (account.getProfileId() != null) {
+            if (!account.getProfileId().equals(profileId)) {
+                throw new BusinessException("This link does not belong to that account.");
+            }
+        } else {
+            JoinContacts contacts = invitationService.resolveJoinContacts(rawToken);
+            if (!contacts.includes(identity.getLoginEmail()) && !contacts.includes(identity.getLoginMobile())) {
+                throw new BusinessException("This link does not belong to that account.");
+            }
         }
         if (StringUtils.isNotBlank(identity.getPassword())) {
             throw new BusinessException("A password is already set — sign in with it instead.");

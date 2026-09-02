@@ -1,23 +1,34 @@
 package io.softa.starter.user.service.impl;
 
+import java.time.LocalDateTime;
+import java.util.List;
 import java.util.Optional;
 
 import org.junit.jupiter.api.Test;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.test.util.ReflectionTestUtils;
 
+import io.softa.framework.base.exception.BusinessException;
+import io.softa.framework.orm.domain.Filters;
 import io.softa.starter.user.dto.JoinVerification;
 import io.softa.starter.user.entity.UserAccount;
 import io.softa.starter.user.entity.UserIdentity;
+import io.softa.starter.user.entity.UserInvitation;
+import io.softa.starter.user.enums.AccountStatus;
+import io.softa.starter.user.enums.InvitationStatus;
 import io.softa.starter.user.service.UserAccountService;
 import io.softa.starter.user.service.UserIdentityService;
 import io.softa.starter.user.service.UserInvitationService;
 import io.softa.starter.user.service.UserProfileService;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.Mockito.doReturn;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.spy;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -59,7 +70,9 @@ class RevivedJoinTest {
     private UserAccount invitationIsFor(Long profileId) {
         UserAccount account = new UserAccount();
         account.setId(100L);
+        account.setTenantId(1L);
         account.setProfileId(profileId);
+        account.setStatus(AccountStatus.INVITED);
         account.setEmail(RELEASED_WORK_EMAIL);
         when(invitationService.resolveJoinAccount(TOKEN)).thenReturn(Optional.of(account));
         return account;
@@ -174,5 +187,69 @@ class RevivedJoinTest {
         assertThat(result.mustSetPassword()).isTrue();
         verify(identityService).findByLoginIdentifier(RELEASED_WORK_EMAIL);
         verify(identityService, never()).findByProfile(any());
+    }
+
+    // ─── the bound person who kept a personal login identifier and has no password yet ───
+
+    /** confirmJoin's real implementation, fed the same row and invitation the login steps saw. */
+    private UserInvitationServiceImpl realInvitationServiceFor(UserAccount account) {
+        UserInvitationServiceImpl real = spy(new UserInvitationServiceImpl(
+                accountService, identityService, mock(ApplicationEventPublisher.class), null, "http://localhost"));
+        UserInvitation invitation = new UserInvitation();
+        invitation.setId(55L);
+        invitation.setUserId(account.getId());
+        invitation.setStatus(InvitationStatus.PENDING);
+        invitation.setEmail(RELEASED_WORK_EMAIL);
+        invitation.setExpiresAt(LocalDateTime.now().plusDays(1));
+        doReturn(Optional.of(invitation)).when(real).searchOne(any(Filters.class));
+        doReturn(true).when(real).updateOne(any(UserInvitation.class));
+        when(accountService.getById(account.getId())).thenReturn(Optional.of(account));
+        when(accountService.listMembershipsOf(any())).thenReturn(List.of());
+        // Her own row is the membership in this tenant; it is not a second slot.
+        when(accountService.findMembershipInTenant(1L, ADA)).thenReturn(Optional.of(account));
+        return real;
+    }
+
+    @Test
+    void aBoundPersonWithNoPassword_whoKeptAPersonalLogin_canSetItAndConfirm() {
+        // Ada left, kept ada@personal.com as her login, never set a password (she signed in by
+        // code), and was re-hired. verifyJoinCode returns her person with mustSetPassword=true and
+        // does not rebind the work address (she holds a live identifier — the takeover case above),
+        // so her identity carries no contact the invitation names. setJoinPassword tying HER to the
+        // contact refused the person the invitation was for, and there was no other way forward:
+        // the FE routes mustSetPassword straight there. The row's profileId is the tie, as it is at
+        // confirmJoin. Load-bearing: setPassword is reached.
+        UserAccount revived = invitationIsFor(ADA);
+        UserIdentity ada = identityOf(ADA, "ada@personal.com", null);
+        ada.setPassword(null);
+        when(identityService.findByProfile(ADA)).thenReturn(Optional.of(ada));
+
+        JoinVerification verified = loginService.verifyJoinCode(TOKEN, "email", "123456");
+        assertThat(verified.profileId()).isEqualTo(ADA);
+        assertThat(verified.mustSetPassword()).isTrue();
+
+        loginService.setJoinPassword(TOKEN, ADA, "Str0ng!Passw0rd");
+        verify(identityService).setPassword(11L, "Str0ng!Passw0rd");
+
+        realInvitationServiceFor(revived).confirmJoin(TOKEN, ADA);
+        assertThat(revived.getStatus()).isEqualTo(AccountStatus.ACTIVE);
+        assertThat(revived.getProfileId()).isEqualTo(ADA);
+        verify(accountService).updateOne(revived);
+    }
+
+    @Test
+    void aBoundRow_stillRefusesAnyOtherProfileId_atSetJoinPassword() {
+        // The tie moved from the contact to the row's profileId; it did not go away. A link-holder
+        // naming a stranger's password-less person — even one whose login identifier the invitation
+        // happens to name — is refused before anything is written.
+        invitationIsFor(ADA);
+        UserIdentity stranger = identityOf(999L, RELEASED_WORK_EMAIL, null);
+        stranger.setPassword(null);
+        when(identityService.findByProfile(999L)).thenReturn(Optional.of(stranger));
+
+        assertThatThrownBy(() -> loginService.setJoinPassword(TOKEN, 999L, "Str0ng!Passw0rd"))
+                .isInstanceOf(BusinessException.class)
+                .hasMessageContaining("does not belong");
+        verify(identityService, never()).setPassword(any(Long.class), anyString());
     }
 }
