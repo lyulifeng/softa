@@ -582,9 +582,13 @@ public class UserAccountController extends EntityController<UserAccountService, 
                     .orElseThrow(() -> new BusinessException(ResponseCode.USER_NOT_FOUND,
                             "Current user account not found for update."));
 
+            // Only the display name is the person's to edit here. The work email and mobile are
+            // owned by the employee record and read-only on the account; a change to the login
+            // contact goes through the verified flow on UserProfile. Copying them from the request
+            // would let any signed-in person, with no verification code and no per-tenant
+            // uniqueness check, redirect where this membership's invitations and notices are
+            // delivered — and collide with uk_user_account_tenant_email on the way.
             existingAccount.setNickname(myAccountDTO.getNickname());
-            existingAccount.setEmail(myAccountDTO.getEmail());
-            existingAccount.setMobile(myAccountDTO.getMobile());
 
             boolean success = service.updateOne(existingAccount);
 
