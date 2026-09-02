@@ -90,13 +90,17 @@ public class UserIdentityServiceImpl extends EntityServiceImpl<UserIdentity, Lon
         }
         // Both are tried rather than guessing by shape ("@" or "+"): a caller that guessed wrong
         // would report "no such account" for an account that exists.
+        //
+        // Both are ALWAYS run, even once the email query has hit. Returning early on a hit makes a
+        // known email cost one query and an unknown one two — a difference an observer with a
+        // stopwatch and two identifiers can read at the anonymous login form, however identical the
+        // refusals are worded. Paying the second query on a hit is what keeps the timing flat, and
+        // it is done here so every caller gets it rather than each remembering to.
         Optional<UserIdentity> byEmail = this.searchOneIdentifier(
                 new Filters().eq(UserIdentity::getLoginEmail, identifier), identifier);
-        if (byEmail.isPresent()) {
-            return byEmail;
-        }
-        return this.searchOneIdentifier(
+        Optional<UserIdentity> byMobile = this.searchOneIdentifier(
                 new Filters().eq(UserIdentity::getLoginMobile, identifier), identifier);
+        return byEmail.isPresent() ? byEmail : byMobile;
     }
 
     /**
@@ -218,15 +222,38 @@ public class UserIdentityServiceImpl extends EntityServiceImpl<UserIdentity, Lon
         if (value == null) {
             return 0;
         }
-        // Same window as the real counter, so the two branches age identically. The counter is never
-        // reset at the threshold: the real branch persists a lock that keeps answering "locked" for
-        // LOCK_MINUTES, and letting this count keep climbing within the same window is what makes
-        // the unknown branch keep answering the same thing.
-        Long failures = cacheService.increment(unknownFailureKey(value), LOCK_MINUTES * 60L);
-        return failures == null ? 0 : failures;
+        // Same window as the real counter, so the two branches age identically.
+        String digest = unknownDigest(value);
+        Long failures = cacheService.increment(unknownFailureKey(digest), LOCK_MINUTES * 60L);
+        if (failures == null) {
+            return 0;
+        }
+        if (failures >= FAILURES_BEFORE_LOCK) {
+            // Mirror recordPasswordFailure exactly: a lock that runs LOCK_MINUTES from THIS failure,
+            // and a counter reset so the next window starts fresh. Letting the counter stand in for
+            // the lock does not work — its TTL runs from the first failure, the real lock from the
+            // tenth, and between those two expiries the branches give different answers.
+            cacheService.save(unknownLockKey(digest), "1", LOCK_MINUTES * 60);
+            cacheService.clear(unknownFailureKey(digest));
+        }
+        return failures;
     }
 
-    private static String unknownFailureKey(String identifier) {
+    @Override
+    public boolean isUnknownIdentifierLocked(String identifier) {
+        String value = StringUtils.trimToNull(identifier);
+        return value != null && cacheService.hasKey(unknownLockKey(unknownDigest(value)));
+    }
+
+    private static String unknownFailureKey(String digest) {
+        return "login:pwd-failures:unknown:" + digest;
+    }
+
+    private static String unknownLockKey(String digest) {
+        return "login:pwd-lock:unknown:" + digest;
+    }
+
+    private static String unknownDigest(String identifier) {
         // Hashed rather than stored: the key would otherwise be a list of every identifier ever
         // guessed at the login form. Lowercased so case variants of one guess share a count: they
         // name the same mailbox, and a counter that split them would hand out a window per spelling.
@@ -237,7 +264,7 @@ public class UserIdentityServiceImpl extends EntityServiceImpl<UserIdentity, Lon
         } catch (NoSuchAlgorithmException e) {
             throw new IllegalStateException("SHA-256 is a mandatory JCA algorithm.", e);
         }
-        return "login:pwd-failures:unknown:" + HexFormat.of().formatHex(digest);
+        return HexFormat.of().formatHex(digest);
     }
 
     @Override

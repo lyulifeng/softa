@@ -242,6 +242,12 @@ public class LoginServiceImpl implements LoginService {
         // identifier in the same window and words its refusal from that count.
         Optional<UserIdentity> resolved = identityService.findByLoginIdentifier(identifier);
         if (resolved.isEmpty()) {
+            // Same ORDER as the real branch below: locked is answered first and is not counted.
+            // Counting while locked would make the unknown branch's lock end at a different moment
+            // from the real one's — the eleventh try tells the two apart.
+            if (identityService.isUnknownIdentifierLocked(identifier)) {
+                throw new BusinessException(lockedMessage());
+            }
             long failures = identityService.recordUnknownIdentifierFailure(identifier);
             throw new BusinessException(wrongPasswordMessage(failures));
         }

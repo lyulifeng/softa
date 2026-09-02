@@ -10,6 +10,7 @@ import org.springframework.test.util.ReflectionTestUtils;
 
 import io.softa.framework.base.context.UserInfo;
 import io.softa.framework.base.exception.BusinessException;
+import io.softa.framework.orm.domain.Filters;
 import io.softa.framework.orm.service.CacheService;
 import io.softa.framework.orm.service.TenantInfoService;
 import io.softa.starter.user.dto.AuthenticationResult;
@@ -23,6 +24,7 @@ import io.softa.starter.user.service.UserProfileService;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
@@ -248,6 +250,79 @@ class PasswordLockoutTest {
                     .isNotNull()
                     .isEqualTo(messageFor(EMAIL));
         }
+
+        // ...and while locked, where the real branch stops counting. An unknown identifier that kept
+        // counting here would come out of its lock at a different moment from a real one.
+        UserIdentity locked = identity(LocalDateTime.now().plusMinutes(5));
+        when(identityService.findByLoginIdentifier(EMAIL)).thenReturn(Optional.of(locked));
+        when(identityService.isPasswordLocked(locked)).thenReturn(true);
+        when(identityService.isUnknownIdentifierLocked(NOBODY)).thenReturn(true);
+
+        assertThat(messageFor(NOBODY)).as("while locked").isNotNull().isEqualTo(messageFor(EMAIL));
+        verify(identityService, never()).recordPasswordFailure(locked);
+        verify(identityService, times(UserIdentityService.FAILURES_BEFORE_LOCK))
+                .recordUnknownIdentifierFailure(NOBODY);
+    }
+
+    @Test
+    void aLockedUnknownIdentifier_isRefusedWithoutBeingCounted() {
+        // Mirrors aLockedPerson_isRefusedWithoutTheirPasswordBeingChecked: the lock is read first
+        // and the try is not counted, so both locks end LOCK_MINUTES after the failure that set them.
+        when(identityService.findByLoginIdentifier(NOBODY)).thenReturn(Optional.empty());
+        when(identityService.isUnknownIdentifierLocked(NOBODY)).thenReturn(true);
+
+        assertThatThrownBy(() -> loginService.authenticateByPassword(NOBODY, "wrong"))
+                .isInstanceOf(BusinessException.class)
+                .hasMessageContaining("Too many failed attempts")
+                .hasMessageContaining("locked for 30 minutes");
+
+        verify(identityService, never()).recordUnknownIdentifierFailure(anyString());
+    }
+
+    @Test
+    void theTenthUnknownFailure_setsALockForTheLockWindow_andResetsTheCounter() {
+        // The refuted shape: a counter whose TTL runs from the FIRST failure, standing in for a lock
+        // that runs from the TENTH. Ten tries over twenty minutes, then a quarter of an hour: the
+        // real identifier is still locked, the made-up one is back to "incorrect". The unknown
+        // branch therefore sets its own lock at the threshold, for exactly the lock window, and
+        // clears the counter the way recordPasswordFailure does.
+        when(cacheService.increment(anyString(), anyLong())).thenReturn(10L);
+
+        assertThat(identityImpl.recordUnknownIdentifierFailure(NOBODY)).isEqualTo(10L);
+
+        ArgumentCaptor<String> counterKey = ArgumentCaptor.forClass(String.class);
+        verify(cacheService).increment(counterKey.capture(), eq(30L * 60));
+        ArgumentCaptor<String> lockKey = ArgumentCaptor.forClass(String.class);
+        verify(cacheService).save(lockKey.capture(), any(), eq(30 * 60));
+        assertThat(lockKey.getValue()).startsWith("login:pwd-lock:unknown:")
+                .doesNotContainIgnoringCase("nobody");
+        verify(cacheService).clear(counterKey.getValue());
+        // The lock key, once set, is what isUnknownIdentifierLocked reads.
+        when(cacheService.hasKey(lockKey.getValue())).thenReturn(true);
+        assertThat(identityImpl.isUnknownIdentifierLocked(NOBODY)).isTrue();
+        assertThat(identityImpl.isUnknownIdentifierLocked("someone-else@acme.com")).isFalse();
+    }
+
+    @Test
+    void belowTheThreshold_theUnknownBranchSetsNoLock() {
+        when(cacheService.increment(anyString(), anyLong())).thenReturn(9L);
+
+        assertThat(identityImpl.recordUnknownIdentifierFailure(NOBODY)).isEqualTo(9L);
+
+        verify(cacheService, never()).save(anyString(), any(), anyInt());
+        verify(cacheService, never()).clear(anyString());
+    }
+
+    @Test
+    void theIdentifierLookup_costsTheSameWhetherOrNotItHits() {
+        // An observer with a stopwatch and two identifiers: a known email that returns after one
+        // query and an unknown one that needs two read differently however identical the refusals
+        // are. Both channel queries run every time, so a hit on the first still pays for the second.
+        doReturn(Optional.of(identity(null))).when(identityImpl).searchOne(any(Filters.class));
+
+        assertThat(identityImpl.findByLoginIdentifier(EMAIL)).isPresent();
+
+        verify(identityImpl, times(2)).searchOne(any(Filters.class));
     }
 
     @Test
