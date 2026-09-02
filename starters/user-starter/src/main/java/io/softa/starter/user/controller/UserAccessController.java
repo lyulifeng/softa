@@ -18,15 +18,20 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import tools.jackson.databind.JsonNode;
 
-import io.softa.framework.base.context.Context;
-import io.softa.framework.base.context.ContextHolder;
+import io.softa.framework.orm.constant.ModelConstant;
 import io.softa.framework.orm.domain.FlexQuery;
 import io.softa.framework.orm.domain.Filters;
+import io.softa.framework.base.utils.JsonUtils;
 import io.softa.framework.orm.meta.ModelManager;
 import io.softa.framework.orm.service.CacheService;
 import io.softa.framework.orm.service.ModelService;
 import io.softa.framework.web.response.ApiResponse;
+import io.softa.starter.user.constant.RoleConstant;
+import io.softa.starter.user.dto.EffectivePermissionsView;
+import io.softa.starter.user.dto.UiContext;
 import io.softa.starter.user.dto.UserRef;
+import io.softa.starter.user.service.UserRosterScope;
+import io.softa.starter.user.service.impl.UiContextBuilder;
 import io.softa.starter.user.util.ModelRefIds;
 import io.softa.starter.user.util.PermissionSnapshotKey;
 
@@ -74,6 +79,8 @@ public class UserAccessController {
 
     private final ModelService<?> modelService;
     private final CacheService cacheService;
+    private final UiContextBuilder uiContextBuilder;
+    private final UserRosterScope rosterScope;
 
     // ─────────────────────── user refs (member / assign dialogs) ───────────────────────
 
@@ -157,16 +164,83 @@ public class UserAccessController {
 
     // ─────────────────────── effective permissions (user detail view) ───────────────────────
 
+    /**
+     * One user's effective access, cache-first: the engine's live snapshot when it has one, a fresh
+     * build when it does not.
+     *
+     * <p>Both halves used to be wrong. The key was built from {@code ContextHolder}'s tenant — the
+     * CALLER's — while {@code userId} names the SUBJECT, and the engine writes each snapshot under the
+     * subject's own tenant, so a platform super-admin inspecting another tenant's user could never
+     * hit. And on a miss the endpoint simply answered null ("this endpoint no longer builds"), which
+     * the panel rendered as a load failure — so the view was permanently blank for any user who had
+     * not authenticated within the cache TTL, which is every freshly created account.
+     *
+     * <p>The subject's tenant is resolved through {@link UserRosterScope}, the same window and the
+     * same bounds that let {@code /UserAccount/getById} open the detail page this panel sits on: a
+     * platform super-admin reaches roster members across tenants, everyone else stays tenant-local
+     * and can therefore only ever inspect their own tenant's users.
+     *
+     * <p>A rebuild is NOT written back to the engine's key. The engine reads that key as
+     * {@code PermissionInfo}; a {@link UiContext}-shaped payload would deserialize with
+     * {@code grantedCompanyIds} absent, silently disabling the company row-scope axis for that user
+     * until the TTL expired. Rebuilding costs a handful of indexed reads on an admin's single page
+     * open, which is not worth that risk.
+     */
     @GetMapping("/userEffectivePermissions")
-    @Operation(summary = "Effective permission snapshot (nav / permission / data-scope / SFS) for a user")
-    public ApiResponse<JsonNode> userEffectivePermissions(@RequestParam("userId") Long userId) {
-        Context ctx = ContextHolder.getContext();
-        Long tenantId = ctx == null ? null : ctx.getTenantId();
-        // Read the target user's cached snapshot as raw JSON. The permission engine
-        // builds it on that user's own authenticated requests; this endpoint no
-        // longer builds (keeping user-starter engine-free), so a user who has not
-        // been active since the last cache expiry returns null — accepted here.
-        JsonNode snapshot = cacheService.get(PermissionSnapshotKey.forUser(tenantId, userId), JsonNode.class);
-        return ApiResponse.success(snapshot);
+    @Operation(summary = "Effective access for a user — engine snapshot when cached, freshly built otherwise")
+    public ApiResponse<EffectivePermissionsView> userEffectivePermissions(@RequestParam("userId") Long userId) {
+        return ApiResponse.success(rosterScope.call(() -> {
+            Long subjectTenantId = resolveSubjectTenantId(userId);
+            if (subjectTenantId == null) {
+                // Outside what this caller may read (another tenant's user, or no such account) —
+                // same answer as a nonexistent record, mirroring getById's roster behaviour.
+                return null;
+            }
+            JsonNode cached =
+                    cacheService.get(PermissionSnapshotKey.forUser(subjectTenantId, userId), JsonNode.class);
+            return cached != null ? fromSnapshot(cached)
+                    : fromUiContext(uiContextBuilder.build(userId, subjectTenantId),
+                            uiContextBuilder.modelScopeMapFor(userId));
+        }));
+    }
+
+    /** The subject's OWN tenant — the half the old key got wrong. Runs inside the roster window, so a
+     *  non-super-admin caller is tenant-filtered by the ORM and simply finds nothing for a user
+     *  outside their tenant. */
+    private Long resolveSubjectTenantId(Long userId) {
+        List<Map<String, Object>> rows = modelService.searchList("UserAccount",
+                new FlexQuery(List.of(ModelConstant.TENANT_ID), new Filters().eq(ModelConstant.ID, userId)));
+        if (rows.isEmpty()) {
+            return null;
+        }
+        Object tenantId = rows.get(0).get(ModelConstant.TENANT_ID);
+        return tenantId instanceof Number n ? n.longValue() : null;
+    }
+
+    /** Cache hit — the engine's PermissionInfo JSON is a superset of this view (see
+     *  {@link EffectivePermissionsView} on why unknown fields are tolerated). */
+    private EffectivePermissionsView fromSnapshot(JsonNode snapshot) {
+        EffectivePermissionsView view =
+                JsonUtils.jsonNodeToObject(snapshot, EffectivePermissionsView.class);
+        view.setSuperAdmin(holdsSuperAdmin(view.getRoleCodes()));
+        view.setSource("cache");
+        return view;
+    }
+
+    /** Cache miss — map the freshly built context onto the same shape. */
+    private EffectivePermissionsView fromUiContext(UiContext ui, Map<String, List<JsonNode>> modelScopeMap) {
+        EffectivePermissionsView view = new EffectivePermissionsView();
+        view.setRoleCodes(ui.getRoleCodes());
+        view.setNavigations(ui.getNavigations());
+        view.setPermissions(ui.getPermissions());
+        view.setModelSensitiveFieldSetsMap(ui.getModelSensitiveFieldSetsMap());
+        view.setModelScopeMap(modelScopeMap);
+        view.setSuperAdmin(holdsSuperAdmin(ui.getRoleCodes()));
+        view.setSource("rebuilt");
+        return view;
+    }
+
+    private static boolean holdsSuperAdmin(Set<String> roleCodes) {
+        return roleCodes != null && roleCodes.contains(RoleConstant.CODE_SUPER_ADMIN);
     }
 }
