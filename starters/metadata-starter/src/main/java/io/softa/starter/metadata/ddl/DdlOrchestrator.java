@@ -154,11 +154,45 @@ public class DdlOrchestrator {
     private record ExecResult(int executed, int skipped, List<RenderedDdl> deferred) {
     }
 
+    /** Set once {@code CREATE EXTENSION IF NOT EXISTS pg_trgm} has succeeded this boot. */
+    private boolean pgTrgmEnsured;
+
+    /**
+     * Provision the {@code pg_trgm} extension before the first unit that renders a trigram
+     * operator class ({@code gin_trgm_ops}, i.e. a SEARCH-method index) executes.
+     * {@code pg_trgm} has been a trusted extension since PostgreSQL 13, so the application's
+     * database-owner role can create it without superuser rights (managed services included);
+     * when even that grant is missing, the failure surfaces here with the statement a DBA
+     * must run, instead of as an "operator class does not exist" error on the index DDL.
+     */
+    private void ensurePgTrgmIfNeeded(List<RenderedDdl> rendered, boolean executeEverything) {
+        if (pgTrgmEnsured || DBUtil.parseDatabaseType(datasourceUrl) != DatabaseType.POSTGRESQL) {
+            return;
+        }
+        boolean needed = rendered.stream()
+                .filter(ddl -> executeEverything || ddl.autoExecute())
+                .flatMap(ddl -> ddl.statements().stream())
+                .anyMatch(statement -> statement.contains("gin_trgm_ops"));
+        if (!needed) {
+            return;
+        }
+        try {
+            jdbcTemplate.execute("CREATE EXTENSION IF NOT EXISTS pg_trgm");
+            pgTrgmEnsured = true;
+        } catch (DataAccessException e) {
+            log.error("DdlOrchestrator: a SEARCH-method index requires the pg_trgm extension and "
+                    + "creating it failed — have a DBA run `CREATE EXTENSION IF NOT EXISTS pg_trgm;` "
+                    + "on this database once, then restart.");
+            throw e;
+        }
+    }
+
     /**
      * Execute rendered units statement by statement, deferring the warn-only kinds unless
      * {@code executeEverything} (the convergence lane, where destructive verbs are policy).
      */
     private ExecResult executeAll(List<RenderedDdl> rendered, boolean executeEverything) {
+        ensurePgTrgmIfNeeded(rendered, executeEverything);
         int executed = 0;
         int skipped = 0;
         List<RenderedDdl> deferred = new ArrayList<>();

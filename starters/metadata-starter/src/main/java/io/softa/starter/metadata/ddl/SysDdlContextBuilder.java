@@ -88,6 +88,10 @@ public final class SysDdlContextBuilder {
         IndexDdlCtx ctx = new IndexDdlCtx();
         ctx.setIndexName(idx.getIndexName());
         ctx.setUnique(Boolean.TRUE.equals(idx.getUniqueIndex()));
+        // null method = BTREE (rows written before the column existed store the default as null)
+        if (idx.getMethod() != null) {
+            ctx.setMethod(idx.getMethod().name());
+        }
         if (idx.getIndexFields() != null) {
             List<String> columns = new ArrayList<>(idx.getIndexFields().size());
             for (String fieldName : idx.getIndexFields()) {

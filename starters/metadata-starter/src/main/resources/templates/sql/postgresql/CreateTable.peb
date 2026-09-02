@@ -25,6 +25,7 @@ Used index fields:
 - indexName
 - columns
 - unique
+- method
 
 Notes:
 - This template renders a newly created table and inline indexes.
@@ -32,6 +33,10 @@ Notes:
   single quotes in descriptions.
 - PostgreSQL indexes are created as separate CREATE INDEX statements (not inline on CREATE TABLE),
   mirroring the AlterIndex template.
+- index.method renders the physical shape: SEARCH -> trigram GIN (pg_trgm is provisioned
+  by DdlOrchestrator before execution), PREFIX -> text_pattern_ops B-tree, anything else
+  (BTREE, or a ctx built without the field) -> plain index. SEARCH/PREFIX are single-column
+  and non-unique by parser validation.
 - FOREIGN KEY constraints are not emitted — referential integrity is enforced at the
   ORM / application layer.
 #}
@@ -56,5 +61,11 @@ COMMENT ON COLUMN {{ model.tableName }}.{{ field.columnName }} IS '{{ field.desc
 {% endif %}
 {% endfor %}
 {% for index in model.createdIndexes %}
+{% if index.method == "SEARCH" -%}
+CREATE INDEX {{ index.indexName }} ON {{ model.tableName }} USING gin ({{ index.columns[0] }} gin_trgm_ops);
+{% elseif index.method == "PREFIX" -%}
+CREATE INDEX {{ index.indexName }} ON {{ model.tableName }} ({{ index.columns[0] }} text_pattern_ops);
+{% else -%}
 CREATE {% if index.unique %}UNIQUE {% endif %}INDEX {{ index.indexName }} ON {{ model.tableName }} ({{ index.columns | join(', ') }});
+{% endif -%}
 {% endfor %}
