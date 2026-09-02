@@ -15,8 +15,10 @@ import io.softa.starter.metadata.ddl.DdlOrchestrator;
 import io.softa.starter.metadata.ddl.introspect.PhysicalSchema;
 import io.softa.starter.metadata.entity.SysModel;
 import io.softa.starter.metadata.scanner.annotation.AnnotationScanResult;
+import io.softa.starter.metadata.scanner.annotation.RenameDeclarations;
 import io.softa.starter.metadata.scanner.diff.SchemaDiff;
 
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.Mockito.*;
@@ -239,5 +241,55 @@ class MetadataAnnotationScannerTest {
         // partial boot self-heals on the next (idempotent) restart.
         verify(f.writer()).backfillAppCode();
         verify(f.writer()).populateSurrogateFks();
+    }
+
+    // ---- rename plumbing: declarations must reach the diff -----------------
+
+    @Test
+    void renameDeclarationsAndThePriorNameRowBothReachTheDiff() {
+        // The parse-time renamedFrom guards fire during parse and validate only — the pairing
+        // itself depends on this method's plumbing, which failed in two independent ways:
+        // the fromCode merge rebuilt the scan result through the 5-arg constructor (renames
+        // replaced with empty()), and confinement keyed fromDb on current code model names
+        // only, filtering the prior-name row out before the diff could pair it. Either one
+        // alone silently turns a declared model rename into CREATE-empty + warn-only DROP.
+        SysModel company = new SysModel();
+        company.setModelName("Company");
+        AnnotationScanResult parsed = new AnnotationScanResult(
+                List.of(company), List.of(), List.of(), List.of(), List.of(),
+                new RenameDeclarations(Map.of("Company", "LegalEntity"), Map.of()));
+
+        SysModel legalEntity = new SysModel();
+        legalEntity.setModelName("LegalEntity");
+        legalEntity.setTableName("legal_entity");
+        AnnotationScanResult current = new AnnotationScanResult(
+                List.of(legalEntity), List.of(), List.of(), List.of());
+
+        MetadataReadPipeline pipeline = mock(MetadataReadPipeline.class);
+        SysJdbcWriter writer = mock(SysJdbcWriter.class);
+        DdlOrchestrator ddl = mock(DdlOrchestrator.class);
+        when(pipeline.discoverModelClasses()).thenReturn(Set.of(Object.class));
+        when(pipeline.discoverOptionSetEnums()).thenReturn(Set.of());
+        // The scanner parses the catalog entities before the in-scope models, so a plain
+        // thenReturn chain would hand `parsed` to the catalog parse; key on the argument.
+        when(pipeline.parse(anyCollection(), anyCollection()))
+                .thenAnswer(inv -> ((java.util.Collection<?>) inv.getArgument(0)).contains(Object.class)
+                        ? parsed : AnnotationScanResult.empty());
+        when(pipeline.loadCurrentState()).thenReturn(current);
+        when(pipeline.diff(any(), any())).thenReturn(SchemaDiff.empty());
+
+        new MetadataAnnotationScanner(
+                pipeline, new MetadataProperties(List.of("*"), null, null), "test-app", writer, ddl)
+                .initialize();
+
+        ArgumentCaptor<AnnotationScanResult> fromCode = ArgumentCaptor.forClass(AnnotationScanResult.class);
+        ArgumentCaptor<AnnotationScanResult> fromDb = ArgumentCaptor.forClass(AnnotationScanResult.class);
+        verify(pipeline).diff(fromCode.capture(), fromDb.capture());
+
+        assertEquals("LegalEntity", fromCode.getValue().renames().modelOldNames().get("Company"),
+                "the parsed rename declarations must survive the fromCode merge");
+        assertTrue(fromDb.getValue().models().stream()
+                        .anyMatch(m -> "LegalEntity".equals(m.getModelName())),
+                "the prior-name row must survive confinement so the diff can pair the rename");
     }
 }

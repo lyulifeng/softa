@@ -308,8 +308,14 @@ public class DdlOrchestrator {
      * Plan one model's convergence against the facts. {@code destructive} distinguishes the
      * full lane (narrowing MODIFY, undeclared DROPs) from the additive Stage-A lane; the
      * diff buckets and {@code modelMod} are empty / {@code null} on the additive lane.
+     *
+     * <p>Package-private for the plan-order test: the undeclared-index DROP must precede the
+     * undeclared-column DROP (a column drop while a composite unique index still holds the
+     * column makes MySQL shrink the key and fail on valid data), and only the rendered plan
+     * can pin that — H2 handles the same column drop differently, so an execution-level test
+     * cannot see the hazard.
      */
-    private void planConvergence(DdlDialect dialect, SysModel model,
+    void planConvergence(DdlDialect dialect, SysModel model,
                                  List<SysField> modelFields, List<SysModelIndex> modelIndexes,
                                  DdlPolicy.FieldOps diffFields, DdlPolicy.IndexOps diffIndexes,
                                  SchemaDiff.Modification<SysModel> modelMod,
@@ -411,6 +417,17 @@ public class DdlOrchestrator {
         }
 
         PhysicalSchema.PhysicalTable physical = facts.tables().get(lower(factsTable));
+
+        planIndexConvergence(dialect, model, modelFields, modelIndexes, diffIndexes,
+                physical, destructive, tag, out);
+
+        // Undeclared-column drops MUST come after the index convergence above: dropping a
+        // column that still participates in a (soon-to-be-dropped) composite unique index
+        // makes MySQL silently shrink the index to its remaining columns first — and the
+        // shrunken key then fails with a duplicate-entry error on perfectly valid data
+        // (seen live: DROP COLUMN code while uk_..._tenant_code(tenant_id, code) still
+        // existed collapsed the key to (tenant_id)). With the undeclared DROP INDEX
+        // executed first, the column drop is plain.
         if (destructive && physical != null) {
             for (PhysicalSchema.PhysicalColumn column : physical.columns().values()) {
                 String columnLower = lower(column.name());
@@ -424,9 +441,6 @@ public class DdlOrchestrator {
                         "DROP COLUMN " + column.name() + " ON " + table + " " + tag + " undeclared"));
             }
         }
-
-        planIndexConvergence(dialect, model, modelFields, modelIndexes, diffIndexes,
-                physical, destructive, tag, out);
     }
 
     /**
@@ -903,7 +917,8 @@ public class DdlOrchestrator {
 
     // ---- dialect ------------------------------------------------------
 
-    private DdlDialect resolveDialect() {
+    /** Package-private alongside {@link #planConvergence} for the plan-order test. */
+    DdlDialect resolveDialect() {
         DatabaseType type = DBUtil.parseDatabaseType(datasourceUrl);
         return DdlDialectFactory.create(type, metadataResolver);
     }

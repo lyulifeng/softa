@@ -504,6 +504,51 @@ abstract class AbstractDdlConvergeTest {
         assertTableGone("search_doc");
     }
 
+    // ---- plan order: undeclared index drop before undeclared column drop --
+
+    @Test
+    void undeclaredIndexDrop_precedesUndeclaredColumnDrop() throws Exception {
+        // MySQL handles ALTER TABLE ... DROP COLUMN on a column that still participates in a
+        // composite unique index by silently shrinking the index to its remaining columns —
+        // and the shrunken key then rejects perfectly valid data (seen live: dropping an
+        // undeclared `code` while uk_...(tenant_id, code) still existed collapsed the key to
+        // (tenant_id) and failed with a duplicate-entry error). The plan must therefore drop
+        // the undeclared index before the undeclared column. H2 resolves the same drop
+        // differently, so only the rendered plan order can pin this — not an execution test.
+        jdbcTemplate.execute("CREATE TABLE customer (id BIGINT NOT NULL PRIMARY KEY, "
+                + "tenant_id BIGINT, code VARCHAR(16))");
+        jdbcTemplate.execute(
+                "CREATE UNIQUE INDEX uk_customer_tenant_code ON customer(tenant_id, code)");
+
+        List<SysModel> models = List.of(customer());
+        // tenant_id stays declared; `code` and the unique index over it do not.
+        List<SysField> fields = List.of(idField(),
+                fieldWithColumn("tenantId", "tenant_id", FieldType.LONG, null, false));
+        ReferenceColumnResolver.stampSysFields(fields);
+        PhysicalSchema facts = PhysicalSchemaReader.readManagedTables(dataSource, models);
+
+        List<RenderedDdl> out = new ArrayList<>();
+        orchestrator.planConvergence(orchestrator.resolveDialect(), customer(), fields, List.of(),
+                DdlPolicy.FieldOps.EMPTY, DdlPolicy.IndexOps.EMPTY, null, facts, true,
+                "[converge]", out);
+
+        int indexDrop = -1;
+        int columnDrop = -1;
+        for (int i = 0; i < out.size(); i++) {
+            if (out.get(i).kind() == RenderedDdl.Kind.DROP_INDEX) {
+                indexDrop = i;
+            }
+            if (out.get(i).kind() == RenderedDdl.Kind.DROP_COLUMN) {
+                columnDrop = i;
+            }
+        }
+        assertTrue(indexDrop >= 0, "the undeclared unique index must be planned for DROP");
+        assertTrue(columnDrop >= 0, "the undeclared column must be planned for DROP");
+        assertTrue(indexDrop < columnDrop,
+                "the index drop must precede the column drop, or MySQL shrinks the unique key"
+                        + " onto the surviving columns and fails on valid data");
+    }
+
     // ---- helpers --------------------------------------------------------
 
     private void assertTableExists(String table) {
