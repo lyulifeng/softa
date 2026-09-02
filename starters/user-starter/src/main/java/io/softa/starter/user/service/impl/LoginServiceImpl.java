@@ -437,12 +437,16 @@ public class LoginServiceImpl implements LoginService {
     }
 
     private List<MembershipOption> resolveMemberships(Long profileId) {
+        // The lock lives on the person's credential, so it is read once and stamped on every
+        // option rather than looked up per company.
+        boolean locked = identityService.findByProfile(profileId)
+                .map(identityService::isPasswordLocked).orElse(false);
         return accountService.listMembershipsOf(profileId).stream()
                 .map(account -> new MembershipOption(
                         account.getId(), account.getTenantId(),
                         tenantInfoService == null ? null
                                 : tenantInfoService.getTenantName(account.getTenantId()),
-                        account.getStatus()))
+                        account.getStatus(), locked))
                 // Selectable first: the common case is one usable company among some frozen ones,
                 // and making the person hunt for it in a mixed list is a needless step.
                 .sorted(Comparator.comparing(MembershipOption::selectable).reversed())

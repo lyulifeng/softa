@@ -17,8 +17,14 @@ import io.softa.starter.user.enums.AccountStatus;
  * @param status     shown as a badge; a non-ACTIVE option is listed but not selectable, so the
  *                   person can see that the company exists and why they cannot enter (frozen /
  *                   locked) rather than facing a list that silently omits it
+ * @param locked     whether the PERSON's password login is currently locked (PRD D5). A property
+ *                   of the credential, so it is the same on every option of one picker. Shown as
+ *                   a badge, never enforced: PRD §1.5 greys a Locked company, but the picker is
+ *                   reached only after authentication, and §1.6 / D5 keep code login open during
+ *                   a lock — greying here would refuse a person the code route just admitted.
  */
-public record MembershipOption(Long accountId, Long tenantId, String tenantName, AccountStatus status) {
+public record MembershipOption(Long accountId, Long tenantId, String tenantName, AccountStatus status,
+                               boolean locked) {
 
     /**
      * Whether this option can actually be entered.
@@ -31,6 +37,7 @@ public record MembershipOption(Long accountId, Long tenantId, String tenantName,
      */
     @JsonProperty("selectable")
     public boolean selectable() {
+        // Deliberately independent of locked — see the component doc.
         return status == AccountStatus.ACTIVE;
     }
 }
