@@ -235,9 +235,17 @@ public class LoginServiceImpl implements LoginService {
 
     @Override
     public AuthenticationResult authenticateByPassword(String identifier, String password) {
-        // Same message for "no such identifier" and "wrong password": splitting them turns the
-        // login form into an account-existence oracle.
-        UserIdentity identity = this.resolveIdentity(identifier, "Incorrect account or password.");
+        // Same message AND same counting for "no such identifier" and "wrong password". One shared
+        // message is not enough: the refusal starts naming the remaining attempts from the seventh
+        // failure, so an identifier that never counted down would have confirmed its non-existence
+        // just as surely as a distinct message. The unknown branch therefore counts the submitted
+        // identifier in the same window and words its refusal from that count.
+        Optional<UserIdentity> resolved = identityService.findByLoginIdentifier(identifier);
+        if (resolved.isEmpty()) {
+            long failures = identityService.recordUnknownIdentifierFailure(identifier);
+            throw new BusinessException(wrongPasswordMessage(failures));
+        }
+        UserIdentity identity = resolved.get();
 
         // Lock checked BEFORE the password, so "locked" versus "incorrect" cannot confirm a guess.
         // Only the password path is locked — code login stays open, because what is under attack

@@ -103,6 +103,23 @@ public interface UserIdentityService extends EntityService<UserIdentity, Long> {
      */
     long recordPasswordFailure(UserIdentity identity);
 
+    /**
+     * Count one wrong password against an identifier that resolves to NOBODY.
+     *
+     * <p>Without this, an unknown identifier is an oracle: the real counter starts naming the
+     * remaining attempts from the seventh failure, so whoever sees a countdown after seven tries
+     * has learned the identifier exists, and whoever never sees one has learned it does not. The
+     * submitted identifier is therefore counted too — keyed by a digest of its lowercased form, so
+     * the cache never holds the raw guesses — in the same window and to the same threshold, and the
+     * login path words its refusal from this count exactly as it does from the real one.
+     *
+     * <p>Nothing is locked, because there is nothing to lock; the count alone is what keeps the two
+     * branches indistinguishable.
+     *
+     * @return the failure count in the current window, this one included
+     */
+    long recordUnknownIdentifierFailure(String identifier);
+
     /** Forget the failure count — a successful login, or a new password, ends the window. */
     void clearPasswordFailures(Long identityId);
 

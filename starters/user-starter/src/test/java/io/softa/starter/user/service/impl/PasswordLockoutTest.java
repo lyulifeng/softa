@@ -5,6 +5,7 @@ import java.util.List;
 import java.util.Optional;
 
 import org.junit.jupiter.api.Test;
+import org.mockito.ArgumentCaptor;
 import org.springframework.test.util.ReflectionTestUtils;
 
 import io.softa.framework.base.context.UserInfo;
@@ -24,10 +25,12 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doReturn;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.spy;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -187,6 +190,84 @@ class PasswordLockoutTest {
         assertThatThrownBy(() -> loginService.authenticateByPassword(EMAIL, "wrong"))
                 .hasMessageContaining("Too many failed attempts")
                 .hasMessageContaining("locked for 30 minutes");
+    }
+
+    // ── an unknown identifier must not be an oracle (PRD L3 / #6) ───
+
+    private static final String NOBODY = "nobody@acme.com";
+
+    private void givenUnknownIdentifierIsFailureNumber(long count) {
+        when(identityService.findByLoginIdentifier(NOBODY)).thenReturn(Optional.empty());
+        when(identityService.recordUnknownIdentifierFailure(NOBODY)).thenReturn(count);
+    }
+
+    private String messageFor(String identifier) {
+        try {
+            loginService.authenticateByPassword(identifier, "wrong");
+            return null;
+        } catch (BusinessException e) {
+            return e.getMessage();
+        }
+    }
+
+    @Test
+    void anUnknownIdentifier_isCounted_andGetsTheSameCountdown() {
+        // Before this, the unknown branch threw before counting: seven tries against a real
+        // identifier produced a countdown, seven against a made-up one never did — a yes/no on
+        // "does this account exist" for anyone patient enough to ask seven times.
+        givenUnknownIdentifierIsFailureNumber(7);
+
+        assertThatThrownBy(() -> loginService.authenticateByPassword(NOBODY, "wrong"))
+                .isInstanceOf(BusinessException.class)
+                .hasMessage("Incorrect account or password. 3 attempt(s) remaining before password login is locked.");
+
+        verify(identityService).recordUnknownIdentifierFailure(NOBODY);
+        verify(identityService, never()).recordPasswordFailure(any());
+    }
+
+    @Test
+    void anUnknownIdentifier_isToldItIsLockedOnTheTenthTry() {
+        givenUnknownIdentifierIsFailureNumber(10);
+
+        assertThatThrownBy(() -> loginService.authenticateByPassword(NOBODY, "wrong"))
+                .hasMessageContaining("Too many failed attempts")
+                .hasMessageContaining("locked for 30 minutes");
+    }
+
+    @Test
+    void knownAndUnknownIdentifiers_readIdenticallyAtEveryCount() {
+        // The security property in one line: for every count in the window, the refusal for a wrong
+        // password against a real person equals the refusal for a made-up identifier at the same
+        // count. Any difference — wording or the count at which it changes — is the oracle again.
+        for (long count = 1; count <= UserIdentityService.FAILURES_BEFORE_LOCK; count++) {
+            givenWrongPasswordIsFailureNumber(identity(null), count);
+            givenUnknownIdentifierIsFailureNumber(count);
+
+            assertThat(messageFor(NOBODY))
+                    .as("failure #%d", count)
+                    .isNotNull()
+                    .isEqualTo(messageFor(EMAIL));
+        }
+    }
+
+    @Test
+    void theUnknownCounter_neverHoldsTheGuessItself_andIgnoresCase() {
+        // The key is a digest of the lowercased identifier: a cache full of raw guesses would be a
+        // list of every address anyone tried, and two spellings of one address are one guess.
+        when(cacheService.increment(anyString(), anyLong())).thenReturn(7L);
+
+        assertThat(identityImpl.recordUnknownIdentifierFailure("Nobody@Acme.com")).isEqualTo(7L);
+        assertThat(identityImpl.recordUnknownIdentifierFailure(NOBODY)).isEqualTo(7L);
+
+        ArgumentCaptor<String> keys = ArgumentCaptor.forClass(String.class);
+        verify(cacheService, times(2)).increment(keys.capture(), eq(30L * 60));
+        assertThat(keys.getAllValues()).hasSize(2);
+        assertThat(keys.getAllValues().get(0))
+                .isEqualTo(keys.getAllValues().get(1))
+                .startsWith("login:pwd-failures:unknown:")
+                .doesNotContainIgnoringCase("nobody")
+                .doesNotContainIgnoringCase("acme");
+        verify(identityImpl, never()).updateOne(any(UserIdentity.class));
     }
 
     // ── the counter and the lock itself ─────────────────────────────
