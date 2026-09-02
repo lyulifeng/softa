@@ -36,7 +36,7 @@ public enum NodeErrorStrategy {
         if (value == null) {
             return FAIL;
         }
-        NodeErrorStrategy strategy = NAMES_MAP.get(value.toUpperCase());
+        NodeErrorStrategy strategy = NAMES_MAP.get(value);
         if (strategy == null) {
             throw new IllegalArgumentException("Unsupported node error strategy: " + value);
         }

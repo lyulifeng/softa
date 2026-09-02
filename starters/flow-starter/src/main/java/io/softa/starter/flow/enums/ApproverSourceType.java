@@ -44,7 +44,7 @@ public enum ApproverSourceType {
      * extends {@code BaseException}, not the JDK one, so that catch would silently stop matching.
      */
     public static ApproverSourceType of(String value) {
-        ApproverSourceType sourceType = value == null ? null : NAMES_MAP.get(value.toUpperCase());
+        ApproverSourceType sourceType = value == null ? null : NAMES_MAP.get(value);
         if (sourceType == null) {
             throw new IllegalArgumentException("Unsupported approver source type: " + value);
         }
