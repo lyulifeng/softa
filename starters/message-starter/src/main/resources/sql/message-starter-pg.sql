@@ -581,3 +581,52 @@ CREATE INDEX IF NOT EXISTS idx_template_priority ON sms_template_provider_bindin
 CREATE UNIQUE INDEX IF NOT EXISTS uk_tenant_tmpl_provider_region ON sms_template_provider_binding (tenant_id, template_id, provider_config_id, region_code);
 CREATE INDEX IF NOT EXISTS idx_template_region ON sms_template_provider_binding (template_id, region_code);
 
+-- TenantMessageQuota
+/* Create table for model: Tenant Message Quota */
+CREATE TABLE IF NOT EXISTS tenant_message_quota (
+    id BIGINT NOT NULL,
+    tenant_id BIGINT NOT NULL,
+    mail_monthly_limit BIGINT,
+    sms_monthly_limit BIGINT,
+    description VARCHAR(500),
+    created_time TIMESTAMP,
+    created_id BIGINT,
+    created_by VARCHAR(64),
+    updated_time TIMESTAMP,
+    updated_id BIGINT,
+    updated_by VARCHAR(64),
+    PRIMARY KEY (id)
+);
+COMMENT ON COLUMN tenant_message_quota.tenant_id IS 'The governed tenant; -1 = the platform''s own quota. Plain column — this model is platform-owned and not tenant-isolated.';
+COMMENT ON COLUMN tenant_message_quota.mail_monthly_limit IS 'Maximum accepted mail sends per calendar month. Null = use the deployment default (message.quota.mail-monthly-default; null there = unlimited).';
+COMMENT ON COLUMN tenant_message_quota.sms_monthly_limit IS 'Maximum accepted SMS sends per calendar month. Null = use the deployment default (message.quota.sms-monthly-default; null there = unlimited).';
+COMMENT ON COLUMN tenant_message_quota.description IS 'Operations note, e.g. the plan or contract behind this ceiling';
+CREATE UNIQUE INDEX IF NOT EXISTS uk_tenant_message_quota_tenant ON tenant_message_quota (tenant_id);
+
+-- TenantMessageUsage
+/* Create table for model: Tenant Message Usage */
+CREATE TABLE IF NOT EXISTS tenant_message_usage (
+    id BIGINT NOT NULL,
+    tenant_id BIGINT NOT NULL,
+    month VARCHAR(7) NOT NULL DEFAULT '',
+    mail_monthly_limit BIGINT,
+    mail_used BIGINT NOT NULL,
+    sms_monthly_limit BIGINT,
+    sms_used BIGINT NOT NULL,
+    version BIGINT NOT NULL DEFAULT 0,
+    created_time TIMESTAMP,
+    created_id BIGINT,
+    created_by VARCHAR(64),
+    updated_time TIMESTAMP,
+    updated_id BIGINT,
+    updated_by VARCHAR(64),
+    PRIMARY KEY (id)
+);
+COMMENT ON COLUMN tenant_message_usage.tenant_id IS 'The quota bucket; -1 = the platform''s own sends.';
+COMMENT ON COLUMN tenant_message_usage.month IS 'Calendar month of this ledger row, format yyyy-MM (server default zone).';
+COMMENT ON COLUMN tenant_message_usage.mail_monthly_limit IS 'Snapshot of the mail ceiling in force at the last accepted mail send of this month (quota row or deployment default); null = unlimited.';
+COMMENT ON COLUMN tenant_message_usage.mail_used IS 'Accepted mail sends this month. Incremented once per accepted message; delivery retries never touch it.';
+COMMENT ON COLUMN tenant_message_usage.sms_monthly_limit IS 'Snapshot of the SMS ceiling in force at the last accepted SMS send of this month; null = unlimited.';
+COMMENT ON COLUMN tenant_message_usage.sms_used IS 'Accepted SMS sends this month. Incremented once per accepted message; delivery retries never touch it.';
+COMMENT ON COLUMN tenant_message_usage.version IS 'Optimistic-lock version. Bumped on every increment.';
+CREATE UNIQUE INDEX IF NOT EXISTS uk_tenant_message_usage_bucket ON tenant_message_usage (tenant_id, month);
