@@ -1,5 +1,8 @@
 package io.softa.starter.user.service.impl;
 
+import java.util.ArrayList;
+import java.util.HashSet;
+import java.util.Set;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -378,11 +381,38 @@ public class UserAccountServiceImpl extends EntityServiceImpl<UserAccount, Long>
         if (StringUtils.isBlank(contact)) {
             return false;
         }
-        // Counted across tenants: the same number handed to workers in two companies is still one
-        // number, and the ambiguity it creates is not confined to a tenant.
-        long asEmail = this.count(new Filters().eq(UserAccount::getEmail, contact));
-        long asMobile = this.count(new Filters().eq(UserAccount::getMobile, contact));
-        return asEmail + asMobile > 1;
+        // Counts PEOPLE, not accounts. One person employed by two companies has two accounts
+        // carrying the same personal address, and that is the whole point of multi-company — it
+        // must not read as "shared". What makes an address unusable for identification is that it
+        // could resolve to more than one PERSON.
+        //
+        // An account with no person yet counts as its own potential person: the shared-number
+        // attack is exactly a bound holder plus an unbound account on the same number, where
+        // resolving the address hands the unbound holder the bound one's identity. The cost is
+        // that a genuine cross-company invite (a second company creating an account with the
+        // person's own address, before they join) also reads as ambiguous until they join —
+        // deliberate: the two are indistinguishable from the data, and the password path is
+        // unaffected, so that person can still sign in.
+        //
+        // Across tenants: the same number handed to workers in two companies is still one number.
+        List<UserAccount> matches = new ArrayList<>(
+                this.searchList(new Filters().eq(UserAccount::getEmail, contact)));
+        matches.addAll(this.searchList(new Filters().eq(UserAccount::getMobile, contact)));
+
+        Set<Long> boundPeople = new HashSet<>();
+        long unbound = 0;
+        Set<Long> seenAccounts = new HashSet<>();
+        for (UserAccount account : matches) {
+            if (account.getId() != null && !seenAccounts.add(account.getId())) {
+                continue;   // an account whose email AND mobile are the same string
+            }
+            if (account.getProfileId() == null) {
+                unbound++;
+            } else {
+                boundPeople.add(account.getProfileId());
+            }
+        }
+        return boundPeople.size() + unbound > 1;
     }
 
     @SkipPermissionCheck
