@@ -94,12 +94,12 @@ public class AdminProvisioningService {
         // The inviter is the current (Ops) user — captured before switching into the tenant context.
         Long inviter = ContextHolder.getContext() == null ? null : ContextHolder.getContext().getUserId();
 
-        // email is globally unique: check across ALL tenants BEFORE pinning into the target tenant
-        // (getUserByEmail is @CrossTenant). Inside inTenantContext the check would only see the
-        // target tenant and miss an email already taken by another tenant.
-        if (accountService.getUserByEmail(request.getEmail()).isPresent()) {
-            throw new BusinessException("Email already exists: " + request.getEmail());
-        }
+        // No cross-tenant email check here any more. It used to run BEFORE pinning into the target
+        // tenant precisely so it would see other tenants — which is the rule that made a person who
+        // already works somewhere unable to be this tenant's admin, the one case where "the same
+        // address in a second company" is the intended outcome rather than a collision.
+        // registerInvitedUser now owns both halves: it links to the existing person instead of
+        // minting a rival, and still refuses a duplicate WITHIN this tenant.
 
         return inTenantContext(request.getTenantId(), () -> {
             // INVITED account (no password) — the admin sets their own password via the invitation.

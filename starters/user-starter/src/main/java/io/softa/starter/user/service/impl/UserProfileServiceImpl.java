@@ -386,6 +386,40 @@ public class UserProfileServiceImpl extends EntityServiceImpl<UserProfile, Long>
         return userInfo;
     }
 
+    /**
+     * <p><b>Why {@code @SkipPermissionCheck}</b>: same reasoning as {@link #registerUserProfile} —
+     * the account being linked was minted by the same call chain, so no row rule can have it in
+     * scope yet, and the person is a global model nothing a role holds references. What authorized
+     * this is the create action that led here, checked where it happened.
+     *
+     * <p>{@code @Transactional} for the same reason too: the link and the cache eviction must not
+     * half-apply. There is no identity row to write here, which is exactly what makes this the
+     * cheaper half — the person already has one.
+     */
+    @SkipPermissionCheck
+    @Override
+    @Transactional
+    public UserInfo linkAccountToPerson(Long userId, Long profileId) {
+        Assert.notNull(userId, "userId is required to link an account to a person.");
+        Assert.notNull(profileId, "profileId is required to link an account to a person.");
+        UserAccount account = accountService.getById(userId).orElseThrow(
+                () -> new BusinessException(
+                        "Account " + userId + " not found — it must exist before being linked."));
+        UserProfile profile = this.getById(profileId).orElseThrow(
+                () -> new BusinessException("Person " + profileId + " not found."));
+
+        // The authoritative pointer, and the only write this needs: UserAccount.profileId IS the
+        // relation. UserProfile.userId is the legacy back-pointer and is deliberately left alone —
+        // it holds one account and the person now has several, so repointing it at the newest would
+        // simply move the breakage to whichever membership it stopped naming.
+        account.setProfileId(profileId);
+        accountService.updateOne(account);
+
+        UserInfo userInfo = this.buildUserInfo(profile, account);
+        this.refreshUserInfo(userId, userInfo);
+        return userInfo;
+    }
+
     /** The work contact, or null when it is already someone else's login identifier. */
     private String claimable(String contact, Long profileId) {
         String value = StringUtils.trimToNull(contact);

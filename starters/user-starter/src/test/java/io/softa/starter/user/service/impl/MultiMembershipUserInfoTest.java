@@ -27,6 +27,7 @@ import static org.mockito.ArgumentMatchers.anyBoolean;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.doReturn;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.spy;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -131,6 +132,44 @@ class MultiMembershipUserInfoTest {
         when(accountService.getById(SECOND_ACCOUNT)).thenReturn(Optional.of(orphan));
 
         assertThatThrownBy(() -> profileService.getUserInfo(SECOND_ACCOUNT))
+                .isInstanceOf(BusinessException.class);
+    }
+
+    @Test
+    void linkingASecondMembershipLeavesThePersonAlone() {
+        // The N:1 link writes ONE pointer: account.profileId. It must not touch the person's
+        // UserProfile.userId back-pointer — that names one account and they now have several, so
+        // repointing it at the newest would just move the breakage to whichever membership it
+        // stopped naming. And it must write no UserIdentity: theirs exists and carries their
+        // password, so a second one would split their credentials in two.
+        UserAccount second = membership(SECOND_ACCOUNT, 2L, AccountStatus.ACTIVE);
+        second.setProfileId(null);
+        when(accountService.getById(SECOND_ACCOUNT)).thenReturn(Optional.of(second));
+
+        UserInfo userInfo = profileService.linkAccountToPerson(SECOND_ACCOUNT, PROFILE);
+
+        assertThat(second.getProfileId()).isEqualTo(PROFILE);
+        verify(accountService).updateOne(second);
+        // Built from the membership that was linked, not from the person's back-pointer.
+        assertThat(userInfo.getUserId()).isEqualTo(SECOND_ACCOUNT);
+        assertThat(userInfo.getTenantId()).isEqualTo(2L);
+        // Never the profile write path — no profile and no identity are minted here.
+        verify(profileService, never()).createOne(any(UserProfile.class));
+    }
+
+    @Test
+    void linkingRefusesAnAccountThatDoesNotExist() {
+        when(accountService.getById(SECOND_ACCOUNT)).thenReturn(Optional.empty());
+
+        assertThatThrownBy(() -> profileService.linkAccountToPerson(SECOND_ACCOUNT, PROFILE))
+                .isInstanceOf(BusinessException.class);
+    }
+
+    @Test
+    void linkingRefusesAPersonThatDoesNotExist() {
+        doReturn(Optional.empty()).when(profileService).getById(PROFILE);
+
+        assertThatThrownBy(() -> profileService.linkAccountToPerson(SECOND_ACCOUNT, PROFILE))
                 .isInstanceOf(BusinessException.class);
     }
 
