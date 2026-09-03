@@ -18,6 +18,7 @@ import org.springframework.test.util.ReflectionTestUtils;
 import io.softa.framework.base.config.SystemConfig;
 import io.softa.framework.base.exception.BusinessException;
 import io.softa.framework.base.context.Context;
+import io.softa.framework.base.context.UserInfo;
 import io.softa.framework.base.context.ContextHolder;
 import io.softa.framework.orm.service.ModelService;
 import io.softa.framework.orm.utils.IdUtils;
@@ -141,6 +142,76 @@ class UserAccountControllerTest {
         }
 
         verify(invalidator).evictBatch(9L, Set.of(7L));
+    }
+
+    // ─── the derived `locked` flag is not writable ───
+
+    /**
+     * The payload a browser sends when the account form was rendered from model metadata: every
+     * displayed field comes back, {@code locked} among them, because the readonly flag the form
+     * would have obeyed lives in {@code sys_field} and is not there until the metadata scanner has
+     * run. The annotation on {@link UserAccount#getLocked()} is read from that same row, so in this
+     * window the controller's own strip is the only thing standing between the request and
+     * {@code UPDATE user_account SET locked = ?}.
+     */
+    private static Map<String, Object> rowWithLock(Object id) {
+        Map<String, Object> row = row(id, false);
+        row.put("locked", true);
+        return row;
+    }
+
+    @Test
+    void updateOne_doesNotWriteTheDerivedLock_butKeepsEveryOtherKey() {
+        when(modelService.updateOne(eq("UserAccount"), any())).thenReturn(true);
+        ArgumentCaptor<Map<String, Object>> sent = ArgumentCaptor.forClass(Map.class);
+
+        try (MockedStatic<IdUtils> ignored = Mockito.mockStatic(IdUtils.class)) {
+            inTenant(9L, () -> controller.updateOne(rowWithLock(7L)));
+        }
+
+        verify(modelService).updateOne(eq("UserAccount"), sent.capture());
+        // Load-bearing: the key never reaches the ORM, so no SET clause is rendered for a column
+        // that is orphaned on an upgraded database and absent on a converged one.
+        assertThat(sent.getValue()).doesNotContainKey("locked");
+        // ...and the strip is surgical — the rest of the form still saves.
+        assertThat(sent.getValue()).containsEntry("nickname", "Alice").containsEntry("id", 7L);
+    }
+
+    @Test
+    void updateOneAndFetch_doesNotWriteTheDerivedLock_butKeepsEveryOtherKey() {
+        when(modelService.updateOneAndFetch(eq("UserAccount"), any(), any())).thenReturn(new HashMap<>());
+        ArgumentCaptor<Map<String, Object>> sent = ArgumentCaptor.forClass(Map.class);
+
+        try (MockedStatic<IdUtils> ignored = Mockito.mockStatic(IdUtils.class)) {
+            inTenant(9L, () -> controller.updateOneAndFetch(rowWithLock(7L)));
+        }
+
+        verify(modelService).updateOneAndFetch(eq("UserAccount"), sent.capture(), any());
+        assertThat(sent.getValue()).doesNotContainKey("locked");
+        assertThat(sent.getValue()).containsEntry("nickname", "Alice").containsEntry("id", 7L);
+    }
+
+    @Test
+    void createOne_neverForwardsACallerSuppliedLock() {
+        // The create endpoints do not pass the row to the write pipeline at all — inviteFromRow
+        // reads named keys and builds the account itself. This pins that: only the policyId patch
+        // reaches modelService, and it carries id + policyId, nothing the caller smuggled in.
+        UserAccountService accountService = mock(UserAccountService.class);
+        UserInfo created = new UserInfo();
+        created.setUserId(7L);
+        when(accountService.registerInvitedUser(any(), any(), any())).thenReturn(created);
+        ReflectionTestUtils.setField(controller, "service", accountService);
+
+        Map<String, Object> row = rowWithLock(null);
+        row.put("email", "alice@example.com");
+        row.put("policyId", 3L);
+        ArgumentCaptor<Map<String, Object>> sent = ArgumentCaptor.forClass(Map.class);
+
+        inTenant(9L, () -> controller.createOne(row));
+
+        verify(modelService).updateOne(eq("UserAccount"), sent.capture());
+        assertThat(sent.getValue()).doesNotContainKey("locked")
+                .containsOnlyKeys("id", "policyId");
     }
 
     private static void inTenant(Long tenantId, Runnable action) {

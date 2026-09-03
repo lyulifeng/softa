@@ -210,6 +210,7 @@ public class UserAccountController extends EntityController<UserAccountService, 
     public ApiResponse<Boolean> updateOne(@RequestBody Map<String, Object> row) {
         Assert.notNull(row.get("id"), "`id` cannot be null or missing when updating data!");
         IdUtils.formatMapId(MODEL, row);
+        dropDerivedLock(row);
         boolean ok = modelService.updateOne(MODEL, row);
         evictIfRolesTouched(row);
         return ApiResponse.success(ok);
@@ -222,6 +223,7 @@ public class UserAccountController extends EntityController<UserAccountService, 
         Assert.notEmpty(row, "The data to be updated cannot be empty!");
         Assert.notNull(row.get("id"), "`id` cannot be null or missing when updating data!");
         IdUtils.formatMapId(MODEL, row);
+        dropDerivedLock(row);
         Map<String, Object> result = modelService.updateOneAndFetch(MODEL, row, ConvertType.REFERENCE);
         evictIfRolesTouched(row);
         return ApiResponse.success(result);
@@ -477,6 +479,29 @@ public class UserAccountController extends EntityController<UserAccountService, 
         Filters scope = ownTenant == null ? roster
                 : Filters.or(roster, new Filters().eq(ModelConstant.TENANT_ID, ownTenant));
         return filters == null ? scope : Filters.and(filters, scope);
+    }
+
+    /**
+     * Drop the derived {@code locked} key from an update payload before it reaches the ORM.
+     *
+     * <p>{@link UserAccount#getLocked()} is also declared {@code readonly}, and the two are not
+     * redundant — they answer at different times. The annotation is the DECLARATIVE answer and the
+     * durable one (it covers every write path, this controller's and the generic ones), but it only
+     * bites through {@code sys_field.readonly}: {@code ModelManager.getModelUpdatableFields} reads
+     * the metadata row, not the annotation, so the field stays writable until a boot with a
+     * non-empty scanner scope — or a studio deploy — reconciles that row. This strip is
+     * UNCONDITIONAL and consults no metadata, so it holds from the first request after deploy.
+     *
+     * <p>What it prevents in that window: {@code {"id":…,"locked":true}} renders
+     * {@code UPDATE user_account SET locked = ?} — persisting to the orphaned legacy column on an
+     * upgraded database, or failing with unknown-column on a freshly converged one.
+     *
+     * <p>The create endpoints need no equivalent: {@link #inviteFromRow} reads named keys off the
+     * row and never hands the map itself to the write pipeline, so a caller-supplied
+     * {@code locked} has nothing to reach.
+     */
+    private static void dropDerivedLock(Map<String, Object> row) {
+        row.remove(LOCKED_FIELD);
     }
 
     /**
