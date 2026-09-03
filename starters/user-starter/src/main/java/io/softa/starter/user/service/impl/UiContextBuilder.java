@@ -23,16 +23,20 @@ import io.softa.framework.base.context.ContextHolder;
 import io.softa.framework.orm.annotation.SkipPermissionCheck;
 import io.softa.framework.orm.domain.FlexQuery;
 import io.softa.framework.orm.domain.Filters;
+import tools.jackson.databind.JsonNode;
+
 import io.softa.framework.orm.service.ModelService;
 import io.softa.starter.user.constant.RoleConstant;
 import io.softa.starter.user.dto.EffectiveAccess;
 import io.softa.starter.user.dto.UiContext;
 import io.softa.starter.user.entity.Navigation;
 import io.softa.starter.user.entity.Role;
+import io.softa.starter.user.entity.RoleDataScope;
 import io.softa.starter.user.entity.RoleNavigation;
 import io.softa.starter.user.entity.RoleSensitiveFieldSet;
 import io.softa.starter.user.entity.UserRoleRel;
 import io.softa.starter.user.service.NavigationModelResolver;
+import io.softa.starter.user.service.RoleDataScopeService;
 import io.softa.starter.user.service.RoleNavigationService;
 import io.softa.starter.user.service.RoleSensitiveFieldSetService;
 import io.softa.starter.user.service.RoleService;
@@ -83,6 +87,7 @@ public class UiContextBuilder {
     private final RoleService roleService;
     private final RoleNavigationService roleNavigationService;
     private final RoleSensitiveFieldSetService roleSensitiveFieldSetService;
+    private final RoleDataScopeService roleDataScopeService;
     private final NavigationModelResolver navigationModelResolver;
     private final ModelService<?> modelService;
 
@@ -107,6 +112,21 @@ public class UiContextBuilder {
      */
     @SkipPermissionCheck
     public UiContext build(Long userId) {
+        return build(userId, ContextHolder.getContext() == null ? null : ContextHolder.getContext().getTenantId());
+    }
+
+    /**
+     * Same build, with the tenant supplied explicitly.
+     *
+     * <p>{@link #build(Long)} reads the tenant off the ambient context, which is right for
+     * {@code /me} (caller and subject are the same person) and WRONG whenever an admin builds the
+     * context of somebody else: the TENANT_ADMIN branch narrows by the tenant's plan, so a platform
+     * super-admin inspecting a tenant admin would otherwise narrow by the PLATFORM tenant's plan and
+     * produce a grant set that belongs to nobody. Callers acting on another user pass that user's own
+     * tenant.
+     */
+    @SkipPermissionCheck
+    public UiContext build(Long userId, Long tenantId) {
         List<Role> activeRoles = loadActiveRolesFor(userId);
         Set<String> roleCodes = activeRoles.stream()
                 .map(Role::getCode)
@@ -129,7 +149,7 @@ public class UiContextBuilder {
         // tenant's plan, + their permissions, computed at runtime (mirrors
         // DefaultPermissionSnapshotProvider).
         if (roleCodes.contains(RoleConstant.CODE_TENANT_ADMIN)) {
-            return tenantAdminGrants(out, ContextHolder.getContext().getTenantId());
+            return tenantAdminGrants(out, tenantId);
         }
 
         // Navigation + permission grants.
@@ -147,6 +167,51 @@ public class UiContextBuilder {
         out.setNavigations(expandAncestors(navigations));
         out.setPermissions(permissions);
         out.setModelSensitiveFieldSetsMap(buildModelSfsMap(roleIds));
+        return out;
+    }
+
+    /**
+     * Row-scope rules for a user, keyed by model and OR-combined across their roles.
+     *
+     * <p>Deliberately NOT part of {@link UiContext}: that DTO is the {@code /me/uiContext} response
+     * and omits scope on purpose (see its javadoc — server-side row-filtering only, and the engine's
+     * {@code ScopeRule} type lives in permission-starter, which this module must not depend on). The
+     * admin "effective permissions" view does need to SHOW them, so they are exposed here as raw
+     * {@link JsonNode} — the wire shape of {@code {scopeType, scopeExpr?}} is identical either way,
+     * and the dependency stays absent.
+     *
+     * <p>Mirrors the engine's own step: SUPER_ADMIN and TENANT_ADMIN carry no scope rows (they bypass
+     * or are computed at runtime), so both answer with an empty map rather than a stray read.
+     */
+    @SkipPermissionCheck
+    public Map<String, List<JsonNode>> modelScopeMapFor(Long userId) {
+        List<Role> activeRoles = loadActiveRolesFor(userId);
+        Set<String> roleCodes = activeRoles.stream()
+                .map(Role::getCode)
+                .filter(c -> c != null && !c.isEmpty())
+                .collect(Collectors.toSet());
+        if (roleCodes.contains(RoleConstant.CODE_SUPER_ADMIN)
+                || roleCodes.contains(RoleConstant.CODE_TENANT_ADMIN)) {
+            return Map.of();
+        }
+        List<Long> roleIds = activeRoles.stream().map(Role::getId).filter(Objects::nonNull).toList();
+        if (roleIds.isEmpty()) {
+            return Map.of();
+        }
+        Map<String, List<JsonNode>> out = new HashMap<>();
+        List<RoleDataScope> grants = roleDataScopeService.searchList(new FlexQuery(
+                List.of("model", "dataScopes"),
+                new Filters().in(RoleDataScope::getRoleId, roleIds)));
+        for (RoleDataScope rds : grants) {
+            String model = rds.getModel();
+            JsonNode rules = rds.getDataScopes();
+            if (model == null || model.isBlank() || rules == null || !rules.isArray()) {
+                continue;
+            }
+            for (JsonNode rule : rules) {
+                out.computeIfAbsent(model, k -> new ArrayList<>()).add(rule);
+            }
+        }
         return out;
     }
 
