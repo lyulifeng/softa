@@ -15,6 +15,7 @@ import io.softa.framework.orm.annotation.Model;
 import io.softa.framework.orm.constant.ModelConstant;
 import io.softa.framework.orm.domain.Orders;
 import io.softa.framework.orm.enums.FieldType;
+import io.softa.framework.orm.enums.IndexMethod;
 import io.softa.framework.orm.enums.StorageType;
 import io.softa.starter.metadata.ddl.SqlReservedWords;
 import io.softa.starter.metadata.ddl.spi.BuiltinDdlMetadataResolver;
@@ -58,7 +59,6 @@ public final class AnnotationParser {
      * not specify one: CosID Radix36 ids are &le;13 chars (Radix62 &le;11); 24
      * leaves headroom and stays index-friendly.
      */
-    /** ISO 3166-1 alpha-2: exactly two upper-case letters. */
     private static final Pattern COUNTRY_CODE = Pattern.compile("[A-Z]{2}");
 
     private static final int STRING_ID_LENGTH = 24;
@@ -902,6 +902,7 @@ public final class AnnotationParser {
                     "@Index on " + modelName + " (" + indexName + ") message exceeds "
                             + MESSAGE_MAX + " chars (sys_model_index.message width)");
         }
+        validateIndexMethod(modelName, indexName, anno, fieldsByName);
 
         SysModelIndex idx = new SysModelIndex();
         idx.setModelName(modelName);
@@ -909,7 +910,57 @@ public final class AnnotationParser {
         idx.setIndexFields(new ArrayList<>(Arrays.asList(fields)));
         idx.setUniqueIndex(anno.unique());
         idx.setMessage(StringUtils.isBlank(anno.message()) ? null : anno.message());
+        // BTREE is stored as null: rows written before the method column existed carry
+        // null, so emitting the default explicitly would make every pre-existing index
+        // diff as "updated" on first boot and trigger a pointless DROP + CREATE of all.
+        idx.setMethod(anno.method() == IndexMethod.BTREE ? null : anno.method());
         return idx;
+    }
+
+    /**
+     * Field types whose column renders as character data — the only ones a trigram or
+     * pattern-ops operator class accepts. OPTION / MULTI_OPTION are exact-match code
+     * domains and JSON / DTO are structured payloads: substring-searching those is a
+     * modeling smell, so they are deliberately excluded rather than silently allowed.
+     */
+    private static final Set<FieldType> PATTERN_INDEXABLE_TYPES =
+            Set.of(FieldType.STRING, FieldType.TEXT, FieldType.MULTI_STRING);
+
+    /**
+     * {@code SEARCH} / {@code PREFIX} constraints, enforced at scan time so the failure
+     * names the model instead of surfacing as a database error at DDL execution:
+     * neither maps to an index shape that can back a unique constraint (GIN has no
+     * uniqueness; pattern-ops B-trees could, but the intent is matching, not identity),
+     * and both render a per-column operator class, which is only meaningful on exactly
+     * one character column.
+     */
+    private static void validateIndexMethod(String modelName, String indexName,
+                                            Index anno, Map<String, SysField> fieldsByName) {
+        IndexMethod method = anno.method();
+        if (method == IndexMethod.BTREE) {
+            return;
+        }
+        if (anno.unique()) {
+            throw new IllegalStateException(
+                    "@Index on " + modelName + " (" + indexName + ") declares method " + method
+                            + " with unique = true; " + method + " indexes cannot back a unique"
+                            + " constraint — keep the default BTREE method for unique indexes.");
+        }
+        if (anno.fields().length != 1) {
+            throw new IllegalStateException(
+                    "@Index on " + modelName + " (" + indexName + ") declares method " + method
+                            + " over " + anno.fields().length + " fields; " + method
+                            + " indexes cover exactly one string-typed field.");
+        }
+        SysField field = fieldsByName.get(anno.fields()[0]);
+        FieldType fieldType = field == null ? null : field.getFieldType();
+        if (!PATTERN_INDEXABLE_TYPES.contains(fieldType)) {
+            throw new IllegalStateException(
+                    "@Index on " + modelName + " (" + indexName + ") declares method " + method
+                            + " on field '" + anno.fields()[0] + "' of type " + fieldType
+                            + "; only " + PATTERN_INDEXABLE_TYPES + " columns can carry a"
+                            + " trigram / pattern operator class.");
+        }
     }
 
     /**

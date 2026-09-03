@@ -18,21 +18,5 @@ public enum FormFieldPermission {
 
     @JsonValue
     private final String type;
-
-    /**
-     * Parse a string value to a {@link FormFieldPermission}, defaulting to {@link #READONLY}.
-     */
-    public static FormFieldPermission fromValue(String value) {
-        if (value == null) {
-            return READONLY;
-        }
-        return switch (value.toLowerCase()) {
-            case "hidden" -> HIDDEN;
-            case "readonly", "read" -> READONLY;
-            case "editable", "edit", "write" -> EDITABLE;
-            case "required" -> REQUIRED;
-            default -> READONLY;
-        };
-    }
 }
 

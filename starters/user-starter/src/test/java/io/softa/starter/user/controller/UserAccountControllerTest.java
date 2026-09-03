@@ -38,6 +38,7 @@ import io.softa.starter.user.service.UserAccountService;
 import io.softa.starter.user.service.UserIdentityService;
 import io.softa.starter.user.service.UserInvitationService;
 import io.softa.starter.user.service.UserRoleRelService;
+import io.softa.starter.user.service.UserRosterScope;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -89,6 +90,9 @@ class UserAccountControllerTest {
         invalidator = mock(PermissionCacheInvalidator.class);
         ReflectionTestUtils.setField(controller, "modelService", modelService);
         ReflectionTestUtils.setField(controller, "permissionCacheInvalidator", invalidator);
+        // The roster window + bounds moved to UserRosterScope; the controller now delegates. Bare
+        // mocks are enough for the non-super-admin paths, which return before resolving the roster.
+        installRosterScope(mock(RoleService.class));
     }
 
     private static Map<String, Object> row(Object id, boolean withRoles) {
@@ -244,8 +248,7 @@ class UserAccountControllerTest {
 
     @Test
     void searchList_superAdmin_readsInsideACrossTenantWindow() {
-        ReflectionTestUtils.setField(controller, "roleService", roleServiceReturningNoAdminRoles());
-        ReflectionTestUtils.setField(controller, "userRoleRelService", mock(UserRoleRelService.class));
+        installRosterScope(roleServiceReturningNoAdminRoles());
 
         assertThat(crossTenantSeenBySearch(Set.of(RoleConstant.CODE_SUPER_ADMIN))).isTrue();
     }
@@ -267,8 +270,7 @@ class UserAccountControllerTest {
     void searchList_leavesTheOuterContextUntouched() {
         // The window is scoped to the read. A leak would hand the rest of the request — including any
         // write — an un-isolated context.
-        ReflectionTestUtils.setField(controller, "roleService", roleServiceReturningNoAdminRoles());
-        ReflectionTestUtils.setField(controller, "userRoleRelService", mock(UserRoleRelService.class));
+        installRosterScope(roleServiceReturningNoAdminRoles());
         when(modelService.searchList(eq("UserAccount"), any())).thenReturn(List.of());
 
         Context ctx = new Context();
@@ -277,6 +279,13 @@ class UserAccountControllerTest {
         ContextHolder.runWith(ctx, () -> controller.searchList(null));
 
         assertThat(ctx.isCrossTenant()).isFalse();
+    }
+
+    /** Install a UserRosterScope backed by the given RoleService — the roster resolution the
+     *  controller used to do itself. */
+    private void installRosterScope(RoleService roleService) {
+        ReflectionTestUtils.setField(controller, "rosterScope",
+                new UserRosterScope(roleService, mock(UserRoleRelService.class)));
     }
 
     private static RoleService roleServiceReturningNoAdminRoles() {
@@ -470,8 +479,7 @@ class UserAccountControllerTest {
         // The case the annotation exists for: the super-admin works a roster that spans tenants, and
         // the roster check (not the caller's tenant) is what bounds it.
         UserAccountService accountService = accountServiceHolding(7L, 9L);
-        ReflectionTestUtils.setField(controller, "roleService", roleServiceReturningNoAdminRoles());
-        ReflectionTestUtils.setField(controller, "userRoleRelService", mock(UserRoleRelService.class));
+        installRosterScope(roleServiceReturningNoAdminRoles());
         when(modelService.count(eq("UserAccount"), any())).thenReturn(1L);
 
         asCallerIn(2L, Set.of(RoleConstant.CODE_SUPER_ADMIN), () -> controller.rehire(7L));

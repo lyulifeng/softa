@@ -9,6 +9,7 @@ import io.softa.framework.orm.annotation.Field;
 import io.softa.framework.orm.annotation.Model;
 import io.softa.framework.orm.entity.AuditableModel;
 import io.softa.framework.orm.enums.IdStrategy;
+import io.softa.framework.orm.enums.IndexMethod;
 
 /**
  * DesignModelIndex Model
@@ -53,6 +54,10 @@ public class DesignModelIndex extends AuditableModel {
 
     @Field(label = "Is Unique Index")
     private Boolean uniqueIndex;
+
+    // Physical shape intent (mirror of SysModelIndex.method); null = BTREE.
+    @Field(label = "Index Method")
+    private IndexMethod method;
 
     // End-user message for a violation of this unique constraint (mirror of SysModelIndex.message).
     @Field(length = 256)

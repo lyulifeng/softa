@@ -31,7 +31,12 @@ public class PostgreSQLDialect implements DialectInterface {
         OPERATOR_MAP.put(Operator.IS_SET, "IS NOT NULL");
         OPERATOR_MAP.put(Operator.IS_NOT_SET, "IS NULL");
         OPERATOR_MAP.put(Operator.PARENT_OF, "IN");
-        OPERATOR_MAP.put(Operator.CHILD_OF, "ILIKE");
+        // CHILD_OF is a prefix match on machine-generated id paths (digits and
+        // slashes), where case-insensitivity buys nothing. Plain LIKE keeps the
+        // operator's documented ability to take a prefix index (see
+        // FilterUnitParser#parseChildOf); ILIKE has no B-tree operator class and
+        // would force a full scan on every tree-scoped query.
+        OPERATOR_MAP.put(Operator.CHILD_OF, "LIKE");
     }
 
     /**

@@ -1,6 +1,5 @@
 package io.softa.starter.flow.enums;
 
-import com.fasterxml.jackson.annotation.JsonCreator;
 import com.fasterxml.jackson.annotation.JsonValue;
 import lombok.AllArgsConstructor;
 import lombok.Getter;
@@ -22,18 +21,5 @@ public enum EmptyApproverStrategy {
 
     @JsonValue
     private final String type;
-
-    @JsonCreator
-    public static EmptyApproverStrategy fromValue(String value) {
-        if (value == null) {
-            return ERROR;
-        }
-        for (EmptyApproverStrategy s : values()) {
-            if (s.type.equalsIgnoreCase(value) || s.name().equalsIgnoreCase(value)) {
-                return s;
-            }
-        }
-        return ERROR;
-    }
 }
 

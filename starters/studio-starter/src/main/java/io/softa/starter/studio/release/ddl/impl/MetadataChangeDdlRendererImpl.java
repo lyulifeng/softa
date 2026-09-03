@@ -28,7 +28,7 @@ public class MetadataChangeDdlRendererImpl implements MetadataChangeDdlRenderer 
             "columnName", "fieldName", "fieldType", "relatedModel", "relatedField", "relatedFieldType",
             "length", "scale", "required", "defaultValue", "description", "dynamic"
     );
-    private static final Set<String> INDEX_PROPERTIES = Set.of("indexName", "indexFields", "uniqueIndex");
+    private static final Set<String> INDEX_PROPERTIES = Set.of("indexName", "indexFields", "uniqueIndex", "method");
 
     @Override
     public DdlRenderResult generateDdlResult(DdlDialect dialect, List<RowChangeDTO> changes) {

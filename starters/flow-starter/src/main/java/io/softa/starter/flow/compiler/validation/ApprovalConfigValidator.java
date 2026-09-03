@@ -114,7 +114,7 @@ public class ApprovalConfigValidator implements FlowValidator {
 
         // Validate the type is a known ApproverSourceType
         try {
-            ApproverSourceType.fromValue(type);
+            ApproverSourceType.of(type);
         } catch (IllegalArgumentException e) {
             d.add(CompileDiagnostic.fieldLevel(nodeId, APPROVAL_TYPE, "config.approverSource.type",
                     UNKNOWN_APPROVER_SOURCE_TYPE,

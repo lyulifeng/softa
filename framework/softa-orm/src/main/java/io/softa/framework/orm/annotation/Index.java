@@ -2,6 +2,8 @@ package io.softa.framework.orm.annotation;
 
 import java.lang.annotation.*;
 
+import io.softa.framework.orm.enums.IndexMethod;
+
 /**
  * Declares a database index on the annotated {@link Model} class.
  * <p>
@@ -38,6 +40,15 @@ import java.lang.annotation.*;
 @Retention(RetentionPolicy.RUNTIME)
 @Repeatable(Indexes.class)
 public @interface Index {
+
+    /**
+     * Physical shape of the index — a dialect-neutral intent; each DDL dialect
+     * renders its own best implementation (see {@link IndexMethod} for the
+     * per-dialect table). {@link IndexMethod#SEARCH} and {@link IndexMethod#PREFIX}
+     * require exactly one string-typed field ({@code STRING} / {@code TEXT} /
+     * {@code MULTI_STRING}) and cannot be unique — both are enforced at scan time.
+     */
+    IndexMethod method() default IndexMethod.BTREE;
 
     /**
      * SQL index identifier. Empty = parser auto-derives as

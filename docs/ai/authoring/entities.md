@@ -144,6 +144,8 @@ Stack as many as you need — no wrapper.
 @Index(fields = {"email"}, unique = true)                            // unique, auto-named uk_...
 @Index(indexName = "uk_emp_project", fields = {"empId", "projectId"},
        unique = true, message = "This employee is already on the project.")
+@Index(fields = {"name"}, method = IndexMethod.SEARCH)               // fuzzy-search index
+@Index(fields = {"idPath"}, method = IndexMethod.PREFIX)             // id-path prefix index
 ```
 
 - `fields` uses the **Java field names** (camelCase), not column names.
@@ -153,6 +155,17 @@ Stack as many as you need — no wrapper.
 - `message` is valid **only** with `unique = true`. It's the end-user text shown
   when that uniqueness is violated (a full sentence, no placeholders); it also
   serves as its own translation key.
+- `method` declares the physical shape as a dialect-neutral intent (default
+  `BTREE`). `SEARCH` targets `CONTAINS` search boxes: PostgreSQL renders a
+  trigram GIN index (`pg_trgm` is provisioned automatically; search terms
+  shorter than 3 characters answer correctly but without acceleration), MySQL
+  falls back to a plain index. `PREFIX` targets `START_WITH` / `CHILD_OF` on
+  machine-generated values (id paths, codes): PostgreSQL renders a
+  `text_pattern_ops` B-tree so prefix `LIKE` takes a range scan, MySQL again
+  needs nothing special. Both are limited to exactly one `STRING` / `TEXT` /
+  `MULTI_STRING` field and cannot be combined with `unique = true` — violations
+  fail at boot with the model named. Declare them only on columns users
+  actually search: a trigram GIN index has real write-amplification cost.
 
 ### `@OptionSet` (on an enum class)
 
