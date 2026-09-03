@@ -465,10 +465,30 @@ public class UserAccountServiceImpl extends EntityServiceImpl<UserAccount, Long>
             return false;   // idempotent: an HR workflow may legitimately fire twice
         }
 
-        // ① Release the work contact from the person's login identifiers FIRST. Doing this before
-        // the status write means a failure here cannot leave a closed membership whose address is
-        // still a live login route — the order encodes which half is security-critical.
-        this.releaseLoginIdentifiers(account);
+        // ① Touch the person's credentials FIRST — release the work contact from their login
+        // identifiers, and clear the password lock. Doing this before the status write means a
+        // failure here cannot leave a closed membership whose address is still a live login route —
+        // the order encodes which half is security-critical. One load and one write for both:
+        // releaseLoginIdentifiers would read the same row again.
+        identityService.findByProfile(account.getProfileId()).ifPresent(identity -> {
+            boolean changed = applyIdentifierRelease(account, identity);
+            // The lock defends against someone guessing THIS PERSON's password, and off-boarding is
+            // not the moment to keep defending it: the lock is a PERSON-level fact while this
+            // closes ONE membership, and a re-hire REVIVES the row, so a lock left standing greets
+            // the returning employee as a refused password login with nothing in the UI to explain
+            // it. Cleared unconditionally, exactly as freezeAccount does on the same transition
+            // (PRD 2.1 "termination — clear the lock first → Deactivated").
+            if (identity.getPasswordLockedUntil() != null) {
+                identity.setPasswordLockedUntil(null);
+                changed = true;
+            }
+            if (changed) {
+                // updateOne(entity, false): both writes here are nulls, which the default
+                // overload drops.
+                identityService.updateOne(identity, false);
+            }
+            identityService.clearPasswordFailures(identity.getId());
+        });
 
         // ② Clear role grants. A closed membership holding live grants is a standing hole by
         // itself, and since a re-hire REVIVES this row, anything left here is silently inherited.
@@ -757,24 +777,40 @@ public class UserAccountServiceImpl extends EntityServiceImpl<UserAccount, Long>
             return false;
         }
         return identityService.findByProfile(account.getProfileId()).map(identity -> {
-            boolean released = false;
-            if (isSameLoginIdentifier(account.getEmail(), identity.getLoginEmail())) {
-                identity.setLoginEmail(null);
-                released = true;
-            }
-            if (isSameLoginIdentifier(account.getMobile(), identity.getLoginMobile())) {
-                identity.setLoginMobile(null);
-                released = true;
-            }
+            boolean released = applyIdentifierRelease(account, identity);
             if (released) {
                 // updateOne(entity) drops null keys — the one thing this write is FOR. The
                 // overload that keeps them is not optional here.
                 identityService.updateOne(identity, false);
-                log.info("Released work contact(s) from identity {} of account {}.",
-                        identity.getId(), account.getId());
             }
             return released;
         }).orElse(false);
+    }
+
+    /**
+     * Null out the login identifiers this company issued, on an already-loaded identity, WITHOUT
+     * writing it.
+     *
+     * <p>Split from {@link #releaseLoginIdentifiers} so off-boarding — which also clears the
+     * password lock on the same row — can do both in one read and one write instead of two of each.
+     *
+     * @return whether anything was released (i.e. whether the row needs writing)
+     */
+    private boolean applyIdentifierRelease(UserAccount account, UserIdentity identity) {
+        boolean released = false;
+        if (isSameLoginIdentifier(account.getEmail(), identity.getLoginEmail())) {
+            identity.setLoginEmail(null);
+            released = true;
+        }
+        if (isSameLoginIdentifier(account.getMobile(), identity.getLoginMobile())) {
+            identity.setLoginMobile(null);
+            released = true;
+        }
+        if (released) {
+            log.info("Released work contact(s) from identity {} of account {}.",
+                    identity.getId(), account.getId());
+        }
+        return released;
     }
 
     /**
