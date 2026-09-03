@@ -5,6 +5,7 @@ import java.util.Map;
 import org.junit.jupiter.api.Test;
 
 import io.softa.framework.orm.enums.FieldType;
+import io.softa.framework.orm.enums.IndexMethod;
 import io.softa.starter.metadata.entity.SysField;
 import io.softa.starter.metadata.entity.SysModel;
 import io.softa.starter.metadata.entity.SysModelIndex;
@@ -129,6 +130,35 @@ class DdlPolicyTest {
         List<DdlPolicy.ModelOps> ops = DdlPolicy.classify(indexModification(code, db), Map.of());
 
         assertTrue(ops.isEmpty(), "a violation-message change must not rebuild the index");
+    }
+
+    @Test
+    void indexMethodChangeRoutesToRebuild() {
+        SysModelIndex db = index(List.of("name"), false, null);
+        SysModelIndex code = index(List.of("name"), false, null);
+        code.setMethod(IndexMethod.SEARCH);
+
+        List<DdlPolicy.ModelOps> ops = DdlPolicy.classify(indexModification(code, db), Map.of());
+
+        assertEquals(1, ops.size());
+        assertEquals(List.of(code), ops.get(0).indexes().updated(),
+                "a BTREE->SEARCH flip changes the physical access method and must rebuild, "
+                        + "not just update the catalog row");
+    }
+
+    @Test
+    void nullMethodVersusExplicitBtree_isNotAChange() {
+        // Rows written before sys_model_index.method existed read back null. Treating that as
+        // different from BTREE would rebuild every index in the catalog on the first boot after
+        // the column lands.
+        SysModelIndex db = index(List.of("name"), false, null);      // method left null
+        SysModelIndex code = index(List.of("name"), false, null);
+        code.setMethod(IndexMethod.BTREE);
+
+        List<DdlPolicy.ModelOps> ops = DdlPolicy.classify(indexModification(code, db), Map.of());
+
+        assertTrue(ops.isEmpty() || ops.get(0).indexes().updated().isEmpty(),
+                "null and BTREE are the same index; no DDL is warranted");
     }
 
     @Test

@@ -5,6 +5,7 @@ import java.util.function.Function;
 import java.util.stream.Collectors;
 
 import io.softa.framework.orm.enums.FieldType;
+import io.softa.framework.orm.enums.IndexMethod;
 import io.softa.starter.metadata.entity.SysField;
 import io.softa.starter.metadata.entity.SysModel;
 import io.softa.starter.metadata.entity.SysModelIndex;
@@ -277,13 +278,22 @@ public final class DdlPolicy {
     }
 
     /**
-     * Whether the index delta changes the physical index: its columns or its
-     * uniqueness. {@code message} (violation text) and other row attributes never
-     * justify a rebuild.
+     * Whether the index delta changes the physical index: its columns, its uniqueness, or its
+     * physical method. {@code message} (violation text) and other row attributes never justify
+     * a rebuild.
+     *
+     * <p>The method is compared NORMALIZED: rows written before {@code sys_model_index.method}
+     * existed read back null, and treating null as different from {@code BTREE} would rebuild
+     * every index in the catalog on the first boot after the column lands.
      */
     private static boolean ddlRelevantIndexChange(SysModelIndex code, SysModelIndex db) {
         return !Objects.equals(code.getIndexFields(), db.getIndexFields())
-                || isTrue(code.getUniqueIndex()) != isTrue(db.getUniqueIndex());
+                || isTrue(code.getUniqueIndex()) != isTrue(db.getUniqueIndex())
+                || method(code) != method(db);
+    }
+
+    private static IndexMethod method(SysModelIndex idx) {
+        return idx.getMethod() == null ? IndexMethod.BTREE : idx.getMethod();
     }
 
     private static boolean isTrue(Boolean b) {
