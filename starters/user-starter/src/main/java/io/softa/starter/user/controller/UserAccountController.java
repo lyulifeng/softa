@@ -497,13 +497,15 @@ public class UserAccountController extends EntityController<UserAccountService, 
     /**
      * Drop the derived {@code locked} key from an update payload before it reaches the ORM.
      *
-     * <p>{@link UserAccount#getLocked()} is also declared {@code readonly}, and the two are not
-     * redundant — they answer at different times. The annotation is the DECLARATIVE answer and the
-     * durable one (it covers every write path, this controller's and the generic ones), but it only
-     * bites through {@code sys_field.readonly}: {@code ModelManager.getModelUpdatableFields} reads
-     * the metadata row, not the annotation, so the field stays writable until a boot with a
-     * non-empty scanner scope — or a studio deploy — reconciles that row. This strip is
-     * UNCONDITIONAL and consults no metadata, so it holds from the first request after deploy.
+     * <p>{@link UserAccount#getLocked()} is also declared {@code readonly}, which is what
+     * {@code ModelManager.getModelUpdatableFields} filters on. That is the DECLARATIVE answer and
+     * the durable one — it covers every write path, this controller's and the five generic ones
+     * this class does not shadow. What it does not cover is time: the attribute is read from the
+     * {@code sys_field} ROW, not from the annotation, so the field stays writable until a boot with
+     * a non-empty scanner scope — or a studio deploy — reconciles it, and production runs with an
+     * empty scanner scope, which makes that reconciliation a release step rather than a boot side
+     * effect. This strip is UNCONDITIONAL and consults no metadata, so it holds from the first
+     * request after deploy, for the two verbs the UI actually calls.
      *
      * <p>What it prevents in that window: {@code {"id":…,"locked":true}} renders
      * {@code UPDATE user_account SET locked = ?} — persisting to the orphaned legacy column on an

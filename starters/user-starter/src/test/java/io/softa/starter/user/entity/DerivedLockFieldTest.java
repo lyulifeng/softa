@@ -12,8 +12,8 @@ import static org.assertj.core.api.Assertions.assertThat;
  * <p>Asserted on the annotation because that is where the decision is made and where it is easy to
  * lose: {@code AnnotationParser} copies {@code readonly} into {@code sys_field}, and
  * {@code ModelManager.getModelUpdatableFields} — the set {@code ModelServiceImpl} intersects an
- * update payload with — filters exactly on it. {@code dynamic} alone does not: it keeps the column
- * out of the DDL, not out of the UPDATE.
+ * update payload with — filters on it. {@code dynamic} answers a different question: it keeps the
+ * column out of the DDL, which is why both are declared.
  */
 class DerivedLockFieldTest {
 
