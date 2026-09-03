@@ -37,12 +37,15 @@ import static org.mockito.Mockito.when;
  * that is already ACTIVE: the link lands in a work mailbox the company holds, so a token pointing
  * at a PENDING row or at an identity with no password would let the company set the person's
  * GLOBAL first password — the takeover forgotPassword refuses to issue for, re-proved here because
- * the link is anonymous and lives for days.
+ * the link is anonymous and lives for days. And the address the link was mailed to must be the
+ * person's own login email: the address is the proof of who redeems it, a work mailbox proves the
+ * company, so a token addressed anywhere else is refused.
  */
 class AcceptTokenTest {
 
     private static final Long ACCOUNT = 100L;
     private static final Long PERSON = 7L;
+    private static final String LOGIN_EMAIL = "ada@personal.com";
 
     private final UserAccountService accountService = mock(UserAccountService.class);
     private final UserIdentityService identityService = mock(UserIdentityService.class);
@@ -51,19 +54,26 @@ class AcceptTokenTest {
             mock(JoinProofGuard.class), "http://localhost:3000"));
 
     private UserAccount tokenFor(AccountStatus status, String password) {
+        return tokenFor(status, password, LOGIN_EMAIL);
+    }
+
+    private UserAccount tokenFor(AccountStatus status, String password, String sentTo) {
         UserAccount account = new UserAccount();
         account.setId(ACCOUNT);
         account.setProfileId(PERSON);
         account.setStatus(status);
+        account.setEmail("ada@acme.com");
         when(accountService.getById(ACCOUNT)).thenReturn(Optional.of(account));
         UserIdentity identity = new UserIdentity();
         identity.setId(11L);
         identity.setProfileId(PERSON);
+        identity.setLoginEmail(LOGIN_EMAIL);
         identity.setPassword(password);
         when(identityService.findByProfile(PERSON)).thenReturn(Optional.of(identity));
         UserInvitation invitation = new UserInvitation();
         invitation.setId(1L);
         invitation.setUserId(ACCOUNT);
+        invitation.setEmail(sentTo);
         invitation.setPurpose(InvitationPurpose.PASSWORD_RESET);
         invitation.setStatus(InvitationStatus.PENDING);
         invitation.setExpiresAt(LocalDateTime.now().plusHours(1));
@@ -110,6 +120,46 @@ class AcceptTokenTest {
         verify(identityService, never()).setPassword(any(UserAccount.class), anyString());
         verify(identityService, never()).setPassword(any(Long.class), anyString());
         verify(invitationService, never()).updateOne(any(UserInvitation.class));
+    }
+
+    @Test
+    void aTokenMailedToTheRowsWorkAddress_isRefused_andNoPasswordIsWritten() {
+        // ACTIVE row, password set — and the link went to the company's mailbox for her, not to
+        // her login. Whoever holds that mailbox holds this token; it was issued before delivery
+        // was pinned to the login identifier (or by anything else that addresses a work mailbox).
+        // Load-bearing: setPassword never runs.
+        tokenFor(AccountStatus.ACTIVE, "hash", "ada@acme.com");
+
+        assertThatThrownBy(() -> invitationService.acceptToken("raw-token", "Str0ng!Passw0rd"))
+                .isInstanceOf(BusinessException.class)
+                .hasMessage("This link is no longer valid. Please contact your HR.");
+
+        verify(identityService, never()).setPassword(any(UserAccount.class), anyString());
+        verify(invitationService, never()).updateOne(any(UserInvitation.class));
+    }
+
+    @Test
+    void aTokenWithNoAddressRecorded_isRefused() {
+        // Rows from before the address was recorded carry nothing to compare — a blank must not
+        // pass as "matches nothing in particular".
+        tokenFor(AccountStatus.ACTIVE, "hash", null);
+
+        assertThatThrownBy(() -> invitationService.acceptToken("raw-token", "Str0ng!Passw0rd"))
+                .isInstanceOf(BusinessException.class)
+                .hasMessage("This link is no longer valid. Please contact your HR.");
+
+        verify(identityService, never()).setPassword(any(UserAccount.class), anyString());
+    }
+
+    @Test
+    void theAddressIsComparedInCanonicalForm() {
+        // Spelling differences between what was recorded and what the identity holds are not a
+        // reason to strand the person who did receive the link.
+        tokenFor(AccountStatus.ACTIVE, "hash", "  Ada@Personal.com ");
+
+        invitationService.acceptToken("raw-token", "Str0ng!Passw0rd");
+
+        verify(identityService).setPassword(any(UserAccount.class), org.mockito.ArgumentMatchers.eq("Str0ng!Passw0rd"));
     }
 
     @Test

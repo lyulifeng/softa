@@ -241,15 +241,23 @@ public class UserInvitationServiceImpl extends EntityServiceImpl<UserInvitation,
         if (StringUtils.isBlank(email)) {
             return;
         }
-        Optional<UserAccount> target = resolveResetTarget(email);
+        Optional<ResetTarget> target = resolveResetTarget(email);
         if (target.isEmpty()) {
-            // One log line and one (empty) response for "unknown", "no password yet" and "no
-            // active membership" alike — telling them apart would make this an oracle over who is
-            // registered where.
+            // One log line and one (empty) response for "unknown", "no password yet", "no active
+            // membership" and "not the person's own login email" alike — telling them apart would
+            // make this an oracle over who is registered where.
             log.info("forgotPassword for an identifier with nothing to reset — ignored (no enumeration).");
             return;
         }
-        issue(target.get(), InvitationPurpose.PASSWORD_RESET, null);
+        issue(target.get().row(), InvitationPurpose.PASSWORD_RESET, null, null, target.get().address());
+    }
+
+    /**
+     * Where a self-service reset goes and which row records it. {@code address} is the person's own
+     * login email in canonical form; {@code row} is one of their ACTIVE memberships and exists only
+     * so the invitation has a userId to be filed under — it decides nothing about delivery.
+     */
+    private record ResetTarget(UserAccount row, String address) {
     }
 
     /**
@@ -270,32 +278,38 @@ public class UserInvitationServiceImpl extends EntityServiceImpl<UserInvitation,
      * <li>the person holds at least one ACTIVE membership, and the token names one of those. The
      *     row an invitation points at is what acceptToken reads back, so it must be one that has
      *     already been confirmed — never a PENDING / INVITED row that a confirm step still guards,
-     *     nor a DEACTIVATED one.</li>
+     *     nor a DEACTIVATED one;</li>
+     * <li>the link is delivered to the login email that resolved the person, and nowhere else. The
+     *     address the link goes to IS the proof of who redeems it: a work mailbox proves the
+     *     company that holds it, the login identifier proves the person. Resolving the person
+     *     correctly and then mailing an ACTIVE row's work address would hand the company a link
+     *     that replaces the person's global password — it only has to type the personal login
+     *     it already has on file. So the ACTIVE row is bookkeeping only (the invitation needs a
+     *     userId), and the mailbox it carries is never consulted.</li>
      * </ol>
-     * Among the ACTIVE rows, the one whose work email is the identifier typed is preferred, so the
-     * link lands where the person asked for it; otherwise any ACTIVE row that has a mailbox to send
-     * to. A person with ACTIVE rows but no work email anywhere gets nothing rather than a token
-     * nobody receives.
+     * The row recorded is the ACTIVE one whose work email is the identifier when there is one —
+     * the token is then filed under the company the person addressed — else any ACTIVE row; which
+     * one no longer changes where the mail lands. A mobile login identifier resolves the person but
+     * has no mailbox to prove, so it gets nothing.
      */
-    private Optional<UserAccount> resolveResetTarget(String identifier) {
+    private Optional<ResetTarget> resolveResetTarget(String identifier) {
         String typed = LoginIdentifiers.typedForm(identifier);
         Optional<UserIdentity> identity = identityService.findByLoginIdentifier(typed);
         if (identity.isEmpty() || StringUtils.isBlank(identity.get().getPassword())) {
             return Optional.empty();
         }
+        String canonical = LoginIdentifiers.normalize(identifier);
+        if (!canonical.equals(LoginIdentifiers.normalize(identity.get().getLoginEmail()))) {
+            return Optional.empty();
+        }
         List<UserAccount> active = accountService.listMembershipsOf(identity.get().getProfileId()).stream()
                 .filter(account -> account.getStatus() == AccountStatus.ACTIVE)
                 .toList();
-        String canonical = LoginIdentifiers.normalize(identifier);
-        Optional<UserAccount> byWorkEmail = active.stream()
-                .filter(account -> canonical.equals(LoginIdentifiers.normalize(account.getEmail())))
-                .findFirst();
-        if (byWorkEmail.isPresent()) {
-            return byWorkEmail;
-        }
         return active.stream()
-                .filter(account -> StringUtils.isNotBlank(account.getEmail()))
-                .findFirst();
+                .filter(account -> canonical.equals(LoginIdentifiers.normalize(account.getEmail())))
+                .findFirst()
+                .or(() -> active.stream().findFirst())
+                .map(row -> new ResetTarget(row, canonical));
     }
 
     /**
@@ -341,6 +355,18 @@ public class UserInvitationServiceImpl extends EntityServiceImpl<UserInvitation,
     }
 
     private void issue(UserAccount account, InvitationPurpose purpose, Long invitedBy, String reason) {
+        this.issue(account, purpose, invitedBy, reason, null);
+    }
+
+    /**
+     * @param deliverTo when non-null, the ONE address the link is sent to and recorded under, in
+     *                  place of the account's work email / mobile fan-out. A self-service reset
+     *                  passes the login identifier that resolved the person: the address is what
+     *                  proves who redeems the link, and the account's work contacts prove the
+     *                  company, not the person.
+     */
+    private void issue(UserAccount account, InvitationPurpose purpose, Long invitedBy, String reason,
+                       String deliverTo) {
         revokePending(account.getId());
 
         // Who this invitation BELONGS to: the invitee's own tenant, never the caller's. It is a record
@@ -364,9 +390,11 @@ public class UserInvitationServiceImpl extends EntityServiceImpl<UserInvitation,
         // Both identifiers are recorded, so the row answers "which channels was this addressed
         // to?" — which the email alone could not once delivery fanned out. The delivery OUTCOME
         // (sent / bounced / retried) stays in message-starter's send records; duplicating it here
-        // would give two answers that drift.
-        invitation.setEmail(account.getEmail());
-        invitation.setMobile(account.getMobile());
+        // would give two answers that drift. With an explicit address, that address is the only
+        // channel — and acceptToken reads it back as the proof the link was mailed to the person.
+        boolean pinned = deliverTo != null;
+        invitation.setEmail(pinned ? deliverTo : account.getEmail());
+        invitation.setMobile(pinned ? null : account.getMobile());
         invitation.setPurpose(purpose);
         invitation.setTokenHash(EncryptUtils.computeSha256(rawToken));
         invitation.setStatus(InvitationStatus.PENDING);
@@ -422,10 +450,11 @@ public class UserInvitationServiceImpl extends EntityServiceImpl<UserInvitation,
         // platform row always resolves.
         Long tenantId = ContextHolder.getContext().getTenantId() != null ? account.getTenantId() : null;
         MessageScope scope = tenantId != null ? MessageScope.TENANT : MessageScope.PLATFORM;
-        if (StringUtils.isNotBlank(account.getEmail())) {
+        String mailTo = pinned ? deliverTo : account.getEmail();
+        if (StringUtils.isNotBlank(mailTo)) {
             String template = purpose == InvitationPurpose.PASSWORD_RESET ? TEMPLATE_RESET : TEMPLATE_INVITE;
             eventPublisher.publishEvent(new MailRequestMessage(
-                    List.of(account.getEmail()), template, Map.of("link", link, "expiryDays", EXPIRY_DAYS),
+                    List.of(mailTo), template, Map.of("link", link, "expiryDays", EXPIRY_DAYS),
                     tenantId, scope));
         }
         // Invitations only. A password reset is started from the login screen by typing an email,
@@ -433,7 +462,7 @@ public class UserInvitationServiceImpl extends EntityServiceImpl<UserInvitation,
         //
         // SmsRequestMessage carries no tenant/scope tier of its own — the SMS consumer resolves the
         // sender from the request context — so the tier above applies to the mail render only.
-        if (purpose != InvitationPurpose.PASSWORD_RESET && StringUtils.isNotBlank(account.getMobile())) {
+        if (!pinned && purpose != InvitationPurpose.PASSWORD_RESET && StringUtils.isNotBlank(account.getMobile())) {
             eventPublisher.publishEvent(new SmsRequestMessage(
                     List.of(account.getMobile()), TEMPLATE_INVITE,
                     Map.of("link", link, "expiryDays", EXPIRY_DAYS)));
@@ -441,7 +470,7 @@ public class UserInvitationServiceImpl extends EntityServiceImpl<UserInvitation,
         // Dev aid: surface the set-password / reset link so it can be copied from the logs when SMTP / MQ
         // is not wired locally. ⚠️ The link carries a one-time credential token — lower this to debug or
         // remove it before production so the token is not leaked into prod logs.
-        log.debug("Invitation link ({}) for {}: {}", purpose, account.getEmail(), link);
+        log.debug("Invitation link ({}) for {}: {}", purpose, mailTo, link);
     }
 
     private void revokePending(Long userId) {
@@ -488,18 +517,24 @@ public class UserInvitationServiceImpl extends EntityServiceImpl<UserInvitation,
 
         UserAccount account = accountService.getById(invitation.getUserId())
                 .orElseThrow(() -> new BusinessException("Account not found."));
-        // forgotPassword proved two things when it issued this: the row is an ACTIVE membership and
-        // its person already has a password. Both are proved AGAIN here because the link is valid
-        // for days and this endpoint is anonymous — in between, the membership can be closed, or
-        // a token from before those checks existed can still be in a mailbox. The mailbox proves
-        // the company that holds it, not the person; only an already-confirmed row whose person
-        // already set a credential may have that credential replaced from a mailbox alone. Any
-        // other row is a first password, which belongs to /join (with a code) or to a session.
+        // forgotPassword proved three things when it issued this: the row is an ACTIVE membership,
+        // its person already has a password, and the link was mailed to that person's own login
+        // email. All three are proved AGAIN here because the link is valid for days and this
+        // endpoint is anonymous — in between, the membership can be closed, or a token from before
+        // those checks existed can still be in a mailbox. The address the link went to is the
+        // proof of who holds it: a work mailbox proves the company, the login identifier proves
+        // the person. A token addressed anywhere but the identity's login email — one issued
+        // against a row's work address before delivery was pinned, or by anything else — was
+        // received by whoever holds that mailbox, and is refused before it can replace the
+        // person's global credential. Only an already-confirmed row whose person already set a
+        // credential may have it replaced from a mailbox at all; any other row is a first
+        // password, which belongs to /join (with a code) or to a session.
         Optional<UserIdentity> identity = account.getProfileId() == null
                 ? Optional.empty()
                 : identityService.findByProfile(account.getProfileId());
         if (account.getStatus() != AccountStatus.ACTIVE
-                || identity.isEmpty() || StringUtils.isBlank(identity.get().getPassword())) {
+                || identity.isEmpty() || StringUtils.isBlank(identity.get().getPassword())
+                || !addressedToTheirLogin(invitation, identity.get())) {
             throw new BusinessException("This link is no longer valid. Please contact your HR.");
         }
         // The password goes on the PERSON, so accepting an invitation from company B when you
@@ -512,6 +547,12 @@ public class UserInvitationServiceImpl extends EntityServiceImpl<UserInvitation,
 
         log.info("User {} set password via {} token (invitation {}).",
                 invitation.getUserId(), invitation.getPurpose(), invitation.getId());
+    }
+
+    /** Whether the link was mailed to the person's own login email — canonical forms, blank never matches. */
+    private static boolean addressedToTheirLogin(UserInvitation invitation, UserIdentity identity) {
+        String sentTo = LoginIdentifiers.normalize(invitation.getEmail());
+        return sentTo != null && sentTo.equals(LoginIdentifiers.normalize(identity.getLoginEmail()));
     }
 
     /**

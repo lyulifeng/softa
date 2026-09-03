@@ -36,6 +36,13 @@ import static org.mockito.Mockito.when;
  * company she belongs to. The mailbox proves the company, not the person, so the reset resolves
  * the PERSON by login identifier and issues only for one who already has a password and an ACTIVE
  * row — while answering every identifier the same way, so nothing here says who is registered.
+ *
+ * <p>The second trace: resolving the person correctly is not enough if the link is then mailed
+ * to an ACTIVE row's WORK address. Ada's login is ada@personal.com, with a password; she is ACTIVE
+ * at a company whose mailbox for her the company holds. HR types her personal login — it is on
+ * file — and the link lands in the company mailbox. The address the link goes to is the proof:
+ * a work mailbox proves the company, the login identifier proves the person. So the link goes to
+ * the identifier that resolved the person, and the ACTIVE row is bookkeeping only.
  */
 class ForgotPasswordScopeTest {
 
@@ -108,8 +115,16 @@ class ForgotPasswordScopeTest {
         nothingIssued();
     }
 
+    private MailRequestMessage sentMail() {
+        ArgumentCaptor<Object> mail = ArgumentCaptor.forClass(Object.class);
+        verify(eventPublisher).publishEvent(mail.capture());
+        return (MailRequestMessage) mail.getValue();
+    }
+
     @Test
-    void anActivePersonWithAPassword_getsATokenAgainstAnActiveRow() {
+    void anActivePersonWithAPassword_getsATokenAgainstAnActiveRow_mailedToHerLogin() {
+        // Ada's login is personal; her only ACTIVE row carries a mailbox the OTHER company holds.
+        // HR at that company types the personal login it has on file.
         ada(PERSONAL_EMAIL, "hash");
         UserAccount pendingElsewhere = row(100L, 1L, AccountStatus.PENDING, WORK_EMAIL);
         UserAccount active = row(200L, 2L, AccountStatus.ACTIVE, "ada@other.com");
@@ -118,16 +133,34 @@ class ForgotPasswordScopeTest {
         service.forgotPassword(PERSONAL_EMAIL);
 
         // The row the token names is what acceptToken reads back; it must be one already confirmed.
-        assertThat(issuedInvitation().getUserId()).isEqualTo(200L);
-        ArgumentCaptor<Object> mail = ArgumentCaptor.forClass(Object.class);
-        verify(eventPublisher).publishEvent(mail.capture());
-        assertThat(((MailRequestMessage) mail.getValue()).to()).containsExactly("ada@other.com");
+        UserInvitation invitation = issuedInvitation();
+        assertThat(invitation.getUserId()).isEqualTo(200L);
+        // Load-bearing: the link goes to the identifier that proved the person — never to the
+        // ACTIVE row's work mailbox, which would hand the company the person's global password.
+        assertThat(sentMail().to()).containsExactly(PERSONAL_EMAIL).doesNotContain("ada@other.com");
+        assertThat(invitation.getEmail()).isEqualTo(PERSONAL_EMAIL);
+        assertThat(invitation.getMobile()).isNull();
     }
 
     @Test
-    void theActiveRowWhoseWorkEmailWasTyped_isPreferred() {
-        // Two ACTIVE companies, the person typed one company's address: the link goes there, not
-        // to whichever row the query happened to return first.
+    void theRowsWorkMobile_isNeverAChannelForAReset() {
+        // The pinned address replaces the whole fan-out, not just the email half of it.
+        ada(PERSONAL_EMAIL, "hash");
+        UserAccount active = row(200L, 2L, AccountStatus.ACTIVE, "ada@other.com");
+        active.setMobile("+6591234567");
+        when(accountService.listMembershipsOf(ADA)).thenReturn(List.of(active));
+
+        service.forgotPassword(PERSONAL_EMAIL);
+
+        assertThat(sentMail().to()).containsExactly(PERSONAL_EMAIL);
+        assertThat(issuedInvitation().getMobile()).isNull();
+    }
+
+    @Test
+    void aLoginThatIsAlsoTheRowsWorkEmail_isMailedThere_andFiledUnderThatRow() {
+        // Two ACTIVE companies, the person's login IS one company's address: the link goes to that
+        // address (it is hers to sign in with), filed under that company's row rather than
+        // whichever row the query happened to return first.
         ada(WORK_EMAIL, "hash");
         UserAccount other = row(200L, 2L, AccountStatus.ACTIVE, "ada@other.com");
         UserAccount acme = row(300L, 3L, AccountStatus.ACTIVE, "Ada@Acme.com");
@@ -136,6 +169,36 @@ class ForgotPasswordScopeTest {
         service.forgotPassword(WORK_EMAIL);
 
         assertThat(issuedInvitation().getUserId()).isEqualTo(300L);
+        assertThat(issuedInvitation().getEmail()).isEqualTo(WORK_EMAIL);
+        assertThat(sentMail().to()).containsExactly(WORK_EMAIL);
+    }
+
+    @Test
+    void anActiveRowWithNoWorkEmail_stillGetsTheLink_atTheLogin() {
+        // Delivery never depended on the row's mailbox, so a row without one is as good as any.
+        ada(PERSONAL_EMAIL, "hash");
+        when(accountService.listMembershipsOf(ADA)).thenReturn(List.of(
+                row(200L, 2L, AccountStatus.ACTIVE, null)));
+
+        service.forgotPassword(PERSONAL_EMAIL);
+
+        assertThat(issuedInvitation().getUserId()).isEqualTo(200L);
+        assertThat(sentMail().to()).containsExactly(PERSONAL_EMAIL);
+    }
+
+    @Test
+    void aMobileLogin_getsNothing_thereIsNoMailboxToProve() {
+        // The identifier resolves the person, but a reset link is mailed and the only address that
+        // proves the person is their login email; anything else would be a work mailbox again.
+        UserIdentity identity = ada(PERSONAL_EMAIL, "hash");
+        identity.setLoginMobile("+6591234567");
+        when(identityService.findByLoginIdentifier("+6591234567")).thenReturn(Optional.of(identity));
+        when(accountService.listMembershipsOf(ADA)).thenReturn(List.of(
+                row(200L, 2L, AccountStatus.ACTIVE, "ada@other.com")));
+
+        service.forgotPassword("+6591234567");
+
+        nothingIssued();
     }
 
     @Test
@@ -187,5 +250,8 @@ class ForgotPasswordScopeTest {
 
         verify(identityService).findByLoginIdentifier(PERSONAL_EMAIL);
         assertThat(issuedInvitation().getUserId()).isEqualTo(200L);
+        // Recorded and mailed in canonical form — acceptToken compares it against the login email.
+        assertThat(issuedInvitation().getEmail()).isEqualTo(PERSONAL_EMAIL);
+        assertThat(sentMail().to()).containsExactly(PERSONAL_EMAIL);
     }
 }

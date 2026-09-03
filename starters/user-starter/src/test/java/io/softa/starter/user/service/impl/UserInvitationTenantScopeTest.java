@@ -79,6 +79,7 @@ class UserInvitationTenantScopeTest {
 
         UserIdentity identity = new UserIdentity();
         identity.setProfileId(7L);
+        identity.setLoginEmail("invitee@example.test");
         identity.setPassword("already-set");
         when(identityService.requireIdentity(any(UserAccount.class))).thenReturn(identity);
         // forgotPassword resolves the PERSON by login identifier and issues against an ACTIVE row of
