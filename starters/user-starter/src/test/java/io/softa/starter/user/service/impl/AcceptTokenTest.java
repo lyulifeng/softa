@@ -115,7 +115,7 @@ class AcceptTokenTest {
 
         assertThatThrownBy(() -> invitationService.acceptToken("raw-token", "Str0ng!Passw0rd"))
                 .isInstanceOf(BusinessException.class)
-                .hasMessage("This link is no longer valid. Please contact your HR.");
+                .hasMessage("This link is no longer valid. Please contact your administrator.");
 
         verify(identityService, never()).setPassword(any(UserAccount.class), anyString());
         verify(identityService, never()).setPassword(any(Long.class), anyString());
@@ -132,7 +132,7 @@ class AcceptTokenTest {
 
         assertThatThrownBy(() -> invitationService.acceptToken("raw-token", "Str0ng!Passw0rd"))
                 .isInstanceOf(BusinessException.class)
-                .hasMessage("This link is no longer valid. Please contact your HR.");
+                .hasMessage("This link is no longer valid. Please contact your administrator.");
 
         verify(identityService, never()).setPassword(any(UserAccount.class), anyString());
         verify(invitationService, never()).updateOne(any(UserInvitation.class));
@@ -146,7 +146,7 @@ class AcceptTokenTest {
 
         assertThatThrownBy(() -> invitationService.acceptToken("raw-token", "Str0ng!Passw0rd"))
                 .isInstanceOf(BusinessException.class)
-                .hasMessage("This link is no longer valid. Please contact your HR.");
+                .hasMessage("This link is no longer valid. Please contact your administrator.");
 
         verify(identityService, never()).setPassword(any(UserAccount.class), anyString());
     }
@@ -170,7 +170,7 @@ class AcceptTokenTest {
 
         assertThatThrownBy(() -> invitationService.acceptToken("raw-token", "Str0ng!Passw0rd"))
                 .isInstanceOf(BusinessException.class)
-                .hasMessage("This link is no longer valid. Please contact your HR.");
+                .hasMessage("This link is no longer valid. Please contact your administrator.");
 
         verify(identityService, never()).setPassword(any(UserAccount.class), anyString());
     }

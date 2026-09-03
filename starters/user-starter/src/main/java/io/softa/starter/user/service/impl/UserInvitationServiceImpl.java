@@ -535,7 +535,7 @@ public class UserInvitationServiceImpl extends EntityServiceImpl<UserInvitation,
         if (account.getStatus() != AccountStatus.ACTIVE
                 || identity.isEmpty() || StringUtils.isBlank(identity.get().getPassword())
                 || !addressedToTheirLogin(invitation, identity.get())) {
-            throw new BusinessException("This link is no longer valid. Please contact your HR.");
+            throw new BusinessException("This link is no longer valid. Please contact your administrator.");
         }
         // The password goes on the PERSON, so accepting an invitation from company B when you
         // already work at company A replaces one global credential rather than minting a second.

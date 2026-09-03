@@ -73,7 +73,7 @@ public class LoginServiceImpl implements LoginService {
             "Your invitation has not been accepted yet. Open the link we sent you.";
 
     private static final String NO_COMPANY_MESSAGE =
-            "Your account is not linked to any company. Please contact your HR.";
+            "Your account is not linked to any company. Please contact your administrator.";
 
     /**
      * The first wrong password that is answered with a remaining-attempts count (PRD L3). Early
@@ -251,7 +251,7 @@ public class LoginServiceImpl implements LoginService {
     private void assertContactNotShared(String identifier) {
         if (accountService.isWorkContactShared(identifier)) {
             throw new BusinessException("This contact is shared by more than one account, so we "
-                    + "cannot confirm who you are. Please contact your HR.");
+                    + "cannot confirm who you are. Please contact your administrator.");
         }
     }
 
@@ -266,7 +266,7 @@ public class LoginServiceImpl implements LoginService {
         // Resolved by LOGIN IDENTIFIER on the person, not by a company's work contact: the code
         // was sent to an identifier, and that identifier is what identifies the human being.
         return this.afterAuthentication(this.resolveIdentity(typed,
-                "This account is not linked to any company. Please contact your HR."));
+                "This account is not linked to any company. Please contact your administrator."));
     }
 
     @Override
@@ -696,7 +696,7 @@ public class LoginServiceImpl implements LoginService {
      *
      * <p>Someone holding nothing but an unaccepted invitation CAN authenticate (their identity is
      * seeded when HR creates the account), so they do reach this refusal, and "not linked to any
-     * company — contact your HR" is both wrong and unactionable for them: HR already did their part.
+     * company — contact your administrator" is both wrong and unactionable for them: the administrator already did their part.
      * The wider set is asked for only here, on the path that is already refusing, so the normal
      * login pays nothing for the distinction.
      */

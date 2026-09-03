@@ -141,7 +141,7 @@ class MembershipSelectionTest {
     @Test
     void onlyAnUnacceptedInvitation_isToldAboutTheInvitation() {
         // This person authenticates fine (registerUserProfile seeds their identity when HR creates
-        // the account) and now counts as belonging nowhere. "Contact your HR" is wrong for them —
+        // the account) and now counts as belonging nowhere. "Contact your administrator" is wrong for them —
         // HR already did their part; the link is sitting in their inbox.
         givenMemberships(membership(100L, 1L, AccountStatus.INVITED));
 
