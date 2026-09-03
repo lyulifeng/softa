@@ -10,6 +10,7 @@ import org.springframework.test.util.ReflectionTestUtils;
 
 import io.softa.framework.base.exception.BusinessException;
 import io.softa.framework.orm.domain.Filters;
+import io.softa.starter.user.dto.JoinContacts;
 import io.softa.starter.user.dto.JoinVerification;
 import io.softa.starter.user.entity.UserAccount;
 import io.softa.starter.user.entity.UserIdentity;
@@ -65,6 +66,7 @@ class RevivedJoinTest {
         ReflectionTestUtils.setField(loginService, "codeGuard", codeGuard);
         ReflectionTestUtils.setField(loginService, "proofGuard", proofGuard);
         when(invitationService.resolveJoinChannel(TOKEN, "email")).thenReturn(RELEASED_WORK_EMAIL);
+        when(invitationService.resolveJoinContacts(TOKEN)).thenReturn(new JoinContacts(RELEASED_WORK_EMAIL, null));
         when(accountService.isWorkContactShared(RELEASED_WORK_EMAIL)).thenReturn(false);
         // Nobody's login identifier any more: off-boarding released it on purpose.
         when(identityService.findByLoginIdentifier(RELEASED_WORK_EMAIL)).thenReturn(Optional.empty());
@@ -215,14 +217,14 @@ class RevivedJoinTest {
     }
 
     @Test
-    void aBoundPersonWithNoPassword_whoKeptAPersonalLogin_canSetItAndConfirm() {
-        // Ada left, kept ada@personal.com as her login, never set a password (she signed in by
-        // code), and was re-hired. verifyJoinCode returns her person with mustSetPassword=true and
-        // does not rebind the work address (she holds a live identifier — the takeover case above),
-        // so her identity carries no contact the invitation names. setJoinPassword tying HER to the
-        // contact refused the person the invitation was for, and there was no other way forward:
-        // the FE routes mustSetPassword straight there. The row's profileId is the tie, as it is at
-        // confirmJoin. Load-bearing: setPassword is reached.
+    void aBoundPersonWithNoPassword_whoKeptAPersonalLogin_confirmsHere_andSetsThePasswordInSession() {
+        // Ada left, kept ada@personal.com as her login, never set a password (she signs in by code),
+        // and was re-hired. The code proved control of ada@acme.com — a mailbox the company holds —
+        // not of Ada; letting it set her GLOBAL password would let whoever holds that mailbox sign
+        // in as her everywhere. She has a way in the link-holder does not (her personal email), so
+        // the password step is skipped here: she confirms on the row's profileId and afterJoin's
+        // mustSetPassword takes her to set it inside her own session. Load-bearing: setJoinPassword
+        // is refused with the sign-in wording and setPassword is never reached; confirmJoin succeeds.
         UserAccount revived = invitationIsFor(ADA);
         UserIdentity ada = identityOf(ADA, "ada@personal.com", null);
         ada.setPassword(null);
@@ -230,15 +232,35 @@ class RevivedJoinTest {
 
         JoinVerification verified = loginService.verifyJoinCode(TOKEN, "email", "123456");
         assertThat(verified.profileId()).isEqualTo(ADA);
-        assertThat(verified.mustSetPassword()).isTrue();
+        assertThat(verified.mustSetPassword()).isFalse();
 
-        loginService.setJoinPassword(TOKEN, ADA, "Str0ng!Passw0rd", "proof");
-        verify(identityService).setPassword(11L, "Str0ng!Passw0rd");
+        assertThatThrownBy(() -> loginService.setJoinPassword(TOKEN, ADA, "Str0ng!Passw0rd", "proof"))
+                .isInstanceOf(BusinessException.class)
+                .hasMessage("Sign in with your existing login to set a password.");
+        verify(identityService, never()).setPassword(any(Long.class), anyString());
 
         realInvitationServiceFor(revived).confirmJoin(TOKEN, ADA, "proof");
         assertThat(revived.getStatus()).isEqualTo(AccountStatus.ACTIVE);
         assertThat(revived.getProfileId()).isEqualTo(ADA);
         verify(accountService).updateOne(revived);
+    }
+
+    @Test
+    void aBoundPersonWithNoPassword_whoseOnlyLoginIsTheInvitedContact_stillSetsItHere() {
+        // Her mobile is on the invitation too, so it is no way in the link-holder lacks: the
+        // invitation reaches both of her identifiers. Nothing outside the invitation -> the
+        // password step stays open, as it does for the fully released identity.
+        invitationIsFor(ADA);
+        when(invitationService.resolveJoinContacts(TOKEN))
+                .thenReturn(new JoinContacts(RELEASED_WORK_EMAIL, "+6591234567"));
+        UserIdentity ada = identityOf(ADA, null, "+6591234567");
+        ada.setPassword(null);
+        when(identityService.findByProfile(ADA)).thenReturn(Optional.of(ada));
+
+        assertThat(loginService.verifyJoinCode(TOKEN, "email", "123456").mustSetPassword()).isTrue();
+
+        loginService.setJoinPassword(TOKEN, ADA, "Str0ng!Passw0rd", "proof");
+        verify(identityService).setPassword(11L, "Str0ng!Passw0rd");
     }
 
     @Test

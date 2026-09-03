@@ -13,6 +13,7 @@ import org.springframework.test.util.ReflectionTestUtils;
 import io.softa.framework.base.exception.BusinessException;
 import io.softa.framework.orm.domain.Filters;
 import io.softa.framework.orm.service.CacheService;
+import io.softa.starter.user.dto.JoinContacts;
 import io.softa.starter.user.dto.JoinVerification;
 import io.softa.starter.user.entity.UserAccount;
 import io.softa.starter.user.entity.UserIdentity;
@@ -88,6 +89,7 @@ class JoinProofTest {
         ada.setId(11L);
         ada.setProfileId(ADA);
         when(invitationService.resolveJoinChannel(TOKEN, "email")).thenReturn(WORK_EMAIL);
+        when(invitationService.resolveJoinContacts(TOKEN)).thenReturn(new JoinContacts(WORK_EMAIL, null));
         when(invitationService.resolveJoinAccount(TOKEN)).thenReturn(Optional.of(revived));
         when(identityService.findByProfile(ADA)).thenReturn(Optional.of(ada));
         when(identityService.isIdentifierClaimable(WORK_EMAIL, ADA)).thenReturn(true);

@@ -433,7 +433,13 @@ public class LoginServiceImpl implements LoginService {
             // otherwise the person keeps signing in with what they hold and confirmJoin admits them
             // on the row's profileId. See reclaimLoginIdentifier for the takeover this prevents.
             this.reclaimLoginIdentifier(known, address);
-            return this.verified(rawToken, known.getProfileId(), StringUtils.isBlank(known.getPassword()));
+            // No password step here for a person who can already sign in some other way — see
+            // holdsLoginOutsideInvitation. They confirm on the row's profileId and set the password
+            // in-session (afterJoin reports mustSetPassword from the identity), where they are
+            // themselves and not merely whoever received this link.
+            boolean mustSetPassword = StringUtils.isBlank(known.getPassword())
+                    && !holdsLoginOutsideInvitation(known, invitationService.resolveJoinContacts(rawToken));
+            return this.verified(rawToken, known.getProfileId(), mustSetPassword);
         }
 
         // Find-or-create by the address the invitation was sent to. Found = this person already
@@ -456,6 +462,24 @@ public class LoginServiceImpl implements LoginService {
      */
     private JoinVerification verified(String rawToken, Long profileId, boolean mustSetPassword) {
         return new JoinVerification(profileId, mustSetPassword, proofGuard.mint(rawToken, profileId));
+    }
+
+    /**
+     * Whether the identity holds a live login identifier the invitation was NOT addressed to.
+     *
+     * <p>That identifier is a way in the link-holder does not have, and it is what keeps a bound
+     * row's first password off the anonymous path. The code sent to a work address proves control
+     * of that address — a mailbox the company holds and reissues — not of the person; for a bound
+     * row the row's profileId then names the person, so a company holding a re-hired leaver's work
+     * mailbox would be setting a password on an identity that is not theirs, valid at every other
+     * company that identity belongs to. Sent instead to sign in with what they hold (by code, since
+     * there is no password yet) and set the password from inside that session. An identity holding
+     * nothing outside the invitation's contacts has no such way in, so for it the address remains
+     * the best evidence available and the password step stays open — the fully released re-hire.
+     */
+    private static boolean holdsLoginOutsideInvitation(UserIdentity identity, JoinContacts contacts) {
+        return (StringUtils.isNotBlank(identity.getLoginEmail()) && !contacts.includes(identity.getLoginEmail()))
+                || (StringUtils.isNotBlank(identity.getLoginMobile()) && !contacts.includes(identity.getLoginMobile()));
     }
 
     /**
@@ -531,15 +555,21 @@ public class LoginServiceImpl implements LoginService {
         // carried no contact the invitation names, so the password could never be set.
         // For an unbound row the contact is the tie, as at confirmJoin: the person's login
         // identifier must be one the invitation was addressed to.
+        JoinContacts contacts = invitationService.resolveJoinContacts(rawToken);
         if (account.getProfileId() != null) {
             if (!account.getProfileId().equals(profileId)) {
                 throw new BusinessException("This link does not belong to that account.");
             }
-        } else {
-            JoinContacts contacts = invitationService.resolveJoinContacts(rawToken);
-            if (!contacts.includes(identity.getLoginEmail()) && !contacts.includes(identity.getLoginMobile())) {
-                throw new BusinessException("This link does not belong to that account.");
+            // Refused even with a valid proof: the proof shows the code passed, and the code only
+            // ever proved control of the work address. A person who can sign in another way sets
+            // their password from that session — see holdsLoginOutsideInvitation for the takeover
+            // this keeps off the anonymous path. verifyJoinCode already answered mustSetPassword=false
+            // for this case; the check is repeated here because this endpoint re-accepts its inputs.
+            if (holdsLoginOutsideInvitation(identity, contacts)) {
+                throw new BusinessException("Sign in with your existing login to set a password.");
             }
+        } else if (!contacts.includes(identity.getLoginEmail()) && !contacts.includes(identity.getLoginMobile())) {
+            throw new BusinessException("This link does not belong to that account.");
         }
         if (StringUtils.isNotBlank(identity.getPassword())) {
             throw new BusinessException("A password is already set — sign in with it instead.");

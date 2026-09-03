@@ -82,7 +82,9 @@ public interface LoginService {
      * <p>Authorized by the invitation rather than by a session, so it is deliberately narrow: it
      * refuses unless the profile's own login identifier is one the invitation names AND that
      * profile has no password. Without both checks a link-holder could name any profileId and
-     * overwrite a stranger's password.
+     * overwrite a stranger's password. A bound row's person who can already sign in some other
+     * way (a live login identifier the invitation was not addressed to) is refused too and sets
+     * the password in-session: the code proved control of the work address, not of the person.
      *
      * @param proof the value {@link #verifyJoinCode} returned; refused unless it was minted for this
      *              very invitation and person, so holding the link is not enough to reach the write
