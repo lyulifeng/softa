@@ -41,6 +41,12 @@ class OffBoardAndReviveTest {
 
     private static final Long PROFILE = 7L;
     private static final Long ACCOUNT = 100L;
+    /**
+     * Deliberately NOT equal to PROFILE. The credential row and the person are separate ids, and
+     * production passes {@code identity.getId()} — with both set to the same value the verify below
+     * would pass for either argument, which is no assertion at all.
+     */
+    private static final Long IDENTITY = 11L;
 
     private final UserIdentityService identityService = mock(UserIdentityService.class);
     private final UserRoleRelService roleRelService = mock(UserRoleRelService.class);
@@ -64,7 +70,7 @@ class OffBoardAndReviveTest {
 
     private static UserIdentity identity(String loginEmail, String loginMobile) {
         UserIdentity identity = new UserIdentity();
-        identity.setId(PROFILE);
+        identity.setId(IDENTITY);
         identity.setProfileId(PROFILE);
         identity.setLoginEmail(loginEmail);
         identity.setLoginMobile(loginMobile);
@@ -114,7 +120,7 @@ class OffBoardAndReviveTest {
         accountService.offBoardWith(membership);
 
         assertThat(person.getPasswordLockedUntil()).isNull();
-        verify(identityService).clearPasswordFailures(PROFILE);
+        verify(identityService).clearPasswordFailures(IDENTITY);
         // One read and one write for both facts — the release and the unlock share the row.
         verify(identityService, times(1)).findByProfile(PROFILE);
         verify(identityService, times(1)).updateOne(person, false);
