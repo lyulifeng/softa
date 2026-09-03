@@ -211,7 +211,7 @@ public class LoginServiceImpl implements LoginService {
     private void assertContactNotShared(String identifier) {
         if (accountService.isWorkContactShared(identifier)) {
             throw new BusinessException("This contact is shared by more than one account, so we "
-                    + "cannot confirm who you are. Please contact your HR.");
+                    + "cannot confirm who you are. Please contact your administrator.");
         }
     }
 
@@ -222,7 +222,7 @@ public class LoginServiceImpl implements LoginService {
         // Resolved by LOGIN IDENTIFIER on the person, not by a company's work contact: the code
         // was sent to an identifier, and that identifier is what identifies the human being.
         return this.afterAuthentication(this.resolveIdentity(identifier,
-                "This account is not linked to any company. Please contact your HR."));
+                "This account is not linked to any company. Please contact your administrator."));
     }
 
     @Override
@@ -285,7 +285,7 @@ public class LoginServiceImpl implements LoginService {
                     profileService.getUserInfo(enterable.get(0).accountId()), mustSetPassword);
         }
         if (options.isEmpty()) {
-            throw new BusinessException("Your account is not linked to any company. Please contact your HR.");
+            throw new BusinessException("Your account is not linked to any company. Please contact your administrator.");
         }
         // A choice is pending, so authentication succeeded but no session is issued yet. Mint a
         // single-use token proving THIS person just authenticated; selectCompany reads the person
@@ -429,7 +429,7 @@ public class LoginServiceImpl implements LoginService {
         if (options.isEmpty()) {
             // Authenticated, but a member of nothing — the account was off-boarded everywhere, or
             // a profile exists with no membership yet. Either way there is nowhere to go.
-            throw new BusinessException("Your account is not linked to any company. Please contact your HR.");
+            throw new BusinessException("Your account is not linked to any company. Please contact your administrator.");
         }
         List<MembershipOption> selectable = options.stream().filter(MembershipOption::selectable).toList();
         if (selectable.size() == 1 && options.size() == 1) {

@@ -481,7 +481,7 @@ public class UserInvitationServiceImpl extends EntityServiceImpl<UserInvitation,
             if (entry.reason() == JoinEntry.Reason.ALREADY_JOINED) {
                 return;   // re-entrant: a double tap is not an error
             }
-            throw new BusinessException("This link is no longer valid. Please contact your HR.");
+            throw new BusinessException("This link is no longer valid. Please contact your administrator.");
         }
         UserInvitation invitation = this.searchOne(new Filters()
                         .eq(UserInvitation::getTokenHash, EncryptUtils.computeSha256(rawToken)))
@@ -503,7 +503,7 @@ public class UserInvitationServiceImpl extends EntityServiceImpl<UserInvitation,
                                 + "the re-hire flow rather than a new invitation.");
                     }
                     throw new BusinessException(
-                            "You are already a member of this company. Please contact your HR.");
+                            "You are already a member of this company. Please contact your administrator.");
                 });
 
         // The profileId is supplied by the CALLER (it came back from verifyJoinCode, but the

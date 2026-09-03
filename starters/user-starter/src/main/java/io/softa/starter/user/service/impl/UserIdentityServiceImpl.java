@@ -112,7 +112,7 @@ public class UserIdentityServiceImpl extends EntityServiceImpl<UserIdentity, Lon
         } catch (IllegalArgumentException e) {
             log.error("Login identifier is not unique — several people claim it. Refusing to guess.");
             throw new BusinessException("This contact is shared by more than one account. "
-                    + "Please contact your HR.");
+                    + "Please contact your administrator.");
         }
     }
 
