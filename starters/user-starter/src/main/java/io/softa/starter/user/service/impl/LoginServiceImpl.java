@@ -91,6 +91,10 @@ public class LoginServiceImpl implements LoginService {
     @Autowired
     private VerificationCodeGuard codeGuard;
 
+    /** Carries "the code was passed" into the anonymous set-password / confirm steps. */
+    @Autowired
+    private JoinProofGuard proofGuard;
+
     @Autowired
     private org.springframework.context.ApplicationEventPublisher eventPublisher;
 
@@ -429,7 +433,7 @@ public class LoginServiceImpl implements LoginService {
             // otherwise the person keeps signing in with what they hold and confirmJoin admits them
             // on the row's profileId. See reclaimLoginIdentifier for the takeover this prevents.
             this.reclaimLoginIdentifier(known, address);
-            return new JoinVerification(known.getProfileId(), StringUtils.isBlank(known.getPassword()));
+            return this.verified(rawToken, known.getProfileId(), StringUtils.isBlank(known.getPassword()));
         }
 
         // Find-or-create by the address the invitation was sent to. Found = this person already
@@ -437,13 +441,21 @@ public class LoginServiceImpl implements LoginService {
         // (that is the whole point of the global profile). Not found = their first company.
         Optional<UserIdentity> existing = identityService.findByLoginIdentifier(address);
         if (existing.isPresent()) {
-            return new JoinVerification(existing.get().getProfileId(),
+            return this.verified(rawToken, existing.get().getProfileId(),
                     StringUtils.isBlank(existing.get().getPassword()));
         }
         // Brand new person: no password by construction, so the password step always follows.
         // Constructed through the profile service, which is the one waived choke point where a
         // person and their credentials row are minted together.
-        return new JoinVerification(profileService.createPersonForJoin(address), true);
+        return this.verified(rawToken, profileService.createPersonForJoin(address), true);
+    }
+
+    /**
+     * The verification result, carrying a freshly minted proof. Minted here and nowhere else: every
+     * branch above has just seen the code pass, and the proof must mean exactly that.
+     */
+    private JoinVerification verified(String rawToken, Long profileId, boolean mustSetPassword) {
+        return new JoinVerification(profileId, mustSetPassword, proofGuard.mint(rawToken, profileId));
     }
 
     /**
@@ -492,7 +504,15 @@ public class LoginServiceImpl implements LoginService {
 
     @Override
     @Transactional
-    public void setJoinPassword(String rawToken, Long profileId, String newPassword) {
+    public void setJoinPassword(String rawToken, Long profileId, String newPassword, String proof) {
+        // The proof comes FIRST, before anything about the invitation or the person is looked up.
+        // This endpoint is anonymous, and for a bound row the tie below is the caller-supplied
+        // profileId alone — a value readable off the roster. A company holding a re-hired person's
+        // work mailbox (where the link lands) could otherwise call this with the token and that id,
+        // set the person's GLOBAL password without ever passing the code, and sign in as them at
+        // every other company. The proof exists only if verifyJoinCode saw the code pass for this
+        // invitation and this person. It is left alive on purpose: confirmJoin follows and spends it.
+        proofGuard.require(proof, rawToken, profileId);
         UserAccount account = invitationService.resolveJoinAccount(rawToken)
                 .orElseThrow(() -> new BusinessException("This invitation link is no longer usable."));
         UserIdentity identity = identityService.findByProfile(profileId)

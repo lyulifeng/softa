@@ -51,13 +51,17 @@ class JoinContactSpellingTest {
     private final UserInvitationService invitationService = mock(UserInvitationService.class);
     private final UserProfileServiceImpl profileService = spy(new UserProfileServiceImpl());
     private final LoginServiceImpl loginService = new LoginServiceImpl();
+    /** Waved through: the proof is JoinProofTest's subject, the contact spelling is this one's. */
+    private final JoinProofGuard proofGuard = mock(JoinProofGuard.class);
     private final UserInvitationServiceImpl realInvitationService = spy(new UserInvitationServiceImpl(
-            accountService, identityService, mock(ApplicationEventPublisher.class), null, "http://localhost"));
+            accountService, identityService, mock(ApplicationEventPublisher.class), null, proofGuard,
+            "http://localhost"));
 
     JoinContactSpellingTest() {
         ReflectionTestUtils.setField(profileService, "identityService", identityService);
         ReflectionTestUtils.setField(loginService, "invitationService", invitationService);
         ReflectionTestUtils.setField(loginService, "identityService", identityService);
+        ReflectionTestUtils.setField(loginService, "proofGuard", proofGuard);
         doReturn(PROFILE).when(profileService).createOne(any(UserProfile.class));
     }
 
@@ -83,7 +87,7 @@ class JoinContactSpellingTest {
         // ② setJoinPassword ties the person to the invitation, which still spells the contact as
         // HR did. Load-bearing: compared raw this threw "This link does not belong to that account."
         when(invitationService.resolveJoinContacts(TOKEN)).thenReturn(new JoinContacts(AS_HR_TYPED_IT, null));
-        loginService.setJoinPassword(TOKEN, PROFILE, "Str0ng!Passw0rd");
+        loginService.setJoinPassword(TOKEN, PROFILE, "Str0ng!Passw0rd", "proof");
         verify(identityService).setPassword(11L, "Str0ng!Passw0rd");
 
         // ③ confirmJoin makes the same tie for an unbound row, from the invitation's own columns.
@@ -98,7 +102,7 @@ class JoinContactSpellingTest {
         when(accountService.getById(ACCOUNT_ID)).thenReturn(Optional.of(account));
         when(accountService.listMembershipsOf(any())).thenReturn(List.of());
 
-        realInvitationService.confirmJoin(TOKEN, PROFILE);
+        realInvitationService.confirmJoin(TOKEN, PROFILE, "proof");
 
         assertThat(account.getProfileId()).isEqualTo(PROFILE);
         assertThat(account.getStatus()).isEqualTo(AccountStatus.ACTIVE);

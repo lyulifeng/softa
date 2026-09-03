@@ -6,7 +6,8 @@ import lombok.Data;
 
 /**
  * Request body for {@code POST /login/setJoinPassword} — the first password, set mid-join where no
- * session exists yet. The token, not the profile id, is what authorizes the write.
+ * session exists yet. The token plus the proof from verifyJoinCode, not the profile id, is what
+ * authorizes the write.
  */
 @Data
 public class SetJoinPasswordDTO {
@@ -19,4 +20,7 @@ public class SetJoinPasswordDTO {
 
     @NotBlank(message = "New password cannot be empty!")
     private String newPassword;
+
+    @NotBlank(message = "Proof cannot be empty!")
+    private String proof;
 }

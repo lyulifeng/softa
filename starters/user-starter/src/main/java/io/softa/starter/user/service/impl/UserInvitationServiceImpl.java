@@ -70,17 +70,21 @@ public class UserInvitationServiceImpl extends EntityServiceImpl<UserInvitation,
     private final ApplicationEventPublisher eventPublisher;
     /** Optional: the join screens show the inviting company's name; absent tenant-starter → null. */
     private final TenantInfoService tenantInfoService;
+    /** The "code was passed" proof that confirmJoin demands and spends. */
+    private final JoinProofGuard proofGuard;
     private final String frontendBaseUrl;
 
     public UserInvitationServiceImpl(UserAccountService accountService,
                                      UserIdentityService identityService,
                                      ApplicationEventPublisher eventPublisher,
                                      @Autowired(required = false) TenantInfoService tenantInfoService,
+                                     JoinProofGuard proofGuard,
                                      @Value("${app.frontend-base-url:http://localhost:3000}") String frontendBaseUrl) {
         this.accountService = accountService;
         this.identityService = identityService;
         this.eventPublisher = eventPublisher;
         this.tenantInfoService = tenantInfoService;
+        this.proofGuard = proofGuard;
         this.frontendBaseUrl = frontendBaseUrl;
     }
 
@@ -463,12 +467,13 @@ public class UserInvitationServiceImpl extends EntityServiceImpl<UserInvitation,
      * @param rawToken  the invitation token, re-validated here — the caller may have held the
      *                  page open long enough for a revoke or re-send to land
      * @param profileId the person who verified their identity in the preceding step
+     * @param proof     what verifyJoinCode handed back for that step; spent here on success
      */
     @SkipPermissionCheck
     @CrossTenant
     @Override
     @Transactional
-    public void confirmJoin(String rawToken, Long profileId) {
+    public void confirmJoin(String rawToken, Long profileId, String proof) {
         Assert.notNull(profileId, "profileId is required");
         JoinEntry entry = this.inspectJoinToken(rawToken);
         if (!entry.usable()) {
@@ -477,6 +482,13 @@ public class UserInvitationServiceImpl extends EntityServiceImpl<UserInvitation,
             }
             throw new BusinessException("This link is no longer valid. Please contact your administrator.");
         }
+        // After the quiet ALREADY_JOINED return, deliberately: the successful confirm just spent the
+        // proof, so a double tap arrives without one and would otherwise be told to verify a code
+        // for a membership it already activated. Before everything else, though: this endpoint is
+        // anonymous and re-accepts the profileId, and for a bound row that id is the only tie —
+        // whoever holds the link (a company holding the work mailbox it landed in) could name the
+        // roster's id for that person and bind without ever passing the code. See JoinProofGuard.
+        proofGuard.require(proof, rawToken, profileId);
         UserInvitation invitation = this.searchOne(new Filters()
                         .eq(UserInvitation::getTokenHash, EncryptUtils.computeSha256(rawToken)))
                 .orElseThrow(() -> new BusinessException("This link is invalid."));
@@ -543,6 +555,8 @@ public class UserInvitationServiceImpl extends EntityServiceImpl<UserInvitation,
         invitation.setStatus(InvitationStatus.ACCEPTED);
         invitation.setAcceptedAt(LocalDateTime.now());
         this.updateOne(invitation);
+        // Spent, not left to expire: the flow it authorized is complete.
+        proofGuard.consume(proof);
         log.info("Profile {} joined tenant {} via invitation {}.",
                 profileId, account.getTenantId(), invitation.getId());
     }

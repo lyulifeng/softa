@@ -48,8 +48,10 @@ class ConfirmJoinAuthorizationTest {
     private final UserAccountService accountService = mock(UserAccountService.class);
     private final UserIdentityService identityService = mock(UserIdentityService.class);
     private final ApplicationEventPublisher eventPublisher = mock(ApplicationEventPublisher.class);
+    /** The proof is JoinProofTest's subject; here it is waved through so the profileId tie is what decides. */
     private final UserInvitationServiceImpl service = spy(new UserInvitationServiceImpl(
-            accountService, identityService, eventPublisher, null, "http://localhost:3000"));
+            accountService, identityService, eventPublisher, null, mock(JoinProofGuard.class),
+            "http://localhost:3000"));
 
     private UserInvitation givenPendingInvitationTo(String email, String mobile) {
         UserInvitation invitation = new UserInvitation();
@@ -86,7 +88,7 @@ class ConfirmJoinAuthorizationTest {
         when(identityService.findByProfile(RIGHTFUL_PROFILE))
                 .thenReturn(Optional.of(identity("alice@acme.com", null)));
 
-        service.confirmJoin(TOKEN, RIGHTFUL_PROFILE);
+        service.confirmJoin(TOKEN, RIGHTFUL_PROFILE, "proof");
 
         verify(accountService).updateOne(any(UserAccount.class));
     }
@@ -99,7 +101,7 @@ class ConfirmJoinAuthorizationTest {
         when(identityService.findByProfile(ATTACKER_TARGET_PROFILE))
                 .thenReturn(Optional.of(identity("victim@elsewhere.com", "+8613800138000")));
 
-        assertThatThrownBy(() -> service.confirmJoin(TOKEN, ATTACKER_TARGET_PROFILE))
+        assertThatThrownBy(() -> service.confirmJoin(TOKEN, ATTACKER_TARGET_PROFILE, "proof"))
                 .isInstanceOf(BusinessException.class)
                 .hasMessageContaining("does not belong");
 
@@ -118,7 +120,7 @@ class ConfirmJoinAuthorizationTest {
         when(identityService.findByProfile(ATTACKER_TARGET_PROFILE))
                 .thenReturn(Optional.of(identity("alice@acme.com", null)));
 
-        assertThatThrownBy(() -> service.confirmJoin(TOKEN, ATTACKER_TARGET_PROFILE))
+        assertThatThrownBy(() -> service.confirmJoin(TOKEN, ATTACKER_TARGET_PROFILE, "proof"))
                 .isInstanceOf(BusinessException.class)
                 .hasMessageContaining("does not belong");
 
@@ -137,7 +139,7 @@ class ConfirmJoinAuthorizationTest {
         when(accountService.findMembershipInTenant(TENANT, RIGHTFUL_PROFILE))
                 .thenReturn(Optional.of(revived));
 
-        service.confirmJoin(TOKEN, RIGHTFUL_PROFILE);
+        service.confirmJoin(TOKEN, RIGHTFUL_PROFILE, "proof");
 
         assertThat(revived.getStatus()).isEqualTo(AccountStatus.ACTIVE);
         verify(accountService).updateOne(revived);
@@ -160,7 +162,7 @@ class ConfirmJoinAuthorizationTest {
         when(accountService.findMembershipInTenant(TENANT, RIGHTFUL_PROFILE))
                 .thenReturn(Optional.of(revived));
 
-        service.confirmJoin(TOKEN, RIGHTFUL_PROFILE);
+        service.confirmJoin(TOKEN, RIGHTFUL_PROFILE, "proof");
 
         assertThat(revived.getStatus()).isEqualTo(AccountStatus.ACTIVE);
         assertThat(revived.getProfileId()).isEqualTo(RIGHTFUL_PROFILE);
@@ -182,7 +184,7 @@ class ConfirmJoinAuthorizationTest {
         when(accountService.findMembershipInTenant(TENANT, RIGHTFUL_PROFILE))
                 .thenReturn(Optional.of(closed));
 
-        assertThatThrownBy(() -> service.confirmJoin(TOKEN, RIGHTFUL_PROFILE))
+        assertThatThrownBy(() -> service.confirmJoin(TOKEN, RIGHTFUL_PROFILE, "proof"))
                 .isInstanceOf(BusinessException.class)
                 .hasMessageContaining("re-hire");
         verify(accountService, never()).updateOne(any(UserAccount.class));

@@ -37,12 +37,6 @@ public interface UserInvitationService extends EntityService<UserInvitation, Lon
     JoinEntry inspectJoinToken(String rawToken);
 
     /**
-     * Confirm joining: bind the verified person to the membership and activate it.
-     *
-     * <p>Separate from setting a password because they mean different things — see the
-     * implementation for why activation waits for this call.
-     */
-    /**
      * Resolves the PLAINTEXT address the invitation names, for the caller to send a code to.
      *
      * <p>Exists because the join page is shown MASKED contacts by design (a leaked link must not
@@ -81,7 +75,16 @@ public interface UserInvitationService extends EntityService<UserInvitation, Lon
      */
     java.util.Optional<io.softa.starter.user.entity.UserAccount> resolveJoinAccount(String rawToken);
 
-    void confirmJoin(String rawToken, Long profileId);
+    /**
+     * Confirm joining: bind the verified person to the membership and activate it.
+     *
+     * <p>Separate from setting a password because they mean different things — see the
+     * implementation for why activation waits for this call.
+     *
+     * @param proof the value verifyJoinCode returned; required to name this invitation and this
+     *              person, and spent here on success
+     */
+    void confirmJoin(String rawToken, Long profileId, String proof);
 
     /**
      * Issue (or re-issue) an INVITE token for a user and email the set-password link. Any prior

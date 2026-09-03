@@ -10,6 +10,9 @@ package io.softa.starter.user.dto;
  *
  * @param profileId       the person, found by the invitation's own address or created on the spot
  * @param mustSetPassword whether a password step must run before the confirm screen
+ * @param proof           single-use evidence that the code was passed, which setJoinPassword and
+ *                        confirmJoin require back — see {@code JoinProofGuard} for why a
+ *                        caller-supplied profileId alone could not authorize either
  */
-public record JoinVerification(Long profileId, boolean mustSetPassword) {
+public record JoinVerification(Long profileId, boolean mustSetPassword, String proof) {
 }

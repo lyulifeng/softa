@@ -39,7 +39,7 @@ class AcceptTokenTest {
     private final UserIdentityService identityService = mock(UserIdentityService.class);
     private final UserInvitationServiceImpl invitationService = spy(new UserInvitationServiceImpl(
             accountService, identityService, mock(ApplicationEventPublisher.class), null,
-            "http://localhost:3000"));
+            mock(JoinProofGuard.class), "http://localhost:3000"));
 
     private UserAccount tokenFor(AccountStatus status) {
         UserAccount account = new UserAccount();

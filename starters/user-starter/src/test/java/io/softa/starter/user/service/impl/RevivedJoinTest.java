@@ -53,6 +53,8 @@ class RevivedJoinTest {
     private final UserIdentityService identityService = mock(UserIdentityService.class);
     private final UserProfileService profileService = mock(UserProfileService.class);
     private final VerificationCodeGuard codeGuard = mock(VerificationCodeGuard.class);
+    /** Waved through: the proof is JoinProofTest's subject; this test is about whose row it is. */
+    private final JoinProofGuard proofGuard = mock(JoinProofGuard.class);
     private final LoginServiceImpl loginService = new LoginServiceImpl();
 
     RevivedJoinTest() {
@@ -61,6 +63,7 @@ class RevivedJoinTest {
         ReflectionTestUtils.setField(loginService, "identityService", identityService);
         ReflectionTestUtils.setField(loginService, "profileService", profileService);
         ReflectionTestUtils.setField(loginService, "codeGuard", codeGuard);
+        ReflectionTestUtils.setField(loginService, "proofGuard", proofGuard);
         when(invitationService.resolveJoinChannel(TOKEN, "email")).thenReturn(RELEASED_WORK_EMAIL);
         when(accountService.isWorkContactShared(RELEASED_WORK_EMAIL)).thenReturn(false);
         // Nobody's login identifier any more: off-boarding released it on purpose.
@@ -194,7 +197,8 @@ class RevivedJoinTest {
     /** confirmJoin's real implementation, fed the same row and invitation the login steps saw. */
     private UserInvitationServiceImpl realInvitationServiceFor(UserAccount account) {
         UserInvitationServiceImpl real = spy(new UserInvitationServiceImpl(
-                accountService, identityService, mock(ApplicationEventPublisher.class), null, "http://localhost"));
+                accountService, identityService, mock(ApplicationEventPublisher.class), null, proofGuard,
+                "http://localhost"));
         UserInvitation invitation = new UserInvitation();
         invitation.setId(55L);
         invitation.setUserId(account.getId());
@@ -228,10 +232,10 @@ class RevivedJoinTest {
         assertThat(verified.profileId()).isEqualTo(ADA);
         assertThat(verified.mustSetPassword()).isTrue();
 
-        loginService.setJoinPassword(TOKEN, ADA, "Str0ng!Passw0rd");
+        loginService.setJoinPassword(TOKEN, ADA, "Str0ng!Passw0rd", "proof");
         verify(identityService).setPassword(11L, "Str0ng!Passw0rd");
 
-        realInvitationServiceFor(revived).confirmJoin(TOKEN, ADA);
+        realInvitationServiceFor(revived).confirmJoin(TOKEN, ADA, "proof");
         assertThat(revived.getStatus()).isEqualTo(AccountStatus.ACTIVE);
         assertThat(revived.getProfileId()).isEqualTo(ADA);
         verify(accountService).updateOne(revived);
@@ -247,7 +251,7 @@ class RevivedJoinTest {
         stranger.setPassword(null);
         when(identityService.findByProfile(999L)).thenReturn(Optional.of(stranger));
 
-        assertThatThrownBy(() -> loginService.setJoinPassword(TOKEN, 999L, "Str0ng!Passw0rd"))
+        assertThatThrownBy(() -> loginService.setJoinPassword(TOKEN, 999L, "Str0ng!Passw0rd", "proof"))
                 .isInstanceOf(BusinessException.class)
                 .hasMessageContaining("does not belong");
         verify(identityService, never()).setPassword(any(Long.class), anyString());

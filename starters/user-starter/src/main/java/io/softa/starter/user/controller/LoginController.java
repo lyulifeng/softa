@@ -179,7 +179,7 @@ public class LoginController {
     @PostMapping("/setJoinPassword")
     @SwitchUser(SystemUser.REGISTERED_USER)
     public ApiResponse<Void> setJoinPassword(@RequestBody @Valid SetJoinPasswordDTO dto) {
-        loginService.setJoinPassword(dto.getToken(), dto.getProfileId(), dto.getNewPassword());
+        loginService.setJoinPassword(dto.getToken(), dto.getProfileId(), dto.getNewPassword(), dto.getProof());
         return ApiResponse.success();
     }
 
@@ -194,7 +194,7 @@ public class LoginController {
     @SwitchUser(SystemUser.REGISTERED_USER)
     public ApiResponse<AuthenticationResult> confirmJoin(@RequestBody @Valid ConfirmJoinDTO dto,
             HttpServletResponse response) {
-        invitationService.confirmJoin(dto.getToken(), dto.getProfileId());
+        invitationService.confirmJoin(dto.getToken(), dto.getProfileId(), dto.getProof());
         // Re-runs the company resolution rather than assuming the just-joined membership is the
         // only one: the person may already belong elsewhere, in which case they must still choose.
         return this.issueOrAskForCompany(loginService.afterJoin(dto.getProfileId()), response);

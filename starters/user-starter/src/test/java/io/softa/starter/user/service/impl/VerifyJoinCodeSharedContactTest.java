@@ -51,6 +51,7 @@ class VerifyJoinCodeSharedContactTest {
         ReflectionTestUtils.setField(loginService, "identityService", identityService);
         ReflectionTestUtils.setField(loginService, "profileService", profileService);
         ReflectionTestUtils.setField(loginService, "codeGuard", codeGuard);
+        ReflectionTestUtils.setField(loginService, "proofGuard", mock(JoinProofGuard.class));
     }
 
     @Test

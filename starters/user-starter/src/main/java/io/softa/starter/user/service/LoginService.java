@@ -83,8 +83,11 @@ public interface LoginService {
      * refuses unless the profile's own login identifier is one the invitation names AND that
      * profile has no password. Without both checks a link-holder could name any profileId and
      * overwrite a stranger's password.
+     *
+     * @param proof the value {@link #verifyJoinCode} returned; refused unless it was minted for this
+     *              very invitation and person, so holding the link is not enough to reach the write
      */
-    void setJoinPassword(String rawToken, Long profileId, String newPassword);
+    void setJoinPassword(String rawToken, Long profileId, String newPassword, String proof);
 
     /** Whether this person still has to set a password (arrived by invitation or code only). */
     boolean mustSetPassword(Long profileId);
