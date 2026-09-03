@@ -35,14 +35,15 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 /**
- * confirmJoin on a bound row does not sign in a person who can sign in elsewhere and has no password.
+ * confirmJoin on a bound row does not sign in a person who can sign in elsewhere — password or not.
  *
- * <p>The trace this closes: Ada left, kept ada@personal.com as her login, never set a password, and
- * was re-hired. The invitation goes to ada@acme.com — a mailbox the company holds. Whoever holds it
- * passes the code (mustSetPassword=false, so the password step is skipped) and confirms. Before
- * this, confirmJoin activated the row and then issued a session for Ada's profileId, from which
- * {@code /UserAccount/setMyFirstPassword} sets her GLOBAL password: the mailbox holder becomes Ada
- * at every company she belongs to. The code proved the company's mailbox, not the person, and the
+ * <p>The trace this closes: Ada left, kept ada@personal.com as her login, and was re-hired. The
+ * invitation goes to ada@acme.com — a mailbox the company holds. Whoever holds it passes the code
+ * (mustSetPassword=false, so the password step is skipped) and confirms. Before this, confirmJoin
+ * activated the row and then issued a session for Ada's profileId — and, had she belonged elsewhere
+ * too, a pre-auth token into the company step. With no password on her identity that session mints
+ * her GLOBAL first password ({@code /UserAccount/setMyFirstPassword}); with one, it simply IS Ada,
+ * here and at every other company. The code proved the company's mailbox, not the person, and the
  * two must not be confused at the one moment a session is minted.
  */
 class ConfirmJoinSignInRequiredTest {
@@ -176,17 +177,40 @@ class ConfirmJoinSignInRequiredTest {
     }
 
     @Test
-    void aBoundPerson_withAPassword_stillGetsASession_whateverTheyHold() {
-        // A set password is what the first-password endpoint refuses to touch, so the session cannot
-        // become the global credential the guard exists to keep off this path.
-        invitationFor(ADA, WORK_EMAIL, null);
+    void aBoundPerson_withAPassword_whoHoldsAnOutsideLogin_isJoinedButNotSignedIn() {
+        // The password changes nothing about WHO passed the code. Ada can sign in with
+        // ada@personal.com and her password; the mailbox holder cannot, and a session here would
+        // be Ada's — in this company, and through the pre-auth token in every other one.
+        UserAccount revived = invitationFor(ADA, WORK_EMAIL, null);
         ada(PERSONAL_EMAIL, null, "hash");
+
+        AuthenticationResult result = loginService.confirmJoin(TOKEN, ADA, "proof");
+
+        assertThat(revived.getStatus()).isEqualTo(AccountStatus.ACTIVE);
+        assertThat(revived.getProfileId()).isEqualTo(ADA);
+        // Load-bearing: signInRequired, and nothing that stands for Ada — no session payload, no
+        // pre-auth token written to the cache.
+        assertThat(result.signInRequired()).isTrue();
+        assertThat(result.isResolved()).isFalse();
+        assertThat(result.userInfo()).isNull();
+        assertThat(result.authToken()).isNull();
+        verify(cacheService, never()).save(anyString(), any(), anyInt());
+        verify(profileService, never()).getUserInfo(any());
+    }
+
+    @Test
+    void aBoundPerson_withAPassword_holdingOnlyTheInvitedContact_stillGetsASession() {
+        // Her only login is the work mobile the invitation also names: nothing she holds is out of
+        // the link-holder's reach, so the address stays the evidence and the session is issued.
+        invitationFor(ADA, WORK_EMAIL, "+6591234567");
+        ada(null, "+6591234567", "hash");
 
         AuthenticationResult result = loginService.confirmJoin(TOKEN, ADA, "proof");
 
         assertThat(result.signInRequired()).isFalse();
         assertThat(result.isResolved()).isTrue();
         assertThat(result.mustSetPassword()).isFalse();
+        verify(profileService).getUserInfo(eq(ACCOUNT_ID));
     }
 
     @Test

@@ -398,17 +398,18 @@ public class LoginServiceImpl implements LoginService {
         // control of the WORK address on a row that already named its person — a mailbox the
         // company holds and reissues. For an unbound row the address IS the person's own login
         // identifier (the contact tie), so the same code does identify them; for a bound row it
-        // identifies whoever holds the mailbox. verifyJoinCode already kept such a person's first
-        // password off this path (holdsLoginOutsideInvitation); a session here would undo that,
-        // because /UserAccount/setMyFirstPassword sets the GLOBAL password from any session. So the
-        // membership stays activated — HR intended it — and nothing is issued: the person signs in
-        // with the login they hold (by code, since there is no password) and sets it from there.
-        // A person WITH a password keeps the session, as before: the first-password endpoint refuses
-        // them, so the global credential this closes off cannot be minted from that session.
-        // Residual, by design: that session is still the leaver's in the joined company (and the
-        // company step, if they belong elsewhere); it rests on HR having issued the invitation.
-        if (boundBefore && StringUtils.isBlank(identity.getPassword())
-                && holdsLoginOutsideInvitation(identity, contacts)) {
+        // identifies whoever holds the mailbox. So the membership stays activated — HR intended it
+        // — and nothing that stands for the person is issued: no session, and no pre-auth token
+        // into their other companies. Whether the identity has a password does not enter into it:
+        // a password-less identity would have its GLOBAL first password minted from the session
+        // (/UserAccount/setMyFirstPassword), and an identity WITH a password would simply be
+        // impersonated — in this company and, through the company step, in every other one it
+        // belongs to — by whoever holds the mailbox. A person who has their own way in must use it;
+        // the one who has none (nothing outside the invitation's contacts) has the address as the
+        // only evidence there is, and for them the session is issued as before.
+        // Residual, by design: for that fully released identity the session still rests on HR
+        // having addressed the invitation to the right person.
+        if (boundBefore && holdsLoginOutsideInvitation(identity, contacts)) {
             return AuthenticationResult.requireSignIn();
         }
         return this.afterAuthentication(identity);
@@ -505,7 +506,8 @@ public class LoginServiceImpl implements LoginService {
      * Whether the identity holds a live login identifier the invitation was NOT addressed to.
      *
      * <p>That identifier is a way in the link-holder does not have, and it is what keeps a bound
-     * row's first password off the anonymous path. The code sent to a work address proves control
+     * row's first password — and, at confirmJoin, any session at all — off the anonymous path.
+     * The code sent to a work address proves control
      * of that address — a mailbox the company holds and reissues — not of the person; for a bound
      * row the row's profileId then names the person, so a company holding a re-hired leaver's work
      * mailbox would be setting a password on an identity that is not theirs, valid at every other
