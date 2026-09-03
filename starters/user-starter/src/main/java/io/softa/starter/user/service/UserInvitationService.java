@@ -107,8 +107,7 @@ public interface UserInvitationService extends EntityService<UserInvitation, Lon
      *               that detaches a person from a membership that keeps its authority, and
      *               "who did this and why" is the only thing a later review has to go on
      */
-    void unbindAndReinvite(Long userId, String newEmail, String newMobile, String reason,
-            Long operatedBy);
+    void unbindAndReinvite(Long userId, String reason, Long operatedBy);
 
     /**
      * Self-service forgot-password: issue a PASSWORD_RESET token for the email. Silently no-ops when

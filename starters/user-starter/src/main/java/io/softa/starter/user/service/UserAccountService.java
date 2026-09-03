@@ -8,6 +8,7 @@ import io.softa.framework.base.context.UserInfo;
 import io.softa.framework.orm.service.EntityService;
 import io.softa.starter.user.dto.UserAccountDTO;
 import io.softa.starter.user.dto.UserProfileDTO;
+import io.softa.starter.user.dto.WorkContacts;
 import io.softa.starter.user.entity.UserAccount;
 
 /**
@@ -69,6 +70,14 @@ public interface UserAccountService extends EntityService<UserAccount, Long> {
     UserInfo registerInvitedUser(String email, String mobile, String fullName);
 
     /**
+     * The reason a new account with these contacts must be refused in the current tenant, or
+     * {@code null} when it may be created (possibly by linking to an existing person or reviving
+     * their closed membership). Same rules {@link #registerInvitedUser} applies — one source, so an
+     * import pre-check and the create path cannot disagree.
+     */
+    String newAccountRefusal(String email, String mobile);
+
+    /**
      * Off-board a membership: close it and strip what must not outlive it (A7 / S3, PRD W6).
      *
      * <p>Three things happen together because leaving any one of them out is a real defect:
@@ -124,6 +133,45 @@ public interface UserAccountService extends EntityService<UserAccount, Long> {
      * At most one row exists, since the slot is unique.
      */
     Optional<UserAccount> findMembershipInTenant(Long tenantId, Long profileId);
+
+    /**
+     * Another account in the CURRENT company holding this work contact, if any.
+     *
+     * <p>Scoped to one tenant because that is the scope of the rule: work contacts are unique per
+     * company ({@code uk_user_account_tenant_email}), not globally. One person working at two
+     * companies legitimately carries the same work email in both, and the global form of this check
+     * is what used to make that impossible — refusing the second company's account, and then
+     * refusing to let HR edit or re-hire it.
+     *
+     * <p>What IS globally unique is the LOGIN identifier on {@code UserIdentity}, guarded separately
+     * (see {@code isIdentifierClaimable} and {@code assertContactNotShared}): a shared work contact
+     * simply never becomes a login route, rather than being banned.
+     *
+     * @param contact work email or work mobile; null/blank finds nothing
+     * @param exceptAccountId the account being written, excluded from the search; may be null
+     */
+    Optional<UserAccount> findContactHolderInTenant(String contact, Long exceptAccountId);
+
+    /**
+     * The work contacts this membership's EMPLOYEE RECORD currently holds (S-B / D23).
+     *
+     * <p>The record is the single source of contact details, so the two operations that move them —
+     * Reset User and Unbind &amp; Re-invite — read them from here rather than from their caller, and
+     * their dialogs echo these read-only. To change a number, HR edits the record and comes back;
+     * that is what makes "the account follows the record" true without a second writer.
+     *
+     * <p>Read generically by model name, the way {@code UserAccessController} and the framework's
+     * {@code EmployeeContextEnricher} already do — no corehr dependency, and
+     * {@link io.softa.framework.orm.meta.ModelManager#existModel} makes it a no-op in a deployment
+     * with no {@code Employee} model at all.
+     *
+     * <p>The ACCOUNT's own contacts are deliberately not consulted: they still hold the value being
+     * replaced, which is what Reset User notifies. Reading the new value from the record and the old
+     * one from the account is the whole reason both are available at once.
+     *
+     * @return the record's contacts, or {@link WorkContacts#none()} when there is no record
+     */
+    WorkContacts archiveWorkContacts(Long userId);
 
     /**
      * Prepare a membership for someone re-joining this company, reusing the closed row.
@@ -225,5 +273,5 @@ public interface UserAccountService extends EntityService<UserAccount, Long> {
      * the message reaches where they can still read it. Telling only the new address would inform
      * whoever now holds it.
      */
-    void resetWorkContacts(Long userId, String newEmail, String newMobile, String reason);
+    void resetWorkContacts(Long userId, String reason);
 }

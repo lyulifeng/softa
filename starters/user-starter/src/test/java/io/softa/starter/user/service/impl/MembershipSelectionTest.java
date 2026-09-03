@@ -1,6 +1,8 @@
 package io.softa.starter.user.service.impl;
 
+import java.time.LocalDateTime;
 import java.util.List;
+import java.util.Optional;
 
 import org.junit.jupiter.api.Test;
 import org.springframework.test.util.ReflectionTestUtils;
@@ -10,6 +12,7 @@ import io.softa.framework.orm.service.CacheService;
 import io.softa.framework.orm.service.TenantInfoService;
 import io.softa.starter.user.dto.MembershipOption;
 import io.softa.starter.user.entity.UserAccount;
+import io.softa.starter.user.entity.UserIdentity;
 import io.softa.starter.user.enums.AccountStatus;
 import io.softa.starter.user.exception.MultipleMembershipsException;
 import io.softa.starter.user.dto.AuthenticationResult;
@@ -20,6 +23,7 @@ import io.softa.starter.user.service.UserProfileService;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -66,6 +70,15 @@ class MembershipSelectionTest {
 
     private void givenMemberships(UserAccount... accounts) {
         when(accountService.listMembershipsOf(PROFILE)).thenReturn(List.of(accounts));
+    }
+
+    private void givenPasswordLocked() {
+        UserIdentity identity = new UserIdentity();
+        identity.setId(11L);
+        identity.setProfileId(PROFILE);
+        identity.setPasswordLockedUntil(LocalDateTime.now().plusMinutes(5));
+        when(identityService.findByProfile(PROFILE)).thenReturn(Optional.of(identity));
+        when(identityService.isPasswordLocked(identity)).thenReturn(true);
     }
 
     // ── resolveSingleMembership ─────────────────────────────────────────
@@ -123,6 +136,29 @@ class MembershipSelectionTest {
     }
 
     @Test
+    void aPasswordLock_isStampedOnEveryOption_withoutMakingAnyUnselectable() {
+        // The lock is the person's, so both companies carry it; and it is informational only —
+        // the picker runs after authentication, which a code login passes during a lock (PRD D5),
+        // so greying the company would lock out exactly the person the lock is meant to protect.
+        givenMemberships(membership(100L, 1L, AccountStatus.ACTIVE),
+                membership(200L, 2L, AccountStatus.FROZEN));
+        givenPasswordLocked();
+
+        List<MembershipOption> options = loginService.listCompanies(TOKEN);
+
+        assertThat(options).extracting(MembershipOption::locked).containsOnly(true);
+        assertThat(options).extracting(MembershipOption::selectable).containsExactly(true, false);
+    }
+
+    @Test
+    void anUnlockedPerson_seesNoLockBadge() {
+        givenMemberships(membership(100L, 1L, AccountStatus.ACTIVE));
+
+        assertThat(loginService.listCompanies(TOKEN)).extracting(MembershipOption::locked)
+                .containsOnly(false);
+    }
+
+    @Test
     void offBoardedMembershipsNeverAppear() {
         // Excluded by the service query, so the picker cannot show a former employer. Asserted
         // here as the contract listCompanies relies on.
@@ -144,6 +180,35 @@ class MembershipSelectionTest {
         assertThat(result.profileId()).isEqualTo(PROFILE);
         // Single use: the token is consumed so a leaked one cannot be replayed into a session.
         verify(cacheService).clear("login:preauth:" + TOKEN);
+    }
+
+    @Test
+    void aFailedSelectionLeavesTheTokenUsable() {
+        // The token used to be consumed BEFORE the session was built, so any failure past that
+        // point burned it: the page said "could not enter that company, please try again" and the
+        // retry answered "your sign-in step expired" — the advice was impossible to follow and the
+        // person had to restart the whole login. Nothing is minted on this path, so nothing is
+        // replayable.
+        givenMemberships(membership(100L, 1L, AccountStatus.ACTIVE));
+        when(profileService.getUserInfo(100L)).thenThrow(new BusinessException("boom"));
+
+        assertThatThrownBy(() -> loginService.selectCompany(TOKEN, 100L))
+                .isInstanceOf(BusinessException.class);
+
+        verify(cacheService, never()).clear("login:preauth:" + TOKEN);
+    }
+
+    @Test
+    void aLockedPersonCanStillEnterAnActiveCompany() {
+        // What a lock refuses is the PASSWORD route. Someone who got this far authenticated another
+        // way, and the company step must not turn the lock into a second refusal.
+        givenMemberships(membership(100L, 1L, AccountStatus.ACTIVE));
+        givenPasswordLocked();
+        when(profileService.getUserInfo(100L)).thenReturn(new io.softa.framework.base.context.UserInfo());
+
+        AuthenticationResult result = loginService.selectCompany(TOKEN, 100L);
+
+        assertThat(result.isResolved()).isTrue();
     }
 
     @Test

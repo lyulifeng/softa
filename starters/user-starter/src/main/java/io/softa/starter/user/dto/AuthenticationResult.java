@@ -2,6 +2,8 @@ package io.softa.starter.user.dto;
 
 import java.util.List;
 
+import com.fasterxml.jackson.annotation.JsonProperty;
+
 import io.softa.framework.base.context.UserInfo;
 
 /**
@@ -49,6 +51,9 @@ public record AuthenticationResult(Long profileId, UserInfo userInfo, List<Membe
     }
 
     /** Whether a session can be issued straight away. */
+    // Named on the wire on purpose: the client branches on "resolved", and a bean-convention
+    // accident (isX) is too thin a thing for that contract to hang from.
+    @JsonProperty("resolved")
     public boolean isResolved() {
         return userInfo != null;
     }

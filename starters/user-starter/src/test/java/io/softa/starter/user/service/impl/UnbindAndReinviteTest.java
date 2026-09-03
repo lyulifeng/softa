@@ -10,6 +10,7 @@ import org.springframework.context.ApplicationEventPublisher;
 import io.softa.framework.base.exception.BusinessException;
 import io.softa.framework.base.exception.IllegalArgumentException;
 import io.softa.framework.orm.domain.Filters;
+import io.softa.starter.user.dto.WorkContacts;
 import io.softa.starter.user.entity.UserAccount;
 import io.softa.starter.user.entity.UserInvitation;
 import io.softa.starter.user.enums.AccountStatus;
@@ -68,6 +69,10 @@ class UnbindAndReinviteTest {
         account.setActivationTime(LocalDateTime.now());
         account.setRoles(List.of(9L));
         when(accountService.getById(ACCOUNT)).thenReturn(Optional.of(account));
+        // The corrected contact is HR's edit to the EMPLOYEE RECORD now (S-B / D23), not something
+        // this call carries — so that is what has to be stubbed.
+        when(accountService.archiveWorkContacts(ACCOUNT))
+                .thenReturn(new WorkContacts("right@acme.com", null));
         // No outstanding invitations unless a test says otherwise.
         doReturn(List.of()).when(invitationService).searchList(any(Filters.class));
         doReturn(1L).when(invitationService).createOne(any(UserInvitation.class));
@@ -78,7 +83,7 @@ class UnbindAndReinviteTest {
     void theOldPersonsLoginIdentifiersAreReleased_beforeAnythingElseIsWritten() {
         UserAccount account = given(AccountStatus.ACTIVE);
 
-        invitationService.unbindAndReinvite(ACCOUNT, "right@acme.com", null, "Wrong hire", OPERATOR);
+        invitationService.unbindAndReinvite(ACCOUNT, "Wrong hire", OPERATOR);
 
         verify(accountService).releaseLoginIdentifiers(account);
     }
@@ -88,7 +93,7 @@ class UnbindAndReinviteTest {
         // The trap: updateOne(entity) drops null keys, so the detach would silently not happen.
         UserAccount account = given(AccountStatus.ACTIVE);
 
-        invitationService.unbindAndReinvite(ACCOUNT, "right@acme.com", null, "Wrong hire", OPERATOR);
+        invitationService.unbindAndReinvite(ACCOUNT, "Wrong hire", OPERATOR);
 
         assertThat(account.getProfileId()).isNull();
         assertThat(account.getActivationTime()).isNull();
@@ -104,7 +109,7 @@ class UnbindAndReinviteTest {
         // department's manager of their authority as a side effect of fixing a typo.
         UserAccount account = given(AccountStatus.ACTIVE);
 
-        invitationService.unbindAndReinvite(ACCOUNT, "right@acme.com", null, "Wrong hire", OPERATOR);
+        invitationService.unbindAndReinvite(ACCOUNT, "Wrong hire", OPERATOR);
 
         assertThat(account.getRoles()).containsExactly(9L);
     }
@@ -125,7 +130,7 @@ class UnbindAndReinviteTest {
             return 2L;
         }).when(invitationService).createOne(any(UserInvitation.class));
 
-        invitationService.unbindAndReinvite(ACCOUNT, "right@acme.com", null, "Wrong hire", OPERATOR);
+        invitationService.unbindAndReinvite(ACCOUNT, "Wrong hire", OPERATOR);
 
         assertThat(outstanding.getStatus()).isEqualTo(InvitationStatus.REVOKED);
         assertThat(issued[0].getPurpose()).isEqualTo(InvitationPurpose.REINVITE);
@@ -141,10 +146,10 @@ class UnbindAndReinviteTest {
         // Assert.* raises the framework's own IllegalArgumentException (BAD_REQUEST) — not
         // java.lang's — which is the shape invite() uses for its preconditions too.
         assertThatThrownBy(() ->
-                invitationService.unbindAndReinvite(ACCOUNT, "right@acme.com", null, "  ", OPERATOR))
+                invitationService.unbindAndReinvite(ACCOUNT, "  ", OPERATOR))
                 .isInstanceOf(IllegalArgumentException.class);
-        assertThatThrownBy(() -> invitationService.unbindAndReinvite(
-                ACCOUNT, "right@acme.com", null, "x".repeat(501), OPERATOR))
+        assertThatThrownBy(() ->
+                invitationService.unbindAndReinvite(ACCOUNT, "x".repeat(501), OPERATOR))
                 .isInstanceOf(IllegalArgumentException.class);
 
         verify(accountService, never()).releaseLoginIdentifiers(any());
@@ -157,8 +162,7 @@ class UnbindAndReinviteTest {
         // Deactivated: the membership is closed; bringing it back is reviveMembership.
         for (AccountStatus status : List.of(AccountStatus.PENDING, AccountStatus.DEACTIVATED)) {
             given(status);
-            assertThatThrownBy(() -> invitationService.unbindAndReinvite(
-                    ACCOUNT, "right@acme.com", null, "Wrong hire", OPERATOR))
+            assertThatThrownBy(() -> invitationService.unbindAndReinvite(ACCOUNT, "Wrong hire", OPERATOR))
                     .isInstanceOf(BusinessException.class)
                     .hasMessageContaining("cannot be unbound");
         }
@@ -170,10 +174,14 @@ class UnbindAndReinviteTest {
         given(AccountStatus.ACTIVE);
         UserAccount other = new UserAccount();
         other.setId(999L);
-        when(accountService.getUserByEmail("taken@acme.com")).thenReturn(Optional.of(other));
+        // Scoped to THIS company — see ResetWorkContactsTest for why the global form had to go.
+        // The record now names the address, and another membership here already holds it.
+        when(accountService.archiveWorkContacts(ACCOUNT))
+                .thenReturn(new WorkContacts("taken@acme.com", null));
+        when(accountService.findContactHolderInTenant("taken@acme.com", ACCOUNT))
+                .thenReturn(Optional.of(other));
 
-        assertThatThrownBy(() -> invitationService.unbindAndReinvite(
-                ACCOUNT, "taken@acme.com", null, "Wrong hire", OPERATOR))
+        assertThatThrownBy(() -> invitationService.unbindAndReinvite(ACCOUNT, "Wrong hire", OPERATOR))
                 .isInstanceOf(BusinessException.class)
                 .hasMessageContaining("already belongs to another account");
 
@@ -182,11 +190,14 @@ class UnbindAndReinviteTest {
     }
 
     @Test
-    void neitherContactSupplied_isRefused() {
+    void anEmployeeRecordWithNoContacts_isRefused() {
+        // Nothing to re-invite to, and nothing this call could supply instead: the contact comes
+        // from the record now, so the message points at the record.
         given(AccountStatus.ACTIVE);
+        when(accountService.archiveWorkContacts(ACCOUNT)).thenReturn(WorkContacts.none());
 
         assertThatThrownBy(() ->
-                invitationService.unbindAndReinvite(ACCOUNT, "  ", null, "Wrong hire", OPERATOR))
+                invitationService.unbindAndReinvite(ACCOUNT, "Wrong hire", OPERATOR))
                 .isInstanceOf(BusinessException.class)
                 .hasMessageContaining("before re-inviting");
     }

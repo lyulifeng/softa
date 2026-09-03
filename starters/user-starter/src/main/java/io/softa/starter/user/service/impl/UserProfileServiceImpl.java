@@ -156,7 +156,12 @@ public class UserProfileServiceImpl extends EntityServiceImpl<UserProfile, Long>
         // (id, userId, density) are written back exactly as read.
         this.updateOne(profile, false);
         // The cached UserInfo carries name / language / timezone / photo — all editable here.
-        this.evictUserInfo(profile.getUserId());
+        // Evict EVERY membership's entry, not profile.getUserId(): the person is one, the cache is
+        // keyed per account, and that legacy back-pointer names only one of them. Missing the rest
+        // leaves the other companies serving the old name and avatar until the entry expires a
+        // month later — for a person who has just been told the change was saved.
+        accountService.listMembershipsOf(profile.getId())
+                .forEach(account -> this.evictUserInfo(account.getId()));
     }
 
     /**
@@ -188,10 +193,18 @@ public class UserProfileServiceImpl extends EntityServiceImpl<UserProfile, Long>
         String userInfoKey = RedisConstant.USER_INFO + userId;
         UserInfo userInfo = cacheService.get(userInfoKey, UserInfo.class);
         if (userInfo == null) {
-            Filters filters = new Filters().eq(UserProfile::getUserId, userId);
-            UserProfile profile = this.searchOne(filters).orElseThrow(
-                    () -> new BusinessException("User profile not found for user ID: " + userId));
-            userInfo = this.buildUserInfo(profile);
+            // Resolve the person FROM the membership, never the reverse. UserProfile.userId is a
+            // single-valued back-pointer left over from the 1:1 era: it names one account, so a
+            // person with two memberships is reachable through exactly one of them and every other
+            // company reports "profile not found" on the way in. Reading through account.profileId
+            // is the direction that survives N accounts per person.
+            UserAccount account = accountService.getById(userId).orElseThrow(
+                    () -> new BusinessException("User account not found for user ID: " + userId));
+            UserProfile profile = Optional.ofNullable(account.getProfileId())
+                    .flatMap(this::getById)
+                    .orElseThrow(() -> new BusinessException(
+                            "User profile not found for user ID: " + userId));
+            userInfo = this.buildUserInfo(profile, account);
             this.refreshUserInfo(userId, userInfo);
         }
         return userInfo;
@@ -222,23 +235,25 @@ public class UserProfileServiceImpl extends EntityServiceImpl<UserProfile, Long>
     * @param profile UserProfile
     * @return UserInfo object
     */
-    private UserInfo buildUserInfo(UserProfile profile) {
+    /**
+     * @param account the membership this session is being established in — NOT looked up from the
+     *                person. A person may hold several, and the whole point of the company picker
+     *                is that the caller has already chosen one. Deriving it here from
+     *                {@code profile.getUserId()} would silently pin every session to whichever
+     *                account that legacy back-pointer happens to name: pick the second company, get
+     *                a session in the first, with the wrong tenantId and no error anywhere.
+     */
+    private UserInfo buildUserInfo(UserProfile profile, UserAccount account) {
         UserInfo userInfo = new UserInfo();
-        userInfo.setUserId(profile.getUserId());
+        userInfo.setUserId(account.getId());
         userInfo.setName(profile.getFullName());
         userInfo.setLanguage(profile.getLanguage());
         userInfo.setTimezone(profile.getTimezone());
-        // The tenant now comes from the MEMBERSHIP, not the person: a person is global, and which
-        // company this session is in is exactly what the account represents. One lookup serves both
-        // this and the live-status check below.
-        Optional<UserAccount> account = accountService.getById(profile.getUserId());
-        userInfo.setTenantId(account.map(UserAccount::getTenantId).orElse(null));
+        // The tenant comes from the MEMBERSHIP, not the person: a person is global, and which
+        // company this session is in is exactly what the chosen account represents.
+        userInfo.setTenantId(account.getTenantId());
         // Reflect the account's live status so ContextBuilder can force-logout a frozen account.
-        // No account row → NOT active: ContextBuilder reads this to decide force-logout, and a
-        // session whose account has vanished should be logged out, not waved through. (The old
-        // orElse(TRUE) here was also dead under multi-tenancy — validateTenantInfo below asserts a
-        // non-null tenantId first and would already have thrown.)
-        userInfo.setActive(account.map(a -> AccountStatus.ACTIVE == a.getStatus()).orElse(Boolean.FALSE));
+        userInfo.setActive(AccountStatus.ACTIVE == account.getStatus());
         this.validateTenantInfo(profile, userInfo.getTenantId());
         if (profile.getPhotoId() != null) {
             // The photo URL expires in one quarter (90 days), longer than the user info cache expiration time
@@ -363,11 +378,45 @@ public class UserProfileServiceImpl extends EntityServiceImpl<UserProfile, Long>
         identityService.createOne(identity);
 
         // Build UserInfo and upload photo if photo is not empty
-        UserInfo userInfo = this.buildUserInfo(userProfile);
+        UserInfo userInfo = this.buildUserInfo(userProfile, account);
 
         // Update UserInfo cache
         this.refreshUserInfo(userId, userInfo);
 
+        return userInfo;
+    }
+
+    /**
+     * <p><b>Why {@code @SkipPermissionCheck}</b>: same reasoning as {@link #registerUserProfile} —
+     * the account being linked was minted by the same call chain, so no row rule can have it in
+     * scope yet, and the person is a global model nothing a role holds references. What authorized
+     * this is the create action that led here, checked where it happened.
+     *
+     * <p>{@code @Transactional} for the same reason too: the link and the cache eviction must not
+     * half-apply. There is no identity row to write here, which is exactly what makes this the
+     * cheaper half — the person already has one.
+     */
+    @SkipPermissionCheck
+    @Override
+    @Transactional
+    public UserInfo linkAccountToPerson(Long userId, Long profileId) {
+        Assert.notNull(userId, "userId is required to link an account to a person.");
+        Assert.notNull(profileId, "profileId is required to link an account to a person.");
+        UserAccount account = accountService.getById(userId).orElseThrow(
+                () -> new BusinessException(
+                        "Account " + userId + " not found — it must exist before being linked."));
+        UserProfile profile = this.getById(profileId).orElseThrow(
+                () -> new BusinessException("Person " + profileId + " not found."));
+
+        // The authoritative pointer, and the only write this needs: UserAccount.profileId IS the
+        // relation. UserProfile.userId is the legacy back-pointer and is deliberately left alone —
+        // it holds one account and the person now has several, so repointing it at the newest would
+        // simply move the breakage to whichever membership it stopped naming.
+        account.setProfileId(profileId);
+        accountService.updateOne(account);
+
+        UserInfo userInfo = this.buildUserInfo(profile, account);
+        this.refreshUserInfo(userId, userInfo);
         return userInfo;
     }
 

@@ -80,6 +80,25 @@ public interface UserProfileService extends EntityService<UserProfile, Long> {
     UserInfo registerUserProfile(Long userId, UserProfileDTO profileDTO);
 
     /**
+     * Link a freshly created membership to a person who ALREADY exists.
+     *
+     * <p>The N:1 half of {@link #registerUserProfile}. That one mints a person; this one does not,
+     * because there is nothing to mint: the identifier the account was created with already belongs
+     * to somebody, and a person joining their second company keeps ONE person record — that is the
+     * whole point of a global profile. Minting a second would split their credentials in two, and
+     * the globally unique login-identifier indexes would refuse the split anyway.
+     *
+     * <p>No {@code UserIdentity} is written either. Theirs exists, carries their password, and is
+     * what the new membership authenticates through — writing another would be the same split by a
+     * different route.
+     *
+     * @param userId    the new membership's account id
+     * @param profileId the existing person
+     * @return UserInfo for the new membership
+     */
+    UserInfo linkAccountToPerson(Long userId, Long profileId);
+
+    /**
      * Create the PERSON for a first-time invitee, identified only by the address their invitation
      * was sent to.
      *

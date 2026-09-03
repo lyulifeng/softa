@@ -1,6 +1,11 @@
 package io.softa.starter.user.service.impl;
 
+import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
 import java.time.LocalDateTime;
+import java.util.HexFormat;
+import java.util.Locale;
 import java.util.Objects;
 import java.util.Optional;
 
@@ -40,7 +45,6 @@ public class UserIdentityServiceImpl extends EntityServiceImpl<UserIdentity, Lon
         implements UserIdentityService {
 
     /** Consecutive wrong passwords that lock the password path (PRD D5). */
-    private static final int FAILURES_BEFORE_LOCK = 10;
     /** How long it stays locked. */
     private static final int LOCK_MINUTES = 30;
 
@@ -187,13 +191,16 @@ public class UserIdentityServiceImpl extends EntityServiceImpl<UserIdentity, Lon
     @SkipPermissionCheck
     @CrossTenant
     @Override
-    public void recordPasswordFailure(UserIdentity identity) {
+    public long recordPasswordFailure(UserIdentity identity) {
         if (identity == null || identity.getId() == null) {
-            return;
+            return 0;
         }
         Long failures = cacheService.increment(failureKey(identity.getId()), LOCK_MINUTES * 60L);
-        if (failures == null || failures < FAILURES_BEFORE_LOCK) {
-            return;
+        if (failures == null) {
+            return 0;
+        }
+        if (failures < FAILURES_BEFORE_LOCK) {
+            return failures;
         }
         identity.setPasswordLockedUntil(LocalDateTime.now().plusMinutes(LOCK_MINUTES));
         this.updateOne(identity);
@@ -202,6 +209,35 @@ public class UserIdentityServiceImpl extends EntityServiceImpl<UserIdentity, Lon
         this.clearPasswordFailures(identity.getId());
         log.warn("Password login locked for {} minutes after {} consecutive failures (identity {}).",
                 LOCK_MINUTES, failures, identity.getId());
+        return failures;
+    }
+
+    @Override
+    public long recordUnknownIdentifierFailure(String identifier) {
+        String value = StringUtils.trimToNull(identifier);
+        if (value == null) {
+            return 0;
+        }
+        // Same window as the real counter, so the two branches age identically. The counter is never
+        // reset at the threshold: the real branch persists a lock that keeps answering "locked" for
+        // LOCK_MINUTES, and letting this count keep climbing within the same window is what makes
+        // the unknown branch keep answering the same thing.
+        Long failures = cacheService.increment(unknownFailureKey(value), LOCK_MINUTES * 60L);
+        return failures == null ? 0 : failures;
+    }
+
+    private static String unknownFailureKey(String identifier) {
+        // Hashed rather than stored: the key would otherwise be a list of every identifier ever
+        // guessed at the login form. Lowercased so case variants of one guess share a count: they
+        // name the same mailbox, and a counter that split them would hand out a window per spelling.
+        byte[] digest;
+        try {
+            digest = MessageDigest.getInstance("SHA-256")
+                    .digest(identifier.toLowerCase(Locale.ROOT).getBytes(StandardCharsets.UTF_8));
+        } catch (NoSuchAlgorithmException e) {
+            throw new IllegalStateException("SHA-256 is a mandatory JCA algorithm.", e);
+        }
+        return "login:pwd-failures:unknown:" + HexFormat.of().formatHex(digest);
     }
 
     @Override

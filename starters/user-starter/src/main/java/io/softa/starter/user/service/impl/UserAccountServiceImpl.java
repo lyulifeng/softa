@@ -1,9 +1,13 @@
 package io.softa.starter.user.service.impl;
 
+import java.util.ArrayList;
+import java.util.HashSet;
+import java.util.Set;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.stream.Stream;
 import jakarta.validation.constraints.NotNull;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.lang3.StringUtils;
@@ -14,7 +18,9 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import io.softa.framework.base.config.SystemConfig;
+import io.softa.framework.base.context.Context;
 import io.softa.framework.base.context.ContextHolder;
+import io.softa.framework.base.utils.SFunction;
 import io.softa.framework.base.context.UserInfo;
 import io.softa.framework.base.exception.BusinessException;
 import io.softa.framework.base.message.MailRequestMessage;
@@ -25,9 +31,12 @@ import io.softa.framework.base.utils.Assert;
 import io.softa.framework.orm.annotation.CrossTenant;
 import io.softa.framework.orm.annotation.SkipPermissionCheck;
 import io.softa.framework.orm.domain.Filters;
+import io.softa.framework.orm.domain.FlexQuery;
+import io.softa.framework.orm.meta.ModelManager;
 import io.softa.framework.orm.service.impl.EntityServiceImpl;
 import io.softa.starter.user.dto.UserAccountDTO;
 import io.softa.starter.user.dto.UserProfileDTO;
+import io.softa.starter.user.dto.WorkContacts;
 import io.softa.starter.user.entity.UserIdentity;
 import io.softa.starter.user.entity.UserAccount;
 import io.softa.starter.user.enums.AccountStatus;
@@ -42,6 +51,13 @@ import io.softa.starter.user.service.UserProfileService;
 @Slf4j
 @Service
 public class UserAccountServiceImpl extends EntityServiceImpl<UserAccount, Long> implements UserAccountService {
+
+    /** The employee record, read by model name rather than through a shared contract — same
+     *  convention as {@code UserAccessController} and the framework's EmployeeContextEnricher. */
+    private static final String ARCHIVE_MODEL = "Employee";
+    private static final String ARCHIVE_USER_FIELD = "userId";
+    private static final String ARCHIVE_EMAIL_FIELD = "workEmail";
+    private static final String ARCHIVE_MOBILE_FIELD = "workPhone";
 
     @Autowired
     private UserProfileService profileService;
@@ -200,17 +216,24 @@ public class UserAccountServiceImpl extends EntityServiceImpl<UserAccount, Long>
     @Override
     @Transactional
     public UserInfo registerInvitedUser(String email, String mobile, String fullName) {
-        // Both identifiers are login credentials, so both are checked ACROSS tenants (the lookups
-        // are @CrossTenant — same reasoning as AdminProvisioningService's email check). Email is
-        // also backed by uk_user_account_email, but a mobile-only account has no unique index
-        // behind it: without this check, importing two employees with the same phone and no email
-        // silently minted two accounts for one credential.
-        if (StringUtils.isNotBlank(email) && this.getUserByEmail(email).isPresent()) {
-            throw new BusinessException("Email already exists: " + email);
+        NewAccountDecision decision = this.decideNewAccount(email, mobile);
+        if (decision.refusal() != null) {
+            throw new BusinessException(decision.refusal());
         }
-        if (StringUtils.isNotBlank(mobile) && this.getUserByMobile(mobile).isPresent()) {
-            throw new BusinessException("Mobile already exists: " + mobile);
+        Long existingPerson = decision.existingPerson();
+
+        // A leaver coming back: (tenantId, profileId) is unique, so a second row cannot be inserted
+        // — the closed one is revived instead. The row is reset to PENDING with the new contacts,
+        // so from here the person is treated exactly like any other fresh create: invite, /join.
+        // The person may have been found through that closed row alone (see decideNewAccount):
+        // off-boarding released their work contact from the identity, so it is the row, not the
+        // login identifier, that still knows who they are.
+        if (decision.closedRow() != null) {
+            UserAccount revived = this.reviveMembership(existingPerson, email, mobile)
+                    .orElseThrow(() -> new BusinessException("This person is already a member of this company."));
+            return profileService.getUserInfo(revived.getId());
         }
+
         UserAccountDTO accountInfo = new UserAccountDTO();
         UserProfileDTO profileInfo = new UserProfileDTO();
         accountInfo.setEmail(email);
@@ -232,9 +255,154 @@ public class UserAccountServiceImpl extends EntityServiceImpl<UserAccount, Long>
         userAccount.setStatus(AccountStatus.PENDING);
         Long userId = this.createOne(userAccount);
 
+        // Their second company: link, do not mint. Note what is NOT carried over — the display name
+        // stays whatever this caller supplied. Reading the existing person's name back would turn a
+        // create form into a lookup for "who owns this address?", answerable by anyone who can
+        // create an account. The account lands PENDING either way, so the person still has to
+        // accept through /join before it becomes usable.
+        if (existingPerson != null) {
+            return profileService.linkAccountToPerson(userId, existingPerson);
+        }
         return profileService.registerUserProfile(userId, profileInfo);
     }
 
+    /**
+     * What {@link #decideNewAccount} found: the person the contacts resolve to (or null), their
+     * closed membership here when the create should revive it rather than insert, and the reason to
+     * refuse — exactly one of which the create path needs at each step.
+     */
+    private record NewAccountDecision(Long existingPerson, Long closedRow, String refusal) {
+        static NewAccountDecision refuse(String reason) {
+            return new NewAccountDecision(null, null, reason);
+        }
+    }
+
+    // @SkipPermissionCheck: the pre-check half of registerInvitedUser, asked by the same callers
+    // (an import validating rows before it creates anything) with the same grants.
+    @SkipPermissionCheck
+    @Override
+    public String newAccountRefusal(String email, String mobile) {
+        return this.decideNewAccount(email, mobile).refusal();
+    }
+
+    /**
+     * The one place that decides whether an account with these contacts may be created here.
+     *
+     * <p>Does this identifier already belong to somebody? If so this is their SECOND company, not a
+     * duplicate: one person keeps one person record, and the account is linked to it instead of
+     * minting a rival. Refusing that is what used to make "a person in two companies" unreachable
+     * through the product at all — every creation path funnels here, so the /join flow's own
+     * find-or-create could never fire either: it needs an account carrying the person's identifier,
+     * and that account was exactly what could not be created.
+     *
+     * <p>Within ONE tenant the identifiers stay unique — that is what uk_user_account_tenant_email
+     * enforces, and a person already holding a live membership here is a duplicate rather than a
+     * second company (uk_user_account_tenant_profile). Only the CROSS-tenant form of this rule was
+     * relaxed.
+     *
+     * <p>The membership is resolved BEFORE the contact checks because a closed one changes what
+     * they mean: a leaver's own old work address still sits on their DEACTIVATED row, and counting
+     * it would refuse the very re-hire that row exists to be reused for.
+     *
+     * <p>A contact names a person through their login identifier FIRST, and failing that through a
+     * membership they closed HERE. The second step is not a fallback for stale data: off-boarding
+     * releases the work contact from the person's identity on purpose (so the address can be
+     * reissued), which means the canonical leaver — one whose only identifier was their work email
+     * — no longer resolves through {@code UserIdentity} at all. Their DEACTIVATED row is then the
+     * only thing still tying the contact to the person, and without reading it the re-hire would
+     * refuse them for holding their own old address.
+     */
+    private NewAccountDecision decideNewAccount(String email, String mobile) {
+        Long tenantId = ContextHolder.getContext() == null ? null : ContextHolder.getContext().getTenantId();
+        ContactAnchor byEmail = this.anchorOf(tenantId, email);
+        ContactAnchor byMobile = this.anchorOf(tenantId, mobile);
+        // A second identifier pointing at a DIFFERENT person is not a second company — it is two
+        // people's credentials on one account, which no later step could untangle. It holds however
+        // each contact resolved: a live identity on one side and a closed row on the other are still
+        // two people.
+        if (byEmail.person() != null && byMobile.person() != null && !byEmail.person().equals(byMobile.person())) {
+            return NewAccountDecision.refuse("This email and mobile belong to two different "
+                    + "people. Enter contacts for one person.");
+        }
+        ContactAnchor anchor = byEmail.person() != null ? byEmail : byMobile;
+        Long existingPerson = anchor.person();
+
+        // A closed row that anchored IS the person's membership here — (tenant, person) is unique,
+        // so there is nothing further to look up.
+        UserAccount membershipHere = existingPerson == null ? null
+                : anchor.closedRow() != null ? anchor.closedRow()
+                : this.findMembershipInTenant(tenantId, existingPerson).orElse(null);
+        Long closedRow = membershipHere != null && membershipHere.getStatus() == AccountStatus.DEACTIVATED
+                ? membershipHere.getId() : null;
+        if (StringUtils.isNotBlank(email) && this.findContactHolderInTenant(email, closedRow).isPresent()) {
+            return NewAccountDecision.refuse("Email already exists: " + email);
+        }
+        if (StringUtils.isNotBlank(mobile) && this.findContactHolderInTenant(mobile, closedRow).isPresent()) {
+            return NewAccountDecision.refuse("Mobile already exists: " + mobile);
+        }
+        if (membershipHere != null && closedRow == null) {
+            return NewAccountDecision.refuse("This person is already a member of this company.");
+        }
+        return new NewAccountDecision(existingPerson, closedRow, null);
+    }
+
+    /**
+     * How one contact names a person: {@code person} is who it resolves to (null when nobody), and
+     * {@code closedRow} is set only when that resolution came through a DEACTIVATED membership in
+     * this tenant rather than through the person's login identifier.
+     */
+    private record ContactAnchor(Long person, UserAccount closedRow) {
+        static final ContactAnchor NONE = new ContactAnchor(null, null);
+    }
+
+    private ContactAnchor anchorOf(Long tenantId, String contact) {
+        if (StringUtils.isBlank(contact)) {
+            return ContactAnchor.NONE;
+        }
+        Long person = identityService.findByLoginIdentifier(contact)
+                .map(UserIdentity::getProfileId)
+                .orElse(null);
+        if (person != null) {
+            return new ContactAnchor(person, null);
+        }
+        return this.closedMembershipHolding(tenantId, contact)
+                .map(row -> new ContactAnchor(row.getProfileId(), row))
+                .orElse(ContactAnchor.NONE);
+    }
+
+    /**
+     * The DEACTIVATED membership in {@code tenantId} still carrying {@code contact} as its work
+     * email or mobile, provided it names a person — a row with no profile has nobody to revive.
+     *
+     * <p>Deliberately not {@link #findMembershipInTenant} (keyed by person, which is exactly what is
+     * unknown here) and not {@link #findContactHolderInTenant} (which reports ANY holder, live rows
+     * included — those are duplicates, not anchors). Tenant and status are filtered explicitly for
+     * the same reason findContactHolderInTenant gives: the class runs {@code @CrossTenant}, so the
+     * ambient scope cannot be relied on to keep another company's leaver out of this one's re-hire.
+     */
+    private Optional<UserAccount> closedMembershipHolding(Long tenantId, String contact) {
+        if (tenantId == null) {
+            return Optional.empty();
+        }
+        Filters holdsContact = Filters.or(
+                new Filters().eq(UserAccount::getEmail, contact),
+                new Filters().eq(UserAccount::getMobile, contact));
+        return this.searchList(new Filters()
+                        .eq(UserAccount::getTenantId, tenantId)
+                        .eq(UserAccount::getStatus, AccountStatus.DEACTIVATED)
+                        .and(holdsContact)).stream()
+                .filter(row -> row.getProfileId() != null)
+                .findFirst();
+    }
+
+    // @SkipPermissionCheck for the mirror of registerInvitedUser's reason. That one pairs an
+    // employee with a login; this one unpairs them, and it is reached from HR approving a
+    // resignation — a role granted "approve resignation", and nothing on the user models, which the
+    // role wizard does not require it to hold. Left checked, the resignation would write the
+    // employee's exit and then fail closed on the person behind it, leaving the membership Active
+    // and its work address still a live login route: exactly the hole off-boarding exists to close.
+    // What authorized this is the resignation approval, checked where it happened.
+    @SkipPermissionCheck
     @Override
     @CrossTenant
     @Transactional
@@ -280,12 +448,20 @@ public class UserAccountServiceImpl extends EntityServiceImpl<UserAccount, Long>
     @CrossTenant
     @Override
     @Transactional
-    public void resetWorkContacts(Long userId, String newEmail, String newMobile, String reason) {
+    public void resetWorkContacts(Long userId, String reason) {
         Assert.notNull(userId, "userId is required");
-        String email = StringUtils.trimToNull(newEmail);
-        String mobile = StringUtils.trimToNull(newMobile);
-        if (email == null && mobile == null) {
-            throw new BusinessException("An account needs a work email or a work mobile.");
+        // Read from the employee record, never from the caller (S-B / D23). Two things follow from
+        // that, and the second is why it matters: the value cannot be whatever a client chose to
+        // post, and the ACCOUNT still holds the value being replaced — which is exactly what gets
+        // notified below. Propagating on the record's own edit instead would destroy that: by the
+        // time HR pressed Confirm the old address would be gone, and the warning meant for whoever
+        // still holds it would go to the new one.
+        WorkContacts archive = this.archiveWorkContacts(userId);
+        String email = archive.email();
+        String mobile = archive.mobile();
+        if (!archive.any()) {
+            throw new BusinessException("This employee's record has no work email or work mobile — "
+                    + "add one there first, then reset.");
         }
 
         UserAccount account = this.getById(userId)
@@ -296,7 +472,7 @@ public class UserAccountServiceImpl extends EntityServiceImpl<UserAccount, Long>
             throw new BusinessException(
                     "This account is not linked to a person yet — invite it instead.");
         }
-        this.getUserByEmail(email).filter(other -> !other.getId().equals(userId))
+        this.findContactHolderInTenant(email, userId)
                 .ifPresent(other -> {
                     throw new BusinessException("That work email already belongs to another account.");
                 });
@@ -371,6 +547,84 @@ public class UserAccountServiceImpl extends EntityServiceImpl<UserAccount, Long>
                 .findFirst();
     }
 
+    /**
+     * <p>The tenant is filtered EXPLICITLY rather than left to the ORM's ambient stamp. This class
+     * carries {@code @CrossTenant} on the credential lookups, and {@code UserAccountController}
+     * sets the flag for a platform super-admin working a roster that spans tenants — while it is
+     * set the ORM skips tenant filtering entirely, so an ambient-scoped query here would quietly
+     * widen back into the cross-tenant check this narrows.
+     *
+     * <p>A contact is looked for under BOTH columns: HR moving an address between the email and
+     * mobile fields of two accounts is the same collision, and checking only the matching column
+     * would let the write reach the index instead.
+     */
+    @SkipPermissionCheck
+    @CrossTenant
+    @Override
+    public Optional<UserAccount> findContactHolderInTenant(String contact, Long exceptAccountId) {
+        String value = StringUtils.trimToNull(contact);
+        Long tenantId = ContextHolder.getContext() == null ? null : ContextHolder.getContext().getTenantId();
+        if (value == null || tenantId == null) {
+            // No tenant means no scope to be unique within, so nothing is taken.
+            return Optional.empty();
+        }
+        return Stream.of(
+                        this.contactHolder(tenantId, UserAccount::getEmail, value),
+                        this.contactHolder(tenantId, UserAccount::getMobile, value))
+                .flatMap(Optional::stream)
+                .filter(other -> exceptAccountId == null || !other.getId().equals(exceptAccountId))
+                .findFirst();
+    }
+
+    @SkipPermissionCheck
+    @Override
+    public WorkContacts archiveWorkContacts(Long userId) {
+        // No Employee model at all (a deployment that is not an HR one) → nothing to follow.
+        if (userId == null || !ModelManager.existModel(ARCHIVE_MODEL)) {
+            return WorkContacts.none();
+        }
+        // Read past row scope on purpose: what is being read is the contact detail of the very
+        // account the caller is already operating on, resolved from its id — not a search. A role
+        // that may reset an account but holds nothing on Employee would otherwise see two blanks
+        // and be told the record has no contacts.
+        Context ctx = ContextHolder.existContext() ? ContextHolder.getContext() : null;
+        boolean previous = ctx != null && ctx.isSkipPermissionCheck();
+        if (ctx != null) {
+            ctx.setSkipPermissionCheck(true);
+        }
+        try {
+            Map<String, Object> row = modelService.searchOne(ARCHIVE_MODEL,
+                    new FlexQuery(new Filters().eq(ARCHIVE_USER_FIELD, userId))).orElse(null);
+            if (row == null) {
+                return WorkContacts.none();
+            }
+            return new WorkContacts(
+                    StringUtils.trimToNull(asString(row.get(ARCHIVE_EMAIL_FIELD))),
+                    StringUtils.trimToNull(asString(row.get(ARCHIVE_MOBILE_FIELD))));
+        } catch (Throwable t) {
+            // Degrade to "no record" rather than failing the operation that asked: the caller
+            // refuses on its own when there is nothing to reach the person on, with a message that
+            // says so, which is a better answer than a stack trace about a model they never named.
+            log.warn("Employee read failed while resolving work contacts for account {}; "
+                    + "treating as no employee record", userId, t);
+            return WorkContacts.none();
+        } finally {
+            if (ctx != null) {
+                ctx.setSkipPermissionCheck(previous);
+            }
+        }
+    }
+
+    private static String asString(Object value) {
+        return value == null ? null : value.toString();
+    }
+
+    private Optional<UserAccount> contactHolder(Long tenantId, SFunction<UserAccount, ?> field, String value) {
+        return this.searchList(new Filters()
+                .eq(UserAccount::getTenantId, tenantId)
+                .eq(field, value)).stream().findFirst();
+    }
+
     @SkipPermissionCheck
     @CrossTenant
     @Override
@@ -378,11 +632,38 @@ public class UserAccountServiceImpl extends EntityServiceImpl<UserAccount, Long>
         if (StringUtils.isBlank(contact)) {
             return false;
         }
-        // Counted across tenants: the same number handed to workers in two companies is still one
-        // number, and the ambiguity it creates is not confined to a tenant.
-        long asEmail = this.count(new Filters().eq(UserAccount::getEmail, contact));
-        long asMobile = this.count(new Filters().eq(UserAccount::getMobile, contact));
-        return asEmail + asMobile > 1;
+        // Counts PEOPLE, not accounts. One person employed by two companies has two accounts
+        // carrying the same personal address, and that is the whole point of multi-company — it
+        // must not read as "shared". What makes an address unusable for identification is that it
+        // could resolve to more than one PERSON.
+        //
+        // An account with no person yet counts as its own potential person: the shared-number
+        // attack is exactly a bound holder plus an unbound account on the same number, where
+        // resolving the address hands the unbound holder the bound one's identity. The cost is
+        // that a genuine cross-company invite (a second company creating an account with the
+        // person's own address, before they join) also reads as ambiguous until they join —
+        // deliberate: the two are indistinguishable from the data, and the password path is
+        // unaffected, so that person can still sign in.
+        //
+        // Across tenants: the same number handed to workers in two companies is still one number.
+        List<UserAccount> matches = new ArrayList<>(
+                this.searchList(new Filters().eq(UserAccount::getEmail, contact)));
+        matches.addAll(this.searchList(new Filters().eq(UserAccount::getMobile, contact)));
+
+        Set<Long> boundPeople = new HashSet<>();
+        long unbound = 0;
+        Set<Long> seenAccounts = new HashSet<>();
+        for (UserAccount account : matches) {
+            if (account.getId() != null && !seenAccounts.add(account.getId())) {
+                continue;   // an account whose email AND mobile are the same string
+            }
+            if (account.getProfileId() == null) {
+                unbound++;
+            } else {
+                boundPeople.add(account.getProfileId());
+            }
+        }
+        return boundPeople.size() + unbound > 1;
     }
 
     @SkipPermissionCheck
@@ -426,7 +707,7 @@ public class UserAccountServiceImpl extends EntityServiceImpl<UserAccount, Long>
         // a person may have left several companies — searching by profile alone would revive whichever
         // closed row came first, possibly in another tenant. Re-hire happens inside one company's HR
         // context, so that is the tenant this reuses.
-        Long tenantId = ContextHolder.getContext().getTenantId();
+        Long tenantId = ContextHolder.getContext() == null ? null : ContextHolder.getContext().getTenantId();
         Assert.notNull(tenantId, "Re-hire must run within a company context.");
         Optional<UserAccount> closed = this.searchList(new Filters()
                         .eq(UserAccount::getProfileId, profileId)
@@ -441,7 +722,7 @@ public class UserAccountServiceImpl extends EntityServiceImpl<UserAccount, Long>
         // uk_user_account_tenant_email — same guard resetWorkContacts and unbindAndReinvite make.
         String email = StringUtils.trimToNull(workEmail);
         if (email != null) {
-            this.getUserByEmail(email).filter(other -> !other.getId().equals(account.getId()))
+            this.findContactHolderInTenant(email, account.getId())
                     .ifPresent(other -> {
                         throw new BusinessException("That work email already belongs to another account.");
                     });

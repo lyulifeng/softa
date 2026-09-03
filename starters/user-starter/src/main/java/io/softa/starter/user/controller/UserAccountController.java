@@ -6,6 +6,7 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
+import java.util.function.Supplier;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.servlet.http.HttpServletRequest;
@@ -44,6 +45,7 @@ import io.softa.framework.web.dto.SearchListParams;
 import io.softa.framework.web.response.ApiResponse;
 import io.softa.framework.web.utils.CookieUtils;
 import io.softa.starter.user.dto.ChangePasswordDTO;
+import io.softa.starter.user.dto.WorkContacts;
 import io.softa.starter.user.dto.SetFirstPasswordDTO;
 import io.softa.starter.user.dto.FreezeAccountDTO;
 import io.softa.starter.user.dto.ResetWorkContactsDTO;
@@ -350,13 +352,24 @@ public class UserAccountController extends EntityController<UserAccountService, 
         return ApiResponse.success();
     }
 
+    @Operation(summary = "The work contacts this account's employee record holds — what Reset User "
+            + "and Unbind & Re-invite will carry onto the membership")
+    @GetMapping("/archiveWorkContacts")
+    public ApiResponse<WorkContacts> archiveWorkContacts(@RequestParam @NotNull Long id) {
+        // Read under the same admission as the operations that consume it: a caller who may reset
+        // or re-invite this account may see what the record says it will be reset to. Wrapped in
+        // onRosterAccounts for the same reason those are — a platform super-admin works a roster
+        // that spans tenants, and the account may not be in the ambient one.
+        return ApiResponse.success(onRosterAccounts(List.of(id),
+                () -> service.archiveWorkContacts(id)));
+    }
+
     @Operation(summary = "Reset a membership's work contacts — keeps the person, their password "
             + "and their roles; moves the login identifier with the contact and notifies the old address")
     @PostMapping("/resetWorkContacts")
     public ApiResponse<Void> resetWorkContacts(@RequestParam @NotNull Long id,
             @RequestBody @Valid ResetWorkContactsDTO dto) {
-        onRosterAccounts(List.of(id), () -> service.resetWorkContacts(
-                id, dto.getEmail(), dto.getMobile(), dto.getReason()));
+        onRosterAccounts(List.of(id), () -> service.resetWorkContacts(id, dto.getReason()));
         return ApiResponse.success();
     }
 
@@ -371,7 +384,7 @@ public class UserAccountController extends EntityController<UserAccountService, 
         Long currentUserId = ContextHolder.getContext() == null ? null
                 : ContextHolder.getContext().getUserId();
         onRosterAccounts(List.of(id), () -> invitationService.unbindAndReinvite(
-                id, dto.getEmail(), dto.getMobile(), dto.getReason(), currentUserId));
+                id, dto.getReason(), currentUserId));
         return ApiResponse.success();
     }
 
@@ -393,7 +406,15 @@ public class UserAccountController extends EntityController<UserAccountService, 
      * tenant-locally, exactly as before.
      */
     private void onRosterAccounts(List<Long> ids, Runnable op) {
-        rosterScope.call(() -> {
+        this.onRosterAccounts(ids, () -> {
+            op.run();
+            return null;
+        });
+    }
+
+    /** The value-returning twin, for the reads that need the same reach as the operations. */
+    private <T> T onRosterAccounts(List<Long> ids, Supplier<T> op) {
+        return rosterScope.call(() -> {
             if (rosterScope.isPlatformSuperAdmin()) {
                 long visible = modelService.count(MODEL,
                         rosterScope.scopeToAdminAccounts(new Filters().in(ModelConstant.ID, ids)));
@@ -401,8 +422,7 @@ public class UserAccountController extends EntityController<UserAccountService, 
                     throw new BusinessException("User not found.");
                 }
             }
-            op.run();
-            return null;
+            return op.get();
         });
     }
 
@@ -476,9 +496,13 @@ public class UserAccountController extends EntityController<UserAccountService, 
                     .orElseThrow(() -> new BusinessException(ResponseCode.USER_NOT_FOUND,
                             "Current user account not found for update."));
 
+            // Only the display name is the person's to edit here. The work email and mobile are
+            // owned by the employee record and read-only on the account; a change to the login
+            // contact goes through the verified flow on UserProfile. Copying them from the request
+            // would let any signed-in person, with no verification code and no per-tenant
+            // uniqueness check, redirect where this membership's invitations and notices are
+            // delivered — and collide with uk_user_account_tenant_email on the way.
             existingAccount.setNickname(myAccountDTO.getNickname());
-            existingAccount.setEmail(myAccountDTO.getEmail());
-            existingAccount.setMobile(myAccountDTO.getMobile());
 
             boolean success = service.updateOne(existingAccount);
 

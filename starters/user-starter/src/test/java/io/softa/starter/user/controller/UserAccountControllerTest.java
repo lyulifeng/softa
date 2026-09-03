@@ -19,13 +19,19 @@ import io.softa.framework.base.context.ContextHolder;
 import io.softa.framework.orm.service.ModelService;
 import io.softa.framework.orm.utils.IdUtils;
 import io.softa.framework.orm.domain.Filters;
+import io.softa.framework.web.response.ApiResponse;
 import io.softa.starter.user.constant.RoleConstant;
+import io.softa.starter.user.dto.UserAccountDTO;
+import io.softa.starter.user.entity.UserAccount;
 import io.softa.starter.user.service.PermissionCacheInvalidator;
 import io.softa.starter.user.service.RoleService;
+import io.softa.starter.user.service.UserAccountService;
 import io.softa.starter.user.service.UserRoleRelService;
 import io.softa.starter.user.service.UserRosterScope;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import org.mockito.ArgumentCaptor;
+
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
@@ -203,5 +209,41 @@ class UserAccountControllerTest {
         RoleService roleService = mock(RoleService.class);
         when(roleService.searchList(any(Filters.class))).thenReturn(List.of());
         return roleService;
+    }
+    // ─── saveMyAccount ───
+
+    @Test
+    void saveMyAccount_writesOnlyTheNickname() {
+        // Work contacts are the employee record's, and the login contact changes through a verified
+        // flow on UserProfile. A self-service save that copied email/mobile from the body would let
+        // any signed-in person move where their invitations and notices are delivered, unverified,
+        // and straight into uk_user_account_tenant_email.
+        UserAccountService accountService = mock(UserAccountService.class);
+        ReflectionTestUtils.setField(controller, "service", accountService);
+        UserAccount stored = new UserAccount();
+        stored.setId(42L);
+        stored.setNickname("Old Name");
+        stored.setEmail("alice@acme.com");
+        stored.setMobile("+6591234567");
+        when(accountService.getById(42L)).thenReturn(java.util.Optional.of(stored));
+        when(accountService.updateOne(any(UserAccount.class))).thenReturn(true);
+
+        UserAccountDTO body = new UserAccountDTO();
+        body.setNickname("New Name");
+        body.setEmail("attacker@evil.example");
+        body.setMobile("+6500000000");
+
+        Context ctx = new Context();
+        ctx.setUserId(42L);
+        ctx.setTenantId(9L);
+        AtomicReference<ApiResponse<Void>> response = new AtomicReference<>();
+        ContextHolder.runWith(ctx, () -> response.set(controller.saveMyAccount(body)));
+
+        assertThat(response.get().isSuccess()).isTrue();
+        ArgumentCaptor<UserAccount> written = ArgumentCaptor.forClass(UserAccount.class);
+        verify(accountService).updateOne(written.capture());
+        assertThat(written.getValue().getNickname()).isEqualTo("New Name");
+        assertThat(written.getValue().getEmail()).isEqualTo("alice@acme.com");
+        assertThat(written.getValue().getMobile()).isEqualTo("+6591234567");
     }
 }

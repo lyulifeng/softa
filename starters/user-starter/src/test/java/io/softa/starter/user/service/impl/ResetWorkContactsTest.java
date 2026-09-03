@@ -10,6 +10,7 @@ import org.springframework.test.util.ReflectionTestUtils;
 import io.softa.framework.base.exception.BusinessException;
 import io.softa.framework.base.message.MailRequestMessage;
 import io.softa.framework.base.message.SmsRequestMessage;
+import io.softa.starter.user.dto.WorkContacts;
 import io.softa.starter.user.entity.UserAccount;
 import io.softa.starter.user.entity.UserIdentity;
 import io.softa.starter.user.enums.AccountStatus;
@@ -53,6 +54,11 @@ class ResetWorkContactsTest {
         ReflectionTestUtils.setField(accountService, "eventPublisher", eventPublisher);
     }
 
+    /** What the employee record says the contacts are — the value this operation carries over. */
+    private void archive(String email, String mobile) {
+        doReturn(new WorkContacts(email, mobile)).when(accountService).archiveWorkContacts(ACCOUNT);
+    }
+
     private UserAccount given(String email, String mobile, Long profileId) {
         UserAccount account = new UserAccount();
         account.setId(ACCOUNT);
@@ -61,6 +67,8 @@ class ResetWorkContactsTest {
         account.setEmail(email);
         account.setMobile(mobile);
         doReturn(Optional.of(account)).when(accountService).getById(ACCOUNT);
+        // The employee record is where the new contacts come from now (S-B / D23); each test sets
+        // what it says via archive(...).
         doReturn(Optional.empty()).when(accountService).getUserByEmail(any());
         doReturn(true).when(accountService).updateOne(any(UserAccount.class), any(Boolean.class));
         return account;
@@ -82,7 +90,8 @@ class ResetWorkContactsTest {
         UserIdentity person = identity("old@acme.com", null);
         when(identityService.findByProfile(PROFILE)).thenReturn(Optional.of(person));
 
-        accountService.resetWorkContacts(ACCOUNT, "new@acme.com", null, "Address changed");
+        archive("new@acme.com", null);
+        accountService.resetWorkContacts(ACCOUNT, "Address changed");
 
         assertThat(account.getEmail()).isEqualTo("new@acme.com");
         assertThat(person.getLoginEmail()).isEqualTo("new@acme.com");
@@ -102,7 +111,8 @@ class ResetWorkContactsTest {
         UserIdentity person = identity("alice.personal@gmail.com", null);
         when(identityService.findByProfile(PROFILE)).thenReturn(Optional.of(person));
 
-        accountService.resetWorkContacts(ACCOUNT, "new@acme.com", null, "Address changed");
+        archive("new@acme.com", null);
+        accountService.resetWorkContacts(ACCOUNT, "Address changed");
 
         assertThat(person.getLoginEmail()).isEqualTo("alice.personal@gmail.com");
         verify(identityService, never()).updateOne(any(UserIdentity.class), any(Boolean.class));
@@ -115,7 +125,8 @@ class ResetWorkContactsTest {
         given("old@acme.com", null, PROFILE);
         when(identityService.findByProfile(PROFILE)).thenReturn(Optional.of(identity("old@acme.com", null)));
 
-        accountService.resetWorkContacts(ACCOUNT, "new@acme.com", null, "Address changed");
+        archive("new@acme.com", null);
+        accountService.resetWorkContacts(ACCOUNT, "Address changed");
 
         var captor = forClass(MailRequestMessage.class);
         verify(eventPublisher).publishEvent(captor.capture());
@@ -127,19 +138,23 @@ class ResetWorkContactsTest {
         // Nothing to reset: the membership has no person, so this is an invitation, not a reset.
         given("old@acme.com", null, null);
 
-        assertThatThrownBy(() ->
-                accountService.resetWorkContacts(ACCOUNT, "new@acme.com", null, "x"))
+        archive("new@acme.com", null);
+
+        assertThatThrownBy(() -> accountService.resetWorkContacts(ACCOUNT, "x"))
                 .isInstanceOf(BusinessException.class)
                 .hasMessageContaining("invite it instead");
     }
 
     @Test
-    void clearingBothChannels_isRefused() {
+    void anEmployeeRecordWithNoContacts_isRefused() {
+        // Nothing to reset TO. The message points at the record, because that is where the fix is:
+        // the operation cannot invent a contact and no longer accepts one from its caller.
         given("old@acme.com", "+8613800138000", PROFILE);
+        archive(null, null);
 
-        assertThatThrownBy(() -> accountService.resetWorkContacts(ACCOUNT, " ", null, "x"))
+        assertThatThrownBy(() -> accountService.resetWorkContacts(ACCOUNT, "x"))
                 .isInstanceOf(BusinessException.class)
-                .hasMessageContaining("needs a work email or a work mobile");
+                .hasMessageContaining("record has no work email or work mobile");
     }
 
     @Test
@@ -147,10 +162,14 @@ class ResetWorkContactsTest {
         given("old@acme.com", null, PROFILE);
         UserAccount other = new UserAccount();
         other.setId(999L);
-        doReturn(Optional.of(other)).when(accountService).getUserByEmail("taken@acme.com");
+        // Scoped to THIS company, not globally: the same work email in ANOTHER company is one
+        // person working at two, which is now allowed to exist and must stay editable.
+        doReturn(Optional.of(other)).when(accountService)
+                .findContactHolderInTenant("taken@acme.com", ACCOUNT);
 
-        assertThatThrownBy(() ->
-                accountService.resetWorkContacts(ACCOUNT, "taken@acme.com", null, "x"))
+        archive("taken@acme.com", null);
+
+        assertThatThrownBy(() -> accountService.resetWorkContacts(ACCOUNT, "x"))
                 .isInstanceOf(BusinessException.class)
                 .hasMessageContaining("already belongs to another account");
         verify(identityService, never()).updateOne(any(UserIdentity.class), any(Boolean.class));
@@ -164,7 +183,8 @@ class ResetWorkContactsTest {
         when(identityService.findByProfile(PROFILE))
                 .thenReturn(Optional.of(identity(null, "+8613800138000")));
 
-        accountService.resetWorkContacts(ACCOUNT, null, "+8613800138001", "Number changed");
+        archive(null, "+8613800138001");
+        accountService.resetWorkContacts(ACCOUNT, "Number changed");
 
         var sms = forClass(SmsRequestMessage.class);
         verify(eventPublisher).publishEvent(sms.capture());
