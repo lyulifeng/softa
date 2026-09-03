@@ -561,6 +561,43 @@ class UserAccountControllerTest {
     }
 
     @Test
+    void searchList_anAggregateQuery_isPassedThroughUntouched() {
+        // The shape a chart sends: "count the accounts per status" — a field list plus groupBy,
+        // which is what flips FlexQuery.aggregate. Borrowing profileId into THAT selection is not a
+        // widening: the column would have to join the GROUP BY (one group per person, so the counts
+        // stop being per status) or be wrapped in an aggregate function. Either way the caller gets
+        // back a different result than it asked for.
+        UserIdentityService identityService = mock(UserIdentityService.class);
+        ReflectionTestUtils.setField(controller, "identityService", identityService);
+        AtomicReference<List<String>> asked = new AtomicReference<>();
+        when(modelService.searchList(eq("UserAccount"), any())).thenAnswer(invocation -> {
+            FlexQuery query = invocation.getArgument(1);
+            asked.set(query.getFields());
+            // A mutable row: the guard is what must keep the stamping away, not an
+            // UnsupportedOperationException from an immutable map.
+            Map<String, Object> grouped = new HashMap<>();
+            grouped.put("status", "Active");
+            grouped.put("count", 3L);
+            return List.of(grouped);
+        });
+
+        SearchListParams params = new SearchListParams();
+        params.setFields(List.of("status"));
+        params.setGroupBy(List.of("status"));
+        Context ctx = new Context();
+        ctx.setTenantId(9L);
+        ctx.setRoleCodes(Set.of("HR"));
+        List<Map<String, Object>> rows =
+                ContextHolder.callWith(ctx, () -> controller.searchList(params).getData());
+
+        // Load-bearing: the field set reaches the ORM exactly as the caller sent it.
+        assertThat(asked.get()).containsExactly("status");
+        // A grouped row is not an account, so there is nothing to badge and nobody to ask about.
+        verify(identityService, never()).findPasswordLockedProfiles(any());
+        assertThat(rows.get(0)).doesNotContainKey("locked").doesNotContainKey("profileId");
+    }
+
+    @Test
     void getById_withAnExplicitFieldList_stillBadgesTheLock_andHandsBackNoProfileId() {
         UserIdentityService identityService = mock(UserIdentityService.class);
         ReflectionTestUtils.setField(controller, "identityService", identityService);

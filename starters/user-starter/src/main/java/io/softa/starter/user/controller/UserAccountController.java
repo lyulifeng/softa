@@ -244,12 +244,15 @@ public class UserAccountController extends EntityController<UserAccountService, 
             queryParams = new QueryParams();
         }
         FlexQuery flexQuery = QueryParams.convertParamsToFlexQuery(queryParams);
-        boolean borrowed = borrowProfileId(flexQuery);
+        boolean perRow = !flexQuery.isAggregate();
+        boolean borrowed = perRow && borrowProfileId(flexQuery);
         Page<Map<String, Object>> page = Page.of(queryParams.getPageNumber(), queryParams.getPageSize());
         return ApiResponse.success(inRosterScope(() -> {
             flexQuery.setFilters(scopeByTenant(flexQuery.getFilters()));
             Page<Map<String, Object>> result = modelService.searchPage(MODEL, flexQuery, page);
-            stampPasswordLock(result == null ? null : result.getRows(), borrowed);
+            if (perRow) {
+                stampPasswordLock(result == null ? null : result.getRows(), borrowed);
+            }
             return result;
         }));
     }
@@ -266,10 +269,12 @@ public class UserAccountController extends EntityController<UserAccountService, 
             searchListParams = new SearchListParams();
         }
         FlexQuery flexQuery = SearchListParams.convertParamsToFlexQuery(searchListParams);
-        boolean borrowed = borrowProfileId(flexQuery);
+        boolean perRow = !flexQuery.isAggregate();
+        boolean borrowed = perRow && borrowProfileId(flexQuery);
         return ApiResponse.success(inRosterScope(() -> {
             flexQuery.setFilters(scopeByTenant(flexQuery.getFilters()));
-            return stampPasswordLock(modelService.searchList(MODEL, flexQuery), borrowed);
+            List<Map<String, Object>> rows = modelService.searchList(MODEL, flexQuery);
+            return perRow ? stampPasswordLock(rows, borrowed) : rows;
         }));
     }
 
@@ -345,6 +350,14 @@ public class UserAccountController extends EntityController<UserAccountService, 
      * set, so {@link #profileIdOf} found nothing on every row of the real request and the lock badge
      * was stamped false for everyone. An empty/absent set already means every field, so it is left
      * alone; a non-empty one is widened here and narrowed back in {@link #stampPasswordLock}.
+     *
+     * <p>Only for a per-row read. An AGGREGATE query ({@link FlexQuery#isAggregate()} — set by any
+     * of groupBy / splitBy / aggFunctions) returns grouped rows, not accounts: there is no account
+     * for a lock to belong to, and adding a plain column to the selection is not a widening but a
+     * different query — profileId would either have to join the GROUP BY (splitting every group by
+     * person) or be wrapped in an aggregate function. Both change the caller's result, so an
+     * aggregate read is passed through exactly as it was sent; see the guards in
+     * {@link #searchPage} / {@link #searchList} for the matching skip of the stamping.
      *
      * @return whether profileId was borrowed, i.e. must be removed from the rows afterwards
      */
