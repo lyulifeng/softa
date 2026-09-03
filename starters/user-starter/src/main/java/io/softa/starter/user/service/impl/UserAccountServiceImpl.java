@@ -169,7 +169,10 @@ public class UserAccountServiceImpl extends EntityServiceImpl<UserAccount, Long>
      * MySQL {@code *_ci} collation to fold it.
      */
     private static String workContact(String contact) {
-        return StringUtils.trimToNull(contact);
+        // Trimmed, case kept (the *_ci collation folds case at the database); a mobile also loses
+        // its typed separators, so the equality queries on these columns — the shared-contact guard
+        // above all — see "+65 9123-4567" and "+6591234567" as the one number they are.
+        return LoginIdentifiers.collapseMobile(StringUtils.trimToNull(contact));
     }
 
     private UserAccount buildUserAccount(UserAccountDTO accountInfo) {

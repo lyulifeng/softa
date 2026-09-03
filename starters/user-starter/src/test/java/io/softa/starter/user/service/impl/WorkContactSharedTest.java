@@ -132,6 +132,43 @@ class WorkContactSharedTest {
     }
 
     @Test
+    void aMobileTypedWithSeparators_isAskedAboutAsTheBareNumber() {
+        // The columns hold the collapsed form (workContact), so the question has to be asked in it:
+        // "+65 9123-4567" and "+6591234567" are one number held by however many rows carry it.
+        givenMatches();
+
+        accountService.isWorkContactShared("+65 9123-4567");
+
+        ArgumentCaptor<Filters> filters = ArgumentCaptor.forClass(Filters.class);
+        verify(accountService, times(2)).searchList(filters.capture());
+        assertThat(filters.getAllValues())
+                .allSatisfy(f -> assertThat(f.toString()).contains("\"+6591234567\"").doesNotContain("9123-"));
+    }
+
+    @Test
+    void twoAccountsHoldingOneMobile_readAsShared_whenHRTypedThemDifferently() {
+        // The bypass on the mobile side: one row written as "+65 9123-4567", the other as
+        // "+6591234567". Stored as typed, the exact query matched one row each and the number read
+        // as unshared — the exact case the guard exists for. Collapsing at write time closes it.
+        ReflectionTestUtils.setField(accountService, "roleRelService", mock(UserRoleRelService.class));
+        List<UserAccount> store = new ArrayList<>();
+        doAnswer(inv -> {
+            String query = inv.getArgument(0).toString();
+            return store.stream().filter(a -> query.contains("\"" + a.getMobile() + "\"")).toList();
+        }).when(accountService).searchList(any(Filters.class));
+
+        UserAccount first = account(1L, 7L);
+        accountService.reviveWith(first, null, "+65 9123-4567");
+        UserAccount second = account(2L, null);
+        accountService.reviveWith(second, null, "+6591234567");
+        store.add(first);
+        store.add(second);
+
+        assertThat(first.getMobile()).isEqualTo("+6591234567");
+        assertThat(accountService.isWorkContactShared("+6591234567")).isTrue();
+    }
+
+    @Test
     void aBlankContact_isNotShared() {
         assertThat(accountService.isWorkContactShared("  ")).isFalse();
         assertThat(accountService.isWorkContactShared(null)).isFalse();

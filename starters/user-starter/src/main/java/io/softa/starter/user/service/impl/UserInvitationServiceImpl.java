@@ -40,6 +40,7 @@ import io.softa.starter.user.enums.InvitationStatus;
 import io.softa.starter.user.service.UserAccountService;
 import io.softa.starter.user.service.UserIdentityService;
 import io.softa.starter.user.service.UserInvitationService;
+import io.softa.starter.user.util.LoginIdentifiers;
 
 /**
  * {@link UserInvitationService} — token issuance + acceptance. Runs under {@link SkipPermissionCheck}
@@ -162,10 +163,11 @@ public class UserInvitationServiceImpl extends EntityServiceImpl<UserInvitation,
         // to the record, and this operation carries it onto the membership. A typo is fixed where
         // it lives rather than retyped here, so the two cannot end up disagreeing.
         WorkContacts archive = accountService.archiveWorkContacts(userId);
-        // Trimmed, case kept — the form UserAccount.email / mobile hold everywhere, so the equality
-        // queries behind the shared-contact guard find this row (see UserAccountServiceImpl.workContact).
+        // Trimmed, case kept, mobile separators collapsed — the form UserAccount.email / mobile hold
+        // everywhere, so the equality queries behind the shared-contact guard find this row (see
+        // UserAccountServiceImpl.workContact).
         String email = StringUtils.trimToNull(archive.email());
-        String mobile = StringUtils.trimToNull(archive.mobile());
+        String mobile = LoginIdentifiers.collapseMobile(StringUtils.trimToNull(archive.mobile()));
         if (email == null && mobile == null) {
             throw new BusinessException(
                     "Enter the correct work email or work mobile before re-inviting.");
