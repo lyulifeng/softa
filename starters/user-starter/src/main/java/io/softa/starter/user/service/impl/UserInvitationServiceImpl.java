@@ -241,16 +241,63 @@ public class UserInvitationServiceImpl extends EntityServiceImpl<UserInvitation,
         if (StringUtils.isBlank(email)) {
             return;
         }
-        Optional<UserAccount> account = accountService.getUserByEmail(email);
-        if (account.isEmpty()) {
-            // Do not reveal whether the email is registered.
-            log.info("forgotPassword for an unknown email — ignored (no enumeration).");
+        Optional<UserAccount> target = resolveResetTarget(email);
+        if (target.isEmpty()) {
+            // One log line and one (empty) response for "unknown", "no password yet" and "no
+            // active membership" alike — telling them apart would make this an oracle over who is
+            // registered where.
+            log.info("forgotPassword for an identifier with nothing to reset — ignored (no enumeration).");
             return;
         }
-        issue(account.get(), InvitationPurpose.PASSWORD_RESET, null);
+        issue(target.get(), InvitationPurpose.PASSWORD_RESET, null);
     }
 
     /**
+     * The membership a self-service reset may be issued against, or empty when nothing may be.
+     *
+     * <p>Resolved as the PERSON, by login identifier — the same lookup and spelling login uses —
+     * never as "the account whose work email this is". The password is global: whoever receives
+     * the link sets the credential that opens every company the identity belongs to. A work
+     * mailbox is the company's, not the person's — it is reissued, and a re-hired leaver's revived
+     * row carries it while still PENDING, with the person's own login elsewhere. Matching that row
+     * by its work column would mail the company a link that sets the leaver's password. Two things
+     * therefore have to hold before a token exists at all, and both are proved again at
+     * {@link #acceptToken} because the link outlives this call:
+     * <ol>
+     * <li>the identifier is a LOGIN identifier of an identity that already has a password — a reset
+     *     replaces a credential; a first password is set in-session or through /join with a code,
+     *     and neither of those paths is a mailbox alone;</li>
+     * <li>the person holds at least one ACTIVE membership, and the token names one of those. The
+     *     row an invitation points at is what acceptToken reads back, so it must be one that has
+     *     already been confirmed — never a PENDING / INVITED row that a confirm step still guards,
+     *     nor a DEACTIVATED one.</li>
+     * </ol>
+     * Among the ACTIVE rows, the one whose work email is the identifier typed is preferred, so the
+     * link lands where the person asked for it; otherwise any ACTIVE row that has a mailbox to send
+     * to. A person with ACTIVE rows but no work email anywhere gets nothing rather than a token
+     * nobody receives.
+     */
+    private Optional<UserAccount> resolveResetTarget(String identifier) {
+        String typed = LoginIdentifiers.typedForm(identifier);
+        Optional<UserIdentity> identity = identityService.findByLoginIdentifier(typed);
+        if (identity.isEmpty() || StringUtils.isBlank(identity.get().getPassword())) {
+            return Optional.empty();
+        }
+        List<UserAccount> active = accountService.listMembershipsOf(identity.get().getProfileId()).stream()
+                .filter(account -> account.getStatus() == AccountStatus.ACTIVE)
+                .toList();
+        String canonical = LoginIdentifiers.normalize(identifier);
+        Optional<UserAccount> byWorkEmail = active.stream()
+                .filter(account -> canonical.equals(LoginIdentifiers.normalize(account.getEmail())))
+                .findFirst();
+        if (byWorkEmail.isPresent()) {
+            return byWorkEmail;
+        }
+        return active.stream()
+                .filter(account -> StringUtils.isNotBlank(account.getEmail()))
+                .findFirst();
+    }
+
     /**
      * Move the account back for a withdrawn invitation, returning whether it changed.
      *
@@ -441,6 +488,20 @@ public class UserInvitationServiceImpl extends EntityServiceImpl<UserInvitation,
 
         UserAccount account = accountService.getById(invitation.getUserId())
                 .orElseThrow(() -> new BusinessException("Account not found."));
+        // forgotPassword proved two things when it issued this: the row is an ACTIVE membership and
+        // its person already has a password. Both are proved AGAIN here because the link is valid
+        // for days and this endpoint is anonymous — in between, the membership can be closed, or
+        // a token from before those checks existed can still be in a mailbox. The mailbox proves
+        // the company that holds it, not the person; only an already-confirmed row whose person
+        // already set a credential may have that credential replaced from a mailbox alone. Any
+        // other row is a first password, which belongs to /join (with a code) or to a session.
+        Optional<UserIdentity> identity = account.getProfileId() == null
+                ? Optional.empty()
+                : identityService.findByProfile(account.getProfileId());
+        if (account.getStatus() != AccountStatus.ACTIVE
+                || identity.isEmpty() || StringUtils.isBlank(identity.get().getPassword())) {
+            throw new BusinessException("This link is no longer valid. Please contact your HR.");
+        }
         // The password goes on the PERSON, so accepting an invitation from company B when you
         // already work at company A replaces one global credential rather than minting a second.
         identityService.setPassword(account, newPassword);
