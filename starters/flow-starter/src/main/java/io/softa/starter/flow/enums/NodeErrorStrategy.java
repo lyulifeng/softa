@@ -1,6 +1,9 @@
 package io.softa.starter.flow.enums;
 
-import com.fasterxml.jackson.annotation.JsonCreator;
+import java.util.Map;
+import java.util.function.Function;
+import java.util.stream.Collectors;
+import java.util.stream.Stream;
 import com.fasterxml.jackson.annotation.JsonValue;
 import lombok.AllArgsConstructor;
 import lombok.Getter;
@@ -21,16 +24,22 @@ public enum NodeErrorStrategy {
     @JsonValue
     private final String type;
 
-    @JsonCreator
+    /** Accepted spellings, upper-cased on both sides: the {@code @JsonValue} type and the constant name. */
+    private static final Map<String, NodeErrorStrategy> NAMES_MAP = Stream.of(values())
+            .collect(Collectors.toMap(NodeErrorStrategy::getType, Function.identity()));
+
+    /**
+     * Lenient parser for raw {@code NodeErrorConfig.strategy} values read out of an untyped
+     * config map. Not a Jackson hook — typed JSON binding goes through {@link JsonValue}.
+     */
     public static NodeErrorStrategy fromValue(String value) {
         if (value == null) {
             return FAIL;
         }
-        for (NodeErrorStrategy s : values()) {
-            if (s.type.equalsIgnoreCase(value) || s.name().equalsIgnoreCase(value)) {
-                return s;
-            }
+        NodeErrorStrategy strategy = NAMES_MAP.get(value);
+        if (strategy == null) {
+            throw new IllegalArgumentException("Unsupported node error strategy: " + value);
         }
-        throw new IllegalArgumentException("Unsupported node error strategy: " + value);
+        return strategy;
     }
 }

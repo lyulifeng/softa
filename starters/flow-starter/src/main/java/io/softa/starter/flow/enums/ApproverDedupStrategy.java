@@ -1,6 +1,5 @@
 package io.softa.starter.flow.enums;
 
-import com.fasterxml.jackson.annotation.JsonCreator;
 import com.fasterxml.jackson.annotation.JsonValue;
 import lombok.AllArgsConstructor;
 import lombok.Getter;
@@ -31,14 +30,4 @@ public enum ApproverDedupStrategy {
 
     @JsonValue
     private final String type;
-
-    @JsonCreator
-    public static ApproverDedupStrategy fromValue(String value) {
-        for (ApproverDedupStrategy s : values()) {
-            if (s.type.equalsIgnoreCase(value) || s.name().equalsIgnoreCase(value)) {
-                return s;
-            }
-        }
-        throw new IllegalArgumentException("Unsupported approver dedup strategy: " + value);
-    }
 }

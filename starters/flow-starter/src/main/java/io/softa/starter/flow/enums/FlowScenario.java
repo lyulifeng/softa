@@ -1,11 +1,11 @@
 package io.softa.starter.flow.enums;
 
-import com.fasterxml.jackson.annotation.JsonCreator;
 import com.fasterxml.jackson.annotation.JsonValue;
-import io.softa.framework.base.annotation.OptionItem;
-import io.softa.framework.base.annotation.OptionSet;
 import lombok.AllArgsConstructor;
 import lombok.Getter;
+
+import io.softa.framework.base.annotation.OptionItem;
+import io.softa.framework.base.annotation.OptionSet;
 
 /**
  * Execution scenario of a flow definition.
@@ -41,13 +41,4 @@ public enum FlowScenario {
     @JsonValue
     private final String type;
 
-    @JsonCreator
-    public static FlowScenario fromValue(String value) {
-        for (FlowScenario s : values()) {
-            if (s.type.equalsIgnoreCase(value) || s.name().equalsIgnoreCase(value)) {
-                return s;
-            }
-        }
-        throw new IllegalArgumentException("Unsupported flow scenario: " + value);
-    }
 }

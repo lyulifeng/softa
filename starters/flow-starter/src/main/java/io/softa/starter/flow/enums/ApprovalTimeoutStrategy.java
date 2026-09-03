@@ -1,6 +1,5 @@
 package io.softa.starter.flow.enums;
 
-import com.fasterxml.jackson.annotation.JsonCreator;
 import com.fasterxml.jackson.annotation.JsonValue;
 import lombok.AllArgsConstructor;
 import lombok.Getter;
@@ -25,18 +24,5 @@ public enum ApprovalTimeoutStrategy {
 
     @JsonValue
     private final String type;
-
-    @JsonCreator
-    public static ApprovalTimeoutStrategy fromValue(String value) {
-        if (value == null) {
-            return REMIND;
-        }
-        for (ApprovalTimeoutStrategy s : values()) {
-            if (s.type.equalsIgnoreCase(value) || s.name().equalsIgnoreCase(value)) {
-                return s;
-            }
-        }
-        return REMIND;
-    }
 }
 

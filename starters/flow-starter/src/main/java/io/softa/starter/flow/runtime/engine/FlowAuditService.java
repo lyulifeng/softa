@@ -1,8 +1,13 @@
 package io.softa.starter.flow.runtime.engine;
 
 import java.time.LocalDateTime;
+import java.util.ArrayList;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
 import java.util.Objects;
-import java.util.*;
+import java.util.Optional;
+
 import org.springframework.stereotype.Component;
 import org.springframework.util.StringUtils;
 
@@ -10,6 +15,7 @@ import io.softa.starter.flow.enums.ApprovalReturnTarget;
 import io.softa.starter.flow.runtime.api.*;
 import io.softa.starter.flow.runtime.bundle.CompiledFlowDefinition;
 import io.softa.starter.flow.runtime.bundle.CompiledFlowNode;
+import io.softa.starter.flow.runtime.state.ApprovalActionAuditEntry.ApprovalActionAuditEntryBuilder;
 import io.softa.starter.flow.runtime.state.*;
 
 /**
@@ -40,7 +46,7 @@ public class FlowAuditService {
     }
 
     public void appendApprovalAudit(FlowExecutionState state,
-                                    ApprovalActionAuditEntry.ApprovalActionAuditEntryBuilder builder) {
+                                    ApprovalActionAuditEntryBuilder builder) {
         if (state.getApprovalAuditDelta() == null) {
             state.setApprovalAuditDelta(new ArrayList<>());
         }
@@ -71,9 +77,9 @@ public class FlowAuditService {
                                                           String nodeId,
                                                           Integer cycleNumber,
                                                           String actorId) {
-        List<ApprovalActionAuditEntry> history = auditReader.fullHistory(state);
+        var history = auditReader.fullHistory(state);
         for (int i = history.size() - 1; i >= 0; i--) {
-            ApprovalActionAuditEntry entry = history.get(i);
+            var entry = history.get(i);
             if (ApprovalActionType.CC.equals(entry.getAction())
                     && Objects.equals(nodeId, entry.getNodeId())
                     && Objects.equals(cycleNumber, entry.getCycleNumber())
@@ -98,7 +104,7 @@ public class FlowAuditService {
     /**
      * Pre-fill a builder with common fields from the approval context.
      */
-    public ApprovalActionAuditEntry.ApprovalActionAuditEntryBuilder baseBuilder(
+    public ApprovalActionAuditEntryBuilder baseBuilder(
             CompiledFlowDefinition definition,
             CompiledFlowNode node,
             PendingApproval pendingApproval,
@@ -185,7 +191,7 @@ public class FlowAuditService {
     }
 
     public Map<String, Object> buildApprovalDecisionPayload(String outcome, FlowRejectRequest request) {
-        Map<String, Object> payload = new LinkedHashMap<>();
+        var payload = new LinkedHashMap<String, Object>();
         payload.put("outcome", outcome);
         payload.put("nodeId", request.getNodeId());
         payload.put("comment", request.getComment());
@@ -208,7 +214,7 @@ public class FlowAuditService {
                                                           String targetActorId,
                                                           ApprovalReturnTarget target,
                                                           CompiledFlowNode targetNode) {
-        Map<String, Object> payload = new LinkedHashMap<>();
+        var payload = new LinkedHashMap<String, Object>();
         payload.put("outcome", "Returned");
         payload.put("nodeId", node.getNodeId());
         payload.put("target", target == null ? null : target.getType());
@@ -244,7 +250,7 @@ public class FlowAuditService {
     public Map<String, Object> buildResubmissionDecisionPayload(FlowResubmitRequest request,
                                                                 CompiledFlowNode node,
                                                                 Integer resubmissionCount) {
-        Map<String, Object> payload = new LinkedHashMap<>();
+        var payload = new LinkedHashMap<String, Object>();
         payload.put("outcome", "Resubmitted");
         payload.put("nodeId", node.getNodeId());
         payload.put("actorId", request.getActorId());
@@ -264,7 +270,7 @@ public class FlowAuditService {
     }
 
     public Map<String, Object> buildWithdrawalDecisionPayload(FlowWithdrawRequest request) {
-        Map<String, Object> payload = new LinkedHashMap<>();
+        var payload = new LinkedHashMap<String, Object>();
         payload.put("outcome", "Withdrawn");
         payload.put("actorId", request.getActorId());
         payload.put("comment", request.getComment());
@@ -293,4 +299,3 @@ public class FlowAuditService {
         }
     }
 }
-

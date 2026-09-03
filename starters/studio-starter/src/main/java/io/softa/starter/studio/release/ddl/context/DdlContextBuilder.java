@@ -110,6 +110,9 @@ public final class DdlContextBuilder {
             index.setColumns(List.copyOf(designModelIndex.getIndexFields()));
         }
         index.setUnique(Boolean.TRUE.equals(designModelIndex.getUniqueIndex()));
+        if (designModelIndex.getMethod() != null) {
+            index.setMethod(designModelIndex.getMethod().name());
+        }
         return index;
     }
 
@@ -118,6 +121,12 @@ public final class DdlContextBuilder {
         index.setIndexName(asString(data.get("indexName")));
         index.setUnique(asBoolean(data.get("uniqueIndex")));
         index.setColumns(asStringList(data.get("indexFields")));
+        // Row-change payloads carry the enum's @JsonValue ("Search"), while the templates
+        // compare against the enum name ("SEARCH") — normalize; null stays the BTREE default.
+        String method = asString(data.get("method"));
+        if (method != null && !method.isBlank()) {
+            index.setMethod(method.toUpperCase(java.util.Locale.ROOT));
+        }
         return index;
     }
 
