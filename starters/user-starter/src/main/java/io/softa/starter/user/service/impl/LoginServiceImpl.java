@@ -6,6 +6,7 @@ import java.util.Comparator;
 import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.Set;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.lang3.RandomStringUtils;
 import io.softa.framework.base.utils.RandomUtils;
@@ -52,6 +53,26 @@ public class LoginServiceImpl implements LoginService {
 
     /** Mirrors UserIdentityServiceImpl's window, for the message the locked-out person sees. */
     private static final int LOCK_MINUTES = 30;
+
+    /**
+     * The memberships the company step counts (PRD 1.5 step 3: Active + Frozen + Locked).
+     *
+     * <p>An INVITED or PENDING row is a membership HR has created, not one the person holds yet:
+     * counting it sends someone with one real company and one open invitation to the picker the PRD
+     * says they should skip, and the picker then lists a company they have not accepted into.
+     *
+     * <p>LOCKED is legacy data — the lock moved to the credential and nothing writes this status any
+     * more — but rows carrying it must still surface, or their owner silently loses the company.
+     */
+    private static final Set<AccountStatus> COUNTED_STATUSES =
+            Set.of(AccountStatus.ACTIVE, AccountStatus.FROZEN, AccountStatus.LOCKED);
+
+    /** Someone whose only memberships are unaccepted invitations — see {@link #noCompanyRefusal}. */
+    private static final String INVITATION_PENDING_MESSAGE =
+            "Your invitation has not been accepted yet. Open the link we sent you.";
+
+    private static final String NO_COMPANY_MESSAGE =
+            "Your account is not linked to any company. Please contact your HR.";
 
     /**
      * The first wrong password that is answered with a remaining-attempts count (PRD L3). Early
@@ -229,7 +250,7 @@ public class LoginServiceImpl implements LoginService {
     private void assertContactNotShared(String identifier) {
         if (accountService.isWorkContactShared(identifier)) {
             throw new BusinessException("This contact is shared by more than one account, so we "
-                    + "cannot confirm who you are. Please contact your administrator.");
+                    + "cannot confirm who you are. Please contact your HR.");
         }
     }
 
@@ -244,7 +265,7 @@ public class LoginServiceImpl implements LoginService {
         // Resolved by LOGIN IDENTIFIER on the person, not by a company's work contact: the code
         // was sent to an identifier, and that identifier is what identifies the human being.
         return this.afterAuthentication(this.resolveIdentity(typed,
-                "This account is not linked to any company. Please contact your administrator."));
+                "This account is not linked to any company. Please contact your HR."));
     }
 
     @Override
@@ -348,7 +369,7 @@ public class LoginServiceImpl implements LoginService {
                     profileService.getUserInfo(enterable.get(0).accountId()), mustSetPassword);
         }
         if (options.isEmpty()) {
-            throw new BusinessException("Your account is not linked to any company. Please contact your administrator.");
+            throw noCompanyRefusal(profileId);
         }
         // A choice is pending, so authentication succeeded but no session is issued yet. Mint a
         // single-use token proving THIS person just authenticated; selectCompany reads the person
@@ -657,6 +678,7 @@ public class LoginServiceImpl implements LoginService {
         boolean locked = identityService.findByProfile(profileId)
                 .map(identityService::isPasswordLocked).orElse(false);
         return accountService.listMembershipsOf(profileId).stream()
+                .filter(account -> COUNTED_STATUSES.contains(account.getStatus()))
                 .map(account -> new MembershipOption(
                         account.getId(), account.getTenantId(),
                         tenantInfoService == null ? null
@@ -668,13 +690,30 @@ public class LoginServiceImpl implements LoginService {
                 .toList();
     }
 
+    /**
+     * Why an authenticated person has nowhere to go — worded from the reason.
+     *
+     * <p>Someone holding nothing but an unaccepted invitation CAN authenticate (their identity is
+     * seeded when HR creates the account), so they do reach this refusal, and "not linked to any
+     * company — contact your HR" is both wrong and unactionable for them: HR already did their part.
+     * The wider set is asked for only here, on the path that is already refusing, so the normal
+     * login pays nothing for the distinction.
+     */
+    private BusinessException noCompanyRefusal(Long profileId) {
+        boolean invited = accountService.listMembershipsOf(profileId).stream()
+                .anyMatch(account -> account.getStatus() == AccountStatus.PENDING
+                        || account.getStatus() == AccountStatus.INVITED);
+        return new BusinessException(invited ? INVITATION_PENDING_MESSAGE : NO_COMPANY_MESSAGE);
+    }
+
     @Override
     public Long resolveSingleMembership(Long profileId) {
         List<MembershipOption> options = this.resolveMemberships(profileId);
         if (options.isEmpty()) {
-            // Authenticated, but a member of nothing — the account was off-boarded everywhere, or
-            // a profile exists with no membership yet. Either way there is nowhere to go.
-            throw new BusinessException("Your account is not linked to any company. Please contact your administrator.");
+            // Authenticated, but a member of nothing to enter — off-boarded everywhere, a profile
+            // with no membership yet, or nothing but unaccepted invitations. Either way there is
+            // nowhere to go, and which of them it is decides what the person is told.
+            throw noCompanyRefusal(profileId);
         }
         List<MembershipOption> selectable = options.stream().filter(MembershipOption::selectable).toList();
         if (selectable.size() == 1 && options.size() == 1) {

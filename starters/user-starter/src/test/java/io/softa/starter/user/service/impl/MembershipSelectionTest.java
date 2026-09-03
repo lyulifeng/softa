@@ -104,12 +104,51 @@ class MembershipSelectionTest {
     }
 
     @Test
+    void anActiveAndAFrozenCompany_bothCount() {
+        // Frozen IS counted (PRD 1.5 step 3), so this is the picker with two entries — the person
+        // has to see the frozen company and why it cannot be entered.
+        givenMemberships(membership(100L, 1L, AccountStatus.ACTIVE),
+                membership(200L, 2L, AccountStatus.FROZEN));
+
+        assertThatThrownBy(() -> loginService.resolveSingleMembership(PROFILE))
+                .isInstanceOf(MultipleMembershipsException.class)
+                .satisfies(e -> assertThat(((MultipleMembershipsException) e).getOptions()).hasSize(2));
+    }
+
+    @Test
     void noCompany_refusesWithSomethingActionable() {
         givenMemberships();
 
         assertThatThrownBy(() -> loginService.resolveSingleMembership(PROFILE))
                 .isInstanceOf(BusinessException.class)
                 .hasMessageContaining("not linked to any company");
+    }
+
+    @Test
+    void anUnacceptedInvitationIsNotACompany_soTheOneRealOneIsEnteredDirectly() {
+        // PRD 1.5 step 3 counts Active + Frozen + Locked. A PENDING row is a membership HR created,
+        // not one this person holds: counting it sent someone with one company and one open
+        // invitation to a picker they should never have seen, listing a company they have not
+        // accepted into.
+        givenMemberships(membership(100L, 1L, AccountStatus.ACTIVE),
+                membership(200L, 2L, AccountStatus.PENDING));
+
+        assertThat(loginService.resolveSingleMembership(PROFILE)).isEqualTo(100L);
+        assertThat(loginService.listCompanies(TOKEN)).hasSize(1)
+                .extracting(MembershipOption::accountId).containsExactly(100L);
+    }
+
+    @Test
+    void onlyAnUnacceptedInvitation_isToldAboutTheInvitation() {
+        // This person authenticates fine (registerUserProfile seeds their identity when HR creates
+        // the account) and now counts as belonging nowhere. "Contact your HR" is wrong for them —
+        // HR already did their part; the link is sitting in their inbox.
+        givenMemberships(membership(100L, 1L, AccountStatus.INVITED));
+
+        assertThatThrownBy(() -> loginService.resolveSingleMembership(PROFILE))
+                .isInstanceOf(BusinessException.class)
+                .hasMessageContaining("invitation has not been accepted")
+                .hasMessageNotContaining("not linked to any company");
     }
 
     @Test
