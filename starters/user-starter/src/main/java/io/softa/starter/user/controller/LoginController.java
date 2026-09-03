@@ -187,17 +187,19 @@ public class LoginController {
      * Confirm joining, after the person verified their identity (and set a password if new).
      *
      * <p>A session is issued here, not earlier: activation and "you are now in" are the same
-     * moment. Verifying a code proves control of the invitation; joining is the agreement.
+     * moment. Verifying a code proves control of the invitation; joining is the agreement. The
+     * service may also answer {@code signInRequired} — joined, but no session — and that result
+     * carries no userInfo, so it passes through issueOrAskForCompany without a cookie.
      */
     @Operation(summary = "Accept the invitation: bind the person, activate the membership, sign in")
     @PostMapping("/confirmJoin")
     @SwitchUser(SystemUser.REGISTERED_USER)
     public ApiResponse<AuthenticationResult> confirmJoin(@RequestBody @Valid ConfirmJoinDTO dto,
             HttpServletResponse response) {
-        invitationService.confirmJoin(dto.getToken(), dto.getProfileId(), dto.getProof());
         // Re-runs the company resolution rather than assuming the just-joined membership is the
         // only one: the person may already belong elsewhere, in which case they must still choose.
-        return this.issueOrAskForCompany(loginService.afterJoin(dto.getProfileId()), response);
+        return this.issueOrAskForCompany(
+                loginService.confirmJoin(dto.getToken(), dto.getProfileId(), dto.getProof()), response);
     }
 
     /**

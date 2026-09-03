@@ -373,12 +373,39 @@ public class LoginServiceImpl implements LoginService {
 
 
     @Override
-    public AuthenticationResult afterJoin(Long profileId) {
+    public AuthenticationResult confirmJoin(String rawToken, Long profileId, String proof) {
+        // Read BEFORE the membership activates: accepting spends the invitation, and neither the
+        // row's prior binding nor the invitation's contacts can be resolved from the token after.
+        // An unusable token resolves to nothing here and is then judged by the invitation service
+        // itself (a refusal, or the quiet re-entrant return), exactly as before.
+        boolean boundBefore = invitationService.resolveJoinAccount(rawToken)
+                .map(account -> account.getProfileId() != null).orElse(false);
+        JoinContacts contacts = boundBefore ? invitationService.resolveJoinContacts(rawToken) : null;
+
+        invitationService.confirmJoin(rawToken, profileId, proof);
+
         // The identity, not the profile: what decides the next step is whether a password exists,
         // and that lives on the credential.
-        return identityService.findByProfile(profileId)
-                .map(this::afterAuthentication)
+        UserIdentity identity = identityService.findByProfile(profileId)
                 .orElseThrow(() -> new BusinessException("Person record not found."));
+        // Two different things were proven, and only one of them is this person. The code proved
+        // control of the WORK address on a row that already named its person — a mailbox the
+        // company holds and reissues. For an unbound row the address IS the person's own login
+        // identifier (the contact tie), so the same code does identify them; for a bound row it
+        // identifies whoever holds the mailbox. verifyJoinCode already kept such a person's first
+        // password off this path (holdsLoginOutsideInvitation); a session here would undo that,
+        // because /UserAccount/setMyFirstPassword sets the GLOBAL password from any session. So the
+        // membership stays activated — HR intended it — and nothing is issued: the person signs in
+        // with the login they hold (by code, since there is no password) and sets it from there.
+        // A person WITH a password keeps the session, as before: the first-password endpoint refuses
+        // them, so the global credential this closes off cannot be minted from that session.
+        // Residual, by design: that session is still the leaver's in the joined company (and the
+        // company step, if they belong elsewhere); it rests on HR having issued the invitation.
+        if (boundBefore && StringUtils.isBlank(identity.getPassword())
+                && holdsLoginOutsideInvitation(identity, contacts)) {
+            return AuthenticationResult.requireSignIn();
+        }
+        return this.afterAuthentication(identity);
     }
 
     @Override
@@ -434,9 +461,10 @@ public class LoginServiceImpl implements LoginService {
             // on the row's profileId. See reclaimLoginIdentifier for the takeover this prevents.
             this.reclaimLoginIdentifier(known, address);
             // No password step here for a person who can already sign in some other way — see
-            // holdsLoginOutsideInvitation. They confirm on the row's profileId and set the password
-            // in-session (afterJoin reports mustSetPassword from the identity), where they are
-            // themselves and not merely whoever received this link.
+            // holdsLoginOutsideInvitation. They confirm on the row's profileId, confirmJoin answers
+            // signInRequired rather than a session, and they set the password in-session after
+            // signing in with what they hold — where they are themselves and not merely whoever
+            // received this link.
             boolean mustSetPassword = StringUtils.isBlank(known.getPassword())
                     && !holdsLoginOutsideInvitation(known, invitationService.resolveJoinContacts(rawToken));
             return this.verified(rawToken, known.getProfileId(), mustSetPassword);

@@ -95,13 +95,21 @@ public interface LoginService {
     boolean mustSetPassword(Long profileId);
 
     /**
-     * Decide where a person lands right after joining a company.
+     * Accept the invitation — bind the person, activate the membership — and decide where they land.
      *
      * <p>Not simply "the membership they just joined": someone who already belonged elsewhere now
      * has two, and must still choose. Reusing the same resolution as authentication is what keeps
      * the two entry points from disagreeing.
+     *
+     * <p>Not always a sign-in, either. For a row that already belonged to a person, the code proved
+     * control of the WORK address on the row — a mailbox the company holds — not of the person. When
+     * that person can sign in some other way and has no password, the membership is activated (HR
+     * meant it) but the result is {@link AuthenticationResult#requireSignIn()}: no session and no
+     * pre-auth token, because either would be a session for whoever holds the mailbox.
+     *
+     * @param proof the value {@link #verifyJoinCode} returned; spent here
      */
-    AuthenticationResult afterJoin(Long profileId);
+    AuthenticationResult confirmJoin(String rawToken, Long profileId, String proof);
 
     /**
      * Generate a new session ID for a user
