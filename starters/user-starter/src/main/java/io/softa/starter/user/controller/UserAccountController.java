@@ -1,5 +1,6 @@
 package io.softa.starter.user.controller;
 
+import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -19,6 +20,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.util.CollectionUtils;
 import org.springframework.web.bind.annotation.*;
 
 import io.softa.framework.base.config.SystemConfig;
@@ -240,11 +242,12 @@ public class UserAccountController extends EntityController<UserAccountService, 
             queryParams = new QueryParams();
         }
         FlexQuery flexQuery = QueryParams.convertParamsToFlexQuery(queryParams);
+        boolean borrowed = borrowProfileId(flexQuery);
         Page<Map<String, Object>> page = Page.of(queryParams.getPageNumber(), queryParams.getPageSize());
         return ApiResponse.success(inRosterScope(() -> {
             flexQuery.setFilters(scopeByTenant(flexQuery.getFilters()));
             Page<Map<String, Object>> result = modelService.searchPage(MODEL, flexQuery, page);
-            stampPasswordLock(result == null ? null : result.getRows());
+            stampPasswordLock(result == null ? null : result.getRows(), borrowed);
             return result;
         }));
     }
@@ -261,9 +264,10 @@ public class UserAccountController extends EntityController<UserAccountService, 
             searchListParams = new SearchListParams();
         }
         FlexQuery flexQuery = SearchListParams.convertParamsToFlexQuery(searchListParams);
+        boolean borrowed = borrowProfileId(flexQuery);
         return ApiResponse.success(inRosterScope(() -> {
             flexQuery.setFilters(scopeByTenant(flexQuery.getFilters()));
-            return stampPasswordLock(modelService.searchList(MODEL, flexQuery));
+            return stampPasswordLock(modelService.searchList(MODEL, flexQuery), borrowed);
         }));
     }
 
@@ -289,6 +293,8 @@ public class UserAccountController extends EntityController<UserAccountService, 
         if (getByIdParams.getSubQueries() != null && !getByIdParams.getSubQueries().isEmpty()) {
             subQueries.setQueryMap(getByIdParams.getSubQueries());
         }
+        boolean borrowed = needsProfileId(getByIdParams.getFields());
+        List<String> fields = borrowed ? withProfileId(getByIdParams.getFields()) : getByIdParams.getFields();
         return ApiResponse.success(inRosterScope(() -> {
             // Roster membership first (super-admin only — everyone else never enters the window and
             // stays on the ORM's own tenant filter). Both the check and the roster resolution must sit
@@ -298,10 +304,10 @@ public class UserAccountController extends EntityController<UserAccountService, 
                 return null;   // outside the roster — same answer as a nonexistent record
             }
             Map<String, Object> row = modelService
-                    .getById(MODEL, id, getByIdParams.getFields(), subQueries, ConvertType.REFERENCE)
+                    .getById(MODEL, id, fields, subQueries, ConvertType.REFERENCE)
                     .orElse(null);
             if (row != null) {
-                stampPasswordLock(List.of(row));
+                stampPasswordLock(List.of(row), borrowed);
             }
             return row;
         }));
@@ -319,6 +325,47 @@ public class UserAccountController extends EntityController<UserAccountService, 
      * <p>ONE query per response, not per row: the page's people are collected first and resolved
      * together. A roster of fifty rows is otherwise fifty credential reads.
      */
+    private List<Map<String, Object>> stampPasswordLock(List<Map<String, Object>> rows, boolean borrowedProfileId) {
+        stampPasswordLock(rows);
+        if (borrowedProfileId && rows != null) {
+            // Give the field list back exactly as asked for. The caller never requested profileId;
+            // leaving it in adds a person id to a response that was scoped to other columns.
+            rows.forEach(row -> row.remove(PROFILE_FIELD));
+        }
+        return rows;
+    }
+
+    /**
+     * Read the row's person even when the caller asked for a narrower field list.
+     *
+     * <p>The account table sends an explicit field set built from its own declared columns, and
+     * profileId is not one of them — the ORM only adds id / version / sliceId to a caller-supplied
+     * set, so {@link #profileIdOf} found nothing on every row of the real request and the lock badge
+     * was stamped false for everyone. An empty/absent set already means every field, so it is left
+     * alone; a non-empty one is widened here and narrowed back in {@link #stampPasswordLock}.
+     *
+     * @return whether profileId was borrowed, i.e. must be removed from the rows afterwards
+     */
+    private static boolean borrowProfileId(FlexQuery flexQuery) {
+        if (!needsProfileId(flexQuery.getFields())) {
+            return false;
+        }
+        flexQuery.setFields(withProfileId(flexQuery.getFields()));
+        return true;
+    }
+
+    /** Whether this caller-supplied field set has to be widened — see {@link #borrowProfileId}. */
+    private static boolean needsProfileId(List<String> fields) {
+        return !CollectionUtils.isEmpty(fields) && !fields.contains(PROFILE_FIELD);
+    }
+
+    /** A widened COPY: the caller's own list may be immutable, and mutating it is not ours to do. */
+    private static List<String> withProfileId(List<String> fields) {
+        List<String> widened = new ArrayList<>(fields);
+        widened.add(PROFILE_FIELD);
+        return widened;
+    }
+
     private List<Map<String, Object>> stampPasswordLock(List<Map<String, Object>> rows) {
         if (rows == null || rows.isEmpty()) {
             return rows;

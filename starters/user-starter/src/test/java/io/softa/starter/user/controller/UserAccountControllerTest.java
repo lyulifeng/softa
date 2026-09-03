@@ -1,8 +1,10 @@
 package io.softa.starter.user.controller;
 
 import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.atomic.AtomicReference;
 
@@ -20,6 +22,9 @@ import io.softa.framework.base.context.ContextHolder;
 import io.softa.framework.orm.service.ModelService;
 import io.softa.framework.orm.utils.IdUtils;
 import io.softa.framework.orm.domain.Filters;
+import io.softa.framework.orm.domain.FlexQuery;
+import io.softa.framework.web.dto.GetByIdParams;
+import io.softa.framework.web.dto.SearchListParams;
 import io.softa.framework.web.response.ApiResponse;
 import io.softa.starter.user.constant.RoleConstant;
 import io.softa.starter.user.dto.ResetWorkContactsDTO;
@@ -401,5 +406,117 @@ class UserAccountControllerTest {
         asCallerIn(2L, Set.of(RoleConstant.CODE_SUPER_ADMIN), () -> controller.rehire(7L));
 
         verify(accountService).rehire(7L);
+    }
+
+    // ─── the lock on a read that names its own fields ───
+
+    /**
+     * The roster table does not send "give me everything": it sends the field list built from its
+     * declared columns, and profileId is not among them. The ORM only auto-adds id / version /
+     * sliceId to a caller-supplied set, so the read came back with no person on any row and the
+     * lock badge was stamped false for the whole page — on every real request, while the
+     * hand-built rows above (which carry profileId already) stayed green.
+     *
+     * <p>Stubbed the way the ORM actually answers: profileId appears in the row only if the query
+     * asked for it.
+     */
+    private List<Map<String, Object>> searchListWithFields(List<String> fields, Map<Long, Long> peopleByAccount) {
+        when(modelService.searchList(eq("UserAccount"), any())).thenAnswer(invocation -> {
+            FlexQuery query = invocation.getArgument(1);
+            List<String> asked = query.getFields();
+            return peopleByAccount.entrySet().stream().map(entry -> {
+                Map<String, Object> row = new HashMap<>();
+                row.put("id", entry.getKey());
+                row.put("status", "Active");
+                if (asked == null || asked.isEmpty() || asked.contains("profileId")) {
+                    row.put("profileId", entry.getValue());
+                }
+                return row;
+            }).toList();
+        });
+        SearchListParams params = new SearchListParams();
+        params.setFields(fields);
+        Context ctx = new Context();
+        ctx.setTenantId(9L);
+        ctx.setRoleCodes(Set.of("HR"));
+        return ContextHolder.callWith(ctx, () -> controller.searchList(params).getData());
+    }
+
+    @Test
+    void searchList_withAnExplicitFieldList_stillBadgesTheLock_andHandsBackNoProfileId() {
+        UserIdentityService identityService = mock(UserIdentityService.class);
+        ReflectionTestUtils.setField(controller, "identityService", identityService);
+        when(identityService.findPasswordLockedProfiles(any())).thenReturn(Set.of(1L));
+
+        // The shape the production caller sends: an explicit list built from the table's columns.
+        Map<Long, Long> peopleByAccount = new LinkedHashMap<>();
+        peopleByAccount.put(100L, 1L);
+        peopleByAccount.put(200L, 2L);
+        List<Map<String, Object>> rows = searchListWithFields(List.of("status"), peopleByAccount);
+
+        // Load-bearing: without borrowing profileId for the read, both rows report false here.
+        assertThat(rows.get(0)).containsEntry("locked", true);
+        assertThat(rows.get(1)).containsEntry("locked", false);
+        verify(identityService, times(1)).findPasswordLockedProfiles(Set.of(1L, 2L));
+        // Borrowed, not granted: the caller asked for status, so the person id goes back out again.
+        assertThat(rows).allSatisfy(row -> assertThat(row).doesNotContainKey("profileId"));
+    }
+
+    @Test
+    void searchList_whenTheCallerAskedForProfileId_itStaysInTheRow() {
+        // Only a BORROWED key is removed. Stripping one the caller named would break the column
+        // they asked to display.
+        UserIdentityService identityService = mock(UserIdentityService.class);
+        ReflectionTestUtils.setField(controller, "identityService", identityService);
+        when(identityService.findPasswordLockedProfiles(any())).thenReturn(Set.of(1L));
+
+        List<Map<String, Object>> rows =
+                searchListWithFields(List.of("status", "profileId"), Map.of(100L, 1L));
+
+        assertThat(rows.get(0)).containsEntry("locked", true).containsEntry("profileId", 1L);
+    }
+
+    @Test
+    void searchList_withNoFieldList_isLeftAlone() {
+        // An empty/absent set already means every field — widening it would be a no-op that only
+        // risked turning "all fields" into "these two".
+        UserIdentityService identityService = mock(UserIdentityService.class);
+        ReflectionTestUtils.setField(controller, "identityService", identityService);
+        when(identityService.findPasswordLockedProfiles(any())).thenReturn(Set.of(1L));
+
+        List<Map<String, Object>> rows = searchListWithFields(null, Map.of(100L, 1L));
+
+        assertThat(rows.get(0)).containsEntry("locked", true).containsEntry("profileId", 1L);
+    }
+
+    @Test
+    void getById_withAnExplicitFieldList_stillBadgesTheLock_andHandsBackNoProfileId() {
+        UserIdentityService identityService = mock(UserIdentityService.class);
+        ReflectionTestUtils.setField(controller, "identityService", identityService);
+        when(identityService.findPasswordLockedProfiles(any())).thenReturn(Set.of(1L));
+        when(modelService.getById(eq("UserAccount"), any(), any(), any(), any())).thenAnswer(invocation -> {
+            List<String> asked = invocation.getArgument(2);
+            Map<String, Object> row = new HashMap<>();
+            row.put("id", 100L);
+            row.put("status", "Active");
+            if (asked != null && asked.contains("profileId")) {
+                row.put("profileId", 1L);
+            }
+            return Optional.of(row);
+        });
+
+        GetByIdParams params = new GetByIdParams();
+        params.setId(100L);
+        params.setFields(List.of("status"));
+        Context ctx = new Context();
+        ctx.setTenantId(9L);
+        ctx.setRoleCodes(Set.of("HR"));
+        Map<String, Object> row;
+        try (MockedStatic<IdUtils> ids = Mockito.mockStatic(IdUtils.class)) {
+            ids.when(() -> IdUtils.formatId(eq("UserAccount"), any())).thenReturn(100L);
+            row = ContextHolder.callWith(ctx, () -> controller.getById(params).getData());
+        }
+
+        assertThat(row).containsEntry("locked", true).doesNotContainKey("profileId");
     }
 }
