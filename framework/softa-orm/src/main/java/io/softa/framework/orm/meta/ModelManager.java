@@ -1236,10 +1236,16 @@ public class ModelManager {
     }
 
     /**
-     * Get the updatable stored fields of the single model, without OneToMany/ManyToMany and `readonly=true` fields.
+     * Get the updatable fields of the single model, without OneToMany/ManyToMany and `readonly=true` fields.
+     *
+     * <p>Deliberately NOT narrowed to stored fields, unlike {@link #getModelUpdatableFields}: its one
+     * caller (pre-data seeding) uses this to decide which fields to null out, and everything it
+     * produces is re-intersected downstream by {@code ModelServiceImpl.updateList}, so a dynamic
+     * field injected here never reaches a SET list. Narrowing it would only hide that the two sets
+     * answer different questions.
      *
      * @param modelName model name
-     * @return stored field collection
+     * @return updatable field collection
      */
     public static Set<String> getModelUpdatableFieldsWithoutXToMany(String modelName) {
         validateModel(modelName);
@@ -1250,7 +1256,13 @@ public class ModelManager {
 
     /**
      * Get the updatable fields of the model, which can be directly assigned, including the OneToMany/ManyToMany fields.
-     * Excluding the fields of `readonly = true`.
+     * Excluding the fields of `readonly = true` and the dynamic fields that own no column.
+     *
+     * <p>One consequence to know about: a payload whose only business field is a dynamic one now
+     * intersects to nothing, and {@code ModelServiceImpl.updateList} answers that with a warn and a
+     * false return rather than the unknown-column error the SQL builder used to raise. Quieter, and
+     * correct — nothing was writable — but a caller who sends only such a field is told "no rows
+     * changed", not "that field does not exist".
      *
      * @param modelName model name
      * @return updatable field set
@@ -1259,6 +1271,18 @@ public class ModelManager {
         validateModel(modelName);
         return modelFields().get(modelName).values().stream()
                 .filter(metaField -> !metaField.isReadonly())
+                // A dynamic field has no column of its own, so it can never be part of a write.
+                // Symmetric with DataCreatePipeline, which filters the very same set through
+                // `isStored` before building its INSERT column list. The UPDATE side had no such
+                // filter — StaticSqlBuilder.getUpdateSql builds its SET list straight from the
+                // payload keys — so a dynamic field surviving here renders `UPDATE ... SET <it> = ?`,
+                // which writes to an orphaned column left behind by a stored-to-dynamic transition,
+                // or fails with unknown-column on a database that never had one.
+                // XToMany fields are dynamic too, but they are written through their own cascade
+                // processors on the related model (DataUpdatePipeline.processXToManyData), never as
+                // a column of this table, so they stay updatable.
+                .filter(metaField -> isStored(modelName, metaField.getFieldName())
+                        || FieldType.TO_MANY_TYPES.contains(metaField.getFieldType()))
                 .map(MetaField::getFieldName).collect(Collectors.toSet());
     }
 
