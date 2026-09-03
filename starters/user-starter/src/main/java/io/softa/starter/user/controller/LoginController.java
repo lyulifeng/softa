@@ -2,21 +2,26 @@ package io.softa.starter.user.controller;
 
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
+import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 import jakarta.validation.Valid;
 import java.util.List;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
 import io.softa.framework.base.constant.BaseConstant;
+import io.softa.framework.base.constant.RedisConstant;
 import io.softa.framework.base.context.UserInfo;
 import io.softa.framework.base.enums.ResponseCode;
 import io.softa.framework.base.enums.SystemUser;
+import io.softa.framework.base.exception.UserNotFoundException;
 import io.softa.framework.orm.annotation.SwitchUser;
+import io.softa.framework.orm.service.CacheService;
 import io.softa.framework.web.response.ApiResponse;
 import io.softa.framework.web.utils.CookieUtils;
 import io.softa.starter.user.dto.*;
@@ -53,6 +58,10 @@ public class LoginController {
 
     @Autowired
     private OAuth2Service oAuth2Service;
+
+    /** Reads the session behind an authenticated call, and drops the one a switch replaces. */
+    @Autowired
+    private CacheService cacheService;
 
     /**
      * Login by Apple ID
@@ -252,6 +261,80 @@ public class LoginController {
         // response shape as the authentication endpoints, so the client has one contract to handle.
         return this.issueOrAskForCompany(
                 loginService.selectCompany(dto.getAuthToken(), dto.getAccountId()), response);
+    }
+
+    /**
+     * The companies the CURRENT session's person may enter — what the header's tenant switcher lists.
+     *
+     * <p>Same options as the login picker, including the company they are in now, so the switcher
+     * can show the current one selected and badge the rest exactly as the picker does.
+     */
+    @Operation(summary = "List the companies the signed-in person can switch to")
+    @GetMapping("/myCompanies")
+    @SwitchUser(SystemUser.REGISTERED_USER)
+    public ApiResponse<List<MembershipOption>> myCompanies(HttpServletRequest request) {
+        return ApiResponse.success(loginService.myCompanies(this.sessionUser(this.sessionIdOf(request))));
+    }
+
+    /**
+     * Move the session to another of this person's companies.
+     *
+     * <p>Authorized by the CURRENT SESSION, not by a pre-auth token: the caller is already signed
+     * in, and a second token-shaped route to minting a session is exactly what this endpoint must
+     * not become. The membership must be one the session's person holds and must be selectable —
+     * {@code switchCompany} makes both checks — and {@code generateSessionId} then re-runs the same
+     * tenant and account gates login runs, against the TARGET membership.
+     *
+     * <p>A NEW session id rather than a rewrite of the old mapping: the session maps to a
+     * UserAccount id, and every downstream layer (ContextBuilder, the permission snapshot, data
+     * scope) is keyed off it, so repointing it in place would leave warmed caches and any in-flight
+     * request pointing at the previous company.
+     */
+    @Operation(summary = "Switch the signed-in session to another of this person's companies")
+    @PostMapping("/switchCompany")
+    @SwitchUser(SystemUser.REGISTERED_USER)
+    public ApiResponse<AuthenticationResult> switchCompany(@RequestBody @Valid SwitchCompanyDTO dto,
+            HttpServletRequest request, HttpServletResponse response) {
+        String previousSessionId = this.sessionIdOf(request);
+        AuthenticationResult result =
+                loginService.switchCompany(this.sessionUser(previousSessionId), dto.getAccountId());
+        // Gates first: a refusal here mints nothing, and the caller is still in the company they
+        // started in — which is why the old session is dropped only after this returns.
+        String sessionId = loginService.generateSessionId(result.userInfo().getUserId());
+        // Explicit, and before the new cookie goes out: a copy of the old cookie taken from another
+        // device would otherwise keep the previous company alive alongside the new one.
+        cacheService.clear(RedisConstant.SESSION + previousSessionId);
+        CookieUtils.setCookie(response, BaseConstant.SESSION_ID, sessionId);
+        return ApiResponse.success(result);
+    }
+
+    /**
+     * The session id this request carries — cookie first, then the header {@code ContextBuilder}
+     * also accepts, so the two endpoints above authenticate the same way every other endpoint does.
+     *
+     * <p>Read here rather than taken from the Context on purpose. {@code /login/**} is anonymous at
+     * the context filter and public in the permission gate, so an UNAUTHENTICATED caller reaches
+     * these handlers and the bound Context carries no userId at all. Assuming the framework had
+     * gated them would make both endpoints answer for whoever asked.
+     */
+    private String sessionIdOf(HttpServletRequest request) {
+        String sessionId = CookieUtils.getCookie(request, BaseConstant.SESSION_ID);
+        if (sessionId == null) {
+            sessionId = request.getHeader(BaseConstant.SESSION_ID_HEADER);
+        }
+        if (sessionId == null) {
+            throw new UserNotFoundException("Session ID is missing");
+        }
+        return sessionId;
+    }
+
+    /** The UserAccount — one membership — the session maps to; absent means expired or forged. */
+    private Long sessionUser(String sessionId) {
+        Long userId = cacheService.get(RedisConstant.SESSION + sessionId, Long.class);
+        if (userId == null) {
+            throw new UserNotFoundException("Invalid session ID");
+        }
+        return userId;
     }
 
     /**

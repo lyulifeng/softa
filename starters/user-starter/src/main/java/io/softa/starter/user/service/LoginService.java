@@ -154,6 +154,36 @@ public interface LoginService {
      * token is consumed on success.
      */
     AuthenticationResult selectCompany(String authToken, Long accountId);
+
+    /**
+     * The same company list the login picker shows, for a person who is ALREADY signed in — the
+     * header's tenant switcher.
+     *
+     * <p>Authorized by the current session, so the caller names no person: the account the session
+     * maps to is resolved to its {@code profileId} and the picker's own resolution runs from there.
+     * The company they are in now is included; it is the one showing as current in the switcher.
+     *
+     * @param currentAccountId the UserAccount the current session maps to
+     */
+    List<MembershipOption> myCompanies(Long currentAccountId);
+
+    /**
+     * Move an existing session to another of the same person's companies.
+     *
+     * <p>The authorization is the CURRENT SESSION, never a pre-auth token: a signed-in person
+     * switching companies has already authenticated, and accepting a token here would open a second
+     * route to minting a session that does not pass through the login flow. The named membership
+     * must be one the session's person holds and must be selectable — the same two checks
+     * {@link #selectCompany} makes, for the same reason.
+     *
+     * <p>Returns the resolved result; the CALLER issues the session (and drops the previous one),
+     * because cookie handling belongs to the controller.
+     *
+     * @param currentAccountId the UserAccount the current session maps to
+     * @param accountId        the membership to move to
+     */
+    AuthenticationResult switchCompany(Long currentAccountId, Long accountId);
+
     /**
      * Forgot password — issue a self-service password-reset token and email the set-password link.
      *

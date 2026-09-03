@@ -20,6 +20,7 @@ import io.softa.framework.base.constant.RedisConstant;
 import io.softa.framework.base.context.UserInfo;
 import io.softa.framework.base.enums.Operator;
 import io.softa.framework.base.exception.BusinessException;
+import io.softa.framework.base.exception.UserNotFoundException;
 import io.softa.framework.base.security.PasswordUtils;
 import io.softa.framework.base.utils.UUIDUtils;
 import java.util.Map;
@@ -748,6 +749,46 @@ public class LoginServiceImpl implements LoginService {
         // costs no replay safety.
         cacheService.clear(preAuthKey(authToken));
         return result;
+    }
+
+    @Override
+    public List<MembershipOption> myCompanies(Long currentAccountId) {
+        return this.resolveMemberships(personBehind(currentAccountId));
+    }
+
+    @Override
+    public AuthenticationResult switchCompany(Long currentAccountId, Long accountId) {
+        Long profileId = personBehind(currentAccountId);
+        MembershipOption chosen = this.resolveMemberships(profileId).stream()
+                .filter(option -> option.accountId().equals(accountId))
+                .findFirst()
+                // Same ownership check selectCompany makes, and it is the whole gate here: the
+                // caller names a company, and nothing else about it is theirs to assert.
+                .orElseThrow(() -> new BusinessException("That company is not available for your account."));
+        if (!chosen.selectable()) {
+            throw new BusinessException(accountDeniedMessage(chosen.status()));
+        }
+        // No session minted here — the controller does that, and only after generateSessionId has
+        // run the tenant and account gates on the TARGET membership.
+        return AuthenticationResult.resolved(
+                profileId, profileService.getUserInfo(accountId), this.mustSetPassword(profileId));
+    }
+
+    /**
+     * The person behind a session: the session maps to a UserAccount (one membership), and every
+     * membership question is asked of the PERSON, so the hop through {@code profileId} is what
+     * turns "where you are" back into "who you are".
+     *
+     * <p>A session pointing at an account that is gone, or at one never paired with a person, is a
+     * broken session rather than a business refusal — answered with the same message the framework
+     * gives any request carrying one.
+     */
+    private Long personBehind(Long accountId) {
+        Long profileId = accountService.getById(accountId).map(UserAccount::getProfileId).orElse(null);
+        if (profileId == null) {
+            throw new UserNotFoundException("Invalid session ID");
+        }
+        return profileId;
     }
 
     /**
