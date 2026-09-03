@@ -83,7 +83,13 @@ public class UserAccount extends AuditableModel {
     @Field(label = "Policy ID")
     private Long policyId;
 
-    @Field(copyable = false)
+    // DERIVED, not stored: the lock lives on the PERSON's credential
+    // (UserIdentity.passwordLockedUntil) and this membership only reports it, so there is nothing
+    // here for a write to own — two copies of one fact would drift the moment the lockout expires.
+    // dynamic = true is what keeps it out of the DDL (SysDdlContextBuilder.isStored) while still
+    // producing a sys_field row, so the account list gets the field in model metadata and can badge
+    // it. UserAccountController fills it per row; see there for the batch read.
+    @Field(label = "Password lock", dynamic = true)
     private Boolean locked;
 
     @Field

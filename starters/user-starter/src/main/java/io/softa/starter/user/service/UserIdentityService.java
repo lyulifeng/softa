@@ -1,6 +1,8 @@
 package io.softa.starter.user.service;
 
+import java.util.Collection;
 import java.util.Optional;
+import java.util.Set;
 
 import io.softa.framework.orm.service.EntityService;
 import io.softa.starter.user.entity.UserAccount;
@@ -86,6 +88,18 @@ public interface UserIdentityService extends EntityService<UserIdentity, Long> {
      * guessing attempt against them into a denial of service.
      */
     boolean isPasswordLocked(UserIdentity identity);
+
+    /**
+     * Which of these people currently have their PASSWORD login locked — one query for the whole set.
+     *
+     * <p>Exists for the account list, which reports the lock as a badge per row. Asking
+     * {@link #findByProfile} row by row would put a query per listed account on the roster read;
+     * the page's people are collected and resolved together instead.
+     *
+     * <p>Returns profile ids rather than identities on purpose: the caller wants the answer, and
+     * handing out credential rows for a display decision spreads them further than the question needs.
+     */
+    Set<Long> findPasswordLockedProfiles(Collection<Long> profileIds);
 
     /** Consecutive wrong passwords that lock the password route (PRD D5). */
     int FAILURES_BEFORE_LOCK = 10;

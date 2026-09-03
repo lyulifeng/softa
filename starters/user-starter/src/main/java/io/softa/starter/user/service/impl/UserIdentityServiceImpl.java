@@ -4,10 +4,13 @@ import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.time.LocalDateTime;
+import java.util.Collection;
 import java.util.HexFormat;
 import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.Set;
+import java.util.stream.Collectors;
 
 import org.apache.commons.lang3.StringUtils;
 import org.springframework.stereotype.Service;
@@ -200,6 +203,28 @@ public class UserIdentityServiceImpl extends EntityServiceImpl<UserIdentity, Lon
     public boolean isPasswordLocked(UserIdentity identity) {
         return identity != null && identity.getPasswordLockedUntil() != null
                 && identity.getPasswordLockedUntil().isAfter(LocalDateTime.now());
+    }
+
+    // @SkipPermissionCheck: this answers a DISPLAY question on the account roster, whose callers are
+    // HR-ish roles granted UserAccount and nothing on UserIdentity. Left checked, the roster read
+    // would fail closed on the credential model — the list every HR opens, refused over a badge.
+    @SkipPermissionCheck
+    @Override
+    public Set<Long> findPasswordLockedProfiles(Collection<Long> profileIds) {
+        if (profileIds == null || profileIds.isEmpty()) {
+            return Set.of();
+        }
+        List<Long> people = profileIds.stream().filter(Objects::nonNull).distinct().toList();
+        if (people.isEmpty()) {
+            return Set.of();
+        }
+        // The "is it locked" clock stays in isPasswordLocked rather than becoming a second
+        // `password_locked_until > now()` in SQL here: two spellings of one rule eventually disagree,
+        // and the row count is bounded by the page the caller is rendering.
+        return this.searchList(new Filters().in(UserIdentity::getProfileId, people)).stream()
+                .filter(this::isPasswordLocked)
+                .map(UserIdentity::getProfileId)
+                .collect(Collectors.toSet());
     }
 
     @SkipPermissionCheck

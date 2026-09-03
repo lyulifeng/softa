@@ -6,6 +6,7 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
+import java.util.stream.Collectors;
 import java.util.function.Supplier;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
@@ -39,6 +40,7 @@ import io.softa.framework.orm.enums.ConvertType;
 import io.softa.framework.orm.service.CacheService;
 import io.softa.framework.orm.service.ModelService;
 import io.softa.framework.orm.utils.IdUtils;
+import io.softa.framework.orm.vo.ModelReference;
 import io.softa.framework.web.controller.EntityController;
 import io.softa.framework.web.dto.GetByIdParams;
 import io.softa.framework.web.dto.QueryParams;
@@ -60,6 +62,7 @@ import io.softa.starter.user.entity.UserRoleRel;
 import io.softa.starter.user.service.PermissionCacheInvalidator;
 import io.softa.starter.user.service.RoleService;
 import io.softa.starter.user.service.UserAccountService;
+import io.softa.starter.user.service.UserIdentityService;
 import io.softa.starter.user.service.UserInvitationService;
 import io.softa.starter.user.service.UserRoleRelService;
 
@@ -75,6 +78,9 @@ public class UserAccountController extends EntityController<UserAccountService, 
 
     private static final String MODEL = "UserAccount";
     private static final String ROLES_FIELD = "roles";
+    private static final String PROFILE_FIELD = "profileId";
+    /** {@link UserAccount#getLocked()} — derived per row, never stored. */
+    private static final String LOCKED_FIELD = "locked";
 
     /** Roles whose holders make up the platform super-admin's account roster. */
     private static final List<String> ADMIN_ROLE_CODES =
@@ -97,6 +103,9 @@ public class UserAccountController extends EntityController<UserAccountService, 
 
     @Autowired
     private UserRoleRelService userRoleRelService;
+
+    @Autowired
+    private UserIdentityService identityService;
 
     /**
      * Create a UserAccount from the standard create form. Routes through
@@ -234,7 +243,9 @@ public class UserAccountController extends EntityController<UserAccountService, 
         Page<Map<String, Object>> page = Page.of(queryParams.getPageNumber(), queryParams.getPageSize());
         return ApiResponse.success(inRosterScope(() -> {
             flexQuery.setFilters(scopeByTenant(flexQuery.getFilters()));
-            return modelService.searchPage(MODEL, flexQuery, page);
+            Page<Map<String, Object>> result = modelService.searchPage(MODEL, flexQuery, page);
+            stampPasswordLock(result == null ? null : result.getRows());
+            return result;
         }));
     }
 
@@ -252,7 +263,7 @@ public class UserAccountController extends EntityController<UserAccountService, 
         FlexQuery flexQuery = SearchListParams.convertParamsToFlexQuery(searchListParams);
         return ApiResponse.success(inRosterScope(() -> {
             flexQuery.setFilters(scopeByTenant(flexQuery.getFilters()));
-            return modelService.searchList(MODEL, flexQuery);
+            return stampPasswordLock(modelService.searchList(MODEL, flexQuery));
         }));
     }
 
@@ -286,9 +297,62 @@ public class UserAccountController extends EntityController<UserAccountService, 
                     scopeToAdminAccounts(new Filters().eq(ModelConstant.ID, id))) == 0) {
                 return null;   // outside the roster — same answer as a nonexistent record
             }
-            return modelService.getById(MODEL, id, getByIdParams.getFields(), subQueries, ConvertType.REFERENCE)
+            Map<String, Object> row = modelService
+                    .getById(MODEL, id, getByIdParams.getFields(), subQueries, ConvertType.REFERENCE)
                     .orElse(null);
+            if (row != null) {
+                stampPasswordLock(List.of(row));
+            }
+            return row;
         }));
+    }
+
+    /**
+     * Fill the derived {@code locked} flag on account rows: true when the row's PERSON currently has
+     * their password login locked ({@code UserIdentity.passwordLockedUntil} in the future).
+     *
+     * <p>The lock is a SECOND AXIS, not a status value — the row keeps reading Active / Frozen /
+     * whatever, and the list badges the lock next to it. Deriving it here rather than storing a
+     * column on the membership is what keeps the two from disagreeing: the lock belongs to the
+     * person (so it is the same across their companies) and it expires on a clock nothing writes to.
+     *
+     * <p>ONE query per response, not per row: the page's people are collected first and resolved
+     * together. A roster of fifty rows is otherwise fifty credential reads.
+     */
+    private List<Map<String, Object>> stampPasswordLock(List<Map<String, Object>> rows) {
+        if (rows == null || rows.isEmpty()) {
+            return rows;
+        }
+        Set<Long> people = rows.stream().map(UserAccountController::profileIdOf)
+                .filter(Objects::nonNull).collect(Collectors.toSet());
+        Set<Long> locked = identityService.findPasswordLockedProfiles(people);
+        for (Map<String, Object> row : rows) {
+            Long profileId = profileIdOf(row);
+            // An account with no person cannot carry a person's lock — false, never null: the badge
+            // reads a boolean and a missing key would render as "unknown" in the UI.
+            row.put(LOCKED_FIELD, profileId != null && locked.contains(profileId));
+        }
+        return rows;
+    }
+
+    /**
+     * The row's person id, whatever shape the read left it in: a raw number, a string (ids are
+     * serialized as strings on the paths a browser reads, which loses precision on a 19-digit long),
+     * or the {@code {id, displayName}} pair {@link ConvertType#REFERENCE} renders a MANY_TO_ONE as.
+     */
+    private static Long profileIdOf(Map<String, Object> row) {
+        Object value = row == null ? null : row.get(PROFILE_FIELD);
+        if (value instanceof ModelReference reference) {
+            value = reference.getId();
+        } else if (value instanceof Map<?, ?> reference) {
+            value = reference.get(ModelConstant.ID);
+        }
+        if (value instanceof Number number) {
+            return number.longValue();
+        }
+        String id = value == null ? null : value.toString();
+        // Not a number at all → no person to ask about, rather than a 500 on a list read.
+        return StringUtils.isNumeric(id) ? Long.valueOf(id) : null;
     }
 
     /**

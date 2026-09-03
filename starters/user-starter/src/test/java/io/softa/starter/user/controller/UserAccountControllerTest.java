@@ -29,6 +29,7 @@ import io.softa.starter.user.entity.UserAccount;
 import io.softa.starter.user.service.PermissionCacheInvalidator;
 import io.softa.starter.user.service.RoleService;
 import io.softa.starter.user.service.UserAccountService;
+import io.softa.starter.user.service.UserIdentityService;
 import io.softa.starter.user.service.UserInvitationService;
 import io.softa.starter.user.service.UserRoleRelService;
 
@@ -40,6 +41,7 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -206,6 +208,75 @@ class UserAccountControllerTest {
         when(roleService.searchList(any(Filters.class))).thenReturn(List.of());
         return roleService;
     }
+
+    // ─── the derived password lock on the roster ───
+
+    /**
+     * The lock is the PERSON's ({@code UserIdentity.passwordLockedUntil}) and the row reports it as
+     * a SECOND AXIS next to its status — so the list has to derive it per row, and cheaply.
+     */
+    private static Map<String, Object> accountRow(Long accountId, Object profileId) {
+        Map<String, Object> row = new HashMap<>();
+        row.put("id", accountId);
+        row.put("profileId", profileId);
+        row.put("status", "Active");
+        return row;
+    }
+
+    private List<Map<String, Object>> searchListAsHr(List<Map<String, Object>> stored) {
+        when(modelService.searchList(eq("UserAccount"), any())).thenReturn(stored);
+        Context ctx = new Context();
+        ctx.setTenantId(9L);
+        ctx.setRoleCodes(Set.of("HR"));
+        return ContextHolder.callWith(ctx, () -> controller.searchList(null).getData());
+    }
+
+    @Test
+    void searchList_badgesTheLockOfTheRowsPerson_inOneQuery() {
+        // Two memberships, two people: A is locked, B is not. The status stays whatever it was —
+        // the lock is an extra axis, not a status value.
+        UserIdentityService identityService = mock(UserIdentityService.class);
+        ReflectionTestUtils.setField(controller, "identityService", identityService);
+        when(identityService.findPasswordLockedProfiles(any())).thenReturn(Set.of(1L));
+
+        List<Map<String, Object>> rows = searchListAsHr(List.of(
+                accountRow(100L, 1L), accountRow(200L, 2L)));
+
+        assertThat(rows.get(0)).containsEntry("locked", true).containsEntry("status", "Active");
+        assertThat(rows.get(1)).containsEntry("locked", false);
+        // The whole page's people are resolved together. Per-row lookups would put one credential
+        // query on the roster read for every account listed.
+        verify(identityService, times(1)).findPasswordLockedProfiles(Set.of(1L, 2L));
+    }
+
+    @Test
+    void searchList_aRowWithNoPerson_isNotLocked() {
+        // A membership not yet paired with a person cannot carry a person's lock. False, not null:
+        // the badge reads a boolean.
+        UserIdentityService identityService = mock(UserIdentityService.class);
+        ReflectionTestUtils.setField(controller, "identityService", identityService);
+        when(identityService.findPasswordLockedProfiles(any())).thenReturn(Set.of());
+
+        List<Map<String, Object>> rows = searchListAsHr(List.of(accountRow(100L, null)));
+
+        assertThat(rows.get(0)).containsEntry("locked", false);
+    }
+
+    @Test
+    void searchList_readsThePersonIdInWhateverShapeTheRowCarriesIt() {
+        // REFERENCE conversion renders profileId as {id, displayName}, and ids reach a browser as
+        // strings (a 19-digit long loses precision in JS). Read from either and the badge is right;
+        // read from neither and every row silently reports "not locked".
+        UserIdentityService identityService = mock(UserIdentityService.class);
+        ReflectionTestUtils.setField(controller, "identityService", identityService);
+        when(identityService.findPasswordLockedProfiles(any())).thenReturn(Set.of(1L, 2L));
+
+        List<Map<String, Object>> rows = searchListAsHr(List.of(
+                accountRow(100L, "1"), accountRow(200L, Map.of("id", 2L))));
+
+        assertThat(rows).allSatisfy(row -> assertThat(row).containsEntry("locked", true));
+    }
+
     // ─── saveMyAccount ───
 
     @Test
