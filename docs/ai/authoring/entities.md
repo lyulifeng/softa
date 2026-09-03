@@ -166,6 +166,14 @@ Stack as many as you need — no wrapper.
   `MULTI_STRING` field and cannot be combined with `unique = true` — violations
   fail at boot with the model named. Declare them only on columns users
   actually search: a trigram GIN index has real write-amplification cost.
+- You rarely declare `SEARCH` yourself: one `SEARCH` index per
+  `@Model(searchName)` member (fallback: a `STRING` field named `name`) is
+  **derived automatically** at scan time, named `idx_<table>_<column>_search`.
+  Declaring an explicit non-BTREE `method` on a column opts that column out of
+  the derivation; a plain BTREE declaration does not (it cannot serve the
+  search box, so the derived index still appears next to it). On PostgreSQL
+  without the `pg_trgm` extension the derived indexes are skipped with a WARN
+  (never a boot failure) and created on the first boot after a DBA installs it.
 
 ### `@OptionSet` (on an enum class)
 
