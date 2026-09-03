@@ -20,7 +20,6 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.bind.annotation.*;
 
-import io.softa.framework.base.config.SystemConfig;
 import io.softa.framework.base.constant.BaseConstant;
 import io.softa.framework.base.constant.RedisConstant;
 import io.softa.framework.base.context.Context;
@@ -45,7 +44,6 @@ import io.softa.framework.web.dto.QueryParams;
 import io.softa.framework.web.dto.SearchListParams;
 import io.softa.framework.web.response.ApiResponse;
 import io.softa.framework.web.utils.CookieUtils;
-import io.softa.starter.user.constant.RoleConstant;
 import io.softa.starter.user.dto.ChangePasswordDTO;
 import io.softa.starter.user.dto.WorkContacts;
 import io.softa.starter.user.dto.SetFirstPasswordDTO;
@@ -54,14 +52,11 @@ import io.softa.starter.user.dto.ResetWorkContactsDTO;
 import io.softa.starter.user.dto.FreezeAccountsDTO;
 import io.softa.starter.user.dto.UnbindAndReinviteDTO;
 import io.softa.starter.user.dto.UserAccountDTO;
-import io.softa.starter.user.entity.Role;
 import io.softa.starter.user.entity.UserAccount;
-import io.softa.starter.user.entity.UserRoleRel;
 import io.softa.starter.user.service.PermissionCacheInvalidator;
-import io.softa.starter.user.service.RoleService;
 import io.softa.starter.user.service.UserAccountService;
 import io.softa.starter.user.service.UserInvitationService;
-import io.softa.starter.user.service.UserRoleRelService;
+import io.softa.starter.user.service.UserRosterScope;
 
 /**
  * UserAccount Controller
@@ -76,10 +71,6 @@ public class UserAccountController extends EntityController<UserAccountService, 
     private static final String MODEL = "UserAccount";
     private static final String ROLES_FIELD = "roles";
 
-    /** Roles whose holders make up the platform super-admin's account roster. */
-    private static final List<String> ADMIN_ROLE_CODES =
-            List.of(RoleConstant.CODE_TENANT_ADMIN, RoleConstant.CODE_SUPER_ADMIN);
-
     @Autowired
     private CacheService cacheService;
 
@@ -92,11 +83,10 @@ public class UserAccountController extends EntityController<UserAccountService, 
     @Autowired
     private UserInvitationService invitationService;
 
+    /** Cross-tenant roster window + bounds, shared with the other endpoints that open another
+     *  tenant's account (see UserRosterScope for why the bounds must be identical). */
     @Autowired
-    private RoleService roleService;
-
-    @Autowired
-    private UserRoleRelService userRoleRelService;
+    private UserRosterScope rosterScope;
 
     /**
      * Create a UserAccount from the standard create form. Routes through
@@ -232,8 +222,8 @@ public class UserAccountController extends EntityController<UserAccountService, 
         }
         FlexQuery flexQuery = QueryParams.convertParamsToFlexQuery(queryParams);
         Page<Map<String, Object>> page = Page.of(queryParams.getPageNumber(), queryParams.getPageSize());
-        return ApiResponse.success(inRosterScope(() -> {
-            flexQuery.setFilters(scopeByTenant(flexQuery.getFilters()));
+        return ApiResponse.success(rosterScope.call(() -> {
+            flexQuery.setFilters(rosterScope.scopeByTenant(flexQuery.getFilters()));
             return modelService.searchPage(MODEL, flexQuery, page);
         }));
     }
@@ -250,8 +240,8 @@ public class UserAccountController extends EntityController<UserAccountService, 
             searchListParams = new SearchListParams();
         }
         FlexQuery flexQuery = SearchListParams.convertParamsToFlexQuery(searchListParams);
-        return ApiResponse.success(inRosterScope(() -> {
-            flexQuery.setFilters(scopeByTenant(flexQuery.getFilters()));
+        return ApiResponse.success(rosterScope.call(() -> {
+            flexQuery.setFilters(rosterScope.scopeByTenant(flexQuery.getFilters()));
             return modelService.searchList(MODEL, flexQuery);
         }));
     }
@@ -278,12 +268,12 @@ public class UserAccountController extends EntityController<UserAccountService, 
         if (getByIdParams.getSubQueries() != null && !getByIdParams.getSubQueries().isEmpty()) {
             subQueries.setQueryMap(getByIdParams.getSubQueries());
         }
-        return ApiResponse.success(inRosterScope(() -> {
+        return ApiResponse.success(rosterScope.call(() -> {
             // Roster membership first (super-admin only — everyone else never enters the window and
             // stays on the ORM's own tenant filter). Both the check and the roster resolution must sit
             // inside the window, same as the list reads.
-            if (isPlatformSuperAdmin() && modelService.count(MODEL,
-                    scopeToAdminAccounts(new Filters().eq(ModelConstant.ID, id))) == 0) {
+            if (rosterScope.isPlatformSuperAdmin() && modelService.count(MODEL,
+                    rosterScope.scopeToAdminAccounts(new Filters().eq(ModelConstant.ID, id))) == 0) {
                 return null;   // outside the roster — same answer as a nonexistent record
             }
             return modelService.getById(MODEL, id, getByIdParams.getFields(), subQueries, ConvertType.REFERENCE)
@@ -291,82 +281,6 @@ public class UserAccountController extends EntityController<UserAccountService, 
         }));
     }
 
-    /**
-     * Re-scope a UserAccount list read. {@link UserAccount} is now framework-multiTenant, so a normal
-     * tenant user's reads are auto-filtered to their tenant by the ORM (nothing to add) and a generic
-     * cross-tenant/system caller sees everything. Only the platform super-admin needs custom scoping
-     * (requirement 2): the cross-tenant admin roster PLUS the super-admin's own tenant — see
-     * {@link #scopeToAdminAccounts}. Single-tenant deployments are untouched. by-key paths (login,
-     * {@code getMyAccount}, invite) never flow through search.
-     */
-    /** True when the caller holds the platform super-admin role. */
-    private static boolean isPlatformSuperAdmin() {
-        var context = ContextHolder.getContext();
-        Set<String> roleCodes = context == null ? null : context.getRoleCodes();
-        return roleCodes != null && roleCodes.contains(RoleConstant.CODE_SUPER_ADMIN);
-    }
-
-    /**
-     * Run a roster read inside a cross-tenant window — but only for the platform super-admin, whose
-     * account list is defined as spanning tenants (every tenant's admins plus its own tenant's users).
-     *
-     * <p>Opened here rather than with {@code @CrossTenant} for two reasons. The annotation applies to
-     * every caller, so it would waive tenant isolation on this endpoint for ordinary tenant users too;
-     * and it additionally skips permission checks, which this read has no reason to do (the same
-     * distinction {@code RelationDeleteHandler} draws when it opens its own window by hand).
-     *
-     * <p>Both the scope computation and the query must sit inside the window. {@link
-     * #scopeToAdminAccounts} resolves the roster through {@code Role} and {@code UserRoleRel}, which
-     * are multiTenant, so a tenant-filtered lookup would only find this tenant's admin roles and the
-     * roster would collapse to the caller's own tenant. And the outer read has to be unfiltered as
-     * well: the ORM would otherwise AND {@code tenant_id = own} onto
-     * {@code roster OR tenant_id = own}, reducing it to {@code tenant_id = own} — the roster silently
-     * dropped. The scope filter is what bounds the result; the window only stops the ORM from
-     * bounding it twice, and more narrowly than intended.
-     */
-    private <T> T inRosterScope(Supplier<T> read) {
-        if (!isPlatformSuperAdmin()) {
-            return read.get();
-        }
-        Context crossTenant = ContextHolder.cloneContext();
-        crossTenant.setCrossTenant(true);
-        return ContextHolder.callWith(crossTenant, read::get);
-    }
-
-    private Filters scopeByTenant(Filters filters) {
-        if (!SystemConfig.env.isEnableMultiTenancy()) {
-            return filters;   // single-tenant: no tenant dimension
-        }
-        if (!isPlatformSuperAdmin()) {
-            return filters;   // non-super-admin: the ORM already auto-filters reads to the caller's tenant
-        }
-        return scopeToAdminAccounts(filters);
-    }
-
-    /**
-     * The platform super-admin's account list (requirement 2): every account holding a
-     * {@code SUPER_ADMIN} or {@code TENANT_ADMIN} role across all tenants, PLUS every account in the
-     * super-admin's own (platform) tenant. Roster resolved via grants (admin role codes →
-     * {@code user_role_rel} → user ids).
-     *
-     * <p>Must be called inside {@link #inRosterScope} — {@code Role} and {@code UserRoleRel} are
-     * multiTenant, so without that window both lookups see only this tenant's admin roles and the
-     * roster degenerates to the caller's own tenant.
-     */
-    private Filters scopeToAdminAccounts(Filters filters) {
-        List<Long> adminRoleIds = roleService.searchList(new Filters().in(Role::getCode, ADMIN_ROLE_CODES))
-                .stream().map(Role::getId).toList();
-        List<Long> userIds = adminRoleIds.isEmpty() ? List.of()
-                : userRoleRelService.searchList(new Filters().in(UserRoleRel::getRoleId, adminRoleIds))
-                        .stream().map(UserRoleRel::getUserId).distinct().toList();
-        // Accounts holding an admin role (empty → sentinel -1L, avoids an ill-defined empty IN)...
-        Filters roster = new Filters().in(ModelConstant.ID, userIds.isEmpty() ? List.of(-1L) : userIds);
-        // ...OR any account in the super-admin's own (platform) tenant.
-        Long ownTenant = ContextHolder.getContext() == null ? null : ContextHolder.getContext().getTenantId();
-        Filters scope = ownTenant == null ? roster
-                : Filters.or(roster, new Filters().eq(ModelConstant.TENANT_ID, ownTenant));
-        return filters == null ? scope : Filters.and(filters, scope);
-    }
 
     /**
      * A UserAccount write only affects that one user's PermissionInfo, so evict
@@ -500,10 +414,10 @@ public class UserAccountController extends EntityController<UserAccountService, 
 
     /** The value-returning twin, for the reads that need the same reach as the operations. */
     private <T> T onRosterAccounts(List<Long> ids, Supplier<T> op) {
-        return inRosterScope(() -> {
-            if (isPlatformSuperAdmin()) {
+        return rosterScope.call(() -> {
+            if (rosterScope.isPlatformSuperAdmin()) {
                 long visible = modelService.count(MODEL,
-                        scopeToAdminAccounts(new Filters().in(ModelConstant.ID, ids)));
+                        rosterScope.scopeToAdminAccounts(new Filters().in(ModelConstant.ID, ids)));
                 if (visible != ids.stream().distinct().count()) {
                     throw new BusinessException("User not found.");
                 }

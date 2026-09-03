@@ -51,6 +51,15 @@ import io.softa.framework.orm.service.FileService;
  * framework-internal plumbing and must not carry a business File field in the first place, so the gap
  * is the correct boundary rather than a hole. <b>A new write path carrying File fields must go through
  * {@code insertList} / {@code updateList}</b>, or call {@code FileService} itself.
+ *
+ * <p><b>What {@code FileRecord.modelName} now means.</b> Before this mechanism it was a label — a
+ * folder name in the OSS key, useful for reading a bucket listing and nothing else. It is now the
+ * first half of the ownership answer: {@code isClaimableBy} lets an unclaimed record be taken only
+ * by the model it was uploaded against. So an uploader must stamp the model that will <b>hold</b>
+ * the file, which is not always the model the file is <i>about</i>. An import's spreadsheet is about
+ * Employee and hangs on ImportHistory; stamped with Employee it cannot be attached to the history
+ * row it was made for, and the write fails with "File … is not yours to attach". Every caller of
+ * {@code uploadFile} answers "who will hold this", not "what is this about".
  */
 public class FileOwnership {
 

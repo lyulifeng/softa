@@ -95,7 +95,7 @@ module cycle.
 | `@Field` | field | Describes a column (label, type, required, length, related model, etc.) |
 | `@OptionSet` | enum class | Marks an enum as a managed option set |
 | `@OptionItem` | enum constant | Describes a single option (display name, sequence, tone, icon) |
-| `@Index` | class (`@Repeatable`) | Declares a database index (fields, unique, globally-unique name, optional unique-violation message) |
+| `@Index` | class (`@Repeatable`) | Declares a database index (fields, unique, globally-unique name, optional unique-violation message, physical `method` intent) |
 
 **Key inference rules** (the parser does heavy lifting; you mostly don't
 need to specify):
@@ -115,6 +115,13 @@ need to specify):
 - `itemCode` = `@JsonValue` field/method value on the enum constant
 - `OPTION` / `MULTI_OPTION` cannot be written explicitly — only inferred
 - Index name = `idx_<table>_<col1>_<col2>...` or `uk_<table>_<col1>_<col2>...`
+- `@Index(method = ...)` is a dialect-neutral physical intent (default `BTREE`):
+  `SEARCH` renders a trigram GIN index on PostgreSQL (`pg_trgm` is provisioned by
+  the DDL executor; it is a trusted extension since PostgreSQL 13, so the app's
+  database-owner role can create it) and a plain index on MySQL; `PREFIX` renders
+  a `text_pattern_ops` B-tree on PostgreSQL (prefix `LIKE` takes a range scan on
+  any collation) and a plain index on MySQL. Both require exactly one
+  `STRING` / `TEXT` / `MULTI_STRING` field and reject `unique = true` at scan time.
 - Explicit `tableName`, `columnName`, and `indexName` values must satisfy
   `StringTools.isTableOrColumn` and must not be SQL reserved words because DDL
   renders identifiers unquoted.

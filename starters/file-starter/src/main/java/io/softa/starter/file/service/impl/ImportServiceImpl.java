@@ -67,6 +67,8 @@ import io.softa.starter.file.vo.ImportWizard;
 @Slf4j
 @Service
 public class ImportServiceImpl implements ImportService {
+    /** The model that HOLDS an import's files — the history row, not the model being imported. */
+    private static final String HISTORY_MODEL = ImportHistory.class.getSimpleName();
 
     @Autowired
     private FileService fileService;
@@ -180,7 +182,11 @@ public class ImportServiceImpl implements ImportService {
         ImportTemplate importTemplate = importTemplateService.getById(templateId, subQueries)
                 .orElseThrow(() -> new IllegalArgumentException("Import template not found by ID: {0}", templateId));
         this.validateImportTemplate(importTemplate);
-        Long fileId = fileService.uploadFile(importTemplate.getModelName(), file);
+        // The model this file is stamped with decides who may later claim it, and the row that will
+        // hold it is the ImportHistory record below — never a row of the model being imported. Stamped
+        // with the business model, the write of ImportHistory.originalFileId is refused with
+        // "File … is not yours to attach", which fails the whole import.
+        Long fileId = fileService.uploadFile(HISTORY_MODEL, file);
         // Generate an import history record
         ImportHistory importHistory = this.generateImportHistory(importTemplate, fileId, ImportType.IMPORT);
         // generate the ImportDataDTO object and ImportTemplateDTO object
@@ -272,7 +278,7 @@ public class ImportServiceImpl implements ImportService {
         ImportTemplate importTemplate = importTemplateService.getById(templateId, subQueries)
                 .orElseThrow(() -> new IllegalArgumentException("Import template not found by ID: {0}", templateId));
         this.validateImportTemplate(importTemplate);
-        Long fileId = fileService.uploadFile(importTemplate.getModelName(), file);
+        Long fileId = fileService.uploadFile(HISTORY_MODEL, file);
         // Generate a validation history record
         ImportHistory importHistory = this.generateImportHistory(importTemplate, fileId, ImportType.VALIDATE);
         String fileName = FileUtils.getShortFileName(file);
@@ -393,7 +399,7 @@ public class ImportServiceImpl implements ImportService {
     @Override
     public ImportHistory importByDynamic(ImportWizard importWizard) {
         String fileName = importWizard.getFileName();
-        Long fileId = fileService.uploadFile(importWizard.getModelName(), importWizard.getFile());
+        Long fileId = fileService.uploadFile(HISTORY_MODEL, importWizard.getFile());
         // Generate an import history record
         ImportHistory importHistory = this.generateImportHistory(importWizard, fileId, ImportType.IMPORT);
         // generate the ImportDataDTO object and ImportTemplateDTO object
@@ -422,7 +428,7 @@ public class ImportServiceImpl implements ImportService {
     @Override
     public ImportHistory validateByDynamic(ImportWizard importWizard) {
         String fileName = importWizard.getFileName();
-        Long fileId = fileService.uploadFile(importWizard.getModelName(), importWizard.getFile());
+        Long fileId = fileService.uploadFile(HISTORY_MODEL, importWizard.getFile());
         // Generate a validation history record
         ImportHistory importHistory = this.generateImportHistory(importWizard, fileId, ImportType.VALIDATE);
         ImportTemplateDTO importTemplateDTO = this.convertToImportTemplateDTO(importWizard);
@@ -698,7 +704,9 @@ public class ImportServiceImpl implements ImportService {
         // Get the data to be exported
         List<List<Object>> rowsTable = ListUtils.convertToTableData(fields, importDataDTO.getFailedRows());
         ExcelSheetData sheetData = new ExcelSheetData(FileConstant.FAILED_DATA, headers, rowsTable, null);
-        FileInfo fileInfo = excelUploadService.generateFileAndUpload(importTemplateDTO.getModelName(), fileName, sheetData);
+        // Stamped with the holder, not the subject — see importByTemplate. This one lands on
+        // ImportHistory.failedFileId.
+        FileInfo fileInfo = excelUploadService.generateFileAndUpload(HISTORY_MODEL, fileName, sheetData);
         return fileInfo.getFileId();
     }
 
@@ -734,7 +742,9 @@ public class ImportServiceImpl implements ImportService {
         }
         List<List<Object>> rowsTable = ListUtils.convertToTableData(fields, allRows);
         ExcelSheetData sheetData = new ExcelSheetData("Validation Result", headers, rowsTable, null);
-        FileInfo fileInfo = excelUploadService.generateFileAndUpload(importTemplateDTO.getModelName(), fileName, sheetData);
+        // Stamped with the holder, not the subject — see importByTemplate. This one lands on
+        // ImportHistory.failedFileId.
+        FileInfo fileInfo = excelUploadService.generateFileAndUpload(HISTORY_MODEL, fileName, sheetData);
         return fileInfo.getFileId();
     }
 

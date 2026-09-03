@@ -24,6 +24,7 @@ import io.softa.starter.user.entity.RoleSensitiveFieldSet;
 import io.softa.starter.user.entity.UserRoleRel;
 import io.softa.starter.user.enums.NavigationType;
 import io.softa.starter.user.service.NavigationModelResolver;
+import io.softa.starter.user.service.RoleDataScopeService;
 import io.softa.starter.user.service.RoleNavigationService;
 import io.softa.starter.user.service.RoleSensitiveFieldSetService;
 import io.softa.starter.user.service.RoleService;
@@ -49,6 +50,7 @@ class UiContextBuilderTest {
     private RoleService roleService;
     private RoleNavigationService roleNavigationService;
     private RoleSensitiveFieldSetService roleSensitiveFieldSetService;
+    private RoleDataScopeService roleDataScopeService;
     private NavigationModelResolver navigationModelResolver;
     private ModelService<?> modelService;
     private UiContextBuilder builder;
@@ -59,6 +61,7 @@ class UiContextBuilderTest {
         roleService = mock(RoleService.class);
         roleNavigationService = mock(RoleNavigationService.class);
         roleSensitiveFieldSetService = mock(RoleSensitiveFieldSetService.class);
+        roleDataScopeService = mock(RoleDataScopeService.class);
         navigationModelResolver = mock(NavigationModelResolver.class);
         modelService = mock(ModelService.class);
 
@@ -68,7 +71,7 @@ class UiContextBuilderTest {
                 nav("hr.employee", "hr", NavigationType.MENU)));
 
         builder = new UiContextBuilder(userRoleRelService, roleService, roleNavigationService,
-                roleSensitiveFieldSetService, navigationModelResolver, modelService);
+                roleSensitiveFieldSetService, roleDataScopeService, navigationModelResolver, modelService);
         ReflectionTestUtils.invokeMethod(builder, "initAncestorIndex");
     }
 

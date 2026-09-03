@@ -1,6 +1,5 @@
 package io.softa.starter.flow.enums;
 
-import com.fasterxml.jackson.annotation.JsonCreator;
 import com.fasterxml.jackson.annotation.JsonValue;
 import io.softa.framework.base.annotation.OptionItem;
 import io.softa.framework.base.annotation.OptionSet;
@@ -95,14 +94,4 @@ public enum FlowNodeType {
 
     /** 所属 palette 分组 */
     private final FlowNodeCategory category;
-
-    @JsonCreator
-    public static FlowNodeType fromValue(String value) {
-        for (FlowNodeType nt : values()) {
-            if (nt.type.equalsIgnoreCase(value) || nt.name().equalsIgnoreCase(value)) {
-                return nt;
-            }
-        }
-        throw new IllegalArgumentException("Unsupported node type: " + value);
-    }
 }

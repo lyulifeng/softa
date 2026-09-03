@@ -76,6 +76,6 @@ class SysCatalogTest {
     @Test
     void sysModelIndex_keysAndFk() {
         assertEquals(Set.of("model_name", "index_name"), Set.copyOf(keyCols(SysModelIndex.class)));
-        assertEquals(Set.of("index_fields", "unique_index", "message"), dataCols(SysModelIndex.class));
+        assertEquals(Set.of("index_fields", "unique_index", "method", "message"), dataCols(SysModelIndex.class));
     }
 }
