@@ -308,7 +308,7 @@ public class UserAccountServiceImpl extends EntityServiceImpl<UserAccount, Long>
      *
      * <p>Does this identifier already belong to somebody? If so this is their SECOND company, not a
      * duplicate: one person keeps one person record, and the account is linked to it instead of
-     * minting a rival. Refusing that is what used to make "a person in two companies" unreachable
+     * minting a rival. Refusing that is what used to make "a person in two tenants" unreachable
      * through the product at all — every creation path funnels here, so the /join flow's own
      * find-or-create could never fire either: it needs an account carrying the person's identifier,
      * and that account was exactly what could not be created.
@@ -731,7 +731,7 @@ public class UserAccountServiceImpl extends EntityServiceImpl<UserAccount, Long>
         if (spellings.isEmpty()) {
             return false;
         }
-        // Counts PEOPLE, not accounts. One person employed by two companies has two accounts
+        // Counts PEOPLE, not accounts. One person employed by two tenants has two accounts
         // carrying the same personal address, and that is the whole point of multi-company — it
         // must not read as "shared". What makes an address unusable for identification is that it
         // could resolve to more than one PERSON.
@@ -744,7 +744,7 @@ public class UserAccountServiceImpl extends EntityServiceImpl<UserAccount, Long>
         // deliberate: the two are indistinguishable from the data, and the password path is
         // unaffected, so that person can still sign in.
         //
-        // Across tenants: the same number handed to workers in two companies is still one number.
+        // Across tenants: the same number handed to workers in two tenants is still one number.
         //
         // Across spellings, too: a row written as "+65 9123-4567" before the fold and one written
         // as "+6591234567" after it are the one number held twice (contactFilter), and the people
@@ -834,7 +834,7 @@ public class UserAccountServiceImpl extends EntityServiceImpl<UserAccount, Long>
             return Optional.empty();
         }
         // Scoped to THIS company. @CrossTenant lets the query run before a membership is chosen, but
-        // a person may have left several companies — searching by profile alone would revive whichever
+        // a person may have left several tenants — searching by profile alone would revive whichever
         // closed row came first, possibly in another tenant. Re-hire happens inside one company's HR
         // context, so that is the tenant this reuses.
         Long tenantId = ContextHolder.getContext() == null ? null : ContextHolder.getContext().getTenantId();

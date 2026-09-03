@@ -139,7 +139,7 @@ class ConfirmJoinSignInRequiredTest {
         assertThat(result.isResolved()).isFalse();
         assertThat(result.userInfo()).isNull();
         assertThat(result.authToken()).isNull();
-        assertThat(result.companies()).isEmpty();
+        assertThat(result.tenants()).isEmpty();
         assertThat(result.mustSetPassword()).isFalse();
         verify(cacheService, never()).save(anyString(), any(), anyInt());
         verify(profileService, never()).getUserInfo(any());

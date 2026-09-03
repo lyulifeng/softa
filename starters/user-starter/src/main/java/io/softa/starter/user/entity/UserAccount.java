@@ -28,7 +28,7 @@ import io.softa.starter.user.enums.AccountStatus;
  * A MEMBERSHIP: one person's employment at one company. The person is {@link UserProfile}.
  *
  * <p>Email stays GLOBALLY unique here, exactly as before. Relaxing it to per-tenant is what
- * enables one person to work for two companies, and that belongs to the release which adds that
+ * enables one person to work for two tenants, and that belongs to the release which adds that
  * ability — not to this one, which only moves where credentials are stored. Login still resolves an
  * account by its email, and a relaxed index would make that resolution ambiguous.
  */

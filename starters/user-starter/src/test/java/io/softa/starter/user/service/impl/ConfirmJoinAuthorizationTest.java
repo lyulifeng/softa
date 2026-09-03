@@ -112,7 +112,7 @@ class ConfirmJoinAuthorizationTest {
     void aMembershipAlreadyBoundToAPerson_isNotHandedToAnotherProfileId() {
         // A re-hired leaver's revived row carries their profileId. verifyJoinCode returns that
         // person, so a different id here is a stale client or a link-holder choosing one — and
-        // writing it would orphan the real person (their password and other companies stay on the
+        // writing it would orphan the real person (their password and other tenants stay on the
         // old id). The bound id is asserted, never overwritten.
         givenPendingInvitationTo("alice@acme.com", null);
         UserAccount revived = accountService.getById(ACCOUNT_ID).orElseThrow();

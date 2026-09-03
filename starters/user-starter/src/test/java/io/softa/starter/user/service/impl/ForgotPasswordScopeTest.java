@@ -158,7 +158,7 @@ class ForgotPasswordScopeTest {
 
     @Test
     void aLoginThatIsAlsoTheRowsWorkEmail_isMailedThere_andFiledUnderThatRow() {
-        // Two ACTIVE companies, the person's login IS one company's address: the link goes to that
+        // Two ACTIVE tenants, the person's login IS one company's address: the link goes to that
         // address (it is hers to sign in with), filed under that company's row rather than
         // whichever row the query happened to return first.
         ada(WORK_EMAIL, "hash");

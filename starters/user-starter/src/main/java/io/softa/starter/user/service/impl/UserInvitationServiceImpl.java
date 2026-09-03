@@ -603,7 +603,7 @@ public class UserInvitationServiceImpl extends EntityServiceImpl<UserInvitation,
         // reassigned by whoever holds the link. verifyJoinCode returns that person for such a row,
         // so a mismatch here is either a stale client or a caller naming a profileId of their own
         // choosing — and overwriting would orphan the real person: their password and their other
-        // companies stay on the old profileId while this row walks off with a new one.
+        // tenants stay on the old profileId while this row walks off with a new one.
         if (account.getProfileId() != null && !account.getProfileId().equals(profileId)) {
             throw new BusinessException("This link does not belong to that account.");
         }

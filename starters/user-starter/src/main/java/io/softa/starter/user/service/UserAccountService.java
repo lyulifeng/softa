@@ -17,7 +17,7 @@ import io.softa.starter.user.entity.UserAccount;
 public interface UserAccountService extends EntityService<UserAccount, Long> {
 
     /**
-     * Every membership belonging to one person, across all companies.
+     * Every membership belonging to one person, across all tenants.
      *
      * <p>{@code @CrossTenant} by nature: it is asked after authenticating but before a company is
      * chosen, so there is no tenant context to scope it to — that is the whole point of the call.
@@ -153,7 +153,7 @@ public interface UserAccountService extends EntityService<UserAccount, Long> {
      *
      * <p>Scoped to one tenant because that is the scope of the rule: work contacts are unique per
      * company ({@code uk_user_account_tenant_email}), not globally. One person working at two
-     * companies legitimately carries the same work email in both, and the global form of this check
+     * tenants legitimately carries the same work email in both, and the global form of this check
      * is what used to make that impossible — refusing the second company's account, and then
      * refusing to let HR edit or re-hire it.
      *

@@ -327,7 +327,7 @@ public class UserAccountController extends EntityController<UserAccountService, 
      * <p>The lock is a SECOND AXIS, not a status value — the row keeps reading Active / Frozen /
      * whatever, and the list badges the lock next to it. Deriving it here rather than storing a
      * column on the membership is what keeps the two from disagreeing: the lock belongs to the
-     * person (so it is the same across their companies) and it expires on a clock nothing writes to.
+     * person (so it is the same across their tenants) and it expires on a clock nothing writes to.
      *
      * <p>ONE query per response, not per row: the page's people are collected first and resolved
      * together. A roster of fifty rows is otherwise fifty credential reads.

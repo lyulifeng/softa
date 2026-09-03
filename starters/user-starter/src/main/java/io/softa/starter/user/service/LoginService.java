@@ -120,23 +120,23 @@ public interface LoginService {
     String generateSessionId(Long userId);
 
     /**
-     * The companies this person may log into, for the "choose your company" step.
+     * The tenants this person may log into, for the "choose your company" step.
      *
      * <p>Authentication answers WHO; this answers WHERE. They are separate calls because one
-     * person can belong to several companies while a session must carry exactly one membership.
+     * person can belong to several tenants while a session must carry exactly one membership.
      *
      * @param profileId the authenticated person
      * @return their memberships, off-boarded ones excluded, non-ACTIVE ones listed but flagged
      *         unselectable (so a frozen company is visibly present rather than silently missing)
      */
-    List<MembershipOption> listCompanies(String authToken);
+    List<MembershipOption> listTenants(String authToken);
 
     /**
      * Resolve which membership an authenticated person lands in.
      *
      * <p>0 → refuse; exactly 1 → that one (so a single-company person sees no extra step, which
      * is today's behaviour unchanged); more than 1 → refuse and let the caller present
-     * {@link #listCompanies}.
+     * {@link #listTenants}.
      *
      * @throws io.softa.framework.base.exception.BusinessException when the person belongs to no
      *         company, or to several and must choose
@@ -153,7 +153,7 @@ public interface LoginService {
      * any accountId would mint a session in a company they are not a member of. Single-use — the
      * token is consumed on success.
      */
-    AuthenticationResult selectCompany(String authToken, Long accountId);
+    AuthenticationResult selectTenant(String authToken, Long accountId);
 
     /**
      * The same company list the login picker shows, for a person who is ALREADY signed in — the
@@ -165,16 +165,16 @@ public interface LoginService {
      *
      * @param currentAccountId the UserAccount the current session maps to
      */
-    List<MembershipOption> myCompanies(Long currentAccountId);
+    List<MembershipOption> myTenants(Long currentAccountId);
 
     /**
-     * Move an existing session to another of the same person's companies.
+     * Move an existing session to another of the same person's tenants.
      *
      * <p>The authorization is the CURRENT SESSION, never a pre-auth token: a signed-in person
-     * switching companies has already authenticated, and accepting a token here would open a second
+     * switching tenants has already authenticated, and accepting a token here would open a second
      * route to minting a session that does not pass through the login flow. The named membership
      * must be one the session's person holds and must be selectable — the same two checks
-     * {@link #selectCompany} makes, for the same reason.
+     * {@link #selectTenant} makes, for the same reason.
      *
      * <p>Returns the resolved result; the CALLER issues the session (and drops the previous one),
      * because cookie handling belongs to the controller.
@@ -182,7 +182,7 @@ public interface LoginService {
      * @param currentAccountId the UserAccount the current session maps to
      * @param accountId        the membership to move to
      */
-    AuthenticationResult switchCompany(Long currentAccountId, Long accountId);
+    AuthenticationResult switchTenant(Long currentAccountId, Long accountId);
 
     /**
      * Forgot password — issue a self-service password-reset token and email the set-password link.

@@ -28,7 +28,7 @@ import static org.mockito.Mockito.verify;
  * "Shared work contact" counts PEOPLE, not accounts.
  *
  * <p>The guard exists because a code sent to an address shared by several employees identifies
- * none of them (finding #2). But one person employed by two companies has two accounts carrying
+ * none of them (finding #2). But one person employed by two tenants has two accounts carrying
  * the same personal address — that is multi-company working as designed, and reading it as
  * "shared" makes A5 impossible to use. Counting accounts conflated the two; counting people
  * separates them.

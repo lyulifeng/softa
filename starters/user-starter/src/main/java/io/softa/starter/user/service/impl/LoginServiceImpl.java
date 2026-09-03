@@ -373,7 +373,7 @@ public class LoginServiceImpl implements LoginService {
             throw noCompanyRefusal(profileId);
         }
         // A choice is pending, so authentication succeeded but no session is issued yet. Mint a
-        // single-use token proving THIS person just authenticated; selectCompany reads the person
+        // single-use token proving THIS person just authenticated; selectTenant reads the person
         // from it, never from a client-supplied id — otherwise the company step would be an
         // unauthenticated "issue me a session for profileId X".
         return AuthenticationResult.choicePending(
@@ -422,7 +422,7 @@ public class LoginServiceImpl implements LoginService {
         // identifier (the contact tie), so the same code does identify them; for a bound row it
         // identifies whoever holds the mailbox. So the membership stays activated — HR intended it
         // — and nothing that stands for the person is issued: no session, and no pre-auth token
-        // into their other companies. Whether the identity has a password does not enter into it:
+        // into their other tenants. Whether the identity has a password does not enter into it:
         // a password-less identity would have its GLOBAL first password minted from the session
         // (/UserAccount/setMyFirstPassword), and an identity WITH a password would simply be
         // impersonated — in this company and, through the company step, in every other one it
@@ -482,7 +482,7 @@ public class LoginServiceImpl implements LoginService {
         // answered "who is this?" before the address is consulted. Their work address was released
         // from their identity at off-boarding, so find-or-create by address would see nobody, mint
         // a second person, and confirmJoin would hand the row to it: the real person keeps their
-        // password and their other companies on a profileId nothing points at any more.
+        // password and their other tenants on a profileId nothing points at any more.
         UserAccount account = invitationService.resolveJoinAccount(rawToken)
                 .orElseThrow(() -> new BusinessException("This invitation link is no longer usable."));
         if (account.getProfileId() != null) {
@@ -667,8 +667,8 @@ public class LoginServiceImpl implements LoginService {
                 .orElse(Boolean.FALSE);
     }
     @Override
-    public List<MembershipOption> listCompanies(String authToken) {
-        // Reads the person from the token, not the request: listing another person's companies is
+    public List<MembershipOption> listTenants(String authToken) {
+        // Reads the person from the token, not the request: listing another person's tenants is
         // a smaller leak than taking over their session, but it is the same unauthenticated call.
         return resolveMemberships(resolvePreAuthToken(authToken));
     }
@@ -722,13 +722,13 @@ public class LoginServiceImpl implements LoginService {
         }
         // More than one, or exactly one that is not enterable: both need the picker. Refusing here
         // rather than auto-picking is deliberate — silently choosing for someone who belongs to two
-        // companies puts them in a workspace they did not ask for, and the wrong one is worse than
+        // tenants puts them in a workspace they did not ask for, and the wrong one is worse than
         // an extra click.
         throw new MultipleMembershipsException(options);
     }
 
     @Override
-    public AuthenticationResult selectCompany(String authToken, Long accountId) {
+    public AuthenticationResult selectTenant(String authToken, Long accountId) {
         Long profileId = resolvePreAuthToken(authToken);
         MembershipOption chosen = this.resolveMemberships(profileId).stream()
                 .filter(option -> option.accountId().equals(accountId))
@@ -752,17 +752,17 @@ public class LoginServiceImpl implements LoginService {
     }
 
     @Override
-    public List<MembershipOption> myCompanies(Long currentAccountId) {
+    public List<MembershipOption> myTenants(Long currentAccountId) {
         return this.resolveMemberships(personBehind(currentAccountId));
     }
 
     @Override
-    public AuthenticationResult switchCompany(Long currentAccountId, Long accountId) {
+    public AuthenticationResult switchTenant(Long currentAccountId, Long accountId) {
         Long profileId = personBehind(currentAccountId);
         MembershipOption chosen = this.resolveMemberships(profileId).stream()
                 .filter(option -> option.accountId().equals(accountId))
                 .findFirst()
-                // Same ownership check selectCompany makes, and it is the whole gate here: the
+                // Same ownership check selectTenant makes, and it is the whole gate here: the
                 // caller names a company, and nothing else about it is theirs to assert.
                 .orElseThrow(() -> new BusinessException("That company is not available for your account."));
         if (!chosen.selectable()) {

@@ -159,7 +159,7 @@ public class UserProfileServiceImpl extends EntityServiceImpl<UserProfile, Long>
         // The cached UserInfo carries name / language / timezone / photo — all editable here.
         // Evict EVERY membership's entry, not profile.getUserId(): the person is one, the cache is
         // keyed per account, and that legacy back-pointer names only one of them. Missing the rest
-        // leaves the other companies serving the old name and avatar until the entry expires a
+        // leaves the other tenants serving the old name and avatar until the entry expires a
         // month later — for a person who has just been told the change was saved.
         accountService.listMembershipsOf(profile.getId())
                 .forEach(account -> this.evictUserInfo(account.getId()));

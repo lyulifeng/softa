@@ -220,7 +220,7 @@ public class LoginController {
      * whole point of the company step.
      *
      * <p>The response carries {@code profileId} either way: the client needs it for
-     * {@code selectCompany}, and it is also what makes {@code mustSetPassword} actionable.
+     * {@code selectTenant}, and it is also what makes {@code mustSetPassword} actionable.
      */
     private ApiResponse<AuthenticationResult> issueOrAskForCompany(AuthenticationResult result,
             HttpServletResponse response) {
@@ -232,17 +232,17 @@ public class LoginController {
     }
 
     /**
-     * The companies an authenticated person may enter.
+     * The tenants an authenticated person may enter.
      *
      * <p>Reached when authentication succeeded but the person belongs to more than one company
      * (or to one they cannot enter), so no session was issued yet. Not tenant-scoped by nature —
      * the caller has proven who they are but not yet chosen where they are going.
      */
-    @Operation(summary = "List the companies this person can log into (multi-company login step)")
-    @PostMapping("/listCompanies")
+    @Operation(summary = "List the tenants this person can log into (multi-company login step)")
+    @PostMapping("/listTenants")
     @SwitchUser(SystemUser.REGISTERED_USER)
-    public ApiResponse<List<MembershipOption>> listCompanies(@RequestBody @Valid AuthTokenDTO dto) {
-        return ApiResponse.success(loginService.listCompanies(dto.getAuthToken()));
+    public ApiResponse<List<MembershipOption>> listTenants(@RequestBody @Valid AuthTokenDTO dto) {
+        return ApiResponse.success(loginService.listTenants(dto.getAuthToken()));
     }
 
     /**
@@ -253,36 +253,36 @@ public class LoginController {
      * is not a member of.
      */
     @Operation(summary = "Enter the chosen company and issue the session")
-    @PostMapping("/selectCompany")
+    @PostMapping("/selectTenant")
     @SwitchUser(SystemUser.REGISTERED_USER)
-    public ApiResponse<AuthenticationResult> selectCompany(@RequestBody @Valid SelectCompanyDTO dto,
+    public ApiResponse<AuthenticationResult> selectTenant(@RequestBody @Valid SelectTenantDTO dto,
             HttpServletResponse response) {
         // The person is read from the token inside the service, never from the request. Same
         // response shape as the authentication endpoints, so the client has one contract to handle.
         return this.issueOrAskForCompany(
-                loginService.selectCompany(dto.getAuthToken(), dto.getAccountId()), response);
+                loginService.selectTenant(dto.getAuthToken(), dto.getAccountId()), response);
     }
 
     /**
-     * The companies the CURRENT session's person may enter — what the header's tenant switcher lists.
+     * The tenants the CURRENT session's person may enter — what the header's tenant switcher lists.
      *
      * <p>Same options as the login picker, including the company they are in now, so the switcher
      * can show the current one selected and badge the rest exactly as the picker does.
      */
-    @Operation(summary = "List the companies the signed-in person can switch to")
-    @GetMapping("/myCompanies")
+    @Operation(summary = "List the tenants the signed-in person can switch to")
+    @GetMapping("/myTenants")
     @SwitchUser(SystemUser.REGISTERED_USER)
-    public ApiResponse<List<MembershipOption>> myCompanies(HttpServletRequest request) {
-        return ApiResponse.success(loginService.myCompanies(this.sessionUser(this.sessionIdOf(request))));
+    public ApiResponse<List<MembershipOption>> myTenants(HttpServletRequest request) {
+        return ApiResponse.success(loginService.myTenants(this.sessionUser(this.sessionIdOf(request))));
     }
 
     /**
-     * Move the session to another of this person's companies.
+     * Move the session to another of this person's tenants.
      *
      * <p>Authorized by the CURRENT SESSION, not by a pre-auth token: the caller is already signed
      * in, and a second token-shaped route to minting a session is exactly what this endpoint must
      * not become. The membership must be one the session's person holds and must be selectable —
-     * {@code switchCompany} makes both checks — and {@code generateSessionId} then re-runs the same
+     * {@code switchTenant} makes both checks — and {@code generateSessionId} then re-runs the same
      * tenant and account gates login runs, against the TARGET membership.
      *
      * <p>A NEW session id rather than a rewrite of the old mapping: the session maps to a
@@ -290,14 +290,14 @@ public class LoginController {
      * scope) is keyed off it, so repointing it in place would leave warmed caches and any in-flight
      * request pointing at the previous company.
      */
-    @Operation(summary = "Switch the signed-in session to another of this person's companies")
-    @PostMapping("/switchCompany")
+    @Operation(summary = "Switch the signed-in session to another of this person's tenants")
+    @PostMapping("/switchTenant")
     @SwitchUser(SystemUser.REGISTERED_USER)
-    public ApiResponse<AuthenticationResult> switchCompany(@RequestBody @Valid SwitchCompanyDTO dto,
+    public ApiResponse<AuthenticationResult> switchTenant(@RequestBody @Valid SwitchTenantDTO dto,
             HttpServletRequest request, HttpServletResponse response) {
         String previousSessionId = this.sessionIdOf(request);
         AuthenticationResult result =
-                loginService.switchCompany(this.sessionUser(previousSessionId), dto.getAccountId());
+                loginService.switchTenant(this.sessionUser(previousSessionId), dto.getAccountId());
         // Gates first: a refusal here mints nothing, and the caller is still in the company they
         // started in — which is why the old session is dropped only after this returns.
         String sessionId = loginService.generateSessionId(result.userInfo().getUserId());

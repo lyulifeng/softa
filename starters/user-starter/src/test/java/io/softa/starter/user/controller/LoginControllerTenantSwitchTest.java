@@ -21,7 +21,7 @@ import io.softa.framework.orm.service.CacheService;
 import io.softa.framework.orm.service.TenantInfoService;
 import io.softa.starter.user.dto.AuthenticationResult;
 import io.softa.starter.user.dto.MembershipOption;
-import io.softa.starter.user.dto.SwitchCompanyDTO;
+import io.softa.starter.user.dto.SwitchTenantDTO;
 import io.softa.starter.user.entity.UserAccount;
 import io.softa.starter.user.enums.AccountStatus;
 import io.softa.starter.user.service.UserAccountService;
@@ -42,7 +42,7 @@ import static org.mockito.Mockito.when;
 
 /**
  * The header's tenant switcher: moving an ALREADY signed-in session from one of a person's
- * companies to another.
+ * tenants to another.
  *
  * <p>Driven through the real controller and the real {@link LoginServiceImpl}, because the whole
  * point of this endpoint sits in the seam between them — the controller decides what authorizes the
@@ -126,8 +126,8 @@ class LoginControllerTenantSwitchTest {
         }
     }
 
-    private static SwitchCompanyDTO switchTo(Long accountId) {
-        SwitchCompanyDTO dto = new SwitchCompanyDTO();
+    private static SwitchTenantDTO switchTo(Long accountId) {
+        SwitchTenantDTO dto = new SwitchTenantDTO();
         dto.setAccountId(accountId);
         return dto;
     }
@@ -146,7 +146,7 @@ class LoginControllerTenantSwitchTest {
         MockHttpServletRequest request = signedInAt(HERE);
 
         AuthenticationResult result =
-                controller.switchCompany(switchTo(THERE), request, response).getData();
+                controller.switchTenant(switchTo(THERE), request, response).getData();
 
         assertThat(result.isResolved()).isTrue();
         assertThat(result.userInfo().getUserId()).isEqualTo(THERE);
@@ -174,7 +174,7 @@ class LoginControllerTenantSwitchTest {
         givenMemberships(membership(HERE, 1L, AccountStatus.ACTIVE));
         MockHttpServletRequest request = signedInAt(HERE);
 
-        assertThatThrownBy(() -> controller.switchCompany(switchTo(999L), request, response))
+        assertThatThrownBy(() -> controller.switchTenant(switchTo(999L), request, response))
                 .isInstanceOf(BusinessException.class)
                 .hasMessage("That company is not available for your account.");
 
@@ -192,7 +192,7 @@ class LoginControllerTenantSwitchTest {
 
         // The picker lists a frozen company so the person can see it exists; entering it is refused
         // with the reason, exactly as the login-time company step refuses it.
-        assertThatThrownBy(() -> controller.switchCompany(switchTo(THERE), request, response))
+        assertThatThrownBy(() -> controller.switchTenant(switchTo(THERE), request, response))
                 .isInstanceOf(BusinessException.class)
                 .hasMessage("Login denied: your account has been deactivated.");
         verify(cacheService, never()).save(anyString(), any(), anyInt());
@@ -220,7 +220,7 @@ class LoginControllerTenantSwitchTest {
         when(tenantInfoService.isTenantActive(2L)).thenReturn(false);
         MockHttpServletRequest request = signedInAt(HERE);
 
-        assertThatThrownBy(() -> controller.switchCompany(switchTo(THERE), request, response))
+        assertThatThrownBy(() -> controller.switchTenant(switchTo(THERE), request, response))
                 .isInstanceOf(BusinessException.class)
                 .hasMessage("Login denied: tenant is not active.");
 
@@ -244,7 +244,7 @@ class LoginControllerTenantSwitchTest {
         when(profileService.getUserInfo(THERE)).thenReturn(userInfoOf(THERE));
         MockHttpServletRequest request = signedInAt(HERE);
 
-        assertThatThrownBy(() -> controller.switchCompany(switchTo(THERE), request, response))
+        assertThatThrownBy(() -> controller.switchTenant(switchTo(THERE), request, response))
                 .isInstanceOf(BusinessException.class)
                 .hasMessage("Login denied: your account has been deactivated.");
 
@@ -258,9 +258,9 @@ class LoginControllerTenantSwitchTest {
         // unauthenticated caller really does reach this handler. Nothing upstream refused it.
         MockHttpServletRequest request = new MockHttpServletRequest();
 
-        assertThatThrownBy(() -> controller.switchCompany(switchTo(THERE), request, response))
+        assertThatThrownBy(() -> controller.switchTenant(switchTo(THERE), request, response))
                 .isInstanceOf(UserNotFoundException.class);
-        assertThatThrownBy(() -> controller.myCompanies(request))
+        assertThatThrownBy(() -> controller.myTenants(request))
                 .isInstanceOf(UserNotFoundException.class);
         verify(accountService, never()).listMembershipsOf(any());
     }
@@ -271,17 +271,17 @@ class LoginControllerTenantSwitchTest {
         request.setCookies(new Cookie(BaseConstant.SESSION_ID, OLD_SESSION));
         when(cacheService.get("session:" + OLD_SESSION, Long.class)).thenReturn(null);
 
-        assertThatThrownBy(() -> controller.switchCompany(switchTo(THERE), request, response))
+        assertThatThrownBy(() -> controller.switchTenant(switchTo(THERE), request, response))
                 .isInstanceOf(UserNotFoundException.class);
         verify(accountService, never()).listMembershipsOf(any());
     }
 
     @Test
-    void myCompanies_listsThePersonsMemberships_includingTheCurrentOne() {
+    void myTenants_listsThePersonsMemberships_includingTheCurrentOne() {
         givenMemberships(membership(HERE, 1L, AccountStatus.ACTIVE),
                 membership(THERE, 2L, AccountStatus.FROZEN));
 
-        List<MembershipOption> options = controller.myCompanies(signedInAt(HERE)).getData();
+        List<MembershipOption> options = controller.myTenants(signedInAt(HERE)).getData();
 
         // The company the caller is in now has to be in the list: the switcher shows it as the
         // current selection, and a list that omitted it would read as "you may leave but not stay".
