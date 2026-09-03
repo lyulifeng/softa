@@ -51,6 +51,15 @@ public class TenantInfoServiceImpl extends EntityServiceImpl<TenantInfo, Long> i
     }
 
     @Override
+    public String getTenantName(Long tenantId) {
+        if (tenantId == null) {
+            return null;
+        }
+        TenantInfo tenantInfo = getTenantInfo(tenantId);
+        return tenantInfo == null ? null : tenantInfo.getName();
+    }
+
+    @Override
     public boolean isTenantActive(Long tenantId) {
         if (tenantId == null) {
             return false;

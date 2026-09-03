@@ -1,0 +1,148 @@
+package io.softa.starter.user.service.impl;
+
+import java.time.LocalDateTime;
+import java.util.List;
+import java.util.Optional;
+
+import org.junit.jupiter.api.Test;
+import org.springframework.test.util.ReflectionTestUtils;
+
+import io.softa.framework.orm.domain.Filters;
+import io.softa.starter.user.entity.UserAccount;
+import io.softa.starter.user.entity.UserIdentity;
+import io.softa.starter.user.enums.AccountStatus;
+import io.softa.starter.user.service.UserIdentityService;
+import io.softa.starter.user.service.UserRoleRelService;
+
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyBoolean;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.when;
+
+/**
+ * Off-boarding and re-hire — the two ends of one membership's life.
+ *
+ * <p>Two assertions here are security properties rather than behaviour:
+ *
+ * <ul>
+ *   <li>off-boarding releases the WORK EMAIL from the person's login identifiers, otherwise a
+ *       recycled address lets a new hire verify by code into the previous holder's account;</li>
+ *   <li>off-boarding and reviving both clear role grants, because re-hire REUSES the row — grants
+ *       left behind would be inherited silently by the returning employee.</li>
+ * </ul>
+ */
+class OffBoardAndReviveTest {
+
+    private static final Long PROFILE = 7L;
+    private static final Long ACCOUNT = 100L;
+
+    private final UserIdentityService identityService = mock(UserIdentityService.class);
+    private final UserRoleRelService roleRelService = mock(UserRoleRelService.class);
+    private final UserAccountServiceImpl accountService = new UserAccountServiceImpl();
+
+    OffBoardAndReviveTest() {
+        ReflectionTestUtils.setField(accountService, "identityService", identityService);
+        ReflectionTestUtils.setField(accountService, "roleRelService", roleRelService);
+    }
+
+    private static UserAccount account(AccountStatus status, String email, String mobile) {
+        UserAccount account = new UserAccount();
+        account.setId(ACCOUNT);
+        account.setProfileId(PROFILE);
+        account.setStatus(status);
+        account.setEmail(email);
+        account.setMobile(mobile);
+        account.setActivationTime(LocalDateTime.now());
+        return account;
+    }
+
+    private static UserIdentity identity(String loginEmail, String loginMobile) {
+        UserIdentity identity = new UserIdentity();
+        identity.setId(PROFILE);
+        identity.setProfileId(PROFILE);
+        identity.setLoginEmail(loginEmail);
+        identity.setLoginMobile(loginMobile);
+        return identity;
+    }
+
+    @Test
+    void offBoarding_releasesTheWorkEmailFromTheLoginIdentifiers() {
+        // The one that matters: once the address is recycled, a new hire holding it must not be
+        // able to verify by code straight into the previous holder's personal account.
+        UserIdentity person = identity("alice@acme.com", "+8613800138000");
+        UserAccount membership = account(AccountStatus.ACTIVE, "alice@acme.com", null);
+        when(identityService.findByProfile(PROFILE)).thenReturn(Optional.of(person));
+
+        accountService.offBoardWith(membership);
+
+        assertThat(person.getLoginEmail()).isNull();
+        // Personal mobile is untouched: it was never this company's to hand out.
+        assertThat(person.getLoginMobile()).isEqualTo("+8613800138000");
+        verify(identityService).updateOne(person, false);
+    }
+
+    @Test
+    void offBoarding_leavesAPersonalEmailAlone() {
+        // The work email and the login email need not be the same value. Only the address this
+        // company issued may be reclaimed.
+        UserIdentity person = identity("alice.personal@gmail.com", null);
+        UserAccount membership = account(AccountStatus.ACTIVE, "alice@acme.com", null);
+        when(identityService.findByProfile(PROFILE)).thenReturn(Optional.of(person));
+
+        accountService.offBoardWith(membership);
+
+        assertThat(person.getLoginEmail()).isEqualTo("alice.personal@gmail.com");
+        verify(identityService, never()).updateOne(any(UserIdentity.class), anyBoolean());
+    }
+
+    @Test
+    void offBoarding_clearsRoleGrants_andClosesTheMembership() {
+        UserAccount membership = account(AccountStatus.ACTIVE, "alice@acme.com", null);
+        when(identityService.findByProfile(PROFILE)).thenReturn(Optional.empty());
+
+        accountService.offBoardWith(membership);
+
+        assertThat(membership.getStatus()).isEqualTo(AccountStatus.DEACTIVATED);
+        verify(roleRelService).deleteByFilters(any(Filters.class));
+    }
+
+    @Test
+    void offBoarding_isIdempotent() {
+        UserAccount alreadyClosed = account(AccountStatus.DEACTIVATED, "alice@acme.com", null);
+
+        accountService.offBoardWith(alreadyClosed);
+
+        // Nothing touched — off-boarding twice is a no-op, not an error, because the caller
+        // (an HR workflow) may legitimately fire more than once.
+        verify(roleRelService, never()).deleteByFilters(any(Filters.class));
+        verify(identityService, never()).updateOne(any(UserIdentity.class), anyBoolean());
+    }
+
+    @Test
+    void reviving_resetsToPendingWithTheNewContacts() {
+        UserAccount closed = account(AccountStatus.DEACTIVATED, "old@acme.com", "+8613800000000");
+        closed.setRoles(List.of(1L, 2L));
+
+        accountService.reviveWith(closed, "new@acme.com", "+8613811111111");
+
+        assertThat(closed.getStatus()).isEqualTo(AccountStatus.PENDING);
+        assertThat(closed.getEmail()).isEqualTo("new@acme.com");
+        assertThat(closed.getMobile()).isEqualTo("+8613811111111");
+        // No activation carried over: the returning employee must accept a fresh invitation.
+        assertThat(closed.getActivationTime()).isNull();
+    }
+
+    @Test
+    void reviving_clearsTheGrantsFromThePreviousStint() {
+        // The reason revival needs care at all: reusing the row means anything left on it is
+        // inherited. A returning employee must start with no roles.
+        UserAccount closed = account(AccountStatus.DEACTIVATED, "old@acme.com", null);
+
+        accountService.reviveWith(closed, "new@acme.com", null);
+
+        verify(roleRelService).deleteByFilters(any(Filters.class));
+    }
+}

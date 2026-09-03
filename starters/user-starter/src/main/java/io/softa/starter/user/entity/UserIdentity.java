@@ -39,12 +39,23 @@ import io.softa.framework.orm.enums.OnDelete;
         idStrategy = IdStrategy.DISTRIBUTED_LONG
 )
 @Index(indexName = "uk_user_identity_profile", fields = {"profileId"}, unique = true)
-// No unique indexes on the login identifiers YET, deliberately — same reasoning as the profile
-// carried before the split: nothing resolves people by identifier this release (login still finds
-// the account by its email), so a unique index could only hurt. Today an admin can clear a leaver's
-// account email and reuse it for a new hire; a unique index here would fail that hire on the
-// leaver's stale identifier. The release that starts resolving people by identifier dedupes first,
-// then adds the indexes.
+@Index(indexName = "uk_user_identity_login_email", fields = {"loginEmail"}, unique = true,
+        message = "This email is already a sign-in identifier for someone else.")
+@Index(indexName = "uk_user_identity_login_mobile", fields = {"loginMobile"}, unique = true,
+        message = "This mobile is already a sign-in identifier for someone else.")
+// The login identifiers ARE unique, and have to be: login resolves a person by one of them, so two
+// people holding the same value cannot be told apart — a code sent there says nothing about which
+// of them is signing in, and resolution can only refuse. Enforced by the database rather than by
+// application code, because the check and the write would otherwise race.
+//
+// NULLs are the point of leaving these nullable: MySQL allows many rows to be null in a unique
+// index, and most people have only one channel. A shared work number simply does not become
+// anyone's identifier — see UserIdentityService.isIdentifierClaimable, which is what keeps the
+// seeding paths from manufacturing a collision out of an ordinary shared contact.
+//
+// Reusing a leaver's address is still possible: off-boarding RELEASES the identifiers this company
+// issued (UserAccountService.releaseLoginIdentifiers), so the value is free before the new hire
+// needs it. That release is what makes these indexes safe to hold.
 public class UserIdentity extends AuditableModel {
 
     @Serial

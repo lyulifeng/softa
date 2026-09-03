@@ -44,8 +44,11 @@ import io.softa.framework.web.dto.SearchListParams;
 import io.softa.framework.web.response.ApiResponse;
 import io.softa.framework.web.utils.CookieUtils;
 import io.softa.starter.user.dto.ChangePasswordDTO;
-import io.softa.starter.user.dto.UnlockAccountDTO;
-import io.softa.starter.user.dto.UnlockAccountsDTO;
+import io.softa.starter.user.dto.SetFirstPasswordDTO;
+import io.softa.starter.user.dto.FreezeAccountDTO;
+import io.softa.starter.user.dto.ResetWorkContactsDTO;
+import io.softa.starter.user.dto.FreezeAccountsDTO;
+import io.softa.starter.user.dto.UnbindAndReinviteDTO;
 import io.softa.starter.user.dto.UserAccountDTO;
 import io.softa.starter.user.entity.UserAccount;
 import io.softa.starter.user.service.PermissionCacheInvalidator;
@@ -303,32 +306,37 @@ public class UserAccountController extends EntityController<UserAccountService, 
         return ApiResponse.success();
     }
 
-    @Operation(summary = "Lock User Account")
-    @PostMapping("/lockAccount")
-    public ApiResponse<Void> lockAccount(@RequestParam @NotNull Long id) {
-        validateNotSelf(id, "lock");
-        onRosterAccounts(List.of(id), () -> service.lockAccount(id));
+    // Lock / Unlock are gone (D21). A manual lock and the automatic password lockout (A8) were two
+    // mechanisms for two different things wearing one name: the lockout reacts to guessing, lives
+    // on the credential and expires by itself, while freezing is an administrator's decision about
+    // a membership that only an administrator lifts.
+    @Operation(summary = "Freeze a user account — suspends access until an administrator lifts it")
+    @PostMapping("/freezeAccount")
+    public ApiResponse<Void> freezeAccount(@RequestParam @NotNull Long id,
+                                           @RequestBody FreezeAccountDTO freezeAccountDTO) {
+        validateNotSelf(id, "freeze");
+        onRosterAccounts(List.of(id), () -> service.freezeAccount(id, freezeAccountDTO.getReason()));
         return ApiResponse.success();
     }
 
-    @Operation(summary = "Unlock User Account")
-    @PostMapping("/unlockAccount")
-    public ApiResponse<Void> unlockAccount(@RequestParam @NotNull Long id,
-                                           @RequestBody UnlockAccountDTO unlockAccountDTO) {
-        validateNotSelf(id, "unlock");
-        onRosterAccounts(List.of(id), () -> service.unlockAccount(id, unlockAccountDTO.getReason()));
+    @Operation(summary = "Unfreeze a user account")
+    @PostMapping("/unfreezeAccount")
+    public ApiResponse<Void> unfreezeAccount(@RequestParam @NotNull Long id,
+                                           @RequestBody FreezeAccountDTO freezeAccountDTO) {
+        validateNotSelf(id, "unfreeze");
+        onRosterAccounts(List.of(id), () -> service.unfreezeAccount(id, freezeAccountDTO.getReason()));
         return ApiResponse.success();
     }
 
-    @Operation(summary = "Batch Unlock User Accounts")
-    @PostMapping("/unlockAccounts")
-    public ApiResponse<Void> unlockAccounts(@RequestBody @Valid UnlockAccountsDTO unlockAccountsDTO) {
-        List<Long> userIds = unlockAccountsDTO.getIds();
+    @Operation(summary = "Batch Unfreeze User Accounts")
+    @PostMapping("/unfreezeAccounts")
+    public ApiResponse<Void> unfreezeAccounts(@RequestBody @Valid FreezeAccountsDTO freezeAccountsDTO) {
+        List<Long> userIds = freezeAccountsDTO.getIds();
         Long currentUserId = ContextHolder.getContext().getUserId();
         if (currentUserId != null && userIds.contains(currentUserId)) {
-            throw new BusinessException("You cannot unlock your own account.");
+            throw new BusinessException("You cannot unfreeze your own account.");
         }
-        onRosterAccounts(userIds, () -> service.unlockAccounts(userIds, unlockAccountsDTO.getReason()));
+        onRosterAccounts(userIds, () -> service.unfreezeAccounts(userIds, freezeAccountsDTO.getReason()));
         return ApiResponse.success();
     }
 
@@ -339,6 +347,39 @@ public class UserAccountController extends EntityController<UserAccountService, 
         Long currentUserId = ContextHolder.getContext() == null ? null
                 : ContextHolder.getContext().getUserId();
         onRosterAccounts(List.of(id), () -> invitationService.invite(id, currentUserId));
+        return ApiResponse.success();
+    }
+
+    @Operation(summary = "Reset a membership's work contacts — keeps the person, their password "
+            + "and their roles; moves the login identifier with the contact and notifies the old address")
+    @PostMapping("/resetWorkContacts")
+    public ApiResponse<Void> resetWorkContacts(@RequestParam @NotNull Long id,
+            @RequestBody @Valid ResetWorkContactsDTO dto) {
+        onRosterAccounts(List.of(id), () -> service.resetWorkContacts(
+                id, dto.getEmail(), dto.getMobile(), dto.getReason()));
+        return ApiResponse.success();
+    }
+
+    @Operation(summary = "Unbind a membership from the wrong person, correct the work contacts "
+            + "and re-invite it — invalidates any link the wrong person still holds")
+    @PostMapping("/unbindAndReinvite")
+    public ApiResponse<Void> unbindAndReinvite(@RequestParam @NotNull Long id,
+            @RequestBody @Valid UnbindAndReinviteDTO dto) {
+        // Not validateNotSelf-guarded like Freeze / Unfreeze: unbinding your OWN membership detaches
+        // you from it, which is a foot-gun rather than a privilege escalation — and an admin who
+        // was themselves bound to the wrong membership is exactly who needs this.
+        Long currentUserId = ContextHolder.getContext() == null ? null
+                : ContextHolder.getContext().getUserId();
+        onRosterAccounts(List.of(id), () -> invitationService.unbindAndReinvite(
+                id, dto.getEmail(), dto.getMobile(), dto.getReason(), currentUserId));
+        return ApiResponse.success();
+    }
+
+    @Operation(summary = "Revoke the outstanding invitation — invalidates the link and returns "
+            + "the account to Pending so it can be invited again")
+    @PostMapping("/revokeInvitation")
+    public ApiResponse<Void> revokeInvitation(@RequestParam @NotNull Long id) {
+        onRosterAccounts(List.of(id), () -> invitationService.revokeInvitation(id));
         return ApiResponse.success();
     }
 
@@ -376,6 +417,19 @@ public class UserAccountController extends EntityController<UserAccountService, 
     @PostMapping("/changeMyPassword")
     public ApiResponse<Void> changeMyPassword(@RequestBody @Valid ChangePasswordDTO changePasswordDTO) {
         service.changeMyPassword(changePasswordDTO.getCurrentPassword(), changePasswordDTO.getNewPassword());
+        return ApiResponse.success();
+    }
+
+    @Operation(summary = "Whether the logged-in person still owes a first password")
+    @GetMapping("/mustSetMyPassword")
+    public ApiResponse<Boolean> mustSetMyPassword() {
+        return ApiResponse.success(service.mustSetMyPassword());
+    }
+
+    @Operation(summary = "setMyFirstPassword")
+    @PostMapping("/setMyFirstPassword")
+    public ApiResponse<Void> setMyFirstPassword(@RequestBody @Valid SetFirstPasswordDTO dto) {
+        service.setMyFirstPassword(dto.getNewPassword());
         return ApiResponse.success();
     }
 

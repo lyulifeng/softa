@@ -27,6 +27,18 @@ public interface TenantInfoService {
     boolean isTenantActive(Long tenantId);
 
     /**
+     * Display name of a tenant, for screens shown BEFORE a session exists — above all the
+     * "choose your company" step, where the caller has authenticated as a person but not yet
+     * picked a membership, so no tenant-scoped read is available to them.
+     *
+     * <p>Default {@code null} so an implementation that predates this method still compiles;
+     * callers must tolerate a missing name (fall back to the id) rather than assume one.
+     */
+    default String getTenantName(Long tenantId) {
+        return null;
+    }
+
+    /**
      * Whether the tenant has finished being provisioned — its seed data is in place and it is safe to let
      * users in.
      *

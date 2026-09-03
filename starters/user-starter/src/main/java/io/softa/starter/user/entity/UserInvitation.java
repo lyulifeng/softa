@@ -56,11 +56,27 @@ public class UserInvitation extends AuditableModel {
             description = "The account being invited / reset")
     private Long userId;
 
-    @Field(description = "Recipient email (denormalized for display + auditing)")
+    @Field(description = "Recipient email (denormalized for display + auditing); null when the "
+            + "account had no work email and the invitation went out by SMS alone")
     private String email;
 
-    @Field(description = "Why the token was issued: INVITE (onboarding) / PASSWORD_RESET (self-service)")
+    @Field(description = "Recipient mobile, dial code included (denormalized for display + auditing); "
+            + "null when the account had no work mobile. Together with email this records WHICH "
+            + "channels one invitation was addressed to — the delivery OUTCOME lives in "
+            + "message-starter's MailSendRecord / SmsSendRecord, which stay the authority on it")
+    private String mobile;
+
+    @Field(description = "Why the token was issued: INVITE (onboarding) / PASSWORD_RESET "
+            + "(self-service) / REINVITE (the membership was bound to the wrong person)")
     private InvitationPurpose purpose;
+
+    @Field(length = 500,
+            description = "Why the membership was unbound, required for REINVITE and null "
+                    + "otherwise. Kept on the invitation rather than only in the audit log because "
+                    + "unbinding detaches a person from a membership that keeps its roles: the row "
+                    + "that caused it has to carry the account of why, where anyone reviewing the "
+                    + "membership will actually see it")
+    private String reason;
 
     @Field(length = 64, copyable = false,
             description = "SHA-256 hex of the emailed token (the raw token is never stored)")

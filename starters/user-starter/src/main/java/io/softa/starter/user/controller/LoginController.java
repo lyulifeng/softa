@@ -1,13 +1,17 @@
 package io.softa.starter.user.controller;
 
+import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.servlet.http.HttpServletResponse;
 import jakarta.validation.Valid;
+import jakarta.validation.constraints.NotNull;
+import java.util.List;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
 import io.softa.framework.base.constant.BaseConstant;
@@ -19,6 +23,8 @@ import io.softa.framework.web.response.ApiResponse;
 import io.softa.framework.web.utils.CookieUtils;
 import io.softa.starter.user.dto.*;
 import io.softa.starter.user.service.LoginService;
+import io.softa.starter.user.service.UserInvitationService;
+import io.softa.starter.user.service.UserProfileService;
 import io.softa.starter.user.service.OAuth2Service;
 
 /**
@@ -33,6 +39,14 @@ public class LoginController {
 
     @Autowired
     private LoginService loginService;
+
+    /** The /join endpoints delegate the token work to the invitation service. */
+    @Autowired
+    private UserInvitationService invitationService;
+
+    /** Builds the session payload once a membership is chosen. */
+    @Autowired
+    private UserProfileService profileService;
 
     @Autowired
     private OAuth2Service oAuth2Service;
@@ -71,12 +85,10 @@ public class LoginController {
      */
     @PostMapping("/loginByEmailCode")
     @SwitchUser(SystemUser.REGISTERED_USER)
-    public ApiResponse<UserInfo> loginByEmail(@RequestBody @Valid EmailCodeDTO emailCodeDTO,
+    public ApiResponse<AuthenticationResult> loginByEmail(@RequestBody @Valid EmailCodeDTO emailCodeDTO,
             HttpServletResponse response) {
-        UserInfo userInfo = loginService.loginByEmailCode(emailCodeDTO.getEmail(), emailCodeDTO.getCode());
-        String sessionId = loginService.generateSessionId(userInfo.getUserId());
-        CookieUtils.setCookie(response, BaseConstant.SESSION_ID, sessionId);
-        return ApiResponse.success(userInfo);
+        return this.issueOrAskForCompany(
+                loginService.authenticateByCode(emailCodeDTO.getEmail(), emailCodeDTO.getCode()), response);
     }
 
     /**
@@ -85,12 +97,10 @@ public class LoginController {
      */
     @PostMapping("/loginByMobileCode")
     @SwitchUser(SystemUser.REGISTERED_USER)
-    public ApiResponse<UserInfo> loginByMobileCode(@RequestBody @Valid MobileCodeDTO mobileCodeDTO,
+    public ApiResponse<AuthenticationResult> loginByMobileCode(@RequestBody @Valid MobileCodeDTO mobileCodeDTO,
             HttpServletResponse response) {
-        UserInfo userInfo = loginService.loginByMobileCode(mobileCodeDTO.getMobile(), mobileCodeDTO.getCode());
-        String sessionId = loginService.generateSessionId(userInfo.getUserId());
-        CookieUtils.setCookie(response, BaseConstant.SESSION_ID, sessionId);
-        return ApiResponse.success(userInfo);
+        return this.issueOrAskForCompany(
+                loginService.authenticateByCode(mobileCodeDTO.getMobile(), mobileCodeDTO.getCode()), response);
     }
 
     @PostMapping("/sendEmailCode")
@@ -107,25 +117,6 @@ public class LoginController {
         return ApiResponse.success();
     }
 
-    /**
-     * Register by email and password.
-     * Automatically login after successful registration.
-     * Set cookie with session id
-     */
-    @PostMapping("/registerByPassword")
-    @SwitchUser(SystemUser.REGISTERED_USER)
-    public ApiResponse<UserInfo> registerByPassword(@RequestBody @Valid EmailPasswordDTO emailPasswordDTO, HttpServletResponse response) {
-        try {
-            UserInfo userInfo = loginService.registerByEmailAndPassword(emailPasswordDTO.getEmail(),
-                    emailPasswordDTO.getPassword());
-            String sessionId = loginService.generateSessionId(userInfo.getUserId());
-            CookieUtils.setCookie(response, BaseConstant.SESSION_ID, sessionId);
-            return ApiResponse.success(userInfo);
-        } catch (Exception e) {
-            log.error("Register error: ", e);
-            return ApiResponse.error(ResponseCode.EMAIL_OR_PASSWORD_ERROR, e.getMessage());
-        }
-    }
 
     /**
      * Login by email and password
@@ -133,13 +124,132 @@ public class LoginController {
      */
     @PostMapping("/loginByPassword")
     @SwitchUser(SystemUser.REGISTERED_USER)
-    public ApiResponse<UserInfo> loginByPassword(@RequestBody @Valid EmailPasswordDTO userNameLoginDTO,
+    public ApiResponse<AuthenticationResult> loginByPassword(@RequestBody @Valid EmailPasswordDTO userNameLoginDTO,
             HttpServletResponse response) {
-        UserInfo userInfo = loginService.loginByEmailAndPassword(userNameLoginDTO.getEmail(),
-                        userNameLoginDTO.getPassword());
-        String sessionId = loginService.generateSessionId(userInfo.getUserId());
-        CookieUtils.setCookie(response, BaseConstant.SESSION_ID, sessionId);
-        return ApiResponse.success(userInfo);
+        return this.issueOrAskForCompany(
+                loginService.authenticateByPassword(userNameLoginDTO.getEmail(),
+                        userNameLoginDTO.getPassword()), response);
+    }
+
+    /**
+     * The /join landing check — may this token proceed, and if not, why (PRD §3.0).
+     *
+     * <p>Public by necessity: whoever opened the link has no session yet. It reveals only masked
+     * contacts and the company name, so a leaked token yields recognition, not usable details.
+     */
+    @Operation(summary = "Check an invitation link and return what the join page should show")
+    @PostMapping("/joinEntry")
+    @SwitchUser(SystemUser.REGISTERED_USER)
+    public ApiResponse<JoinEntry> joinEntry(@RequestParam @NotNull String token) {
+        return ApiResponse.success(invitationService.inspectJoinToken(token));
+    }
+
+    /**
+     * Send a verification code to the channel the invitation names, without the caller ever seeing
+     * the address. The join page only has masked contacts, so it cannot use the plaintext
+     * send-code endpoints — and it must not, or a leaked link would become an address oracle.
+     */
+    @Operation(summary = "Send a verification code to the invitation's own email or mobile")
+    @PostMapping("/sendJoinCode")
+    @SwitchUser(SystemUser.REGISTERED_USER)
+    public ApiResponse<Void> sendJoinCode(@RequestParam @NotNull String token,
+            @RequestParam @NotNull String channel) {
+        loginService.sendJoinCode(token, channel);
+        return ApiResponse.success();
+    }
+
+    /**
+     * Verify the code and identify the person, without issuing a session. Joining is a separate
+     * agreement — see confirmJoin — so this step deliberately stops at "we know who you are".
+     */
+    @Operation(summary = "Verify the join code and return the person behind the invitation")
+    @PostMapping("/verifyJoinCode")
+    @SwitchUser(SystemUser.REGISTERED_USER)
+    public ApiResponse<JoinVerification> verifyJoinCode(@RequestParam @NotNull String token,
+            @RequestParam @NotNull String channel, @RequestParam @NotNull String code) {
+        return ApiResponse.success(loginService.verifyJoinCode(token, channel, code));
+    }
+
+    /**
+     * Set a first password mid-join, where no session exists yet. Authorized by the invitation, and
+     * narrow because of it: it reaches only the profile the invitation names, only when that
+     * profile has no password.
+     */
+    @Operation(summary = "Set the first password during the join flow")
+    @PostMapping("/setJoinPassword")
+    @SwitchUser(SystemUser.REGISTERED_USER)
+    public ApiResponse<Void> setJoinPassword(@RequestParam @NotNull String token,
+            @RequestParam @NotNull Long profileId, @RequestBody @Valid SetFirstPasswordDTO dto) {
+        loginService.setJoinPassword(token, profileId, dto.getNewPassword());
+        return ApiResponse.success();
+    }
+
+    /**
+     * Confirm joining, after the person verified their identity (and set a password if new).
+     *
+     * <p>A session is issued here, not earlier: activation and "you are now in" are the same
+     * moment. Verifying a code proves control of the invitation; joining is the agreement.
+     */
+    @Operation(summary = "Accept the invitation: bind the person, activate the membership, sign in")
+    @PostMapping("/confirmJoin")
+    @SwitchUser(SystemUser.REGISTERED_USER)
+    public ApiResponse<AuthenticationResult> confirmJoin(@RequestParam @NotNull String token,
+            @RequestParam @NotNull Long profileId, HttpServletResponse response) {
+        invitationService.confirmJoin(token, profileId);
+        // Re-runs the company resolution rather than assuming the just-joined membership is the
+        // only one: the person may already belong elsewhere, in which case they must still choose.
+        return this.issueOrAskForCompany(loginService.afterJoin(profileId), response);
+    }
+
+    /**
+     * Issue the session when authentication resolved to one membership; otherwise hand back the
+     * choice for the client to present.
+     *
+     * <p>Shared by all three authentication endpoints so the "one or many" decision cannot differ
+     * between channels — a path that issued a session without going through here would bypass the
+     * whole point of the company step.
+     *
+     * <p>The response carries {@code profileId} either way: the client needs it for
+     * {@code selectCompany}, and it is also what makes {@code mustSetPassword} actionable.
+     */
+    private ApiResponse<AuthenticationResult> issueOrAskForCompany(AuthenticationResult result,
+            HttpServletResponse response) {
+        if (result.isResolved()) {
+            String sessionId = loginService.generateSessionId(result.userInfo().getUserId());
+            CookieUtils.setCookie(response, BaseConstant.SESSION_ID, sessionId);
+        }
+        return ApiResponse.success(result);
+    }
+
+    /**
+     * The companies an authenticated person may enter.
+     *
+     * <p>Reached when authentication succeeded but the person belongs to more than one company
+     * (or to one they cannot enter), so no session was issued yet. Not tenant-scoped by nature —
+     * the caller has proven who they are but not yet chosen where they are going.
+     */
+    @Operation(summary = "List the companies this person can log into (multi-company login step)")
+    @PostMapping("/listCompanies")
+    @SwitchUser(SystemUser.REGISTERED_USER)
+    public ApiResponse<List<MembershipOption>> listCompanies(@RequestParam @NotNull String authToken) {
+        return ApiResponse.success(loginService.listCompanies(authToken));
+    }
+
+    /**
+     * Enter one company, issuing the session.
+     *
+     * <p>The service verifies the membership really belongs to this person before returning its
+     * account id — naming someone else's would otherwise mint a session in a company the caller
+     * is not a member of.
+     */
+    @Operation(summary = "Enter the chosen company and issue the session")
+    @PostMapping("/selectCompany")
+    @SwitchUser(SystemUser.REGISTERED_USER)
+    public ApiResponse<AuthenticationResult> selectCompany(@RequestParam @NotNull String authToken,
+            @RequestParam @NotNull Long accountId, HttpServletResponse response) {
+        // The person is read from the token inside the service, never from the request. Same
+        // response shape as the authentication endpoints, so the client has one contract to handle.
+        return this.issueOrAskForCompany(loginService.selectCompany(authToken, accountId), response);
     }
 
     /**
@@ -155,6 +265,14 @@ public class LoginController {
     /**
      * Reset password using the token sent via email
      */
+    @Operation(summary = "Reset a password with a verification code")
+    @PostMapping("/resetPasswordByCode")
+    @SwitchUser(SystemUser.REGISTERED_USER)
+    public ApiResponse<Void> resetPasswordByCode(@RequestBody @Valid ResetPasswordByCodeDTO dto) {
+        loginService.resetPasswordByCode(dto.getIdentifier(), dto.getCode(), dto.getNewPassword());
+        return ApiResponse.success();
+    }
+
     @PostMapping("/resetPassword")
     @SwitchUser(SystemUser.REGISTERED_USER)
     public ApiResponse<Void> resetPassword(@RequestBody @Valid ResetPasswordDTO resetPasswordDTO) {

@@ -1,9 +1,14 @@
 package io.softa.starter.user.service.impl;
 
+import org.apache.commons.lang3.StringUtils;
+
+import java.util.Comparator;
+import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.lang3.RandomStringUtils;
+import io.softa.framework.base.utils.RandomUtils;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -16,10 +21,18 @@ import io.softa.framework.base.enums.Operator;
 import io.softa.framework.base.exception.BusinessException;
 import io.softa.framework.base.security.PasswordUtils;
 import io.softa.framework.base.utils.UUIDUtils;
-import io.softa.framework.orm.domain.Filters;
+import java.util.Map;
+import io.softa.framework.base.message.MailRequestMessage;
+import io.softa.framework.base.message.SmsRequestMessage;
+import io.softa.framework.base.message.MessageScope;
 import io.softa.framework.orm.service.CacheService;
 import io.softa.framework.orm.service.TenantInfoService;
+import io.softa.starter.user.dto.AuthenticationResult;
+import io.softa.starter.user.dto.JoinContacts;
+import io.softa.starter.user.dto.JoinVerification;
 import io.softa.starter.user.dto.InvitationInfo;
+import io.softa.starter.user.dto.MembershipOption;
+import io.softa.starter.user.exception.MultipleMembershipsException;
 import io.softa.starter.user.entity.UserAccount;
 import io.softa.starter.user.entity.UserIdentity;
 import io.softa.starter.user.enums.AccountStatus;
@@ -35,6 +48,17 @@ import io.softa.starter.user.service.UserProfileService;
 @Slf4j
 @Service
 public class LoginServiceImpl implements LoginService {
+
+    /** Mirrors UserIdentityServiceImpl's window, for the message the locked-out person sees. */
+    private static final int LOCK_MINUTES = 30;
+    /** Verification-code template, one code for both channels (MailTemplate / SmsTemplate share it). */
+    private static final String TEMPLATE_CODE = "user.verification-code";
+    /** Code lifetime shown to the recipient; kept in step with VerificationCodeGuard.CODE_TTL_SECONDS. */
+    private static final int CODE_EXPIRY_MINUTES = VerificationCodeGuard.CODE_TTL_SECONDS / 60;
+    /** Entropy of the pre-auth token that bridges authentication and the company step. */
+    private static final int PREAUTH_TOKEN_BYTES = 32;
+    /** How long the person has to pick a company before re-authenticating. */
+    private static final int PREAUTH_TTL_SECONDS = 600;
 
     @Autowired
     private CacheService cacheService;
@@ -53,6 +77,13 @@ public class LoginServiceImpl implements LoginService {
 
     @Autowired
     private UserInvitationService invitationService;
+
+    /** Send / attempt limits for one-time codes (PRD D2) — see the class for why each exists. */
+    @Autowired
+    private VerificationCodeGuard codeGuard;
+
+    @Autowired
+    private org.springframework.context.ApplicationEventPublisher eventPublisher;
 
     /**
      * Tenant lifecycle gate at login: only ACTIVE tenants may log in. Enforced at the single
@@ -111,13 +142,16 @@ public class LoginServiceImpl implements LoginService {
 
     /** Human-readable reason for refusing login to a non-ACTIVE account. */
     private static String accountDeniedMessage(AccountStatus status) {
+        // No default branch on purpose: the switch is exhaustive over the six-value axis, so
+        // adding a status makes this fail to COMPILE rather than silently fall through to
+        // "not active" — which is how the removed values earned their vague message.
         String reason = switch (status == null ? AccountStatus.FROZEN : status) {
-            case FROZEN, PENDING_DELETION, DELETED -> "your account has been deactivated";
+            case FROZEN -> "your account has been deactivated";
+            case DEACTIVATED -> "your membership of this company has ended";
             case LOCKED -> "your account is locked";
-            case BLACKLISTED -> "your account has been blocked";
+            case PENDING -> "your account has not been invited yet — ask your administrator to send the invitation";
             case INVITED -> "your account invitation has not been accepted yet";
-            case UNVERIFIED -> "your account has not been verified yet";
-            default -> "your account is not active";
+            case ACTIVE -> "your account is not active";
         };
         return "Login denied: " + reason + ".";
     }
@@ -127,106 +161,303 @@ public class LoginServiceImpl implements LoginService {
         return RedisConstant.VERIFICATION_CODE + "login:" + identifier;
     }
 
-    private void generateNumericCode(String identifier) {
-        // 1. Generate 6-digit numeric code
-        String code = RandomStringUtils.insecure().nextNumeric(6);
-        // 2. Generate Redis Key (can be partitioned by scenario, e.g., login/signup/reset_password)
-        String redisKey = buildLoginCodeKey(identifier);
-        // 3. Store in Redis with 5 minutes expiration
-        cacheService.save(redisKey, code, RedisConstant.FIVE_MINUTES);
-
+    /**
+     * Issue a code for this identifier, subject to the send limits.
+     *
+     * <p>The rate check runs BEFORE generating: an over-limit request must be refused without
+     * overwriting a code the user may still be typing.
+     */
+    private String generateNumericCode(String identifier) {
+        codeGuard.beforeSend(identifier);
+        String code = RandomStringUtils.insecure()
+                .nextNumeric(VerificationCodeGuard.CODE_LENGTH);
+        codeGuard.store(identifier, code);
+        return code;
     }
 
     public void verifyCode(String identifier, String inputCode) {
-        String redisKey = buildLoginCodeKey(identifier);
-        String cachedCode = cacheService.get(redisKey);
-        if (cachedCode == null) {
-            throw new BusinessException("Verification code expired or not found");
-        } if (!cachedCode.equals(inputCode)) {
-            throw new BusinessException("Verification code is incorrect");
-        }
-    }
-
-    private void clearCode(String identifier) {
-        String redisKey = buildLoginCodeKey(identifier);
-        cacheService.clear(redisKey);
+        codeGuard.verify(identifier, inputCode);
     }
 
     @Override
     public void sendEmailCode(String email) {
-        Filters filters = new Filters().eq(UserAccount::getEmail, email);
-        this.generateNumericCode(email);
-//        UserAccount userAccount = this.getUserByFilter(filters);
-        // TODO: Send email with the code
-        // emailService.sendEmail(email, "Verification Code", "Your verification code is: " + code);
+        String code = this.generateNumericCode(email);
+        // PLATFORM tier: a login / join code is requested BEFORE any session, so there is no tenant
+        // context to render a tenant-specific template from — the platform row is the code's copy.
+        // Absent message-starter this is a graceful no-op, same as every other request message.
+        eventPublisher.publishEvent(new MailRequestMessage(
+                List.of(email), TEMPLATE_CODE,
+                Map.of("code", code, "expiryMinutes", CODE_EXPIRY_MINUTES), null, MessageScope.PLATFORM));
     }
 
     @Override
     public void sendMobileCode(String mobile) {
-        Filters filters = new Filters().eq(UserAccount::getMobile, mobile);
-//        UserAccount userAccount = this.getUserByFilter(filters);
-        // TODO: Send SMS with the code
-    }
-
-    @Override
-    public UserInfo loginByEmailCode(String email, String code) {
-        verifyCode(email, code);
-        Optional<UserAccount> optionalUserAccount = accountService.getUserByEmail(email);
-        UserInfo userInfo;
-        if (optionalUserAccount.isEmpty()) {
-            userInfo = accountService.registerNewUser(email, null, null);
-        } else {
-            userInfo = profileService.getUserInfo(optionalUserAccount.get().getId());
-        }
-        clearCode(email);
-        return userInfo;
-    }
-
-    @Override
-    public UserInfo loginByMobileCode(String mobile, String code) {
-        verifyCode(mobile, code);
-        Optional<UserAccount> optionalUserAccount = accountService.getUserByMobile(mobile);
-        UserInfo userInfo;
-        if (optionalUserAccount.isEmpty()) {
-            userInfo = accountService.registerNewUser(null, mobile, null);
-        } else {
-            userInfo = profileService.getUserInfo(optionalUserAccount.get().getId());
-        }
-        clearCode(mobile);
-        return userInfo;
+        String code = this.generateNumericCode(mobile);
+        eventPublisher.publishEvent(new SmsRequestMessage(
+                List.of(mobile), TEMPLATE_CODE,
+                Map.of("code", code, "expiryMinutes", CODE_EXPIRY_MINUTES)));
     }
 
     /**
-     * User login by email and password
+     * Refuse to identify anyone from a contact shared by more than one account (finding #2).
      *
-     * @param email    Email address
-     * @param password Password
-     * @return UserInfo
+     * <p>A verification code proves control of the ADDRESS, not of a person. A work number used by
+     * several employees identifies none of them, so resolving it to whichever person happens to
+     * hold it as their login identifier lets a second holder sign in — or reset the password — as
+     * the first. Every code-and-identifier entry point (login, /join, reset) has to ask this;
+     * the password path does not, because knowing the password is itself the proof a shared
+     * contact cannot supply.
      */
+    private void assertContactNotShared(String identifier) {
+        if (accountService.isWorkContactShared(identifier)) {
+            throw new BusinessException("This contact is shared by more than one account, so we "
+                    + "cannot confirm who you are. Please contact your administrator.");
+        }
+    }
+
     @Override
-    public UserInfo loginByEmailAndPassword(String email, String password) {
-        UserAccount userAccount = accountService.getUserByEmail(email).orElseThrow(
-                () -> new BusinessException("User or password is incorrect."));
-        // The account still identifies WHO is signing in; only the credential moved. Verifying
-        // against the person means someone employed by two companies has one password to remember,
-        // and it is the same one whichever account they arrive through.
-        //
-        // requireProfile's own error ("not linked to a person") must not escape here: this endpoint
-        // is anonymous, and a distinct message would tell a stranger which accounts exist but are
-        // broken — an account-existence oracle. Inside, it is a data fault; outside, it is just a
-        // failed login.
-        UserIdentity identity;
-        try {
-            identity = identityService.requireIdentity(userAccount);
-        } catch (BusinessException e) {
-            log.error("Password login blocked: account {} has no linked person — run the "
-                    + "credentials migration. Reporting a plain failed login to the caller.", userAccount.getId());
-            throw new BusinessException("User or password is incorrect.");
+    public AuthenticationResult authenticateByCode(String identifier, String code) {
+        verifyCode(identifier, code);
+        assertContactNotShared(identifier);
+        // Resolved by LOGIN IDENTIFIER on the person, not by a company's work contact: the code
+        // was sent to an identifier, and that identifier is what identifies the human being.
+        return this.afterAuthentication(this.resolveIdentity(identifier,
+                "This account is not linked to any company. Please contact your administrator."));
+    }
+
+    @Override
+    public AuthenticationResult authenticateByPassword(String identifier, String password) {
+        // Same message for "no such identifier" and "wrong password": splitting them turns the
+        // login form into an account-existence oracle.
+        UserIdentity identity = this.resolveIdentity(identifier, "Incorrect account or password.");
+
+        // Lock checked BEFORE the password, so "locked" versus "incorrect" cannot confirm a guess.
+        // Only the password path is locked — code login stays open, because what is under attack
+        // is the password and locking the person out entirely would complete the attack for it.
+        if (identityService.isPasswordLocked(identity)) {
+            throw new BusinessException("Too many failed attempts. Password login is locked for "
+                    + LOCK_MINUTES + " minutes. You can still log in with a verification code.");
         }
         if (!identityService.matchesPassword(identity, password)) {
-            throw new BusinessException("User or password is incorrect.");
+            // Counted per PERSON, so switching company buys no extra tries.
+            identityService.recordPasswordFailure(identity);
+            throw new BusinessException("Incorrect account or password.");
         }
-        return profileService.getUserInfo(userAccount.getId());
+        identityService.clearPasswordFailures(identity.getId());
+        return this.afterAuthentication(identity);
+    }
+
+    /**
+     * Find the PERSON behind a login identifier.
+     *
+     * <p>Identifiers are unique on {@code UserIdentity} and seeded when a person is created, so
+     * this is the whole of the lookup — there is deliberately no fallback to resolving the ACCOUNT
+     * by its work contact. Such a fallback existed while identifiers were being introduced, to heal
+     * rows created before the seeding; it also required {@code UserAccount.email} to stay globally
+     * unique, which is what kept the email index from being narrowed to {@code (tenantId, email)}.
+     * With no data predating the seeding, the fallback protects nobody and costs that narrowing.
+     *
+     * @param notFoundMessage what the caller may safely tell an anonymous stranger. Both reasons
+     *                        ("no such identifier", "identifier is not linked to a person") must
+     *                        report the same thing: a distinct message would confirm which
+     *                        accounts exist.
+     */
+    private UserIdentity resolveIdentity(String identifier, String notFoundMessage) {
+        return identityService.findByLoginIdentifier(identifier)
+                .orElseThrow(() -> new BusinessException(notFoundMessage));
+    }
+
+    /**
+     * The shared tail of every authentication path: decide what the client must do next.
+     *
+     * <p>One place rather than per-path, because the three questions (needs a password? one
+     * company or a choice? which membership?) have the same answers however the person proved
+     * who they are — and a path that skipped one of them would be a hole rather than a variation.
+     */
+    private AuthenticationResult afterAuthentication(UserIdentity identity) {
+        Long profileId = identity.getProfileId();
+        boolean mustSetPassword = StringUtils.isBlank(identity.getPassword());
+        List<MembershipOption> options = this.resolveMemberships(profileId);
+        List<MembershipOption> enterable = options.stream()
+                .filter(MembershipOption::selectable).toList();
+        if (options.size() == 1 && enterable.size() == 1) {
+            return AuthenticationResult.resolved(profileId,
+                    profileService.getUserInfo(enterable.get(0).accountId()), mustSetPassword);
+        }
+        if (options.isEmpty()) {
+            throw new BusinessException("Your account is not linked to any company. Please contact your administrator.");
+        }
+        // A choice is pending, so authentication succeeded but no session is issued yet. Mint a
+        // single-use token proving THIS person just authenticated; selectCompany reads the person
+        // from it, never from a client-supplied id — otherwise the company step would be an
+        // unauthenticated "issue me a session for profileId X".
+        return AuthenticationResult.choicePending(
+                profileId, options, mustSetPassword, issuePreAuthToken(profileId));
+    }
+
+    private static String preAuthKey(String token) {
+        return "login:preauth:" + token;
+    }
+
+    private String issuePreAuthToken(Long profileId) {
+        String token = RandomUtils.randomString(PREAUTH_TOKEN_BYTES);
+        cacheService.save(preAuthKey(token), profileId.toString(), PREAUTH_TTL_SECONDS);
+        return token;
+    }
+
+    /** The person a live pre-auth token stands for, or a refusal if it expired / never existed. */
+    private Long resolvePreAuthToken(String authToken) {
+        String value = StringUtils.isBlank(authToken) ? null : cacheService.get(preAuthKey(authToken));
+        if (value == null) {
+            throw new BusinessException("Your sign-in step expired. Please log in again.");
+        }
+        return Long.valueOf(value);
+    }
+
+
+    @Override
+    public AuthenticationResult afterJoin(Long profileId) {
+        // The identity, not the profile: what decides the next step is whether a password exists,
+        // and that lives on the credential.
+        return identityService.findByProfile(profileId)
+                .map(this::afterAuthentication)
+                .orElseThrow(() -> new BusinessException("Person record not found."));
+    }
+
+    @Override
+    public void sendJoinCode(String rawToken, String channel) {
+        // The address never crosses the wire in either direction: the caller sends a token, the
+        // invitation service resolves it, and the code goes out to what IT stored.
+        String address = invitationService.resolveJoinChannel(rawToken, channel);
+        if ("mobile".equalsIgnoreCase(channel)) {
+            this.sendMobileCode(address);
+        } else {
+            this.sendEmailCode(address);
+        }
+    }
+
+    @Override
+    @Transactional
+    public JoinVerification verifyJoinCode(String rawToken, String channel, String code) {
+        // Resolving the address from the token (not from the caller) is what keeps this from being
+        // a way to verify a code against an address of the caller's choosing.
+        String address = invitationService.resolveJoinChannel(rawToken, channel);
+        this.verifyCode(address, code);
+
+        // A shared work contact identifies no one, so an invitee holding it cannot be resolved
+        // automatically — HR completes the bind. Same guard as login and reset.
+        assertContactNotShared(address);
+
+        // Find-or-create by the address the invitation was sent to. Found = this person already
+        // works somewhere and is being added to a second company, and they keep ONE person record
+        // (that is the whole point of the global profile). Not found = their first company.
+        Optional<UserIdentity> existing = identityService.findByLoginIdentifier(address);
+        if (existing.isPresent()) {
+            return new JoinVerification(existing.get().getProfileId(),
+                    StringUtils.isBlank(existing.get().getPassword()));
+        }
+        // Brand new person: no password by construction, so the password step always follows.
+        // Constructed through the profile service, which is the one waived choke point where a
+        // person and their credentials row are minted together.
+        return new JoinVerification(profileService.createPersonForJoin(address), true);
+    }
+
+    @Override
+    @Transactional
+    public void setJoinPassword(String rawToken, Long profileId, String newPassword) {
+        JoinContacts contacts = invitationService.resolveJoinContacts(rawToken);
+        UserIdentity identity = identityService.findByProfile(profileId)
+                .orElseThrow(() -> new BusinessException("Person record not found."));
+
+        // Both checks matter. The first ties the person to THIS invitation, so holding a link
+        // cannot reach an unrelated person. The second keeps it a first-password path rather than
+        // a reset — someone who already has a password must prove it, or arrive by code.
+        if (!contacts.includes(identity.getLoginEmail()) && !contacts.includes(identity.getLoginMobile())) {
+            throw new BusinessException("This link does not belong to that account.");
+        }
+        if (StringUtils.isNotBlank(identity.getPassword())) {
+            throw new BusinessException("A password is already set — sign in with it instead.");
+        }
+        // Strength rules live inside setPassword, checked against this person's own contacts.
+        identityService.setPassword(identity.getId(), newPassword);
+    }
+
+    @Override
+    @Transactional
+    public void resetPasswordByCode(String identifier, String code, String newPassword) {
+        // Code first. Looking the person up before verifying would let a caller probe which
+        // identifiers exist by watching which ones fail differently.
+        this.verifyCode(identifier, code);
+        assertContactNotShared(identifier);
+        UserIdentity identity = identityService.findByLoginIdentifier(identifier).orElseThrow(
+                () -> new BusinessException("Incorrect account or code."));
+        // Strength rules and the lock reset both live inside setPassword — a reset must clear the
+        // lock, or someone who forgot their password stays locked out of the password they just set.
+        identityService.setPassword(identity.getId(), newPassword);
+    }
+
+    @Override
+    public boolean mustSetPassword(Long profileId) {
+        return identityService.findByProfile(profileId)
+                .map(identity -> StringUtils.isBlank(identity.getPassword()))
+                // Unknown person → do not claim they are fine; the caller fails elsewhere.
+                .orElse(Boolean.FALSE);
+    }
+    @Override
+    public List<MembershipOption> listCompanies(String authToken) {
+        // Reads the person from the token, not the request: listing another person's companies is
+        // a smaller leak than taking over their session, but it is the same unauthenticated call.
+        return resolveMemberships(resolvePreAuthToken(authToken));
+    }
+
+    private List<MembershipOption> resolveMemberships(Long profileId) {
+        return accountService.listMembershipsOf(profileId).stream()
+                .map(account -> new MembershipOption(
+                        account.getId(), account.getTenantId(),
+                        tenantInfoService == null ? null
+                                : tenantInfoService.getTenantName(account.getTenantId()),
+                        account.getStatus()))
+                // Selectable first: the common case is one usable company among some frozen ones,
+                // and making the person hunt for it in a mixed list is a needless step.
+                .sorted(Comparator.comparing(MembershipOption::selectable).reversed())
+                .toList();
+    }
+
+    @Override
+    public Long resolveSingleMembership(Long profileId) {
+        List<MembershipOption> options = this.resolveMemberships(profileId);
+        if (options.isEmpty()) {
+            // Authenticated, but a member of nothing — the account was off-boarded everywhere, or
+            // a profile exists with no membership yet. Either way there is nowhere to go.
+            throw new BusinessException("Your account is not linked to any company. Please contact your administrator.");
+        }
+        List<MembershipOption> selectable = options.stream().filter(MembershipOption::selectable).toList();
+        if (selectable.size() == 1 && options.size() == 1) {
+            return selectable.get(0).accountId();
+        }
+        // More than one, or exactly one that is not enterable: both need the picker. Refusing here
+        // rather than auto-picking is deliberate — silently choosing for someone who belongs to two
+        // companies puts them in a workspace they did not ask for, and the wrong one is worse than
+        // an extra click.
+        throw new MultipleMembershipsException(options);
+    }
+
+    @Override
+    public AuthenticationResult selectCompany(String authToken, Long accountId) {
+        Long profileId = resolvePreAuthToken(authToken);
+        MembershipOption chosen = this.resolveMemberships(profileId).stream()
+                .filter(option -> option.accountId().equals(accountId))
+                .findFirst()
+                // Ownership check: the membership must be one the token's person actually holds, or
+                // naming any accountId would mint a session in a company they are not a member of.
+                .orElseThrow(() -> new BusinessException("That company is not available for your account."));
+        if (!chosen.selectable()) {
+            throw new BusinessException(accountDeniedMessage(chosen.status()));
+        }
+        // Single use: consume the token so a leaked one cannot be replayed into another session.
+        cacheService.clear(preAuthKey(authToken));
+        return AuthenticationResult.resolved(
+                profileId, profileService.getUserInfo(accountId), this.mustSetPassword(profileId));
     }
 
     /**
@@ -235,6 +466,7 @@ public class LoginServiceImpl implements LoginService {
      * @param userId User ID
      * @return Session ID
      */
+    @Override
     public String generateSessionId(Long userId) {
         // Tenant + account lifecycle gates — the single choke point every login flow
         // passes through, and it runs AFTER credentials are verified.
@@ -247,22 +479,6 @@ public class LoginServiceImpl implements LoginService {
         return sessionId;
     }
 
-    /**
-     * User registration by email and password
-     * @param email    email
-     * @param password Password
-     * @return UserInfo
-     */
-    @Override
-    @Transactional
-    public UserInfo registerByEmailAndPassword(String email, String password) {
-        // Check if username already exists
-        Filters filter = new Filters().eq(UserAccount::getEmail, email);
-        if (accountService.count(filter) > 0) {
-            throw new BusinessException("Email already exists: " + email);
-        }
-        return accountService.registerNewUser(email, null, password);
-    }
 
     /**
      * Forgot password — issue a self-service PASSWORD_RESET token and email the set-password link.

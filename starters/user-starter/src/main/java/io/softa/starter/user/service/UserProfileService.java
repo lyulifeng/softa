@@ -80,6 +80,22 @@ public interface UserProfileService extends EntityService<UserProfile, Long> {
     UserInfo registerUserProfile(Long userId, UserProfileDTO profileDTO);
 
     /**
+     * Create the PERSON for a first-time invitee, identified only by the address their invitation
+     * was sent to.
+     *
+     * <p>Separate from {@link #registerUserProfile} because that path starts from an account and
+     * copies its work contacts onto the person. On /join the order is reversed: the person is
+     * created before they agree to join, so no membership may be touched yet — binding happens in
+     * {@code confirmJoin}, and doing it here would make "I verified a code" mean "I accepted".
+     *
+     * <p>Nothing but the identifier is filled in. Their name and details belong to the employee
+     * record their company maintains; guessing them here would create a second source of truth.
+     *
+     * @return the new person's id
+     */
+    Long createPersonForJoin(String identifier);
+
+    /**
      * Fetch user photo from remote URL and save it locally
      *
      * @param photoUrl Photo URL

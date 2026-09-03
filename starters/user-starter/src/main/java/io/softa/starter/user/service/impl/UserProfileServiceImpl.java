@@ -17,6 +17,7 @@ import io.softa.framework.base.exception.BusinessException;
 import io.softa.framework.base.exception.IllegalArgumentException;
 import io.softa.framework.base.utils.Assert;
 import io.softa.framework.base.utils.LambdaUtils;
+import org.springframework.transaction.annotation.Transactional;
 import io.softa.framework.orm.annotation.SkipPermissionCheck;
 import io.softa.framework.orm.domain.Filters;
 import io.softa.framework.orm.domain.FlexQuery;
@@ -312,7 +313,15 @@ public class UserProfileServiceImpl extends EntityServiceImpl<UserProfile, Long>
      */
     @SkipPermissionCheck
     @Override
+    @Transactional
     public UserInfo registerUserProfile(Long userId, UserProfileDTO profileDTO) {
+        // @Transactional on the atomic unit itself, not just its callers: this writes a profile,
+        // links the account to it, and creates the credentials row — the three that together make a
+        // person able to log in. A partial failure (identity insert throws after the account is
+        // linked) leaves exactly the "account has a profileId but no identity" fault the class
+        // warns about, unrecoverable and login-breaking. Current callers are transactional, but an
+        // atomic unit that relies on every future caller remembering that is one bad merge from the
+        // fault. REQUIRED propagation joins an existing transaction, so this changes nothing for them.
         // Create user profile
         UserProfile userProfile = this.buildUserProfile(profileDTO);
         userProfile.setUserId(userId);
@@ -338,14 +347,19 @@ public class UserProfileServiceImpl extends EntityServiceImpl<UserProfile, Long>
         // account's work contacts, in the same transaction — a person is not fully created until
         // their credentials row exists, and requireIdentity resolves through it.
         //
-        // The identifiers are not read by anything yet — login still resolves an account by its
-        // email, exactly as before. They are populated from day one so that the release which DOES
-        // resolve people by identifier needs no backfill: the expensive part of that change is the
-        // data, and this is the one moment where every new person passes through a single place.
+        // Login RESOLVES people by these identifiers now, so seeding them here is what makes a
+        // freshly created person able to sign in at all — it is the only place a person created
+        // from an account gets one.
         UserIdentity identity = new UserIdentity();
         identity.setProfileId(profileId);
-        identity.setLoginEmail(StringUtils.trimToNull(account.getEmail()));
-        identity.setLoginMobile(StringUtils.trimToNull(account.getMobile()));
+        // Seeded only when the value is not ALREADY someone's login identifier. A work contact and
+        // a login identifier are different roles for the same string, and only the second has to be
+        // unique: shared work numbers are ordinary (a shop's phone, a shared floor handset, a
+        // manager's number entered for a worker who has none). Copying such a number across anyway
+        // does not create a login route, it destroys one — both holders then resolve to "shared by
+        // more than one account" instead of the one who had it to themselves.
+        identity.setLoginEmail(claimable(account.getEmail(), profileId));
+        identity.setLoginMobile(claimable(account.getMobile(), profileId));
         identityService.createOne(identity);
 
         // Build UserInfo and upload photo if photo is not empty
@@ -355,6 +369,43 @@ public class UserProfileServiceImpl extends EntityServiceImpl<UserProfile, Long>
         this.refreshUserInfo(userId, userInfo);
 
         return userInfo;
+    }
+
+    /** The work contact, or null when it is already someone else's login identifier. */
+    private String claimable(String contact, Long profileId) {
+        String value = StringUtils.trimToNull(contact);
+        return value != null && identityService.isIdentifierClaimable(value, profileId) ? value : null;
+    }
+
+    @SkipPermissionCheck
+    @Override
+    @Transactional
+    public Long createPersonForJoin(String identifier) {
+        Assert.notBlank(identifier, "An identifier is required to create a person.");
+        // @SkipPermissionCheck for the same reason registerUserProfile carries it: these are rows
+        // this method mints itself, and on /join the caller has no session at all. Both models are
+        // global, so no @CrossTenant is needed. @Transactional on the unit itself, like
+        // registerUserProfile: a profile without its identity row fails every later
+        // requireIdentity, and relying on each caller to wrap it is one merge from that fault.
+        // REQUIRED propagation joins verifyJoinCode's transaction, so this is a no-op there.
+        UserProfile profile = new UserProfile();
+        Long profileId = this.createOne(profile);
+
+        UserIdentity identity = new UserIdentity();
+        identity.setProfileId(profileId);
+        // Which column depends on the channel, and "@" is the only thing that distinguishes them
+        // once we hold a bare address. A dial-code mobile can never contain one.
+        if (identifier.contains("@")) {
+            identity.setLoginEmail(identifier);
+        } else {
+            identity.setLoginMobile(identifier);
+        }
+        // No claimable() guard here, deliberately: on /join the identifier is the address the
+        // invitation was SENT to and the code was verified against, so this person demonstrably
+        // controls it. If another identity holds it, that is the duplicate to resolve — refusing
+        // here would instead refuse the person who just proved control.
+        identityService.createOne(identity);
+        return profileId;
     }
 
     /**

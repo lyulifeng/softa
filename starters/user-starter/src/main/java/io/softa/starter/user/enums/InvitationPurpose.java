@@ -14,6 +14,7 @@ import io.softa.framework.base.annotation.OptionSet;
 public enum InvitationPurpose {
     INVITE("Invite"),                 // Ops onboards a new (INVITED) account — first-time password set
     PASSWORD_RESET("PasswordReset"),  // existing ACTIVE user self-service forgot-password
+    REINVITE("Reinvite"),             // the membership was bound to the WRONG person — see W5
     ;
 
     @JsonValue
