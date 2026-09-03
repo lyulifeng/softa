@@ -622,14 +622,14 @@ public class UserAccountServiceImpl extends EntityServiceImpl<UserAccount, Long>
         // Trimmed to the form the columns hold (workContact). Not lowercased: case-insensitivity of
         // this equality is the MySQL *_ci collation of the email / mobile columns — a known,
         // accepted dependency, the same one every other equality on these columns already has.
-        String value = workContact(contact);
-        if (value == null || tenantId == null) {
+        List<String> spellings = LoginIdentifiers.workContactSpellings(contact);
+        if (spellings.isEmpty() || tenantId == null) {
             // No tenant means no scope to be unique within, so nothing is taken.
             return Optional.empty();
         }
         return Stream.of(
-                        this.contactHolder(tenantId, UserAccount::getEmail, value),
-                        this.contactHolder(tenantId, UserAccount::getMobile, value))
+                        this.contactHolder(tenantId, UserAccount::getEmail, spellings),
+                        this.contactHolder(tenantId, UserAccount::getMobile, spellings))
                 .flatMap(Optional::stream)
                 .filter(other -> exceptAccountId == null || !other.getId().equals(exceptAccountId))
                 .findFirst();
@@ -678,23 +678,37 @@ public class UserAccountServiceImpl extends EntityServiceImpl<UserAccount, Long>
         return value == null ? null : value.toString();
     }
 
-    private Optional<UserAccount> contactHolder(Long tenantId, SFunction<UserAccount, ?> field, String value) {
-        return this.searchList(new Filters()
-                .eq(UserAccount::getTenantId, tenantId)
-                .eq(field, value)).stream().findFirst();
+    private Optional<UserAccount> contactHolder(Long tenantId, SFunction<UserAccount, ?> field, List<String> spellings) {
+        return this.searchList(contactFilter(field, spellings)
+                .eq(UserAccount::getTenantId, tenantId)).stream().findFirst();
+    }
+
+    /**
+     * The equality on a work-contact column, asked under every spelling the value may be stored in.
+     *
+     * <p>Rows written before the separator fold hold a mobile as HR typed it ("+65 9123-4567"), and
+     * no migration rewrites them. One collapsed spelling would miss those rows on exactly the
+     * questions these columns answer — is this number shared, does this tenant already hold it —
+     * so a mobile is asked for as a set (LoginIdentifiers.workContactSpellings); an email has one
+     * spelling and stays an exact match.
+     */
+    private static Filters contactFilter(SFunction<UserAccount, ?> field, List<String> spellings) {
+        return spellings.size() == 1
+                ? new Filters().eq(field, spellings.getFirst())
+                : new Filters().in(field, spellings);
     }
 
     @SkipPermissionCheck
     @CrossTenant
     @Override
     public boolean isWorkContactShared(String contact) {
-        // The callers hold a login identifier (already canonical); the question is asked of the
-        // work contacts, which are stored trimmed with HR's case (workContact). Trimming here keeps
-        // both sides in that form; case-insensitivity of the equality is the MySQL *_ci collation
+        // The callers hold a login identifier in its typed form; the question is asked of the
+        // work contacts, which are stored trimmed with HR's case (workContact). The spellings are
+        // trimmed here to that form; case-insensitivity of the equality is the MySQL *_ci collation
         // of the email / mobile columns — a known, accepted dependency, not something this method
         // could supply by lowercasing the query (the stored value is not lowercased).
-        contact = workContact(contact);
-        if (contact == null) {
+        List<String> spellings = LoginIdentifiers.workContactSpellings(contact);
+        if (spellings.isEmpty()) {
             return false;
         }
         // Counts PEOPLE, not accounts. One person employed by two companies has two accounts
@@ -711,9 +725,13 @@ public class UserAccountServiceImpl extends EntityServiceImpl<UserAccount, Long>
         // unaffected, so that person can still sign in.
         //
         // Across tenants: the same number handed to workers in two companies is still one number.
+        //
+        // Across spellings, too: a row written as "+65 9123-4567" before the fold and one written
+        // as "+6591234567" after it are the one number held twice (contactFilter), and the people
+        // behind them are counted together exactly as they are across rows.
         List<UserAccount> matches = new ArrayList<>(
-                this.searchList(new Filters().eq(UserAccount::getEmail, contact)));
-        matches.addAll(this.searchList(new Filters().eq(UserAccount::getMobile, contact)));
+                this.searchList(contactFilter(UserAccount::getEmail, spellings)));
+        matches.addAll(this.searchList(contactFilter(UserAccount::getMobile, spellings)));
 
         Set<Long> boundPeople = new HashSet<>();
         long unbound = 0;

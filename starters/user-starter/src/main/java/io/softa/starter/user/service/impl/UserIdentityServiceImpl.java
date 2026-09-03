@@ -5,6 +5,7 @@ import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.time.LocalDateTime;
 import java.util.HexFormat;
+import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
 
@@ -86,6 +87,9 @@ public class UserIdentityServiceImpl extends EntityServiceImpl<UserIdentity, Lon
     @Override
     public Optional<UserIdentity> findByLoginIdentifier(String identifier) {
         // Same spelling the seeding wrote and the unknown counter hashes — see LoginIdentifiers.
+        // The mobile column is also asked for the typed spelling, because rows seeded before the
+        // separator fold hold it and nothing rewrites them (loginSpellings).
+        List<String> mobileSpellings = LoginIdentifiers.loginSpellings(identifier);
         identifier = LoginIdentifiers.normalize(identifier);
         if (identifier == null) {
             return Optional.empty();
@@ -101,7 +105,7 @@ public class UserIdentityServiceImpl extends EntityServiceImpl<UserIdentity, Lon
         Optional<UserIdentity> byEmail = this.searchOneIdentifier(
                 new Filters().eq(UserIdentity::getLoginEmail, identifier), identifier);
         Optional<UserIdentity> byMobile = this.searchOneIdentifier(
-                new Filters().eq(UserIdentity::getLoginMobile, identifier), identifier);
+                new Filters().in(UserIdentity::getLoginMobile, mobileSpellings), identifier);
         return byEmail.isPresent() ? byEmail : byMobile;
     }
 
@@ -130,14 +134,17 @@ public class UserIdentityServiceImpl extends EntityServiceImpl<UserIdentity, Lon
     @CrossTenant
     @Override
     public boolean isIdentifierClaimable(String identifier, Long forProfileId) {
+        List<String> spellings = LoginIdentifiers.loginSpellings(identifier);
         identifier = LoginIdentifiers.normalize(identifier);
         if (identifier == null) {
             return false;
         }
         boolean isEmail = identifier.contains("@");
+        // A mobile under every spelling it may be stored in: a pre-fold row holding the number with
+        // separators is a claimant too, and missing it would seed the same number twice.
         Filters filters = isEmail
                 ? new Filters().eq(UserIdentity::getLoginEmail, identifier)
-                : new Filters().eq(UserIdentity::getLoginMobile, identifier);
+                : new Filters().in(UserIdentity::getLoginMobile, spellings);
         // searchList, not searchOne: the point is to COUNT claimants (0 = free, 1 = held, and if a
         // migration ever left more than one, searchOne would throw rather than count them).
         return this.searchList(filters).stream()

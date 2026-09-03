@@ -13,6 +13,7 @@ import io.softa.starter.user.entity.UserIdentity;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.doReturn;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.mock;
@@ -73,6 +74,20 @@ class IdentityAdoptionTest {
                 .when(identityService).searchList(any(Filters.class));
 
         assertThat(identityService.isIdentifierClaimable("+8613800138000", MINE)).isTrue();
+    }
+
+    @Test
+    void anIdentifierHeldUnderItsPreFoldSpelling_isNotClaimable() {
+        // The row was seeded as "+65 9123-4567" before the fold and nothing rewrote it. Asking the
+        // column only for "+6591234567" saw no claimant, and /join seeded the same number onto a
+        // second identity. The store answers by exact equality, as the database does.
+        UserIdentity legacy = heldBy(8L, null, "+65 9123-4567");
+        doAnswer(inv -> inv.getArgument(0).toString().contains("\"+65 9123-4567\"")
+                ? List.of(legacy) : List.of())
+                .when(identityService).searchList(any(Filters.class));
+
+        assertThat(identityService.isIdentifierClaimable("+65 9123-4567", MINE)).isFalse();
+        assertThat(identityService.isIdentifierClaimable("+65 9123-4567", 8L)).isTrue();
     }
 
     @Test

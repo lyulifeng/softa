@@ -2,11 +2,15 @@ package io.softa.starter.user.service.impl;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Optional;
+import java.util.concurrent.atomic.AtomicReference;
 
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
 import org.springframework.test.util.ReflectionTestUtils;
 
+import io.softa.framework.base.context.Context;
+import io.softa.framework.base.context.ContextHolder;
 import io.softa.framework.orm.domain.Filters;
 import io.softa.starter.user.entity.UserAccount;
 import io.softa.starter.user.service.UserRoleRelService;
@@ -132,9 +136,10 @@ class WorkContactSharedTest {
     }
 
     @Test
-    void aMobileTypedWithSeparators_isAskedAboutAsTheBareNumber() {
-        // The columns hold the collapsed form (workContact), so the question has to be asked in it:
-        // "+65 9123-4567" and "+6591234567" are one number held by however many rows carry it.
+    void aMobileTypedWithSeparators_isAskedAboutAsTheBareNumber_andAsTyped() {
+        // The columns hold the collapsed form (workContact) for every row written since the fold,
+        // and the typed form for rows written before it, which no migration rewrites. The question
+        // is asked in both, on both columns, so however many rows carry the one number, all count.
         givenMatches();
 
         accountService.isWorkContactShared("+65 9123-4567");
@@ -142,7 +147,57 @@ class WorkContactSharedTest {
         ArgumentCaptor<Filters> filters = ArgumentCaptor.forClass(Filters.class);
         verify(accountService, times(2)).searchList(filters.capture());
         assertThat(filters.getAllValues())
-                .allSatisfy(f -> assertThat(f.toString()).contains("\"+6591234567\"").doesNotContain("9123-"));
+                .allSatisfy(f -> assertThat(f.toString()).contains("\"+6591234567\"").contains("\"+65 9123-4567\""));
+    }
+
+    @Test
+    void aRowWrittenBeforeTheFold_andOneWrittenAfterIt_readAsShared() {
+        // Load-bearing for the pre-fold rows: user_account.mobile still holds "+65 9123-4567" on a
+        // row nobody rewrote, another row holds the same number collapsed. One collapsed query saw
+        // one row and the number read as unshared — the exact case the guard exists for. The store
+        // answers by exact equality, as the database does; people are counted across both spellings.
+        ReflectionTestUtils.setField(accountService, "roleRelService", mock(UserRoleRelService.class));
+        List<UserAccount> store = new ArrayList<>();
+        doAnswer(inv -> {
+            String query = inv.getArgument(0).toString();
+            return store.stream().filter(a -> query.contains("\"" + a.getMobile() + "\"")).toList();
+        }).when(accountService).searchList(any(Filters.class));
+
+        UserAccount legacy = account(1L, 7L);
+        legacy.setMobile("+65 9123-4567");   // written before the fold: not through a write path
+        UserAccount folded = account(2L, null);
+        accountService.reviveWith(folded, null, "+65 9123-4567");
+        assertThat(folded.getMobile()).isEqualTo("+6591234567");
+        store.add(legacy);
+        store.add(folded);
+
+        assertThat(accountService.isWorkContactShared("+65 9123-4567")).isTrue();
+        // One person on both spellings is still one person.
+        legacy.setProfileId(7L);
+        folded.setProfileId(7L);
+        assertThat(accountService.isWorkContactShared("+65 9123-4567")).isFalse();
+    }
+
+    @Test
+    void theTenantContactHolder_isFoundUnderThePreFoldSpelling() {
+        // The duplicate-contact check on create / re-hire asks the same columns; a legacy row
+        // holding the number with separators would otherwise let a second row take the number.
+        List<UserAccount> store = new ArrayList<>();
+        doAnswer(inv -> {
+            String query = inv.getArgument(0).toString();
+            return store.stream().filter(a -> query.contains("\"" + a.getMobile() + "\"")).toList();
+        }).when(accountService).searchList(any(Filters.class));
+        UserAccount legacy = account(1L, 7L);
+        legacy.setTenantId(2L);
+        legacy.setMobile("+65 9123-4567");
+        store.add(legacy);
+
+        Context ctx = new Context();
+        ctx.setTenantId(2L);
+        AtomicReference<Optional<UserAccount>> holder = new AtomicReference<>();
+        ContextHolder.runWith(ctx, () -> holder.set(accountService.findContactHolderInTenant("+65 9123-4567", null)));
+
+        assertThat(holder.get()).contains(legacy);
     }
 
     @Test

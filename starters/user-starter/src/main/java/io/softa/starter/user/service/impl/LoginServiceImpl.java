@@ -235,12 +235,15 @@ public class LoginServiceImpl implements LoginService {
 
     @Override
     public AuthenticationResult authenticateByCode(String identifier, String code) {
+        // The code is keyed by the canonical form; the lookups get the typed form, so a row seeded
+        // with the separators the person still types is found too (LoginIdentifiers.loginSpellings).
+        String typed = LoginIdentifiers.typedForm(identifier);
         identifier = LoginIdentifiers.normalize(identifier);
         verifyCode(identifier, code);
-        assertContactNotShared(identifier);
+        assertContactNotShared(typed);
         // Resolved by LOGIN IDENTIFIER on the person, not by a company's work contact: the code
         // was sent to an identifier, and that identifier is what identifies the human being.
-        return this.afterAuthentication(this.resolveIdentity(identifier,
+        return this.afterAuthentication(this.resolveIdentity(typed,
                 "This account is not linked to any company. Please contact your administrator."));
     }
 
@@ -256,8 +259,11 @@ public class LoginServiceImpl implements LoginService {
         // already hashed a trimmed, lowercased form; the lookup here used the raw one, so " x"
         // always fell into the unknown branch while "x" could resolve — and whether the eighth try
         // continued the countdown or started afresh said whether x existed (see LoginIdentifiers).
+        // The lookup itself gets the typed form (trimmed, lowercased, separators kept) so that it
+        // can also ask for a pre-fold row's spelling; the counters below key on the canonical one.
+        String typed = LoginIdentifiers.typedForm(identifier);
         identifier = LoginIdentifiers.normalize(identifier);
-        Optional<UserIdentity> resolved = identityService.findByLoginIdentifier(identifier);
+        Optional<UserIdentity> resolved = identityService.findByLoginIdentifier(typed);
         if (resolved.isEmpty()) {
             // Same ORDER as the real branch below: locked is answered first and is not counted.
             // Counting while locked would make the unknown branch's lock end at a different moment
@@ -439,12 +445,15 @@ public class LoginServiceImpl implements LoginService {
         // a way to verify a code against an address of the caller's choosing.
         // Normalised because the invitation stores the WORK contact as HR typed it, while the code
         // was keyed by (sendEmailCode) and the identity is looked up / seeded with the login form.
-        String address = LoginIdentifiers.normalize(invitationService.resolveJoinChannel(rawToken, channel));
+        // The typed form — what HR wrote on the invitation, lowercased — is what the lookups get,
+        // so a row seeded before the separator fold is still the one they find.
+        String typedAddress = LoginIdentifiers.typedForm(invitationService.resolveJoinChannel(rawToken, channel));
+        String address = LoginIdentifiers.normalize(typedAddress);
         this.verifyCode(address, code);
 
         // A shared work contact identifies no one, so an invitee holding it cannot be resolved
         // automatically — HR completes the bind. Same guard as login and reset.
-        assertContactNotShared(address);
+        assertContactNotShared(typedAddress);
 
         // A membership that already belongs to a person — a re-hired leaver's revived row — has
         // answered "who is this?" before the address is consulted. Their work address was released
@@ -459,7 +468,7 @@ public class LoginServiceImpl implements LoginService {
             // The address comes home as a LOGIN identifier only when the identity is fully released;
             // otherwise the person keeps signing in with what they hold and confirmJoin admits them
             // on the row's profileId. See reclaimLoginIdentifier for the takeover this prevents.
-            this.reclaimLoginIdentifier(known, address);
+            this.reclaimLoginIdentifier(known, address, typedAddress);
             // No password step here for a person who can already sign in some other way — see
             // holdsLoginOutsideInvitation. They confirm on the row's profileId, confirmJoin answers
             // signInRequired rather than a session, and they set the password in-session after
@@ -473,7 +482,7 @@ public class LoginServiceImpl implements LoginService {
         // Find-or-create by the address the invitation was sent to. Found = this person already
         // works somewhere and is being added to a second company, and they keep ONE person record
         // (that is the whole point of the global profile). Not found = their first company.
-        Optional<UserIdentity> existing = identityService.findByLoginIdentifier(address);
+        Optional<UserIdentity> existing = identityService.findByLoginIdentifier(typedAddress);
         if (existing.isPresent()) {
             return this.verified(rawToken, existing.get().getProfileId(),
                     StringUtils.isBlank(existing.get().getPassword()));
@@ -518,8 +527,12 @@ public class LoginServiceImpl implements LoginService {
      * of it through a code is the one who lost it. Bound only if the identity is fully released and
      * nobody else has claimed the address meanwhile — {@code isIdentifierClaimable} answers that,
      * and when it says no the identity is left as it was rather than made ambiguous.
+     *
+     * @param address      the canonical form, which is what is written
+     * @param typedAddress the form the invitation carries, so the claim check also sees a pre-fold
+     *                     row holding the number with its separators
      */
-    private void reclaimLoginIdentifier(UserIdentity identity, String address) {
+    private void reclaimLoginIdentifier(UserIdentity identity, String address, String typedAddress) {
         if (StringUtils.isNotBlank(identity.getLoginEmail())
                 || StringUtils.isNotBlank(identity.getLoginMobile())) {
             // Identity takeover, refused. The row is bound, so the code proved control of a WORK
@@ -543,7 +556,7 @@ public class LoginServiceImpl implements LoginService {
         // identity — is documented on this method's caller; the mitigation is procedural: HR
         // corrects the row's contacts (Reset User) BEFORE inviting, and the invite is HR-initiated.
         boolean isEmail = address.contains("@");
-        if (!identityService.isIdentifierClaimable(address, identity.getProfileId())) {
+        if (!identityService.isIdentifierClaimable(typedAddress, identity.getProfileId())) {
             return;
         }
         if (isEmail) {
@@ -611,10 +624,11 @@ public class LoginServiceImpl implements LoginService {
     public void resetPasswordByCode(String identifier, String code, String newPassword) {
         // Code first. Looking the person up before verifying would let a caller probe which
         // identifiers exist by watching which ones fail differently.
+        String typed = LoginIdentifiers.typedForm(identifier);
         identifier = LoginIdentifiers.normalize(identifier);
         this.verifyCode(identifier, code);
-        assertContactNotShared(identifier);
-        UserIdentity identity = identityService.findByLoginIdentifier(identifier).orElseThrow(
+        assertContactNotShared(typed);
+        UserIdentity identity = identityService.findByLoginIdentifier(typed).orElseThrow(
                 () -> new BusinessException("Incorrect account or code."));
         // Strength rules and the lock reset both live inside setPassword — a reset must clear the
         // lock, or someone who forgot their password stays locked out of the password they just set.

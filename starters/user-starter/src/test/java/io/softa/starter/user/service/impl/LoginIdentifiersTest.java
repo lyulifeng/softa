@@ -16,11 +16,14 @@ import io.softa.starter.user.util.LoginIdentifiers;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.doReturn;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.spy;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.when;
 
 /**
  * One spelling for a login identifier, wherever it is stored, looked up or hashed.
@@ -53,9 +56,11 @@ class LoginIdentifiersTest {
     }
 
     @Test
-    void theLookup_byAMobileTypedWithSeparators_queriesTheBareNumber() {
-        // Load-bearing for "resolves the same identity": what reaches the database is the seeded
-        // spelling, so the row seeded as +6591234567 is found from +65 9123-4567.
+    void theLookup_byAMobileTypedWithSeparators_queriesTheBareNumber_andTheTypedSpelling() {
+        // Load-bearing for "resolves the same identity": the seeded spelling reaches the database,
+        // so the row seeded as +6591234567 is found from +65 9123-4567. The mobile column is ALSO
+        // asked for the typed spelling — rows seeded before the fold hold it, and no migration
+        // rewrites them — while the email column gets the one canonical form.
         UserIdentityServiceImpl identityService = spy(new UserIdentityServiceImpl(mock(CacheService.class)));
         doReturn(Optional.empty()).when(identityService).searchOne(any(Filters.class));
 
@@ -63,8 +68,79 @@ class LoginIdentifiersTest {
 
         ArgumentCaptor<Filters> filters = ArgumentCaptor.forClass(Filters.class);
         verify(identityService, times(2)).searchOne(filters.capture());
-        assertThat(filters.getAllValues())
-                .allSatisfy(f -> assertThat(f.toString()).contains("\"+6591234567\"").doesNotContain("9123-"));
+        assertThat(filters.getAllValues().get(0).toString())
+                .contains("loginEmail").contains("\"+6591234567\"").doesNotContain("9123-");
+        assertThat(filters.getAllValues().get(1).toString())
+                .contains("loginMobile").contains("\"+6591234567\"").contains("\"+65 9123-4567\"");
+    }
+
+    @Test
+    void loginSpellings_areTheCanonicalFormAndTheTypedOne_forAMobileOnly() {
+        assertThat(LoginIdentifiers.loginSpellings("+65 9123-4567"))
+                .containsExactly("+6591234567", "+65 9123-4567");
+        assertThat(LoginIdentifiers.loginSpellings(" +6591234567 ")).containsExactly("+6591234567");
+        // Nothing inside an email was ever folded, so it has exactly one stored spelling.
+        assertThat(LoginIdentifiers.loginSpellings(" ALICE@acme.com")).containsExactly("alice@acme.com");
+        assertThat(LoginIdentifiers.loginSpellings("  ")).isEmpty();
+        assertThat(LoginIdentifiers.workContactSpellings(" +65 9123-4567 "))
+                .containsExactly("+6591234567", "+65 9123-4567");
+        assertThat(LoginIdentifiers.workContactSpellings(" Ada@Acme.com ")).containsExactly("Ada@Acme.com");
+    }
+
+    @Test
+    void aRowSeededBeforeTheFold_isStillFound_byTheSpellingItWasSeededWith() {
+        // Load-bearing for the pre-fold rows: user_identity.login_mobile still holds "+65 9123-4567"
+        // and nothing rewrites it. A lookup asking only for "+6591234567" misses it — the person
+        // cannot sign in or reset by mobile, and an unbound /join mints a second identity for them.
+        // The store answers by exact equality, as the database does.
+        UserIdentityServiceImpl identityService = spy(new UserIdentityServiceImpl(mock(CacheService.class)));
+        UserIdentity legacy = new UserIdentity();
+        legacy.setId(11L);
+        legacy.setProfileId(7L);
+        legacy.setLoginMobile("+65 9123-4567");
+        UserIdentity folded = new UserIdentity();
+        folded.setId(12L);
+        folded.setProfileId(8L);
+        folded.setLoginMobile("+6591234567");
+        doAnswer(inv -> {
+            String query = inv.getArgument(0).toString();
+            return query.contains("loginMobile") && query.contains("\"" + legacy.getLoginMobile() + "\"")
+                    ? Optional.of(legacy) : Optional.empty();
+        }).when(identityService).searchOne(any(Filters.class));
+
+        assertThat(identityService.findByLoginIdentifier("+65 9123-4567")).contains(legacy);
+        assertThat(identityService.findByLoginIdentifier(" +65 9123-4567 ")).contains(legacy);
+
+        // And the fold's own promise still holds: a row seeded canonical is found from the typed form.
+        doAnswer(inv -> {
+            String query = inv.getArgument(0).toString();
+            return query.contains("loginMobile") && query.contains("\"" + folded.getLoginMobile() + "\"")
+                    ? Optional.of(folded) : Optional.empty();
+        }).when(identityService).searchOne(any(Filters.class));
+        assertThat(identityService.findByLoginIdentifier("+65 9123-4567")).contains(folded);
+    }
+
+    @Test
+    void theLoginPaths_handTheLookupsTheTypedForm_andKeyTheCodeOnTheCanonicalOne() {
+        // The service is where the typed spelling would be lost: it normalises for the code key
+        // and the counters, and used to hand that same canonical string to the lookups, so no
+        // caller could ever reach a pre-fold row. Load-bearing: the lookups see the typed form.
+        UserIdentityService identityService = mock(UserIdentityService.class);
+        io.softa.starter.user.service.UserAccountService accountService =
+                mock(io.softa.starter.user.service.UserAccountService.class);
+        VerificationCodeGuard codeGuard = mock(VerificationCodeGuard.class);
+        LoginServiceImpl loginService = new LoginServiceImpl();
+        ReflectionTestUtils.setField(loginService, "identityService", identityService);
+        ReflectionTestUtils.setField(loginService, "accountService", accountService);
+        ReflectionTestUtils.setField(loginService, "codeGuard", codeGuard);
+        when(identityService.findByLoginIdentifier(any())).thenReturn(Optional.empty());
+
+        assertThatThrownBy(() -> loginService.authenticateByCode(" +65 9123-4567 ", "123456"))
+                .isInstanceOf(io.softa.framework.base.exception.BusinessException.class);
+
+        verify(codeGuard).verify("+6591234567", "123456");
+        verify(accountService).isWorkContactShared("+65 9123-4567");
+        verify(identityService).findByLoginIdentifier("+65 9123-4567");
     }
 
     @Test

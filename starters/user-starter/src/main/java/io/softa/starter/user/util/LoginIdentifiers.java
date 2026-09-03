@@ -1,7 +1,9 @@
 package io.softa.starter.user.util;
 
+import java.util.List;
 import java.util.Locale;
 import java.util.regex.Pattern;
+import java.util.stream.Stream;
 
 import org.apache.commons.lang3.StringUtils;
 
@@ -45,6 +47,44 @@ public final class LoginIdentifiers {
     public static String normalize(String identifier) {
         String value = StringUtils.trimToNull(identifier);
         return value == null ? null : collapseMobile(value).toLowerCase(Locale.ROOT);
+    }
+
+    /**
+     * Trimmed and lowercased only — a mobile keeps the separators it was typed with. What a caller
+     * hands the lookups when it wants {@link #loginSpellings} to include the typed spelling and not
+     * just the canonical one; see there for why that spelling still matters.
+     */
+    public static String typedForm(String identifier) {
+        String value = StringUtils.trimToNull(identifier);
+        return value == null ? null : value.toLowerCase(Locale.ROOT);
+    }
+
+    /**
+     * Every spelling a login identifier may be STORED under, canonical form first; empty for a blank.
+     *
+     * <p>Rows seeded before the separator fold hold a mobile as it was typed ("+65 9123-4567"), and
+     * no migration rewrites them — ops SQL is out of band and may never run. A lookup that asked
+     * only for the collapsed form would then miss exactly those rows: the person cannot sign in or
+     * reset by mobile, /join on an unbound row mints a duplicate identity, and the shared-contact
+     * guard misses a legacy holder. So a mobile is asked for under both the collapsed form and the
+     * form it was typed in, which is what such a row was written as. An email has one spelling —
+     * its canonical form — since nothing inside it was ever folded.
+     */
+    public static List<String> loginSpellings(String identifier) {
+        return spellings(normalize(identifier), typedForm(identifier));
+    }
+
+    /**
+     * The same set for a work contact ({@code UserAccount.email} / {@code mobile}): collapsed and
+     * trimmed-as-typed, case kept, because those columns keep HR's case and rely on the collation.
+     */
+    public static List<String> workContactSpellings(String contact) {
+        String trimmed = StringUtils.trimToNull(contact);
+        return spellings(collapseMobile(trimmed), trimmed);
+    }
+
+    private static List<String> spellings(String canonical, String typed) {
+        return Stream.of(canonical, typed).filter(StringUtils::isNotBlank).distinct().toList();
     }
 
     /**
