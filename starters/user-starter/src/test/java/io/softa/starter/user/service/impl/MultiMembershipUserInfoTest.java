@@ -71,7 +71,7 @@ class MultiMembershipUserInfoTest {
         UserProfile profile = new UserProfile();
         profile.setId(PROFILE);
         // The legacy back-pointer names the FIRST account only — the shape every multi-company
-        // person has, since one person keeps one profile however many companies they join.
+        // person has, since one person keeps one profile however many tenants they join.
         profile.setUserId(FIRST_ACCOUNT);
         profile.setFullName("Ada");
         doReturn(Optional.of(profile)).when(profileService).getById(PROFILE);
@@ -176,7 +176,7 @@ class MultiMembershipUserInfoTest {
     @Test
     void editingTheProfileEvictsEveryMembership() {
         // The cache is keyed per account. Evicting only the back-pointer's account leaves the
-        // person's other companies serving the old name for the cache's month-long TTL — right
+        // person's other tenants serving the old name for the cache's month-long TTL — right
         // after they were told the change was saved.
         UserProfile profile = new UserProfile();
         profile.setId(PROFILE);

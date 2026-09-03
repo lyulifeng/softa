@@ -37,12 +37,6 @@ public interface UserInvitationService extends EntityService<UserInvitation, Lon
     JoinEntry inspectJoinToken(String rawToken);
 
     /**
-     * Confirm joining: bind the verified person to the membership and activate it.
-     *
-     * <p>Separate from setting a password because they mean different things — see the
-     * implementation for why activation waits for this call.
-     */
-    /**
      * Resolves the PLAINTEXT address the invitation names, for the caller to send a code to.
      *
      * <p>Exists because the join page is shown MASKED contacts by design (a leaked link must not
@@ -66,7 +60,31 @@ public interface UserInvitationService extends EntityService<UserInvitation, Lon
      */
     JoinContacts resolveJoinContacts(String rawToken);
 
-    void confirmJoin(String rawToken, Long profileId);
+    /**
+     * The membership a usable invitation is for — so /join can see whether the account already
+     * belongs to a person before it goes looking for one by address.
+     *
+     * <p>Exists for the re-hired leaver: their revived row still carries their profileId, while
+     * the address on the invitation resolves to nobody (off-boarding released it from their
+     * identity). Find-or-create by address would then mint a second person and confirmJoin would
+     * hand the row to it, orphaning the real one — password, other-company memberships and all.
+     * The row already knows who it is for; this is how the flow asks it.
+     *
+     * <p>Server-internal, same reasoning as {@link #resolveJoinChannel}. Empty when the token is
+     * not usable — callers that already passed the gate treat that as a race, not as "unbound".
+     */
+    java.util.Optional<io.softa.starter.user.entity.UserAccount> resolveJoinAccount(String rawToken);
+
+    /**
+     * Confirm joining: bind the verified person to the membership and activate it.
+     *
+     * <p>Separate from setting a password because they mean different things — see the
+     * implementation for why activation waits for this call.
+     *
+     * @param proof the value verifyJoinCode returned; required to name this invitation and this
+     *              person, and spent here on success
+     */
+    void confirmJoin(String rawToken, Long profileId, String proof);
 
     /**
      * Issue (or re-issue) an INVITE token for a user and email the set-password link. Any prior

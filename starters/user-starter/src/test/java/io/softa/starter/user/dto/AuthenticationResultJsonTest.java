@@ -26,7 +26,17 @@ class AuthenticationResultJsonTest {
         String json = mapper.writeValueAsString(
                 AuthenticationResult.resolved(7L, new UserInfo(), false));
 
-        assertThat(json).contains("\"resolved\":true");
+        assertThat(json).contains("\"resolved\":true").contains("\"signInRequired\":false");
+    }
+
+    @Test
+    void signInRequired_isNamedOnTheWire_andIsNotResolved() throws Exception {
+        // The client branches on it to skip saving a session it was never given; the record
+        // component's name is the contract, so it is asserted rather than assumed.
+        String json = mapper.writeValueAsString(AuthenticationResult.requireSignIn());
+
+        assertThat(json).contains("\"signInRequired\":true").contains("\"resolved\":false")
+                .contains("\"userInfo\":null").contains("\"authToken\":null");
     }
 
     @Test

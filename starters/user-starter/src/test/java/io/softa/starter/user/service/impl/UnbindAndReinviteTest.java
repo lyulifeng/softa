@@ -57,7 +57,8 @@ class UnbindAndReinviteTest {
     private final UserIdentityService identityService = mock(UserIdentityService.class);
     private final ApplicationEventPublisher eventPublisher = mock(ApplicationEventPublisher.class);
     private final UserInvitationServiceImpl invitationService = spy(new UserInvitationServiceImpl(
-            accountService, identityService, eventPublisher, null, "http://localhost:3000"));
+            accountService, identityService, eventPublisher, null, mock(JoinProofGuard.class),
+            "http://localhost:3000"));
 
     private UserAccount given(AccountStatus status) {
         UserAccount account = new UserAccount();

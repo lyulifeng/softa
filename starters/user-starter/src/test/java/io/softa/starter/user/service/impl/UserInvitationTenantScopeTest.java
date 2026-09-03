@@ -8,6 +8,7 @@ import io.softa.framework.orm.domain.Filters;
 import io.softa.starter.user.entity.UserAccount;
 import io.softa.starter.user.entity.UserIdentity;
 import io.softa.starter.user.entity.UserInvitation;
+import io.softa.starter.user.enums.AccountStatus;
 import io.softa.starter.user.service.UserAccountService;
 import io.softa.starter.user.service.UserIdentityService;
 import org.junit.jupiter.api.BeforeEach;
@@ -62,7 +63,7 @@ class UserInvitationTenantScopeTest {
         // tenantInfoService is null: it only supplies the company NAME shown on the /join screens,
         // and this test is about which tenant tier the mail is rendered under.
         service = spy(new UserInvitationServiceImpl(accountService, identityService, eventPublisher,
-                null, "https://app.example.test/"));
+                null, mock(JoinProofGuard.class), "https://app.example.test/"));
         // Stub the inherited ORM surface: this test is about which tier reaches the mail, not about
         // how the invitation row is stored.
         doReturn(List.<UserInvitation>of()).when(service).searchList(any(Filters.class));
@@ -77,8 +78,14 @@ class UserInvitationTenantScopeTest {
         }).when(service).createOne(any(UserInvitation.class));
 
         UserIdentity identity = new UserIdentity();
+        identity.setProfileId(7L);
+        identity.setLoginEmail("invitee@example.test");
         identity.setPassword("already-set");
         when(identityService.requireIdentity(any(UserAccount.class))).thenReturn(identity);
+        // forgotPassword resolves the PERSON by login identifier and issues against an ACTIVE row of
+        // theirs (ForgotPasswordScopeTest owns that gate); here it only has to reach issue().
+        when(identityService.findByLoginIdentifier("invitee@example.test")).thenReturn(Optional.of(identity));
+        when(accountService.listMembershipsOf(7L)).thenAnswer(inv -> List.of(activeAccount()));
     }
 
     private UserAccount account() {
@@ -87,6 +94,12 @@ class UserInvitationTenantScopeTest {
         account.setEmail("invitee@example.test");
         account.setProfileId(7L);
         account.setTenantId(ACCOUNT_TENANT);
+        return account;
+    }
+
+    private UserAccount activeAccount() {
+        UserAccount account = account();
+        account.setStatus(AccountStatus.ACTIVE);
         return account;
     }
 
@@ -137,8 +150,6 @@ class UserInvitationTenantScopeTest {
         // platform-tier deliberately — template resolution has no fallback across tiers, so reaching
         // for the account's tenant would turn a missing or disabled tenant copy into "No mail
         // template found" on a path with no operator around to see it.
-        when(accountService.getUserByEmail("invitee@example.test")).thenReturn(Optional.of(account()));
-
         service.forgotPassword("invitee@example.test");
 
         MailRequestMessage mail = captureMail();
@@ -170,8 +181,6 @@ class UserInvitationTenantScopeTest {
         // they part: no context to trust, so the mail renders platform-tier — but the invitation is
         // still a record of THIS person's account at THEIR company, and belongs to that tenant. An
         // earlier revision asserted the two were always equal, which this path disproves.
-        when(accountService.getUserByEmail("invitee@example.test")).thenReturn(Optional.of(account()));
-
         service.forgotPassword("invitee@example.test");
 
         assertThat(tenantSeenByRowInsert.get())
@@ -184,8 +193,6 @@ class UserInvitationTenantScopeTest {
     void theLinkIsStillTheSetPasswordUrlWithASingleSlash() {
         // The trailing slash on the configured base url is trimmed; a doubled slash would 404 on
         // some proxies and is invisible in a passing "mail was published" assertion.
-        when(accountService.getUserByEmail("invitee@example.test")).thenReturn(Optional.of(account()));
-
         service.forgotPassword("invitee@example.test");
 
         assertThat((String) captureMail().variables().get("link"))

@@ -1,6 +1,8 @@
 package io.softa.starter.user.service;
 
+import java.util.Collection;
 import java.util.Optional;
+import java.util.Set;
 
 import io.softa.framework.orm.service.EntityService;
 import io.softa.starter.user.entity.UserAccount;
@@ -87,6 +89,18 @@ public interface UserIdentityService extends EntityService<UserIdentity, Long> {
      */
     boolean isPasswordLocked(UserIdentity identity);
 
+    /**
+     * Which of these people currently have their PASSWORD login locked — one query for the whole set.
+     *
+     * <p>Exists for the account list, which reports the lock as a badge per row. Asking
+     * {@link #findByProfile} row by row would put a query per listed account on the roster read;
+     * the page's people are collected and resolved together instead.
+     *
+     * <p>Returns profile ids rather than identities on purpose: the caller wants the answer, and
+     * handing out credential rows for a display decision spreads them further than the question needs.
+     */
+    Set<Long> findPasswordLockedProfiles(Collection<Long> profileIds);
+
     /** Consecutive wrong passwords that lock the password route (PRD D5). */
     int FAILURES_BEFORE_LOCK = 10;
 
@@ -109,16 +123,27 @@ public interface UserIdentityService extends EntityService<UserIdentity, Long> {
      * <p>Without this, an unknown identifier is an oracle: the real counter starts naming the
      * remaining attempts from the seventh failure, so whoever sees a countdown after seven tries
      * has learned the identifier exists, and whoever never sees one has learned it does not. The
-     * submitted identifier is therefore counted too — keyed by a digest of its lowercased form, so
+     * submitted identifier is therefore counted too — keyed by a digest of its canonical form (LoginIdentifiers), so
      * the cache never holds the raw guesses — in the same window and to the same threshold, and the
      * login path words its refusal from this count exactly as it does from the real one.
      *
-     * <p>Nothing is locked, because there is nothing to lock; the count alone is what keeps the two
-     * branches indistinguishable.
+     * <p>On the failure that would lock a real person, a lock keyed the same way is set for the same
+     * duration and the counter is cleared — the real branch's exact clock. A counter that merely
+     * kept climbing until its TTL ran out would expire {@code LOCK_MINUTES} after the FIRST failure,
+     * while the real lock starts at the TENTH: spread ten tries over twenty minutes and, a quarter
+     * of an hour later, the real identifier still says "locked" and the made-up one says "incorrect".
      *
      * @return the failure count in the current window, this one included
      */
     long recordUnknownIdentifierFailure(String identifier);
+
+    /**
+     * Whether an identifier that resolves to nobody is currently "locked" — the twin of
+     * {@link #isPasswordLocked} for the unknown branch, read before counting for the same reason
+     * the real lock is: a locked person is refused without their guess being counted, so a locked
+     * unknown identifier must be too, or the two diverge on the eleventh try.
+     */
+    boolean isUnknownIdentifierLocked(String identifier);
 
     /** Forget the failure count — a successful login, or a new password, ends the window. */
     void clearPasswordFailures(Long identityId);

@@ -48,8 +48,10 @@ class ConfirmJoinAuthorizationTest {
     private final UserAccountService accountService = mock(UserAccountService.class);
     private final UserIdentityService identityService = mock(UserIdentityService.class);
     private final ApplicationEventPublisher eventPublisher = mock(ApplicationEventPublisher.class);
+    /** The proof is JoinProofTest's subject; here it is waved through so the profileId tie is what decides. */
     private final UserInvitationServiceImpl service = spy(new UserInvitationServiceImpl(
-            accountService, identityService, eventPublisher, null, "http://localhost:3000"));
+            accountService, identityService, eventPublisher, null, mock(JoinProofGuard.class),
+            "http://localhost:3000"));
 
     private UserInvitation givenPendingInvitationTo(String email, String mobile) {
         UserInvitation invitation = new UserInvitation();
@@ -86,7 +88,7 @@ class ConfirmJoinAuthorizationTest {
         when(identityService.findByProfile(RIGHTFUL_PROFILE))
                 .thenReturn(Optional.of(identity("alice@acme.com", null)));
 
-        service.confirmJoin(TOKEN, RIGHTFUL_PROFILE);
+        service.confirmJoin(TOKEN, RIGHTFUL_PROFILE, "proof");
 
         verify(accountService).updateOne(any(UserAccount.class));
     }
@@ -99,11 +101,72 @@ class ConfirmJoinAuthorizationTest {
         when(identityService.findByProfile(ATTACKER_TARGET_PROFILE))
                 .thenReturn(Optional.of(identity("victim@elsewhere.com", "+8613800138000")));
 
-        assertThatThrownBy(() -> service.confirmJoin(TOKEN, ATTACKER_TARGET_PROFILE))
+        assertThatThrownBy(() -> service.confirmJoin(TOKEN, ATTACKER_TARGET_PROFILE, "proof"))
                 .isInstanceOf(BusinessException.class)
                 .hasMessageContaining("does not belong");
 
         verify(accountService, never()).updateOne(any(UserAccount.class));
+    }
+
+    @Test
+    void aMembershipAlreadyBoundToAPerson_isNotHandedToAnotherProfileId() {
+        // A re-hired leaver's revived row carries their profileId. verifyJoinCode returns that
+        // person, so a different id here is a stale client or a link-holder choosing one — and
+        // writing it would orphan the real person (their password and other tenants stay on the
+        // old id). The bound id is asserted, never overwritten.
+        givenPendingInvitationTo("alice@acme.com", null);
+        UserAccount revived = accountService.getById(ACCOUNT_ID).orElseThrow();
+        revived.setProfileId(RIGHTFUL_PROFILE);
+        when(identityService.findByProfile(ATTACKER_TARGET_PROFILE))
+                .thenReturn(Optional.of(identity("alice@acme.com", null)));
+
+        assertThatThrownBy(() -> service.confirmJoin(TOKEN, ATTACKER_TARGET_PROFILE, "proof"))
+                .isInstanceOf(BusinessException.class)
+                .hasMessageContaining("does not belong");
+
+        assertThat(revived.getProfileId()).isEqualTo(RIGHTFUL_PROFILE);
+        verify(accountService, never()).updateOne(any(UserAccount.class));
+    }
+
+    @Test
+    void theBoundPerson_confirmsTheirRevivedMembership() {
+        givenPendingInvitationTo("alice@acme.com", null);
+        UserAccount revived = accountService.getById(ACCOUNT_ID).orElseThrow();
+        revived.setProfileId(RIGHTFUL_PROFILE);
+        when(identityService.findByProfile(RIGHTFUL_PROFILE))
+                .thenReturn(Optional.of(identity("alice@acme.com", null)));
+        // Their own row is the membership in this tenant; it is not a second slot.
+        when(accountService.findMembershipInTenant(TENANT, RIGHTFUL_PROFILE))
+                .thenReturn(Optional.of(revived));
+
+        service.confirmJoin(TOKEN, RIGHTFUL_PROFILE, "proof");
+
+        assertThat(revived.getStatus()).isEqualTo(AccountStatus.ACTIVE);
+        verify(accountService).updateOne(revived);
+    }
+
+    @Test
+    void theBoundPerson_whoKeptAPersonalLoginEmail_confirmsTheirRevivedMembership() {
+        // Ada left, kept ada@personal.com as her login, and was re-hired; the invitation went to the
+        // work address on her revived row. verifyJoinCode returned her person without rebinding that
+        // address (she still holds a live identifier — see RevivedJoinTest's takeover case), so her
+        // identity carries no contact the invitation names. The row's profileId equalling hers IS
+        // the tie for a bound row: the invitation was issued for this very row, and she proved
+        // control of the address it went to. Tying her to the contact instead refused exactly the
+        // person the invitation was for.
+        givenPendingInvitationTo("alice@acme.com", null);
+        UserAccount revived = accountService.getById(ACCOUNT_ID).orElseThrow();
+        revived.setProfileId(RIGHTFUL_PROFILE);
+        when(identityService.findByProfile(RIGHTFUL_PROFILE))
+                .thenReturn(Optional.of(identity("alice.personal@gmail.com", null)));
+        when(accountService.findMembershipInTenant(TENANT, RIGHTFUL_PROFILE))
+                .thenReturn(Optional.of(revived));
+
+        service.confirmJoin(TOKEN, RIGHTFUL_PROFILE, "proof");
+
+        assertThat(revived.getStatus()).isEqualTo(AccountStatus.ACTIVE);
+        assertThat(revived.getProfileId()).isEqualTo(RIGHTFUL_PROFILE);
+        verify(accountService).updateOne(revived);
     }
 
     @Test
@@ -121,7 +184,7 @@ class ConfirmJoinAuthorizationTest {
         when(accountService.findMembershipInTenant(TENANT, RIGHTFUL_PROFILE))
                 .thenReturn(Optional.of(closed));
 
-        assertThatThrownBy(() -> service.confirmJoin(TOKEN, RIGHTFUL_PROFILE))
+        assertThatThrownBy(() -> service.confirmJoin(TOKEN, RIGHTFUL_PROFILE, "proof"))
                 .isInstanceOf(BusinessException.class)
                 .hasMessageContaining("re-hire");
         verify(accountService, never()).updateOne(any(UserAccount.class));

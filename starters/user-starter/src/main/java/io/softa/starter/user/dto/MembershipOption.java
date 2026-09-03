@@ -8,7 +8,7 @@ import io.softa.starter.user.enums.AccountStatus;
  * One company a person belongs to, offered as a login target.
  *
  * <p>Authentication proves WHO you are ({@code UserProfile}); this says WHERE you can go. The two
- * are separate steps now because a person can belong to several companies, and the session must
+ * are separate steps now because a person can belong to several tenants, and the session must
  * carry one membership — {@code accountId} is what the session ends up holding.
  *
  * @param accountId  the membership to log into (this becomes the session's userId)

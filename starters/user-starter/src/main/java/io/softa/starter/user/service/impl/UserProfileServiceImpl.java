@@ -36,6 +36,7 @@ import io.softa.starter.user.enums.AccountStatus;
 import io.softa.starter.user.service.UserAccountService;
 import io.softa.starter.user.service.UserIdentityService;
 import io.softa.starter.user.service.UserProfileService;
+import io.softa.starter.user.util.LoginIdentifiers;
 
 /**
  * UserProfile Model Service Implementation
@@ -158,7 +159,7 @@ public class UserProfileServiceImpl extends EntityServiceImpl<UserProfile, Long>
         // The cached UserInfo carries name / language / timezone / photo — all editable here.
         // Evict EVERY membership's entry, not profile.getUserId(): the person is one, the cache is
         // keyed per account, and that legacy back-pointer names only one of them. Missing the rest
-        // leaves the other companies serving the old name and avatar until the entry expires a
+        // leaves the other tenants serving the old name and avatar until the entry expires a
         // month later — for a person who has just been told the change was saved.
         accountService.listMembershipsOf(profile.getId())
                 .forEach(account -> this.evictUserInfo(account.getId()));
@@ -422,7 +423,9 @@ public class UserProfileServiceImpl extends EntityServiceImpl<UserProfile, Long>
 
     /** The work contact, or null when it is already someone else's login identifier. */
     private String claimable(String contact, Long profileId) {
-        String value = StringUtils.trimToNull(contact);
+        // Stored in LoginIdentifiers' canonical form — the form login looks it up in. The account
+        // keeps the contact as typed; only the identifier is normalised.
+        String value = LoginIdentifiers.normalize(contact);
         return value != null && identityService.isIdentifierClaimable(value, profileId) ? value : null;
     }
 
@@ -430,6 +433,7 @@ public class UserProfileServiceImpl extends EntityServiceImpl<UserProfile, Long>
     @Override
     @Transactional
     public Long createPersonForJoin(String identifier) {
+        identifier = LoginIdentifiers.normalize(identifier);
         Assert.notBlank(identifier, "An identifier is required to create a person.");
         // @SkipPermissionCheck for the same reason registerUserProfile carries it: these are rows
         // this method mints itself, and on /join the caller has no session at all. Both models are

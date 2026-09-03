@@ -2,21 +2,26 @@ package io.softa.starter.user.controller;
 
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
+import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 import jakarta.validation.Valid;
 import java.util.List;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
 import io.softa.framework.base.constant.BaseConstant;
+import io.softa.framework.base.constant.RedisConstant;
 import io.softa.framework.base.context.UserInfo;
 import io.softa.framework.base.enums.ResponseCode;
 import io.softa.framework.base.enums.SystemUser;
+import io.softa.framework.base.exception.UserNotFoundException;
 import io.softa.framework.orm.annotation.SwitchUser;
+import io.softa.framework.orm.service.CacheService;
 import io.softa.framework.web.response.ApiResponse;
 import io.softa.framework.web.utils.CookieUtils;
 import io.softa.starter.user.dto.*;
@@ -53,6 +58,10 @@ public class LoginController {
 
     @Autowired
     private OAuth2Service oAuth2Service;
+
+    /** Reads the session behind an authenticated call, and drops the one a switch replaces. */
+    @Autowired
+    private CacheService cacheService;
 
     /**
      * Login by Apple ID
@@ -179,7 +188,7 @@ public class LoginController {
     @PostMapping("/setJoinPassword")
     @SwitchUser(SystemUser.REGISTERED_USER)
     public ApiResponse<Void> setJoinPassword(@RequestBody @Valid SetJoinPasswordDTO dto) {
-        loginService.setJoinPassword(dto.getToken(), dto.getProfileId(), dto.getNewPassword());
+        loginService.setJoinPassword(dto.getToken(), dto.getProfileId(), dto.getNewPassword(), dto.getProof());
         return ApiResponse.success();
     }
 
@@ -187,17 +196,19 @@ public class LoginController {
      * Confirm joining, after the person verified their identity (and set a password if new).
      *
      * <p>A session is issued here, not earlier: activation and "you are now in" are the same
-     * moment. Verifying a code proves control of the invitation; joining is the agreement.
+     * moment. Verifying a code proves control of the invitation; joining is the agreement. The
+     * service may also answer {@code signInRequired} — joined, but no session — and that result
+     * carries no userInfo, so it passes through issueOrAskForCompany without a cookie.
      */
     @Operation(summary = "Accept the invitation: bind the person, activate the membership, sign in")
     @PostMapping("/confirmJoin")
     @SwitchUser(SystemUser.REGISTERED_USER)
     public ApiResponse<AuthenticationResult> confirmJoin(@RequestBody @Valid ConfirmJoinDTO dto,
             HttpServletResponse response) {
-        invitationService.confirmJoin(dto.getToken(), dto.getProfileId());
         // Re-runs the company resolution rather than assuming the just-joined membership is the
         // only one: the person may already belong elsewhere, in which case they must still choose.
-        return this.issueOrAskForCompany(loginService.afterJoin(dto.getProfileId()), response);
+        return this.issueOrAskForCompany(
+                loginService.confirmJoin(dto.getToken(), dto.getProfileId(), dto.getProof()), response);
     }
 
     /**
@@ -209,7 +220,7 @@ public class LoginController {
      * whole point of the company step.
      *
      * <p>The response carries {@code profileId} either way: the client needs it for
-     * {@code selectCompany}, and it is also what makes {@code mustSetPassword} actionable.
+     * {@code selectTenant}, and it is also what makes {@code mustSetPassword} actionable.
      */
     private ApiResponse<AuthenticationResult> issueOrAskForCompany(AuthenticationResult result,
             HttpServletResponse response) {
@@ -221,17 +232,17 @@ public class LoginController {
     }
 
     /**
-     * The companies an authenticated person may enter.
+     * The tenants an authenticated person may enter.
      *
      * <p>Reached when authentication succeeded but the person belongs to more than one company
      * (or to one they cannot enter), so no session was issued yet. Not tenant-scoped by nature —
      * the caller has proven who they are but not yet chosen where they are going.
      */
-    @Operation(summary = "List the companies this person can log into (multi-company login step)")
-    @PostMapping("/listCompanies")
+    @Operation(summary = "List the tenants this person can log into (multi-company login step)")
+    @PostMapping("/listTenants")
     @SwitchUser(SystemUser.REGISTERED_USER)
-    public ApiResponse<List<MembershipOption>> listCompanies(@RequestBody @Valid AuthTokenDTO dto) {
-        return ApiResponse.success(loginService.listCompanies(dto.getAuthToken()));
+    public ApiResponse<List<MembershipOption>> listTenants(@RequestBody @Valid AuthTokenDTO dto) {
+        return ApiResponse.success(loginService.listTenants(dto.getAuthToken()));
     }
 
     /**
@@ -242,14 +253,88 @@ public class LoginController {
      * is not a member of.
      */
     @Operation(summary = "Enter the chosen company and issue the session")
-    @PostMapping("/selectCompany")
+    @PostMapping("/selectTenant")
     @SwitchUser(SystemUser.REGISTERED_USER)
-    public ApiResponse<AuthenticationResult> selectCompany(@RequestBody @Valid SelectCompanyDTO dto,
+    public ApiResponse<AuthenticationResult> selectTenant(@RequestBody @Valid SelectTenantDTO dto,
             HttpServletResponse response) {
         // The person is read from the token inside the service, never from the request. Same
         // response shape as the authentication endpoints, so the client has one contract to handle.
         return this.issueOrAskForCompany(
-                loginService.selectCompany(dto.getAuthToken(), dto.getAccountId()), response);
+                loginService.selectTenant(dto.getAuthToken(), dto.getAccountId()), response);
+    }
+
+    /**
+     * The tenants the CURRENT session's person may enter — what the header's tenant switcher lists.
+     *
+     * <p>Same options as the login picker, including the company they are in now, so the switcher
+     * can show the current one selected and badge the rest exactly as the picker does.
+     */
+    @Operation(summary = "List the tenants the signed-in person can switch to")
+    @GetMapping("/myTenants")
+    @SwitchUser(SystemUser.REGISTERED_USER)
+    public ApiResponse<List<MembershipOption>> myTenants(HttpServletRequest request) {
+        return ApiResponse.success(loginService.myTenants(this.sessionUser(this.sessionIdOf(request))));
+    }
+
+    /**
+     * Move the session to another of this person's tenants.
+     *
+     * <p>Authorized by the CURRENT SESSION, not by a pre-auth token: the caller is already signed
+     * in, and a second token-shaped route to minting a session is exactly what this endpoint must
+     * not become. The membership must be one the session's person holds and must be selectable —
+     * {@code switchTenant} makes both checks — and {@code generateSessionId} then re-runs the same
+     * tenant and account gates login runs, against the TARGET membership.
+     *
+     * <p>A NEW session id rather than a rewrite of the old mapping: the session maps to a
+     * UserAccount id, and every downstream layer (ContextBuilder, the permission snapshot, data
+     * scope) is keyed off it, so repointing it in place would leave warmed caches and any in-flight
+     * request pointing at the previous company.
+     */
+    @Operation(summary = "Switch the signed-in session to another of this person's tenants")
+    @PostMapping("/switchTenant")
+    @SwitchUser(SystemUser.REGISTERED_USER)
+    public ApiResponse<AuthenticationResult> switchTenant(@RequestBody @Valid SwitchTenantDTO dto,
+            HttpServletRequest request, HttpServletResponse response) {
+        String previousSessionId = this.sessionIdOf(request);
+        AuthenticationResult result =
+                loginService.switchTenant(this.sessionUser(previousSessionId), dto.getAccountId());
+        // Gates first: a refusal here mints nothing, and the caller is still in the company they
+        // started in — which is why the old session is dropped only after this returns.
+        String sessionId = loginService.generateSessionId(result.userInfo().getUserId());
+        // Explicit, and before the new cookie goes out: a copy of the old cookie taken from another
+        // device would otherwise keep the previous company alive alongside the new one.
+        cacheService.clear(RedisConstant.SESSION + previousSessionId);
+        CookieUtils.setCookie(response, BaseConstant.SESSION_ID, sessionId);
+        return ApiResponse.success(result);
+    }
+
+    /**
+     * The session id this request carries — cookie first, then the header {@code ContextBuilder}
+     * also accepts, so the two endpoints above authenticate the same way every other endpoint does.
+     *
+     * <p>Read here rather than taken from the Context on purpose. {@code /login/**} is anonymous at
+     * the context filter and public in the permission gate, so an UNAUTHENTICATED caller reaches
+     * these handlers and the bound Context carries no userId at all. Assuming the framework had
+     * gated them would make both endpoints answer for whoever asked.
+     */
+    private String sessionIdOf(HttpServletRequest request) {
+        String sessionId = CookieUtils.getCookie(request, BaseConstant.SESSION_ID);
+        if (sessionId == null) {
+            sessionId = request.getHeader(BaseConstant.SESSION_ID_HEADER);
+        }
+        if (sessionId == null) {
+            throw new UserNotFoundException("Session ID is missing");
+        }
+        return sessionId;
+    }
+
+    /** The UserAccount — one membership — the session maps to; absent means expired or forged. */
+    private Long sessionUser(String sessionId) {
+        Long userId = cacheService.get(RedisConstant.SESSION + sessionId, Long.class);
+        if (userId == null) {
+            throw new UserNotFoundException("Invalid session ID");
+        }
+        return userId;
     }
 
     /**

@@ -4,9 +4,9 @@ import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotNull;
 import lombok.Data;
 
-/** Request body for {@code POST /login/selectCompany} — the pre-auth token and the chosen membership. */
+/** Request body for {@code POST /login/selectTenant} — the pre-auth token and the chosen membership. */
 @Data
-public class SelectCompanyDTO {
+public class SelectTenantDTO {
 
     @NotBlank(message = "Auth token cannot be empty!")
     private String authToken;

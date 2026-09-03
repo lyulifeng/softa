@@ -27,7 +27,7 @@ import io.softa.framework.orm.enums.OnDelete;
  * everywhere.
  *
  * <p>Global, exactly like the profile: a person has ONE set of credentials no matter how many
- * companies employ them. One row per person, linked 1:1 to {@link UserProfile} via {@code profileId}
+ * tenants employ them. One row per person, linked 1:1 to {@link UserProfile} via {@code profileId}
  * (the FK is here, not on the profile, so the credential path resolves an identity straight from an
  * account's {@code profileId} without loading the profile at all). {@code onDelete = CASCADE}: deleting
  * a person deletes their credentials with them, so a tenant purge that clears profiles leaves no

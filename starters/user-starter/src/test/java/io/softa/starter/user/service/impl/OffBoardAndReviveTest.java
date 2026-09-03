@@ -19,6 +19,7 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyBoolean;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -31,13 +32,21 @@ import static org.mockito.Mockito.when;
  *   <li>off-boarding releases the WORK EMAIL from the person's login identifiers, otherwise a
  *       recycled address lets a new hire verify by code into the previous holder's account;</li>
  *   <li>off-boarding and reviving both clear role grants, because re-hire REUSES the row — grants
- *       left behind would be inherited silently by the returning employee.</li>
+ *       left behind would be inherited silently by the returning employee;</li>
+ *   <li>off-boarding clears the person's password lock, for the same reuse reason: a lock left
+ *       behind refuses the returning employee's password with nothing explaining it.</li>
  * </ul>
  */
 class OffBoardAndReviveTest {
 
     private static final Long PROFILE = 7L;
     private static final Long ACCOUNT = 100L;
+    /**
+     * Deliberately NOT equal to PROFILE. The credential row and the person are separate ids, and
+     * production passes {@code identity.getId()} — with both set to the same value the verify below
+     * would pass for either argument, which is no assertion at all.
+     */
+    private static final Long IDENTITY = 11L;
 
     private final UserIdentityService identityService = mock(UserIdentityService.class);
     private final UserRoleRelService roleRelService = mock(UserRoleRelService.class);
@@ -61,7 +70,7 @@ class OffBoardAndReviveTest {
 
     private static UserIdentity identity(String loginEmail, String loginMobile) {
         UserIdentity identity = new UserIdentity();
-        identity.setId(PROFILE);
+        identity.setId(IDENTITY);
         identity.setProfileId(PROFILE);
         identity.setLoginEmail(loginEmail);
         identity.setLoginMobile(loginMobile);
@@ -96,6 +105,42 @@ class OffBoardAndReviveTest {
 
         assertThat(person.getLoginEmail()).isEqualTo("alice.personal@gmail.com");
         verify(identityService, never()).updateOne(any(UserIdentity.class), anyBoolean());
+    }
+
+    @Test
+    void offBoarding_clearsThePasswordLock() {
+        // PRD 2.1: a Locked row leaves through "termination (clear the lock first) → Deactivated".
+        // Left standing, the lock survives the re-hire that REVIVES this row, and the returning
+        // employee's password login is refused with nothing in the UI explaining why.
+        UserIdentity person = identity("alice@acme.com", null);
+        person.setPasswordLockedUntil(LocalDateTime.now().plusMinutes(30));
+        UserAccount membership = account(AccountStatus.ACTIVE, "alice@acme.com", null);
+        when(identityService.findByProfile(PROFILE)).thenReturn(Optional.of(person));
+
+        accountService.offBoardWith(membership);
+
+        assertThat(person.getPasswordLockedUntil()).isNull();
+        verify(identityService).clearPasswordFailures(IDENTITY);
+        // One read and one write for both facts — the release and the unlock share the row.
+        verify(identityService, times(1)).findByProfile(PROFILE);
+        verify(identityService, times(1)).updateOne(person, false);
+    }
+
+    @Test
+    void offBoarding_clearsTheLockEvenWhenNoIdentifierIsReleased() {
+        // The lock is the PERSON's, the released address is this COMPANY's: clearing it must not
+        // depend on the work contact happening to be a login identifier too. Without the write
+        // here the unlock would stay in memory only.
+        UserIdentity person = identity("alice.personal@gmail.com", null);
+        person.setPasswordLockedUntil(LocalDateTime.now().plusMinutes(30));
+        UserAccount membership = account(AccountStatus.ACTIVE, "alice@acme.com", null);
+        when(identityService.findByProfile(PROFILE)).thenReturn(Optional.of(person));
+
+        accountService.offBoardWith(membership);
+
+        assertThat(person.getLoginEmail()).isEqualTo("alice.personal@gmail.com");
+        assertThat(person.getPasswordLockedUntil()).isNull();
+        verify(identityService).updateOne(person, false);
     }
 
     @Test

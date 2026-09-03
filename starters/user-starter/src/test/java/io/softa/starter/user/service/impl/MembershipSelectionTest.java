@@ -29,7 +29,7 @@ import static org.mockito.Mockito.when;
 
 /**
  * Authentication says WHO, membership selection says WHERE. This covers the second step —
- * the one that only exists because a person can now belong to several companies.
+ * the one that only exists because a person can now belong to several tenants.
  *
  * <p>The load-bearing test is {@link #namingSomeoneElsesMembership_isRefused()}: without that
  * ownership check, anyone who authenticated as themselves could name any accountId and be issued
@@ -104,12 +104,51 @@ class MembershipSelectionTest {
     }
 
     @Test
+    void anActiveAndAFrozenCompany_bothCount() {
+        // Frozen IS counted (PRD 1.5 step 3), so this is the picker with two entries — the person
+        // has to see the frozen company and why it cannot be entered.
+        givenMemberships(membership(100L, 1L, AccountStatus.ACTIVE),
+                membership(200L, 2L, AccountStatus.FROZEN));
+
+        assertThatThrownBy(() -> loginService.resolveSingleMembership(PROFILE))
+                .isInstanceOf(MultipleMembershipsException.class)
+                .satisfies(e -> assertThat(((MultipleMembershipsException) e).getOptions()).hasSize(2));
+    }
+
+    @Test
     void noCompany_refusesWithSomethingActionable() {
         givenMemberships();
 
         assertThatThrownBy(() -> loginService.resolveSingleMembership(PROFILE))
                 .isInstanceOf(BusinessException.class)
                 .hasMessageContaining("not linked to any company");
+    }
+
+    @Test
+    void anUnacceptedInvitationIsNotACompany_soTheOneRealOneIsEnteredDirectly() {
+        // PRD 1.5 step 3 counts Active + Frozen + Locked. A PENDING row is a membership HR created,
+        // not one this person holds: counting it sent someone with one company and one open
+        // invitation to a picker they should never have seen, listing a company they have not
+        // accepted into.
+        givenMemberships(membership(100L, 1L, AccountStatus.ACTIVE),
+                membership(200L, 2L, AccountStatus.PENDING));
+
+        assertThat(loginService.resolveSingleMembership(PROFILE)).isEqualTo(100L);
+        assertThat(loginService.listTenants(TOKEN)).hasSize(1)
+                .extracting(MembershipOption::accountId).containsExactly(100L);
+    }
+
+    @Test
+    void onlyAnUnacceptedInvitation_isToldAboutTheInvitation() {
+        // This person authenticates fine (registerUserProfile seeds their identity when HR creates
+        // the account) and now counts as belonging nowhere. "Contact your administrator" is wrong for them —
+        // HR already did their part; the link is sitting in their inbox.
+        givenMemberships(membership(100L, 1L, AccountStatus.INVITED));
+
+        assertThatThrownBy(() -> loginService.resolveSingleMembership(PROFILE))
+                .isInstanceOf(BusinessException.class)
+                .hasMessageContaining("invitation has not been accepted")
+                .hasMessageNotContaining("not linked to any company");
     }
 
     @Test
@@ -122,14 +161,14 @@ class MembershipSelectionTest {
                 .isInstanceOf(MultipleMembershipsException.class);
     }
 
-    // ── listCompanies ───────────────────────────────────────────────────
+    // ── listTenants ───────────────────────────────────────────────────
 
     @Test
     void selectableCompaniesComeFirst() {
         givenMemberships(membership(100L, 1L, AccountStatus.FROZEN),
                 membership(200L, 2L, AccountStatus.ACTIVE));
 
-        List<MembershipOption> options = loginService.listCompanies(TOKEN);
+        List<MembershipOption> options = loginService.listTenants(TOKEN);
 
         assertThat(options).extracting(MembershipOption::accountId).containsExactly(200L, 100L);
         assertThat(options.get(0).tenantName()).isEqualTo("Globex");
@@ -137,14 +176,14 @@ class MembershipSelectionTest {
 
     @Test
     void aPasswordLock_isStampedOnEveryOption_withoutMakingAnyUnselectable() {
-        // The lock is the person's, so both companies carry it; and it is informational only —
+        // The lock is the person's, so both tenants carry it; and it is informational only —
         // the picker runs after authentication, which a code login passes during a lock (PRD D5),
         // so greying the company would lock out exactly the person the lock is meant to protect.
         givenMemberships(membership(100L, 1L, AccountStatus.ACTIVE),
                 membership(200L, 2L, AccountStatus.FROZEN));
         givenPasswordLocked();
 
-        List<MembershipOption> options = loginService.listCompanies(TOKEN);
+        List<MembershipOption> options = loginService.listTenants(TOKEN);
 
         assertThat(options).extracting(MembershipOption::locked).containsOnly(true);
         assertThat(options).extracting(MembershipOption::selectable).containsExactly(true, false);
@@ -154,27 +193,27 @@ class MembershipSelectionTest {
     void anUnlockedPerson_seesNoLockBadge() {
         givenMemberships(membership(100L, 1L, AccountStatus.ACTIVE));
 
-        assertThat(loginService.listCompanies(TOKEN)).extracting(MembershipOption::locked)
+        assertThat(loginService.listTenants(TOKEN)).extracting(MembershipOption::locked)
                 .containsOnly(false);
     }
 
     @Test
     void offBoardedMembershipsNeverAppear() {
         // Excluded by the service query, so the picker cannot show a former employer. Asserted
-        // here as the contract listCompanies relies on.
+        // here as the contract listTenants relies on.
         when(accountService.listMembershipsOf(PROFILE)).thenReturn(List.of());
 
-        assertThat(loginService.listCompanies(TOKEN)).isEmpty();
+        assertThat(loginService.listTenants(TOKEN)).isEmpty();
     }
 
-    // ── selectCompany:所有权校验 ────────────────────────────────────────
+    // ── selectTenant:所有权校验 ────────────────────────────────────────
 
     @Test
     void selectingOwnActiveMembership_isAllowed() {
         givenMemberships(membership(100L, 1L, AccountStatus.ACTIVE));
         when(profileService.getUserInfo(100L)).thenReturn(new io.softa.framework.base.context.UserInfo());
 
-        AuthenticationResult result = loginService.selectCompany(TOKEN, 100L);
+        AuthenticationResult result = loginService.selectTenant(TOKEN, 100L);
 
         assertThat(result.isResolved()).isTrue();
         assertThat(result.profileId()).isEqualTo(PROFILE);
@@ -192,7 +231,7 @@ class MembershipSelectionTest {
         givenMemberships(membership(100L, 1L, AccountStatus.ACTIVE));
         when(profileService.getUserInfo(100L)).thenThrow(new BusinessException("boom"));
 
-        assertThatThrownBy(() -> loginService.selectCompany(TOKEN, 100L))
+        assertThatThrownBy(() -> loginService.selectTenant(TOKEN, 100L))
                 .isInstanceOf(BusinessException.class);
 
         verify(cacheService, never()).clear("login:preauth:" + TOKEN);
@@ -206,7 +245,7 @@ class MembershipSelectionTest {
         givenPasswordLocked();
         when(profileService.getUserInfo(100L)).thenReturn(new io.softa.framework.base.context.UserInfo());
 
-        AuthenticationResult result = loginService.selectCompany(TOKEN, 100L);
+        AuthenticationResult result = loginService.selectTenant(TOKEN, 100L);
 
         assertThat(result.isResolved()).isTrue();
     }
@@ -217,7 +256,7 @@ class MembershipSelectionTest {
         // not in this profile's list — and the message must not confirm that it exists.
         givenMemberships(membership(100L, 1L, AccountStatus.ACTIVE));
 
-        assertThatThrownBy(() -> loginService.selectCompany(TOKEN, 999L))
+        assertThatThrownBy(() -> loginService.selectTenant(TOKEN, 999L))
                 .isInstanceOf(BusinessException.class)
                 .hasMessageContaining("not available for your account");
     }
@@ -228,10 +267,10 @@ class MembershipSelectionTest {
         // must not mint their session. An unknown token resolves to nobody.
         when(cacheService.get("login:preauth:forged")).thenReturn(null);
 
-        assertThatThrownBy(() -> loginService.selectCompany("forged", 100L))
+        assertThatThrownBy(() -> loginService.selectTenant("forged", 100L))
                 .isInstanceOf(BusinessException.class)
                 .hasMessageContaining("expired");
-        assertThatThrownBy(() -> loginService.listCompanies("forged"))
+        assertThatThrownBy(() -> loginService.listTenants("forged"))
                 .isInstanceOf(BusinessException.class);
     }
 
@@ -239,7 +278,7 @@ class MembershipSelectionTest {
     void selectingAFrozenMembership_isRefusedWithTheReason() {
         givenMemberships(membership(100L, 1L, AccountStatus.FROZEN));
 
-        assertThatThrownBy(() -> loginService.selectCompany(TOKEN, 100L))
+        assertThatThrownBy(() -> loginService.selectTenant(TOKEN, 100L))
                 .isInstanceOf(BusinessException.class)
                 .hasMessageContaining("deactivated");
     }

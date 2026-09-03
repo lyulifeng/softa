@@ -82,21 +82,34 @@ public interface LoginService {
      * <p>Authorized by the invitation rather than by a session, so it is deliberately narrow: it
      * refuses unless the profile's own login identifier is one the invitation names AND that
      * profile has no password. Without both checks a link-holder could name any profileId and
-     * overwrite a stranger's password.
+     * overwrite a stranger's password. A bound row's person who can already sign in some other
+     * way (a live login identifier the invitation was not addressed to) is refused too and sets
+     * the password in-session: the code proved control of the work address, not of the person.
+     *
+     * @param proof the value {@link #verifyJoinCode} returned; refused unless it was minted for this
+     *              very invitation and person, so holding the link is not enough to reach the write
      */
-    void setJoinPassword(String rawToken, Long profileId, String newPassword);
+    void setJoinPassword(String rawToken, Long profileId, String newPassword, String proof);
 
     /** Whether this person still has to set a password (arrived by invitation or code only). */
     boolean mustSetPassword(Long profileId);
 
     /**
-     * Decide where a person lands right after joining a company.
+     * Accept the invitation — bind the person, activate the membership — and decide where they land.
      *
      * <p>Not simply "the membership they just joined": someone who already belonged elsewhere now
      * has two, and must still choose. Reusing the same resolution as authentication is what keeps
      * the two entry points from disagreeing.
+     *
+     * <p>Not always a sign-in, either. For a row that already belonged to a person, the code proved
+     * control of the WORK address on the row — a mailbox the company holds — not of the person. When
+     * that person can sign in some other way and has no password, the membership is activated (HR
+     * meant it) but the result is {@link AuthenticationResult#requireSignIn()}: no session and no
+     * pre-auth token, because either would be a session for whoever holds the mailbox.
+     *
+     * @param proof the value {@link #verifyJoinCode} returned; spent here
      */
-    AuthenticationResult afterJoin(Long profileId);
+    AuthenticationResult confirmJoin(String rawToken, Long profileId, String proof);
 
     /**
      * Generate a new session ID for a user
@@ -107,23 +120,23 @@ public interface LoginService {
     String generateSessionId(Long userId);
 
     /**
-     * The companies this person may log into, for the "choose your company" step.
+     * The tenants this person may log into, for the "choose your company" step.
      *
      * <p>Authentication answers WHO; this answers WHERE. They are separate calls because one
-     * person can belong to several companies while a session must carry exactly one membership.
+     * person can belong to several tenants while a session must carry exactly one membership.
      *
      * @param profileId the authenticated person
      * @return their memberships, off-boarded ones excluded, non-ACTIVE ones listed but flagged
      *         unselectable (so a frozen company is visibly present rather than silently missing)
      */
-    List<MembershipOption> listCompanies(String authToken);
+    List<MembershipOption> listTenants(String authToken);
 
     /**
      * Resolve which membership an authenticated person lands in.
      *
      * <p>0 → refuse; exactly 1 → that one (so a single-company person sees no extra step, which
      * is today's behaviour unchanged); more than 1 → refuse and let the caller present
-     * {@link #listCompanies}.
+     * {@link #listTenants}.
      *
      * @throws io.softa.framework.base.exception.BusinessException when the person belongs to no
      *         company, or to several and must choose
@@ -140,7 +153,37 @@ public interface LoginService {
      * any accountId would mint a session in a company they are not a member of. Single-use — the
      * token is consumed on success.
      */
-    AuthenticationResult selectCompany(String authToken, Long accountId);
+    AuthenticationResult selectTenant(String authToken, Long accountId);
+
+    /**
+     * The same company list the login picker shows, for a person who is ALREADY signed in — the
+     * header's tenant switcher.
+     *
+     * <p>Authorized by the current session, so the caller names no person: the account the session
+     * maps to is resolved to its {@code profileId} and the picker's own resolution runs from there.
+     * The company they are in now is included; it is the one showing as current in the switcher.
+     *
+     * @param currentAccountId the UserAccount the current session maps to
+     */
+    List<MembershipOption> myTenants(Long currentAccountId);
+
+    /**
+     * Move an existing session to another of the same person's tenants.
+     *
+     * <p>The authorization is the CURRENT SESSION, never a pre-auth token: a signed-in person
+     * switching tenants has already authenticated, and accepting a token here would open a second
+     * route to minting a session that does not pass through the login flow. The named membership
+     * must be one the session's person holds and must be selectable — the same two checks
+     * {@link #selectTenant} makes, for the same reason.
+     *
+     * <p>Returns the resolved result; the CALLER issues the session (and drops the previous one),
+     * because cookie handling belongs to the controller.
+     *
+     * @param currentAccountId the UserAccount the current session maps to
+     * @param accountId        the membership to move to
+     */
+    AuthenticationResult switchTenant(Long currentAccountId, Long accountId);
+
     /**
      * Forgot password — issue a self-service password-reset token and email the set-password link.
      *

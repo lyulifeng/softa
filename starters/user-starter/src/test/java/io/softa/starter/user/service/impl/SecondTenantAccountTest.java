@@ -37,12 +37,12 @@ import static org.mockito.Mockito.when;
  * {@code registerInvitedUser}, which refused any identifier already used in ANY tenant. That also
  * kept the /join flow's own find-or-create from ever firing: it needs an account carrying the
  * person's identifier, and that account was exactly what could not be created. The only way to
- * produce a person with two companies was to write the row by hand.
+ * produce a person with two tenants was to write the row by hand.
  *
  * <p>What must NOT come back is the person's existing identity. A create form that echoed the name
  * behind an address would answer "who owns this address?" for anyone able to create an account.
  */
-class SecondCompanyAccountTest {
+class SecondTenantAccountTest {
 
     private static final Long PERSON = 7L;
     private static final Long THIS_TENANT = 2L;
@@ -54,7 +54,7 @@ class SecondCompanyAccountTest {
     private final UserProfileService profileService = mock(UserProfileService.class);
     private final UserAccountServiceImpl accountService = spy(new UserAccountServiceImpl());
 
-    SecondCompanyAccountTest() {
+    SecondTenantAccountTest() {
         ReflectionTestUtils.setField(accountService, "identityService", identityService);
         ReflectionTestUtils.setField(accountService, "profileService", profileService);
         doReturn(NEW_ACCOUNT).when(accountService).createOne(any(UserAccount.class));

@@ -28,7 +28,7 @@ import io.softa.starter.user.enums.AccountStatus;
  * A MEMBERSHIP: one person's employment at one company. The person is {@link UserProfile}.
  *
  * <p>Email stays GLOBALLY unique here, exactly as before. Relaxing it to per-tenant is what
- * enables one person to work for two companies, and that belongs to the release which adds that
+ * enables one person to work for two tenants, and that belongs to the release which adds that
  * ability — not to this one, which only moves where credentials are stored. Login still resolves an
  * account by its email, and a relaxed index would make that resolution ambiguous.
  */
@@ -83,7 +83,21 @@ public class UserAccount extends AuditableModel {
     @Field(label = "Policy ID")
     private Long policyId;
 
-    @Field(copyable = false)
+    // DERIVED, not stored: the lock lives on the PERSON's credential
+    // (UserIdentity.passwordLockedUntil) and this membership only reports it, so there is nothing
+    // here for a write to own — two copies of one fact would drift the moment the lockout expires.
+    // dynamic = true is what keeps it out of the DDL (SysDdlContextBuilder.isStored) while still
+    // producing a sys_field row, so the account list gets the field in model metadata and can badge
+    // it. UserAccountController fills it per row; see there for the batch read.
+    // readonly: the field is derived on READ, so there is nothing here a write may own. This is
+    // what keeps it out of getModelUpdatableFields — the set an update payload is intersected with
+    // — and so out of POST /UserAccount/updateOne {"locked":true} rendering
+    // UPDATE user_account SET locked = ?, which writes to the orphaned legacy column on an upgraded
+    // database and fails with unknown-column on a fresh one. The value would be ignored either way
+    // (stampPasswordLock overwrites it on every read), which is why accepting the write is worse
+    // than refusing it: it silently does nothing visible. Read from sys_field, so it shares the
+    // reconciliation window that UserAccountController's unconditional strip covers.
+    @Field(label = "Password lock", dynamic = true, readonly = true)
     private Boolean locked;
 
     @Field

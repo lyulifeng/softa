@@ -104,6 +104,24 @@ class ResetWorkContactsTest {
     }
 
     @Test
+    void theLoginIdentifierIsStoredInCanonicalForm_whileTheContactKeepsItsCase() {
+        // The identifier is what login looks up, so it is written the way login asks — otherwise the
+        // person could sign in only by reproducing HR's capitalisation. The account keeps HR's case
+        // (it is displayed) but not HR's whitespace: the contact columns are queried by equality
+        // with a trimmed value, and a stored stray space hid the row from the shared-contact guard.
+        UserAccount account = given("Old@Acme.com", null, PROFILE);
+        UserIdentity person = identity("old@acme.com", null);
+        when(identityService.findByProfile(PROFILE)).thenReturn(Optional.of(person));
+
+        archive(" New@Acme.com ", null);
+        accountService.resetWorkContacts(ACCOUNT, "Address changed");
+
+        assertThat(account.getEmail()).isEqualTo("New@Acme.com");
+        assertThat(person.getLoginEmail()).isEqualTo("new@acme.com");
+        verify(identityService).updateOne(person, false);
+    }
+
+    @Test
     void aPersonalLoginEmailIsLeftAlone() {
         // The work email and the login email need not be the same value. Only the address this
         // company issued may be rewritten.
@@ -173,6 +191,26 @@ class ResetWorkContactsTest {
                 .isInstanceOf(BusinessException.class)
                 .hasMessageContaining("already belongs to another account");
         verify(identityService, never()).updateOne(any(UserIdentity.class), any(Boolean.class));
+    }
+
+    @Test
+    void aMobileAnotherAccountHolds_isRefused_notJustTheEmail() {
+        // The mobile is a login identifier as much as the email is. Checking only the email let a
+        // reset move a number onto this account while a colleague's row still held it, so a code
+        // sent there named two people.
+        given("old@acme.com", "+8613800138000", PROFILE);
+        UserAccount other = new UserAccount();
+        other.setId(999L);
+        doReturn(Optional.of(other)).when(accountService)
+                .findContactHolderInTenant("+8613899999999", ACCOUNT);
+
+        archive("old@acme.com", "+8613899999999");
+
+        assertThatThrownBy(() -> accountService.resetWorkContacts(ACCOUNT, "x"))
+                .isInstanceOf(BusinessException.class)
+                .hasMessageContaining("already belongs to another account");
+        verify(identityService, never()).updateOne(any(UserIdentity.class), any(Boolean.class));
+        verify(accountService, never()).updateOne(any(UserAccount.class), any(Boolean.class));
     }
 
     @Test

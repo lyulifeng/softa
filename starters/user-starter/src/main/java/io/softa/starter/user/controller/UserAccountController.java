@@ -1,11 +1,13 @@
 package io.softa.starter.user.controller;
 
+import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
+import java.util.stream.Collectors;
 import java.util.function.Supplier;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
@@ -18,6 +20,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.util.CollectionUtils;
 import org.springframework.web.bind.annotation.*;
 
 import io.softa.framework.base.constant.BaseConstant;
@@ -38,6 +41,7 @@ import io.softa.framework.orm.enums.ConvertType;
 import io.softa.framework.orm.service.CacheService;
 import io.softa.framework.orm.service.ModelService;
 import io.softa.framework.orm.utils.IdUtils;
+import io.softa.framework.orm.vo.ModelReference;
 import io.softa.framework.web.controller.EntityController;
 import io.softa.framework.web.dto.GetByIdParams;
 import io.softa.framework.web.dto.QueryParams;
@@ -55,6 +59,7 @@ import io.softa.starter.user.dto.UserAccountDTO;
 import io.softa.starter.user.entity.UserAccount;
 import io.softa.starter.user.service.PermissionCacheInvalidator;
 import io.softa.starter.user.service.UserAccountService;
+import io.softa.starter.user.service.UserIdentityService;
 import io.softa.starter.user.service.UserInvitationService;
 import io.softa.starter.user.service.UserRosterScope;
 
@@ -70,6 +75,9 @@ public class UserAccountController extends EntityController<UserAccountService, 
 
     private static final String MODEL = "UserAccount";
     private static final String ROLES_FIELD = "roles";
+    private static final String PROFILE_FIELD = "profileId";
+    /** {@link UserAccount#getLocked()} — derived per row, never stored. */
+    private static final String LOCKED_FIELD = "locked";
 
     @Autowired
     private CacheService cacheService;
@@ -87,6 +95,9 @@ public class UserAccountController extends EntityController<UserAccountService, 
      *  tenant's account (see UserRosterScope for why the bounds must be identical). */
     @Autowired
     private UserRosterScope rosterScope;
+
+    @Autowired
+    private UserIdentityService identityService;
 
     /**
      * Create a UserAccount from the standard create form. Routes through
@@ -189,6 +200,7 @@ public class UserAccountController extends EntityController<UserAccountService, 
     public ApiResponse<Boolean> updateOne(@RequestBody Map<String, Object> row) {
         Assert.notNull(row.get("id"), "`id` cannot be null or missing when updating data!");
         IdUtils.formatMapId(MODEL, row);
+        dropDerivedLock(row);
         boolean ok = modelService.updateOne(MODEL, row);
         evictIfRolesTouched(row);
         return ApiResponse.success(ok);
@@ -201,6 +213,7 @@ public class UserAccountController extends EntityController<UserAccountService, 
         Assert.notEmpty(row, "The data to be updated cannot be empty!");
         Assert.notNull(row.get("id"), "`id` cannot be null or missing when updating data!");
         IdUtils.formatMapId(MODEL, row);
+        dropDerivedLock(row);
         Map<String, Object> result = modelService.updateOneAndFetch(MODEL, row, ConvertType.REFERENCE);
         evictIfRolesTouched(row);
         return ApiResponse.success(result);
@@ -221,10 +234,16 @@ public class UserAccountController extends EntityController<UserAccountService, 
             queryParams = new QueryParams();
         }
         FlexQuery flexQuery = QueryParams.convertParamsToFlexQuery(queryParams);
+        boolean perRow = !flexQuery.isAggregate();
+        boolean borrowed = perRow && borrowProfileId(flexQuery);
         Page<Map<String, Object>> page = Page.of(queryParams.getPageNumber(), queryParams.getPageSize());
         return ApiResponse.success(rosterScope.call(() -> {
             flexQuery.setFilters(rosterScope.scopeByTenant(flexQuery.getFilters()));
-            return modelService.searchPage(MODEL, flexQuery, page);
+            Page<Map<String, Object>> result = modelService.searchPage(MODEL, flexQuery, page);
+            if (perRow) {
+                stampPasswordLock(result == null ? null : result.getRows(), borrowed);
+            }
+            return result;
         }));
     }
 
@@ -240,9 +259,12 @@ public class UserAccountController extends EntityController<UserAccountService, 
             searchListParams = new SearchListParams();
         }
         FlexQuery flexQuery = SearchListParams.convertParamsToFlexQuery(searchListParams);
+        boolean perRow = !flexQuery.isAggregate();
+        boolean borrowed = perRow && borrowProfileId(flexQuery);
         return ApiResponse.success(rosterScope.call(() -> {
             flexQuery.setFilters(rosterScope.scopeByTenant(flexQuery.getFilters()));
-            return modelService.searchList(MODEL, flexQuery);
+            List<Map<String, Object>> rows = modelService.searchList(MODEL, flexQuery);
+            return perRow ? stampPasswordLock(rows, borrowed) : rows;
         }));
     }
 
@@ -268,6 +290,8 @@ public class UserAccountController extends EntityController<UserAccountService, 
         if (getByIdParams.getSubQueries() != null && !getByIdParams.getSubQueries().isEmpty()) {
             subQueries.setQueryMap(getByIdParams.getSubQueries());
         }
+        boolean borrowed = needsProfileId(getByIdParams.getFields());
+        List<String> fields = borrowed ? withProfileId(getByIdParams.getFields()) : getByIdParams.getFields();
         return ApiResponse.success(rosterScope.call(() -> {
             // Roster membership first (super-admin only — everyone else never enters the window and
             // stays on the ORM's own tenant filter). Both the check and the roster resolution must sit
@@ -276,11 +300,138 @@ public class UserAccountController extends EntityController<UserAccountService, 
                     rosterScope.scopeToAdminAccounts(new Filters().eq(ModelConstant.ID, id))) == 0) {
                 return null;   // outside the roster — same answer as a nonexistent record
             }
-            return modelService.getById(MODEL, id, getByIdParams.getFields(), subQueries, ConvertType.REFERENCE)
+            Map<String, Object> row = modelService
+                    .getById(MODEL, id, fields, subQueries, ConvertType.REFERENCE)
                     .orElse(null);
+            if (row != null) {
+                stampPasswordLock(List.of(row), borrowed);
+            }
+            return row;
         }));
     }
 
+    /**
+     * Fill the derived {@code locked} flag on account rows: true when the row's PERSON currently has
+     * their password login locked ({@code UserIdentity.passwordLockedUntil} in the future).
+     *
+     * <p>The lock is a SECOND AXIS, not a status value — the row keeps reading Active / Frozen /
+     * whatever, and the list badges the lock next to it. Deriving it here rather than storing a
+     * column on the membership is what keeps the two from disagreeing: the lock belongs to the
+     * person (so it is the same across their tenants) and it expires on a clock nothing writes to.
+     *
+     * <p>ONE query per response, not per row: the page's people are collected first and resolved
+     * together. A roster of fifty rows is otherwise fifty credential reads.
+     */
+    private List<Map<String, Object>> stampPasswordLock(List<Map<String, Object>> rows, boolean borrowedProfileId) {
+        stampPasswordLock(rows);
+        if (borrowedProfileId && rows != null) {
+            // Give the field list back exactly as asked for. The caller never requested profileId;
+            // leaving it in adds a person id to a response that was scoped to other columns.
+            rows.forEach(row -> row.remove(PROFILE_FIELD));
+        }
+        return rows;
+    }
+
+    /**
+     * Read the row's person even when the caller asked for a narrower field list.
+     *
+     * <p>The account table sends an explicit field set built from its own declared columns, and
+     * profileId is not one of them — the ORM only adds id / version / sliceId to a caller-supplied
+     * set, so {@link #profileIdOf} found nothing on every row of the real request and the lock badge
+     * was stamped false for everyone. An empty/absent set already means every field, so it is left
+     * alone; a non-empty one is widened here and narrowed back in {@link #stampPasswordLock}.
+     *
+     * <p>Only for a per-row read. An AGGREGATE query ({@link FlexQuery#isAggregate()} — set by any
+     * of groupBy / splitBy / aggFunctions) returns grouped rows, not accounts: there is no account
+     * for a lock to belong to, and adding a plain column to the selection is not a widening but a
+     * different query — profileId would either have to join the GROUP BY (splitting every group by
+     * person) or be wrapped in an aggregate function. Both change the caller's result, so an
+     * aggregate read is passed through exactly as it was sent; see the guards in
+     * {@link #searchPage} / {@link #searchList} for the matching skip of the stamping.
+     *
+     * @return whether profileId was borrowed, i.e. must be removed from the rows afterwards
+     */
+    private static boolean borrowProfileId(FlexQuery flexQuery) {
+        if (!needsProfileId(flexQuery.getFields())) {
+            return false;
+        }
+        flexQuery.setFields(withProfileId(flexQuery.getFields()));
+        return true;
+    }
+
+    /** Whether this caller-supplied field set has to be widened — see {@link #borrowProfileId}. */
+    private static boolean needsProfileId(List<String> fields) {
+        return !CollectionUtils.isEmpty(fields) && !fields.contains(PROFILE_FIELD);
+    }
+
+    /** A widened COPY: the caller's own list may be immutable, and mutating it is not ours to do. */
+    private static List<String> withProfileId(List<String> fields) {
+        List<String> widened = new ArrayList<>(fields);
+        widened.add(PROFILE_FIELD);
+        return widened;
+    }
+
+    private List<Map<String, Object>> stampPasswordLock(List<Map<String, Object>> rows) {
+        if (rows == null || rows.isEmpty()) {
+            return rows;
+        }
+        Set<Long> people = rows.stream().map(UserAccountController::profileIdOf)
+                .filter(Objects::nonNull).collect(Collectors.toSet());
+        Set<Long> locked = identityService.findPasswordLockedProfiles(people);
+        for (Map<String, Object> row : rows) {
+            Long profileId = profileIdOf(row);
+            // An account with no person cannot carry a person's lock — false, never null: the badge
+            // reads a boolean and a missing key would render as "unknown" in the UI.
+            row.put(LOCKED_FIELD, profileId != null && locked.contains(profileId));
+        }
+        return rows;
+    }
+
+    /**
+     * The row's person id, whatever shape the read left it in: a raw number, a string (ids are
+     * serialized as strings on the paths a browser reads, which loses precision on a 19-digit long),
+     * or the {@code {id, displayName}} pair {@link ConvertType#REFERENCE} renders a MANY_TO_ONE as.
+     */
+    private static Long profileIdOf(Map<String, Object> row) {
+        Object value = row == null ? null : row.get(PROFILE_FIELD);
+        if (value instanceof ModelReference reference) {
+            value = reference.getId();
+        } else if (value instanceof Map<?, ?> reference) {
+            value = reference.get(ModelConstant.ID);
+        }
+        if (value instanceof Number number) {
+            return number.longValue();
+        }
+        String id = value == null ? null : value.toString();
+        // Not a number at all → no person to ask about, rather than a 500 on a list read.
+        return StringUtils.isNumeric(id) ? Long.valueOf(id) : null;
+    }
+
+
+    /**
+     * Drop the derived {@code locked} key from an update payload before it reaches the ORM.
+     *
+     * <p>{@link UserAccount#getLocked()} is also declared {@code readonly}, which is what
+     * {@code ModelManager.getModelUpdatableFields} filters on. That is the DECLARATIVE answer and
+     * the durable one — it covers every write path, this controller's and the five generic ones
+     * this class does not shadow. What it does not cover is time: the attribute is read from the
+     * {@code sys_field} ROW, not from the annotation, so the field stays writable until a boot with
+     * a non-empty scanner scope — or a studio deploy — reconciles it, and production runs with an
+     * empty scanner scope, which makes that reconciliation a release step rather than a boot side
+     * effect. This strip is UNCONDITIONAL and consults no metadata, so it holds from the first
+     * request after deploy, for the two verbs the UI actually calls.
+     *
+     * <p>What it prevents in that window: {@code {"id":…,"locked":true}} renders
+     * {@code UPDATE user_account SET locked = ?} — persisting to the orphaned legacy column on an
+     * upgraded database, or failing with unknown-column on a freshly converged one.
+     *
+     * <p>The create endpoints need no equivalent: {@link #inviteFromRow} reads named keys off the
+     * row and never hands the map itself to the write pipeline, so a caller-supplied
+     * {@code locked} has nothing to reach.
+     */
+    private static void dropDerivedLock(Map<String, Object> row) {
+        row.remove(LOCKED_FIELD);
+    }
 
     /**
      * A UserAccount write only affects that one user's PermissionInfo, so evict
@@ -352,6 +503,14 @@ public class UserAccountController extends EntityController<UserAccountService, 
         return ApiResponse.success();
     }
 
+    @Operation(summary = "Re-hire a former employee — reopens their closed account as Pending with "
+            + "its previous work contacts; send a new invitation afterwards")
+    @PostMapping("/rehire")
+    public ApiResponse<Void> rehire(@RequestParam @NotNull Long id) {
+        onOwnRosterAccount(id, () -> service.rehire(id));
+        return ApiResponse.success();
+    }
+
     @Operation(summary = "The work contacts this account's employee record holds — what Reset User "
             + "and Unbind & Re-invite will carry onto the membership")
     @GetMapping("/archiveWorkContacts")
@@ -369,7 +528,7 @@ public class UserAccountController extends EntityController<UserAccountService, 
     @PostMapping("/resetWorkContacts")
     public ApiResponse<Void> resetWorkContacts(@RequestParam @NotNull Long id,
             @RequestBody @Valid ResetWorkContactsDTO dto) {
-        onRosterAccounts(List.of(id), () -> service.resetWorkContacts(id, dto.getReason()));
+        onOwnRosterAccount(id, () -> service.resetWorkContacts(id, dto.getReason()));
         return ApiResponse.success();
     }
 
@@ -383,7 +542,7 @@ public class UserAccountController extends EntityController<UserAccountService, 
         // was themselves bound to the wrong membership is exactly who needs this.
         Long currentUserId = ContextHolder.getContext() == null ? null
                 : ContextHolder.getContext().getUserId();
-        onRosterAccounts(List.of(id), () -> invitationService.unbindAndReinvite(
+        onOwnRosterAccount(id, () -> invitationService.unbindAndReinvite(
                 id, dto.getReason(), currentUserId));
         return ApiResponse.success();
     }
@@ -402,8 +561,10 @@ public class UserAccountController extends EntityController<UserAccountService, 
      * resolved their target inside the caller's own tenant, so Lock / Unlock / Invite on any row
      * from another tenant failed with "User not found" (#686 — the operation twin of the getById
      * fix above). Same window, same bounds: the super-admin reaches roster members only, and an id
-     * outside the roster gets the same answer as a nonexistent one; every other caller runs
-     * tenant-locally, exactly as before.
+     * outside the roster gets the same answer as a nonexistent one. Every other caller stays outside
+     * the window, so an operation that resolves its row through the ORM's tenant filter runs
+     * tenant-locally — but a service method annotated {@code @CrossTenant} resolves its row WITHOUT
+     * that filter whoever calls it, and needs {@link #onOwnRosterAccount} on top.
      */
     private void onRosterAccounts(List<Long> ids, Runnable op) {
         this.onRosterAccounts(ids, () -> {
@@ -423,6 +584,32 @@ public class UserAccountController extends EntityController<UserAccountService, 
                 }
             }
             return op.get();
+        });
+    }
+
+    /**
+     * Run a by-id operation whose service method is {@code @CrossTenant} — {@code rehire},
+     * {@code resetWorkContacts}, {@code unbindAndReinvite} — bounded to a row the caller administers.
+     *
+     * <p>The annotation is there so the platform super-admin can act on a roster row that sits in
+     * another company, but it waives the ORM's tenant filter for EVERY caller: the service loads
+     * the row by id with no tenant clause, so a tenant HR holding the grant could post another
+     * tenant's account id and reopen, re-address or unbind that membership. {@link
+     * #onRosterAccounts} bounds only the super-admin (to the roster); this bounds everyone else to
+     * their own tenant, by loading the row first and comparing its tenant to the caller's. The
+     * refusal is the same "User not found." a nonexistent id gets, so the check does not confirm
+     * that the id exists elsewhere.
+     */
+    private void onOwnRosterAccount(Long id, Runnable op) {
+        onRosterAccounts(List.of(id), () -> {
+            UserAccount row = service.getById(id)
+                    .orElseThrow(() -> new BusinessException("User not found."));
+            // Objects.equals: single-tenant deployments carry null on both sides.
+            if (!rosterScope.isPlatformSuperAdmin()
+                    && !Objects.equals(row.getTenantId(), ContextHolder.getContext().getTenantId())) {
+                throw new BusinessException("User not found.");
+            }
+            op.run();
         });
     }
 
