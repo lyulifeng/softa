@@ -47,6 +47,15 @@ public @interface Index {
      * per-dialect table). {@link IndexMethod#SEARCH} and {@link IndexMethod#PREFIX}
      * require exactly one string-typed field ({@code STRING} / {@code TEXT} /
      * {@code MULTI_STRING}) and cannot be unique — both are enforced at scan time.
+     *
+     * <p><b>You rarely declare {@code SEARCH} yourself.</b> The indexes that back the
+     * product's search box are derived automatically from {@code @Model(searchName)}
+     * (falling back to a {@code STRING} field literally called {@code name}) — see
+     * {@code SearchIndexSynthesizer}. Declaring an explicit non-BTREE {@code method} on
+     * a column opts that column OUT of the derivation: the hand-written declaration is
+     * the developer taking manual control. A plain BTREE declaration on the column does
+     * not opt out — it cannot serve the search box, so the derived index still appears
+     * next to it.
      */
     IndexMethod method() default IndexMethod.BTREE;
 

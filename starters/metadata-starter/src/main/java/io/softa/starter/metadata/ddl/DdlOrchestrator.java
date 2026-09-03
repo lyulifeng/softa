@@ -22,7 +22,9 @@ import io.softa.framework.orm.enums.DatabaseType;
 import io.softa.framework.orm.enums.FieldType;
 import io.softa.framework.orm.enums.StorageType;
 import io.softa.framework.orm.jdbc.database.DBUtil;
+import io.softa.framework.orm.enums.IndexMethod;
 import io.softa.starter.metadata.ddl.DdlPolicy.ModelOps;
+import io.softa.starter.metadata.ddl.context.IndexDdlCtx;
 import io.softa.starter.metadata.ddl.context.ModelDdlCtx;
 import io.softa.starter.metadata.ddl.dialect.DdlDialect;
 import io.softa.starter.metadata.ddl.introspect.IndexNameCompat;
@@ -154,37 +156,51 @@ public class DdlOrchestrator {
     private record ExecResult(int executed, int skipped, List<RenderedDdl> deferred) {
     }
 
-    /** Set once {@code CREATE EXTENSION IF NOT EXISTS pg_trgm} has succeeded this boot. */
-    private boolean pgTrgmEnsured;
+    /** Probed lazily and at most once: whether SEARCH-method indexes can be built right now. */
+    private TrigramCapability trigramCapability;
+
+    private TrigramCapability trigramCapability() {
+        if (trigramCapability == null) {
+            trigramCapability = new TrigramCapability(
+                    jdbcTemplate, DBUtil.parseDatabaseType(datasourceUrl));
+        }
+        return trigramCapability;
+    }
 
     /**
-     * Provision the {@code pg_trgm} extension before the first unit that renders a trigram
-     * operator class ({@code gin_trgm_ops}, i.e. a SEARCH-method index) executes.
-     * {@code pg_trgm} has been a trusted extension since PostgreSQL 13, so the application's
-     * database-owner role can create it without superuser rights (managed services included);
-     * when even that grant is missing, the failure surfaces here with the statement a DBA
-     * must run, instead of as an "operator class does not exist" error on the index DDL.
+     * Remove the SEARCH-method indexes this database cannot build from a context about to be
+     * rendered — see {@link TrigramCapability} for why that is a skip and not a boot failure.
+     *
+     * <p>Guarding at the <b>context</b> rather than the rendered SQL is what covers every path
+     * with one rule: the CREATE TABLE templates render a new table's indexes inline
+     * ({@link #planGenesis} / {@link #renderCreate}), so a statement-level guard on the index
+     * units alone would let a fresh bootstrap emit {@code gin_trgm_ops} DDL that fails the boot
+     * — the exact failure the capability check exists to prevent. Only CREATE work is stripped:
+     * dropping a GIN index needs no extension (refusing would strand it forever), and a pure
+     * RENAME moves whatever physically exists.
      */
-    private void ensurePgTrgmIfNeeded(List<RenderedDdl> rendered, boolean executeEverything) {
-        if (pgTrgmEnsured || DBUtil.parseDatabaseType(datasourceUrl) != DatabaseType.POSTGRESQL) {
+    private void stripUnbuildableSearchIndexes(ModelDdlCtx ctx) {
+        boolean affected = isSearch(ctx.getCreatedIndexes())
+                || isSearch(ctx.getUpdatedIndexes())
+                || ctx.getRenamedIndexes().stream()
+                        .anyMatch(i -> i.isDefinitionChanged() && isSearch(i));
+        if (!affected || trigramCapability().available()) {
             return;
         }
-        boolean needed = rendered.stream()
-                .filter(ddl -> executeEverything || ddl.autoExecute())
-                .flatMap(ddl -> ddl.statements().stream())
-                .anyMatch(statement -> statement.contains("gin_trgm_ops"));
-        if (!needed) {
-            return;
-        }
-        try {
-            jdbcTemplate.execute("CREATE EXTENSION IF NOT EXISTS pg_trgm");
-            pgTrgmEnsured = true;
-        } catch (DataAccessException e) {
-            log.error("DdlOrchestrator: a SEARCH-method index requires the pg_trgm extension and "
-                    + "creating it failed — have a DBA run `CREATE EXTENSION IF NOT EXISTS pg_trgm;` "
-                    + "on this database once, then restart.");
-            throw e;
-        }
+        List<String> skipped = new ArrayList<>();
+        ctx.getCreatedIndexes().removeIf(i -> isSearch(i) && skipped.add(i.getIndexName()));
+        ctx.getUpdatedIndexes().removeIf(i -> isSearch(i) && skipped.add(i.getIndexName()));
+        ctx.getRenamedIndexes().removeIf(
+                i -> i.isDefinitionChanged() && isSearch(i) && skipped.add(i.getIndexName()));
+        trigramCapability().warnSkipped(skipped, ctx.getTableName());
+    }
+
+    private static boolean isSearch(List<IndexDdlCtx> indexes) {
+        return indexes.stream().anyMatch(DdlOrchestrator::isSearch);
+    }
+
+    private static boolean isSearch(IndexDdlCtx index) {
+        return IndexMethod.SEARCH.name().equals(index.getMethod());
     }
 
     /**
@@ -192,7 +208,6 @@ public class DdlOrchestrator {
      * {@code executeEverything} (the convergence lane, where destructive verbs are policy).
      */
     private ExecResult executeAll(List<RenderedDdl> rendered, boolean executeEverything) {
-        ensurePgTrgmIfNeeded(rendered, executeEverything);
         int executed = 0;
         int skipped = 0;
         List<RenderedDdl> deferred = new ArrayList<>();
@@ -545,6 +560,7 @@ public class DdlOrchestrator {
                     + "fields to create it from", tag, ctx.getTableName());
             return;
         }
+        stripUnbuildableSearchIndexes(ctx);
         out.add(RenderedDdl.of(RenderedDdl.Kind.CREATE_TABLE,
                 "CREATE TABLE " + ctx.getTableName() + " " + tag + " genesis",
                 dialect.createTableDDL(ctx).toString()));
@@ -710,6 +726,7 @@ public class DdlOrchestrator {
                     op.model().getModelName());
             return;
         }
+        stripUnbuildableSearchIndexes(ctx);
         String sql = dialect.createTableDDL(ctx).toString();
         out.add(RenderedDdl.of(RenderedDdl.Kind.CREATE_TABLE, "CREATE TABLE " + ctx.getTableName(), sql));
     }
@@ -788,6 +805,7 @@ public class DdlOrchestrator {
 
     private void renderIndexChange(DdlDialect dialect, ModelDdlCtx ctx, RenderedDdl.Kind kind,
                                    String label, List<RenderedDdl> out) {
+        stripUnbuildableSearchIndexes(ctx);
         if (!ctx.isHasIndexChanges()) {
             return;
         }

@@ -122,6 +122,19 @@ need to specify):
   a `text_pattern_ops` B-tree on PostgreSQL (prefix `LIKE` takes a range scan on
   any collation) and a plain index on MySQL. Both require exactly one
   `STRING` / `TEXT` / `MULTI_STRING` field and reject `unique = true` at scan time.
+- **Search indexes are derived, not declared**: `SearchIndexSynthesizer` (invoked from
+  `MetadataReadPipeline.parse`, so the scanner and the production checker see the same
+  from-code state) derives one `SEARCH` index per `@Model(searchName)` member — falling
+  back to a `STRING` field literally called `name` — named
+  `idx_<table>_<column>_search` (deterministically shortened past 60 chars). Dynamic,
+  non-`STRING` fields, projections and non-RDBMS models are skipped; a hand-written
+  `@Index` with an explicit non-BTREE `method` on the column suppresses the derivation
+  for that column. The studio lane derives the identical rows while assembling its
+  desired state (`DesignSearchIndexSpecs`), so a deploy never deletes them as
+  runtime-only. When PostgreSQL cannot build a trigram index (no `pg_trgm`, and the
+  role may not create it), the planner skips those indexes per-index with one
+  actionable WARN instead of failing the boot — the rows stay in `sys_model_index`,
+  so the first boot after a DBA runs `CREATE EXTENSION pg_trgm;` creates them.
 - Explicit `tableName`, `columnName`, and `indexName` values must satisfy
   `StringTools.isTableOrColumn` and must not be SQL reserved words because DDL
   renders identifiers unquoted.
