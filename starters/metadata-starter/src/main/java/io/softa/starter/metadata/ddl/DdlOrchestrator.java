@@ -677,7 +677,8 @@ public class DdlOrchestrator {
      * {@link #apply}. Returns units in execution order: table renames first (declared →
      * auto RENAME TABLE, undeclared → warn), then per-model CREATE, per-change ALTERs
      * (column adds / modifies / declared renames, then index adds / rebuilds) and
-     * per-model DROP hints (warn).
+     * per-model DROPs — <b>indexes before columns</b>, because dropping a column an index
+     * still covers rebuilds that index on its remaining columns rather than removing it.
      */
     private List<RenderedDdl> render(SchemaDiff diff, List<SysModel> allCodeModels,
                                      List<SysField> allCodeFields) {
@@ -707,8 +708,14 @@ public class DdlOrchestrator {
                 case ALTER_TABLE -> renderAlter(dialect, op, modelFieldToColumn, out);
                 case ALTER_TABLE_WITH_DROP_WARNING -> {
                     renderAlter(dialect, op, modelFieldToColumn, out);
-                    renderDropColumn(dialect, op, out);
+                    // Indexes before columns, and the order is load-bearing. Dropping a column that a
+                    // multi-column index still covers does not drop the index — MySQL rebuilds it on
+                    // the remaining columns, so uk(tenant_id, code) silently becomes uk(tenant_id) and
+                    // the statement fails on the first tenant holding more than one row. The error
+                    // names a duplicate tenant id and a unique key nobody declared, which reads like
+                    // corrupt data rather than a drop ordering problem.
                     renderDropIndex(dialect, op, out);
+                    renderDropColumn(dialect, op, out);
                 }
                 case DROP_TABLE_WARNING -> renderDropTable(dialect, op, out);
             }

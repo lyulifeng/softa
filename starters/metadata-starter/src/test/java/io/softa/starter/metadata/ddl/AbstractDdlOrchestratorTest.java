@@ -806,6 +806,51 @@ abstract class AbstractDdlOrchestratorTest {
                 "SELECT status FROM customer WHERE id = 1", String.class));
     }
 
+    // ---- drop ordering: indexes before the columns they cover -----------
+
+    @Test
+    void dropIndex_rendersBeforeDropColumn_soAUniqueKeyIsNotRebuiltOnWhatRemains() {
+        // Removing a field AND the composite unique key that covers it, in one diff. The order these
+        // render in is the whole contract: DROP COLUMN on a column an index still covers does not drop
+        // that index — MySQL rebuilds it on the remaining columns, so uk(tenant_id, code) becomes
+        // uk(tenant_id) and the statement dies on the first tenant holding more than one row.
+        //
+        // The failure names a duplicate tenant id against a unique key nobody declared, which reads
+        // like corrupt data rather than a drop that ran too early. Asserted on the RENDERED order
+        // rather than by executing: H2 drops the index with the column, so an end-to-end assertion
+        // passes just as happily with the two statements the wrong way round.
+        SysModel model = customer();
+        SysField code = field("Customer", "code", FieldType.STRING, 64, false);
+        SysModelIndex uk = idx("Customer", "uk_customer_tenant_code", List.of("tenantId", "code"), true);
+
+        SchemaDiff diff = new SchemaDiff(
+                EntityDiff.<SysModel>empty(),
+                new EntityDiff<>(List.of(), List.of(code), List.of()),
+                EntityDiff.<SysOptionSet>empty(),
+                EntityDiff.<SysOptionItem>empty(),
+                new EntityDiff<>(List.of(), List.of(uk), List.of()));
+
+        List<String> kinds = renderedKinds(diff, List.of(model), List.of(code));
+
+        int dropIndex = kinds.indexOf("DROP_INDEX");
+        int dropColumn = kinds.indexOf("DROP_COLUMN");
+        assertTrue(dropIndex >= 0, "expected a DROP_INDEX unit, rendered: " + kinds);
+        assertTrue(dropColumn >= 0, "expected a DROP_COLUMN unit, rendered: " + kinds);
+        assertTrue(dropIndex < dropColumn,
+                "DROP INDEX must precede DROP COLUMN, rendered: " + kinds);
+    }
+
+    /** The private render step's output kinds, in execution order. */
+    private List<String> renderedKinds(SchemaDiff diff, List<SysModel> models, List<SysField> fields) {
+        Object rendered = org.springframework.test.util.ReflectionTestUtils.invokeMethod(
+                orchestrator, "render", diff, models, fields);
+        List<?> units = (List<?>) rendered;
+        return units.stream()
+                .map(u -> String.valueOf(
+                        org.springframework.test.util.ReflectionTestUtils.getField(u, "kind")))
+                .toList();
+    }
+
     private static SchemaDiff diffWithModifiedIndex(SysModelIndex fromCode, SysModelIndex fromDb) {
         return new SchemaDiff(
                 EntityDiff.<SysModel>empty(),
