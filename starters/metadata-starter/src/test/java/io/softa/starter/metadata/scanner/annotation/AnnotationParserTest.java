@@ -15,6 +15,7 @@ import io.softa.framework.orm.annotation.Field;
 import io.softa.framework.orm.annotation.Index;
 import io.softa.framework.orm.annotation.Model;
 import io.softa.framework.orm.entity.AuditableModel;
+import io.softa.framework.orm.entity.FileRecord;
 import io.softa.framework.orm.enums.FieldType;
 import io.softa.framework.orm.enums.IdStrategy;
 import io.softa.starter.metadata.entity.*;
@@ -693,6 +694,25 @@ class AnnotationParserTest {
     void parsesRepeatedIndexes_intoSysModelIndexRows() {
         AnnotationScanResult result = parser.parse(List.of(IndexedEntity.class), List.of());
         assertEquals(2, result.modelIndexes().size());
+    }
+
+    /**
+     * The names live databases already carry. file_record was hand-created while this entity's
+     * package sat outside scanner-scope; once the scanner takes the table over, an index whose
+     * derived name does not match the physical one is a DROP plus a CREATE rather than a no-op,
+     * and for uk_file_record_oss_key that briefly retires a uniqueness guard on a live table.
+     */
+    @Test
+    void fileRecordIndexNames_matchTheOnesLiveDatabasesAlreadyCarry() {
+        AnnotationScanResult result = parser.parse(List.of(FileRecord.class), List.of());
+
+        SysModelIndex uk = byIndexName(result.modelIndexes(), "uk_file_record_oss_key");
+        assertEquals(true, uk.getUniqueIndex());
+        assertEquals(List.of("ossKey"), uk.getIndexFields());
+
+        SysModelIndex lookup = byIndexName(result.modelIndexes(), "idx_file_record_model_name_row_id");
+        assertEquals(false, lookup.getUniqueIndex());
+        assertEquals(List.of("modelName", "rowId"), lookup.getIndexFields());
     }
 
     @Test
