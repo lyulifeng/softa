@@ -26,6 +26,7 @@ import io.softa.starter.file.excel.imports.handler.TimeHandler;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
+import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
@@ -258,6 +259,57 @@ class ImportHandlerFactoryTest {
             row.put("legalEntityId.code", "lyztest20265508");
             handler.handleRow(row);
             assertEquals("lyztest20265508", row.get("legalEntityId.code"));
+        }
+    }
+
+    /**
+     * A three-segment path takes its requirement from the relation it names, not from the one it
+     * travels through.
+     *
+     * <p>The reported case. {@code Employee.employeeProfileId} is required — an employee must have a
+     * profile — and reading the first segment turned every {@code employeeProfileId.*.name} column of
+     * the Singapore template mandatory, Pass Type among them. Singapore citizens and PRs hold no pass
+     * and the value domain offers nothing for them, so those rows could not be imported at all.
+     */
+    @Test
+    void aNestedLookupPath_takesRequiredFromTheRelationItNames_notTheOneItTravelsThrough() {
+        ImportHandlerFactory factory = new ImportHandlerFactory();
+        MetaField profile = relationField("EmployeeProfile", true);      // 员工必须有档案
+        MetaField passType = relationField("PassType", false);           // 准证不必填
+        try (MockedStatic<ModelManager> mm = Mockito.mockStatic(ModelManager.class)) {
+            mm.when(() -> ModelManager.existField("Employee", "employeeProfileId")).thenReturn(true);
+            mm.when(() -> ModelManager.getModelField("Employee", "employeeProfileId")).thenReturn(profile);
+            mm.when(() -> ModelManager.existModel("EmployeeProfile")).thenReturn(true);
+            mm.when(() -> ModelManager.existField("EmployeeProfile", "passType")).thenReturn(true);
+            mm.when(() -> ModelManager.getModelField("EmployeeProfile", "passType")).thenReturn(passType);
+
+            ImportFieldDTO dto = new ImportFieldDTO();
+            dto.setFieldName("employeeProfileId.passType.name");
+
+            assertNull(factory.createLookupRequiredHandler(
+                    "Employee", "employeeProfileId.passType.name", dto));
+            assertNotEquals(Boolean.TRUE, dto.getRequired());
+        }
+    }
+
+    /** The same path still gets a check when the relation it NAMES is the required one. */
+    @Test
+    void aNestedLookupPath_isStillCheckedWhenTheNamedRelationIsRequired() {
+        ImportHandlerFactory factory = new ImportHandlerFactory();
+        MetaField profile = relationField("EmployeeProfile", false);
+        MetaField nationality = relationField("CountryRegion", true);
+        try (MockedStatic<ModelManager> mm = Mockito.mockStatic(ModelManager.class)) {
+            mm.when(() -> ModelManager.existField("Employee", "employeeProfileId")).thenReturn(true);
+            mm.when(() -> ModelManager.getModelField("Employee", "employeeProfileId")).thenReturn(profile);
+            mm.when(() -> ModelManager.existModel("EmployeeProfile")).thenReturn(true);
+            mm.when(() -> ModelManager.existField("EmployeeProfile", "nationality")).thenReturn(true);
+            mm.when(() -> ModelManager.getModelField("EmployeeProfile", "nationality")).thenReturn(nationality);
+
+            ImportFieldDTO dto = new ImportFieldDTO();
+            dto.setFieldName("employeeProfileId.nationality.name");
+
+            assertNotNull(factory.createLookupRequiredHandler(
+                    "Employee", "employeeProfileId.nationality.name", dto));
         }
     }
 
