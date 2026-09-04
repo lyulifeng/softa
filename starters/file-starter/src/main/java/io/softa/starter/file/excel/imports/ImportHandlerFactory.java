@@ -82,11 +82,10 @@ public class ImportHandlerFactory {
      */
     BaseImportHandler createLookupRequiredHandler(String modelName, String fieldName,
                                                   ImportFieldDTO importFieldDTO) {
-        String rootField = fieldName.substring(0, fieldName.indexOf('.'));
-        if (!ModelManager.existField(modelName, rootField)) {
+        MetaField metaField = addressedRelation(modelName, fieldName);
+        if (metaField == null) {
             return null;
         }
-        MetaField metaField = ModelManager.getModelField(modelName, rootField);
         if (!Boolean.TRUE.equals(importFieldDTO.getRequired())) {
             importFieldDTO.setRequired(metaField.isRequired());
         }
@@ -94,6 +93,47 @@ public class ImportHandlerFactory {
             return null;
         }
         return new LookupRequiredHandler(metaField, importFieldDTO, fieldName);
+    }
+
+    /**
+     * The relation a lookup column actually names — the second-to-last segment, not the first.
+     *
+     * <p>The last segment is how the relation is addressed (a name, a code), so the column is about
+     * the one before it: {@code legalEntityId.name} is about {@code legalEntityId}, and
+     * {@code employeeProfileId.passType.name} is about {@code passType} on EmployeeProfile.
+     *
+     * <p>Reading the first segment instead made a required root spread down every path that ran
+     * through it. {@code Employee.employeeProfileId} is required — an employee must have a profile —
+     * and that turned all five of the Singapore template's {@code employeeProfileId.*.name} columns
+     * mandatory, Pass Type among them. Singapore citizens and PRs hold no pass and the value domain
+     * offers nothing for them, so those employees could not be imported at all, by any spelling.
+     *
+     * <p>"An employee must have a profile" is not "every column reaching through the profile is
+     * mandatory", and only the addressed field can say which. The sibling
+     * {@code createSubFieldHandler} already declines to inherit for the same reason.
+     */
+    private MetaField addressedRelation(String modelName, String fieldName) {
+        String[] segments = fieldName.split("\\.");
+        if (segments.length < 2) {
+            return null;
+        }
+        String currentModel = modelName;
+        // Walk to the model the addressed field lives on: every segment before the last two is a
+        // relation being traversed, not the one the column is about.
+        for (int i = 0; i < segments.length - 2; i++) {
+            if (!ModelManager.existField(currentModel, segments[i])) {
+                return null;
+            }
+            currentModel = ModelManager.getModelField(currentModel, segments[i]).getRelatedModel();
+            if (currentModel == null || !ModelManager.existModel(currentModel)) {
+                return null;
+            }
+        }
+        String addressed = segments[segments.length - 2];
+        if (!ModelManager.existField(currentModel, addressed)) {
+            return null;
+        }
+        return ModelManager.getModelField(currentModel, addressed);
     }
 
     BaseImportHandler createNestedOneToOneHandler(String modelName, String fieldName, ImportFieldDTO importFieldDTO) {
