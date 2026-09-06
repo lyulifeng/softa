@@ -11,6 +11,7 @@ import org.springframework.web.bind.annotation.RestController;
 import lombok.RequiredArgsConstructor;
 
 import io.softa.framework.base.context.Context;
+import io.softa.framework.base.context.EmpInfo;
 import io.softa.framework.base.context.ContextHolder;
 import io.softa.framework.orm.service.CacheService;
 import io.softa.framework.orm.service.EntitlementService;
@@ -58,7 +59,20 @@ public class MeController {
             info = uiContextBuilder.build(ctx.getUserId());
         }
         appendEntitlement(info, ctx.getTenantId());
+        appendEmployeeIdentity(info, ctx);
         return ApiResponse.success(info);
+    }
+
+    /**
+     * Add the caller's own employee id.
+     *
+     * <p>Read from the context — {@code EmployeeContextEnricher} resolved it for this request — rather
+     * than from the cached snapshot, so linking an account to an employee takes effect on the next
+     * request instead of after the snapshot's hour.
+     */
+    private void appendEmployeeIdentity(UiContext info, Context ctx) {
+        EmpInfo empInfo = ctx == null ? null : ctx.getEmpInfo();
+        info.setEmpId(empInfo == null ? null : empInfo.getEmpId());
     }
 
     /**
