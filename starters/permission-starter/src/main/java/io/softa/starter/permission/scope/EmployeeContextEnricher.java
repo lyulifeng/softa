@@ -80,14 +80,14 @@ public class EmployeeContextEnricher implements ContextEnricher {
     /**
      * Load the caller's employee row + managed departments.
      *
-     * <p>Runs with {@code skipPermissionCheck=true} — a scope bypass only; the tenant filter
-     * still applies, so this reads a single tenant's data. The flag is set <b>manually</b>
-     * rather than via {@code @SkipPermissionCheck}: that annotation is Spring-AOP advice and
-     * only fires on calls that arrive through the bean proxy. This method is reached by
-     * self-invocation from {@link #loadCached}, and {@link #collectManagedDeptIds} is
-     * {@code private} — neither is ever advised, so the annotation was inert and these reads
-     * ran under full row-scope enforcement. Same manual pattern as
-     * {@code DepartmentIdPathResolver.loadTreeFromDb()}.
+     * <p>Runs on a copy of the request context with {@code skipPermissionCheck=true} and no company
+     * selected — a scope and selection waiver only; the tenant filter still applies, so this reads a
+     * single tenant's data. The waiver is applied in code rather than via {@code @SkipPermissionCheck}:
+     * that annotation is Spring-AOP advice and only fires on calls that arrive through the bean proxy.
+     * This method is reached by self-invocation from {@link #loadCached}, and
+     * {@link #collectManagedDeptIds} is {@code private} — neither is ever advised, so the annotation
+     * was inert and these reads ran under full row-scope enforcement. Same shape as
+     * {@code MeCompanyController.withSelectionCleared}.
      *
      * <p>Why that mattered: row scope resolves SELF / DIRECT_REPORTS / DEPT_SUBTREE against
      * {@code Context.empInfo} — precisely what this method exists to build. So a non-admin
@@ -99,41 +99,66 @@ public class EmployeeContextEnricher implements ContextEnricher {
     EmpInfo buildFromDb(Long userId) {
         // Non-HR app (no Employee model) → no EmpInfo; caller treats as pure user.
         if (!ModelManager.existModel(EMPLOYEE_MODEL)) return null;
-        // Unbound context (scheduler / MQ threads): permission checks are already bypassed and
-        // the flag would land on the throwaway Context getContext() hands back, so there is
-        // nothing to set or restore.
-        boolean bound = ContextHolder.existContext();
-        Context ctx = bound ? ContextHolder.getContext() : null;
-        boolean previous = bound && ctx.isSkipPermissionCheck();
-        if (bound) ctx.setSkipPermissionCheck(true);
-        try {
-            Map<String, Object> me = modelService.searchOne(
-                    EMPLOYEE_MODEL, new FlexQuery(Filters.of("userId", Operator.EQUAL, userId))).orElse(null);
-            if (me == null || me.get("id") == null) {
-                log.debug("EmployeeContextEnricher — user {} has no linked Employee row (pure user)", userId);
-                return null;
-            }
-            EmpInfo info = new EmpInfo();
-            info.setEmpId(coerceLong(me.get("id")));
-            info.setName(asString(me.get("fullName")));
-            info.setEmail(asString(me.get("workEmail")));
-            info.setPhone(asString(me.get("workPhone")));
-            info.setDeptId(coerceLong(me.get("departmentId")));
-            info.setPositionId(coerceLong(me.get("jobPositionId")));
-            // The org affiliation feeds USER_COMP_ID, so it reads the company AXIS field — after
-            // the split, Employee.legalEntityId still exists but names the signing entity, an
-            // attribute rather than the axis.
-            info.setCompanyId(coerceLong(me.get(ModelConstant.COMPANY_FIELD)));
-            // Same reason as the axis field above, and the same class of name: the framework hard-codes
-            // "tenantId" elsewhere too, so a literal here is a second copy that can drift out of step.
-            // The plain literals around it name HCM's own columns — nothing else spells those, so
-            // there is no copy to keep aligned.
-            info.setTenantId(coerceLong(me.get(ModelConstant.TENANT_ID)));
-            info.setManagedDeptIds(collectManagedDeptIds(info.getEmpId()));
-            return info;
-        } finally {
-            if (bound) ctx.setSkipPermissionCheck(previous);
+        // Unbound context (scheduler / MQ threads): permission checks are already bypassed and there
+        // is no selection to clear, so the reads run as they are.
+        if (!ContextHolder.existContext()) return readIdentity(userId);
+        // Read on a COPY rather than mutating the live context and restoring it. The Context is
+        // shared by the whole request, so a restore missed on any path would leave every later query
+        // unscoped and unnarrowed — a far wider failure than the one this fixes. A copy cannot leak.
+        // Same shape as {@code MeCompanyController.withSelectionCleared}, which asks the sibling
+        // question ("which companies may I switch to") and clears the selection the same way.
+        Context isolated = ContextHolder.getContext().copy();
+        // Row scope resolves SELF / DIRECT_REPORTS / DEPT_SUBTREE against Context.empInfo — precisely
+        // what these reads exist to produce — so leaving it on deadlocks: a non-admin matches no
+        // Employee row, EmpInfo stays null, and every employee-anchored scope silently yields nothing.
+        isolated.setSkipPermissionCheck(true);
+        // Identity is prior to the view. `X-Company-Id` names the company the caller is LOOKING AT;
+        // it must not decide WHO the caller is. Left in place, MultiCompanyScope appends
+        // `companyId = <selected>` to both reads, so a caller viewing a company they hold no employee
+        // row in resolves to no EmpInfo at all — and a CUSTOM rule on USER_EMP_ID then fails outright
+        // at SQL-build time.
+        //
+        // Which requests were affected was arbitrary: this method only runs on an `emp-info:` cache
+        // miss, and that key holds for a month with no company in it, so whichever request happened
+        // to rebuild it decided the answer for the next 30 days — the first request after login
+        // usually carries no company header and resolved correctly, a mid-session rebuild carried one
+        // and could resolve to null.
+        //
+        // Clearing takes MultiCompanyScope's own first branch ("no company selected -> not narrowed");
+        // it is not a new bypass. MultiCountryScope needs no equivalent: it returns early on a blank
+        // `companyCountry`, which CompanyCountryEnricher (ORDER_DERIVED) has not written yet at
+        // ORDER_IDENTITY.
+        isolated.setCompanyId(null);
+        return ContextHolder.callWith(isolated, () -> readIdentity(userId));
+    }
+
+    /** The two reads themselves. Always called with a context that already waives row scope and the
+     *  company selection — see {@link #buildFromDb}. */
+    private EmpInfo readIdentity(Long userId) {
+        Map<String, Object> me = modelService.searchOne(
+                EMPLOYEE_MODEL, new FlexQuery(Filters.of("userId", Operator.EQUAL, userId))).orElse(null);
+        if (me == null || me.get("id") == null) {
+            log.debug("EmployeeContextEnricher — user {} has no linked Employee row (pure user)", userId);
+            return null;
         }
+        EmpInfo info = new EmpInfo();
+        info.setEmpId(coerceLong(me.get("id")));
+        info.setName(asString(me.get("fullName")));
+        info.setEmail(asString(me.get("workEmail")));
+        info.setPhone(asString(me.get("workPhone")));
+        info.setDeptId(coerceLong(me.get("departmentId")));
+        info.setPositionId(coerceLong(me.get("jobPositionId")));
+        // The org affiliation feeds USER_COMP_ID, so it reads the company AXIS field — after
+        // the split, Employee.legalEntityId still exists but names the signing entity, an
+        // attribute rather than the axis.
+        info.setCompanyId(coerceLong(me.get(ModelConstant.COMPANY_FIELD)));
+        // Same reason as the axis field above, and the same class of name: the framework hard-codes
+        // "tenantId" elsewhere too, so a literal here is a second copy that can drift out of step.
+        // The plain literals around it name HCM's own columns — nothing else spells those, so
+        // there is no copy to keep aligned.
+        info.setTenantId(coerceLong(me.get(ModelConstant.TENANT_ID)));
+        info.setManagedDeptIds(collectManagedDeptIds(info.getEmpId()));
+        return info;
     }
 
     /** Departments the employee directly heads — {@code picEmpId} (department
