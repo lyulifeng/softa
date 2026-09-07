@@ -91,6 +91,77 @@ class UserRoleRelServiceImplTest {
     }
 
     @Test
+    void guard_lastHolderOfATenantAdminRole_throws() throws Exception {
+        // The other half of the invariant: a tenant with no tenant admin can no longer administer
+        // itself, which is the whole reason this guard exists.
+        UserRoleRel rel = new UserRoleRel();
+        rel.setId(1L);
+        rel.setRoleId(500L);
+        doReturn(List.of(rel)).when(svc).searchList(any(Filters.class));
+
+        Role tenantAdmin = new Role();
+        tenantAdmin.setId(500L);
+        tenantAdmin.setCode("TENANT_ADMIN");
+        tenantAdmin.setName("Tenant Admin");
+        when(roleService.searchList(any(Filters.class))).thenReturn(List.of(tenantAdmin));
+        doReturn(1L).when(svc).count(any(Filters.class));
+
+        assertThatThrownBy(() -> invokePrivateGuard(svc, List.of(1L)))
+                .hasCauseInstanceOf(BusinessException.class);
+    }
+
+    @Test
+    void guard_lastHolderOfABuiltInBusinessRole_passes() throws Exception {
+        // A downstream app seeds HR Admin / Payroll Admin / Manager / Employee with reserved codes of
+        // their own. Those are built-in role ROWS — not roles somebody must always hold. Revoking the
+        // last HR Admin is an ordinary thing to do when that person changes jobs, and keying the
+        // guard on "has a code" is what used to refuse it.
+        UserRoleRel rel = new UserRoleRel();
+        rel.setId(1L);
+        rel.setRoleId(500L);
+        doReturn(List.of(rel)).when(svc).searchList(any(Filters.class));
+
+        Role hrAdmin = new Role();
+        hrAdmin.setId(500L);
+        hrAdmin.setCode("HR_ADMIN");
+        hrAdmin.setName("HR Admin");
+        when(roleService.searchList(any(Filters.class))).thenReturn(List.of(hrAdmin));
+        doReturn(1L).when(svc).count(any(Filters.class));   // the only holder — and that is allowed
+
+        invokePrivateGuard(svc, List.of(1L));   // must not throw
+    }
+
+    @Test
+    void guard_mixedBatchStillProtectsTheProtectedOne() throws Exception {
+        // Revoking both in one submit: the built-in business role goes, the tenant admin does not.
+        UserRoleRel hrRel = new UserRoleRel();
+        hrRel.setId(1L);
+        hrRel.setRoleId(500L);
+        UserRoleRel adminRel = new UserRoleRel();
+        adminRel.setId(2L);
+        adminRel.setRoleId(600L);
+        doReturn(List.of(hrRel, adminRel)).when(svc).searchList(any(Filters.class));
+
+        Role hrAdmin = new Role();
+        hrAdmin.setId(500L);
+        hrAdmin.setCode("HR_ADMIN");
+        hrAdmin.setName("HR Admin");
+        Role tenantAdmin = new Role();
+        tenantAdmin.setId(600L);
+        tenantAdmin.setCode("TENANT_ADMIN");
+        tenantAdmin.setName("Tenant Admin");
+        when(roleService.searchList(any(Filters.class))).thenReturn(List.of(hrAdmin, tenantAdmin));
+        doReturn(1L).when(svc).count(any(Filters.class));
+
+        // The helper rewraps, and BusinessException's Lombok toString drops the message, so the
+        // name has to be read off the cause itself — it is the point of the assertion: the batch
+        // was refused for the tenant admin, not for the HR Admin sharing the submit.
+        assertThatThrownBy(() -> invokePrivateGuard(svc, List.of(1L, 2L)))
+                .hasCauseInstanceOf(BusinessException.class)
+                .cause().hasMessageContaining("Tenant Admin");
+    }
+
+    @Test
     void guard_emptyRelIds_earlyReturn() throws Exception {
         invokePrivateGuard(svc, List.of());
         verify(roleService, never()).searchList(any(Filters.class));

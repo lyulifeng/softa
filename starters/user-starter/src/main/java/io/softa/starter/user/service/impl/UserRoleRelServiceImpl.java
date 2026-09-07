@@ -24,9 +24,11 @@ import io.softa.starter.user.service.UserRoleRelService;
 /**
  * UserRoleRel Model Service Implementation.
  *
- * <p>Guards system roles against removal of the last holder. Without this
+ * <p>Guards the two roles somebody must always hold — {@code SUPER_ADMIN} and
+ * {@code TENANT_ADMIN} — against removal of their last holder. Without this
  * guard an admin could revoke {@code SUPER_ADMIN} from every user via the
  * generic ORM delete, locking everyone out of role / permission management.
+ * Other built-in roles are revocable down to zero holders.
  * The check runs in {@link #deleteById} / {@link #deleteByIds} / before
  * {@link #deleteByFilters}, so it covers all delete paths whether they go
  * through bulk revoke, the wizard "rewrite" flow, or a custom service call.
@@ -130,13 +132,6 @@ public class UserRoleRelServiceImpl extends EntityServiceImpl<UserRoleRel, Long>
     }
 
     /**
-     * For each system role represented in the to-be-deleted rel set, ensure at
-     * least one remaining holder. {@code SUPER_ADMIN} is the only built-in
-     * code today; the check applies to any future role with a non-null
-     * {@link Role#getCode()} so new system roles inherit the protection
-     * automatically.
-     */
-    /**
      * Reject binding the {@code SUPER_ADMIN} role via the API — it is managed by ops only (seed / DB);
      * no application flow legitimately binds it. TENANT_ADMIN is deliberately NOT blocked here:
      * {@link io.softa.starter.user.provisioning.AdminProvisioningService} binds it during tenant
@@ -158,6 +153,21 @@ public class UserRoleRelServiceImpl extends EntityServiceImpl<UserRoleRel, Long>
         }
     }
 
+    /**
+     * Refuse to strand a role that somebody must always hold — {@code SUPER_ADMIN} and
+     * {@code TENANT_ADMIN}, the two whose absence leaves nobody able to administer.
+     *
+     * <p>Every other built-in role is revocable down to zero holders. It reads as though it should be
+     * the same rule, and it was: the check keyed on "has a code", which is true of every reserved
+     * role. That is the right test for whether the role ROW may be edited or deleted — it is not the
+     * test for whether the role must have a member. Downstream apps seed built-in business roles of
+     * their own, and the last HR Admin then could not be revoked, which is a real thing to do when
+     * somebody changes jobs.
+     *
+     * <p>The query still fetches every reserved role in the set and the narrowing happens here, in
+     * one readable predicate, rather than inside the filter: reserved roles number a handful, and
+     * which of them are protected is a business rule that should not be spelled out in a query.
+     */
     private void guardSystemRoleHolderRemoval(List<Long> relIds) {
         if (relIds == null || relIds.isEmpty()) return;
 
@@ -171,12 +181,9 @@ public class UserRoleRelServiceImpl extends EntityServiceImpl<UserRoleRel, Long>
 
         List<Role> systemRoles = roleService.searchList(
                 new Filters().in(Role::getId, roleIds).isSet(Role::getCode));
-        if (systemRoles.isEmpty()) return;
-
-        Set<Long> systemRoleIds = new HashSet<>(systemRoles.size());
-        for (Role r : systemRoles) systemRoleIds.add(r.getId());
 
         for (Role role : systemRoles) {
+            if (!RoleConstant.requiresAtLeastOneHolder(role)) continue;
             long toRemove = rels.stream()
                     .filter(r -> role.getId().equals(r.getRoleId()))
                     .count();

@@ -64,6 +64,23 @@ public final class RoleConstant {
         return role != null && role.getCode() != null && !role.getCode().isBlank();
     }
 
+    /**
+     * True when stranding this role with no holder would leave nobody able to administer — the only
+     * reason to refuse revoking a role from its last holder.
+     *
+     * <p>Deliberately narrower than {@link #isSystemRole(Role)}, which answers a different question.
+     * "This role row is built in, so an admin may not rename or delete it" is true of every reserved
+     * code; "somebody must always hold this" is true of exactly two. Downstream apps seed their own
+     * built-in business roles (HR Admin, Payroll Admin, Manager, Employee, Read Only), and a tenant
+     * that employs no payroll admin is a tenant that does not run payroll — not a tenant locked out.
+     * Reading the wrong invariant off {@code code} made the last HR Admin unrevokable.
+     *
+     * <p>Null-safe.
+     */
+    public static boolean requiresAtLeastOneHolder(Role role) {
+        return isSuperAdmin(role) || isTenantAdmin(role);
+    }
+
     private RoleConstant() {
         // utility class — no instances
     }
