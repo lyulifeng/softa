@@ -8,6 +8,7 @@ import java.util.Map;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import org.mockito.ArgumentCaptor;
 import org.mockito.InOrder;
 
 import io.softa.framework.orm.domain.Filters;
@@ -141,6 +142,43 @@ class TenantSeedCleanerTest {
 
         assertThat(cleaner.clearPreData(TENANT)).containsEntry("SysPreData", 1);
         assertThat(modelsDeleted()).contains("SysPreData");
+    }
+
+    @Test
+    @DisplayName("parents are deleted last, whatever order the ledger recorded them in")
+    void clearPreData_deletesChildFirst() {
+        // The ledger records the LOAD order, which is parents-first by construction — AttendanceGroup
+        // cannot be created before the AttendanceExceptionRequestRule it points at. Deleting in that same
+        // order hits the FK from the wrong end, and that one declares onDelete = RESTRICT, so the whole
+        // pre-data seeder failed on rebuild: "Cannot delete AttendanceExceptionRequestRule: 1 row(s) in
+        // AttendanceGroup.attnExceptionRequestRuleId still reference it".
+        bindings.add(binding(1L, "AttendanceExceptionRequestRule", "101"));
+        bindings.add(binding(2L, "AttendanceGroup", "201"));
+
+        cleaner.clearPreData(TENANT);
+
+        InOrder order = inOrder(modelService);
+        order.verify(modelService).deleteByIds(eq("AttendanceGroup"), anyList());
+        order.verify(modelService).deleteByIds(eq("AttendanceExceptionRequestRule"), anyList());
+        // The ledger itself stays last: it carries no business FK, but the rows it points at must be gone
+        // before it is, or a failure midway leaves bindings addressing rows that no longer exist.
+        order.verify(modelService).deleteByIds(eq("SysPreData"), anyList());
+    }
+
+    @Test
+    @DisplayName("the ledger is read in a declared order, not the plan's")
+    void clearPreData_readsTheLedgerOrdered() {
+        // Reversing an order that is merely usually insertion order fixes nothing. SysPreData declares no
+        // defaultOrder, and an updated row can move, so without asking for one the delete order — and
+        // whether a rebuild works at all — was a property of the execution plan.
+        bindings.add(binding(1L, "Role", "11"));
+
+        cleaner.clearPreData(TENANT);
+
+        ArgumentCaptor<FlexQuery> query = ArgumentCaptor.forClass(FlexQuery.class);
+        verify(modelService).searchList(eq("SysPreData"), query.capture());
+        assertThat(query.getValue().getOrders()).isNotNull();
+        assertThat(query.getValue().getOrders().toString()).contains("id");
     }
 
     @Test

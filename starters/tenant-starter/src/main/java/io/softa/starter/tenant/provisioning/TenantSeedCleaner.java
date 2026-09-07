@@ -1,6 +1,7 @@
 package io.softa.starter.tenant.provisioning;
 
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -11,6 +12,7 @@ import org.springframework.stereotype.Service;
 import io.softa.framework.orm.constant.ModelConstant;
 import io.softa.framework.orm.domain.Filters;
 import io.softa.framework.orm.domain.FlexQuery;
+import io.softa.framework.orm.domain.Orders;
 import io.softa.framework.orm.service.ModelService;
 import io.softa.framework.orm.utils.IdUtils;
 
@@ -118,12 +120,21 @@ public class TenantSeedCleaner {
      * <p>The bindings go too. Left behind, they would point the next load at rows that no longer exist, and its
      * create-or-update reconciliation would try to update them.
      *
+     * <p><b>Deletes run child-first</b>, the same contract {@link #clearModels} puts on its caller — derived
+     * here rather than passed in. The load order is a dependency order by construction (a seed file cannot
+     * create a row before the row it points at exists), so the ledger, written as the load proceeds, records
+     * parents before children; deleting in that order hits each FK from the wrong end. The ledger read is
+     * ordered explicitly for the same reason: {@code SysPreData} declares no {@code defaultOrder}, so
+     * "insertion order" was an observation about the execution plan, not a guarantee — and the whole
+     * correctness of the clear rested on it.
+     *
      * @param tenantId tenant whose predefined data to remove
      * @return rows deleted per model, including the ledger itself
      */
     public Map<String, Integer> clearPreData(Long tenantId) {
         List<Map<String, Object>> bindings = modelService.searchList(PRE_DATA_LEDGER,
-                new FlexQuery(new Filters().eq(ModelConstant.TENANT_ID, tenantId)));
+                new FlexQuery(new Filters().eq(ModelConstant.TENANT_ID, tenantId),
+                        Orders.ofAsc(ModelConstant.ID)));
         if (bindings.isEmpty()) {
             return Map.of();
         }
@@ -141,11 +152,16 @@ public class TenantSeedCleaner {
                 rowIdsByModel.computeIfAbsent(model, k -> new ArrayList<>()).add(rowId.toString());
             }
         }
+        // Children before parents. Reversing the MODELS is enough: rows of one model have no ordering
+        // requirement among themselves unless the model points at itself, and none of the seeded models does.
+        List<String> modelsChildFirst = new ArrayList<>(rowIdsByModel.keySet());
+        Collections.reverse(modelsChildFirst);
         Map<String, Integer> deleted = new LinkedHashMap<>();
-        rowIdsByModel.forEach((model, rowIds) -> {
+        for (String model : modelsChildFirst) {
+            List<String> rowIds = rowIdsByModel.get(model);
             modelService.deleteByIds(model, toRowIds(model, rowIds));
             deleted.put(model, rowIds.size());
-        });
+        }
         modelService.deleteByIds(PRE_DATA_LEDGER, toRowIds(PRE_DATA_LEDGER, bindingIds));
         deleted.put(PRE_DATA_LEDGER, bindingIds.size());
         return deleted;
