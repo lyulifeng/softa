@@ -145,7 +145,9 @@ public class DesignField extends AuditableModel {
     private Boolean autoSequence;
 
     // Structural mirror of sys_field.cascade_parent (the MANY_TO_ONE a dependent import-template
-    // dropdown narrows by); kept in lockstep so the cross-lane checksum sees no phantom drift.
+    // dropdown narrows by). FIELD_ATTRS is reflective, so the cross-lane checksum reads this the
+    // moment it exists — and null does not hash as false. Declaring the column only covers new rows;
+    // existing ones are backfilled by V41, without which every model aggregate reads as drifted.
     @Field(label = "Cascade Parent")
     private Boolean cascadeParent;
 

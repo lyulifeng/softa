@@ -25,6 +25,7 @@ import org.mockito.Mockito;
 import org.springframework.test.util.ReflectionTestUtils;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.entry;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
@@ -564,10 +565,10 @@ class OptionDropdownResolverTest {
     }
 
     @Test
-    void twoParentsSharingANameFallBackToAFlatList() {
-        // The sheet finds a parent by matching the cell's text against the list of keys. Two rows with
-        // one name are one position, so the second would silently offer the first one's children.
-        // Not narrowing at all is the honest answer, and it is said in the log.
+    void twoParentsSharingANameOfferTheirChildrenTogether() {
+        // The parent column's own list is distinct, so two levels named 'Degree' are one cell value
+        // and one position for MATCH. Their tracks therefore belong under one key: the sheet has no
+        // way to mean either level in particular, and offering neither would be worse than both.
         withMetadata(mm -> {
             field("Employee", "employeeProfileId", FieldType.ONE_TO_ONE, "EmployeeProfile", null, null);
             field("EmployeeProfile", "highestEducationLevel", FieldType.MANY_TO_ONE,
@@ -590,9 +591,33 @@ class OptionDropdownResolverTest {
                     "employeeProfileId.highestEducationLevel.name",
                     "employeeProfileId.highestEducationTrack.name");
 
-            assertThat(resolution.cascadesByColumn()).isEmpty();
-            assertThat(resolution.optionsByColumn().get(1))
-                    .as("the child keeps its flat list").containsExactly("BEng", "MEng");
+            assertThat(resolution.cascadesByColumn().get(1).valuesByParentValue())
+                    .containsExactly(entry("Degree", List.of("BEng", "MEng")));
+        });
+    }
+
+    @Test
+    void flaggingOneRelationLeavesTheOthersPairingAsBefore() {
+        // The rule is per relation, not per model: a model that flags its level must not thereby lose
+        // the code-as-id pairing it already had onto something else. Otherwise annotating one template
+        // silently un-narrows another, with nothing failing and nothing logged.
+        withMetadata(mm -> {
+            field("EmployeeProfile", "institution", FieldType.MANY_TO_ONE, "Institution", null, null);
+            field("EmployeeProfile", "highestEducationTrack", FieldType.MANY_TO_ONE,
+                    "HighestEducationTrack", null, null);
+            parentLink("HighestEducationTrack", "level", "HighestEducationLevel");
+            field("HighestEducationTrack", "institution", FieldType.MANY_TO_ONE, "Institution", null, null);
+            model("Institution", false, IdStrategy.EXTERNAL_ID);
+            model("HighestEducationTrack", false, IdStrategy.EXTERNAL_ID);
+            stubRows("Institution", "id", List.of("SG_NUS"));
+            stubGroupedRows("HighestEducationTrack",
+                    List.of(Map.of("id", "SG_BEng", "institution", "SG_NUS")));
+
+            var resolution = resolveAll("EmployeeProfile", null, "institution", "highestEducationTrack");
+
+            assertThat(resolution.cascadesByColumn().get(1).valuesByParentValue())
+                    .as("the unflagged link still pairs, both columns being code-as-id")
+                    .containsEntry("SG_NUS", List.of("SG_BEng"));
         });
     }
 

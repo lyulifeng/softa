@@ -459,6 +459,9 @@ public final class AnnotationParser {
         f.setRequired(true);
         // Explicit false, like parseField: a null here would diff against the DB row's 0/false and phantom-modify every model's id row on the first boot.
         f.setAutoSequence(false);
+        // Same reason: an id is never a cascade parent, and a null here would diff against the DB
+        // row's 0/false. Against a NOT NULL column that phantom MODIFY writes NULL and fails the boot.
+        f.setCascadeParent(false);
         if (anno != null) {
             f.setDescription(checkedDescription(anno.description(), "field " + modelName + ".id"));
             if (anno.length() > 0) {

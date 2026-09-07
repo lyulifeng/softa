@@ -132,6 +132,7 @@ value-preserving rename would have carried wrong values.
 | `dynamic` | boolean | `false` | `dynamic` | not physically stored |
 | `encrypted` | boolean | `false` | `encrypted` | at-rest encryption |
 | `autoSequence` | boolean | `false` | `auto_sequence` | auto-fill from a sequence on INSERT when blank; STRING only (not `dynamic`/`computed`/id, RDBMS only); pairs with a `sys_sequence` row `"<Model>.<field>"` (missing row = insert fails, fail-closed). `+ readonly` = strict system numbering (caller values rejected); without = caller values trusted (imports). Never carried on copy |
+| `cascadeParent` | boolean | `false` | `cascade_parent` | MANY_TO_ONE only (rejected at scan time and on catalog load). Marks the parent a dependent **import-template dropdown** narrows by — pick a level, get that level's tracks. Per relation: a flagged link pairs however the two columns are addressed (`.name`, `.code`, id); unflagged, the pre-flag rule still applies (both columns code-as-id). Distinguishes a hierarchy parent from a partition (`country`), which structure alone cannot |
 | `maskingType` | `MaskingType[]` | `{}` | `maskingType` | single element |
 | `defaultValue` | String | `""` | `defaultValue` | |
 | `relatedModel` | `Class<?>` | `Void.class` | `relatedModel` | Class ref (compile-checked), e.g. `Foo.class`; `Void.class` → inferred from POJO type; **required** for `Long` FK. Use `relatedModelName` (String) for cross-module/dynamic models |

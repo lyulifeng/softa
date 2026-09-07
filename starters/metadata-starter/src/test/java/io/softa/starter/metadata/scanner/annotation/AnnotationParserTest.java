@@ -473,6 +473,17 @@ class AnnotationParserTest {
     }
 
     @Test
+    void cascadeParent_onTheIdRow_isExplicitFalse() {
+        // buildIdField writes its own SysField and does not go through parseField, so the flag has to
+        // be set there too. A null would diff against the DB row's 0/false and phantom-modify every
+        // model's id row on every boot — and against a NOT NULL column that MODIFY writes NULL and
+        // fails the reconcile outright.
+        AnnotationScanResult result =
+                parser.parse(List.of(CascadeParentOnManyToOneIsAccepted.class), List.of());
+        assertEquals(Boolean.FALSE, byFieldName(result.fields(), "id").getCascadeParent());
+    }
+
+    @Test
     void cascadeParent_onNonRelation_isRejectedAtParse() {
         // A parent is the row this field points at; a STRING points at nothing. Flagging one would
         // mean nothing and fail nowhere, so it fails here.
