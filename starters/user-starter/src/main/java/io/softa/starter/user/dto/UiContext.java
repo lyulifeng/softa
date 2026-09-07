@@ -39,6 +39,21 @@ public class UiContext {
     /** Model name → granted sensitive-field-set ids. */
     private Map<String, Set<String>> modelSensitiveFieldSetsMap;
 
+    /**
+     * The caller's own employee id, or null when the account is not linked to an employee record.
+     *
+     * <p>Appended per request rather than baked into the cached snapshot: the snapshot holds for an
+     * hour, and whether an account is an employee changes the moment an administrator links it.
+     *
+     * <p>The frontend gates flows that require the caller to act <i>as</i> an employee with it — a
+     * document template signed by whoever initiates it, say — at the point the flow is chosen rather
+     * than at the step that submits it.
+     *
+     * <p>Always serialized: a literal {@code null} is the signal ("no employee record"). An absent key
+     * reads as "backend predates the field", which the frontend deliberately does not gate on.
+     */
+    private Long empId;
+
     /** Module ids the tenant's plan entitles it to; OMITTED (null) = entitlement not installed, so the
      *  FE applies no version gating (treats every module as entitled). */
     @JsonInclude(JsonInclude.Include.NON_NULL)
