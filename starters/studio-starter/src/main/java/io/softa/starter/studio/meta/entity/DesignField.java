@@ -144,6 +144,11 @@ public class DesignField extends AuditableModel {
     @Field(label = "Auto Sequence")
     private Boolean autoSequence;
 
+    // Structural mirror of sys_field.cascade_parent (the MANY_TO_ONE a dependent import-template
+    // dropdown narrows by); kept in lockstep so the cross-lane checksum sees no phantom drift.
+    @Field(label = "Cascade Parent")
+    private Boolean cascadeParent;
+
     // Structural mirror of sys_field.countries (the countries a field applies in; empty means all);
     // the cross-lane checksum requires design_* and sys_* to match field-for-field. Without the twin
     // the runtime row carries a value the design row cannot hold at all, and every deploy after that

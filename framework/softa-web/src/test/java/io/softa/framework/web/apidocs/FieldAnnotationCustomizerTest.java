@@ -101,6 +101,7 @@ class FieldAnnotationCustomizerTest {
             @Override public boolean dynamic() { return false; }
             @Override public boolean encrypted() { return false; }
             @Override public boolean autoSequence() { return false; }
+ public boolean cascadeParent() { return false; }
             @Override public MaskingType[] maskingType() { return new MaskingType[0]; }
             @Override public String defaultValue() { return ""; }
             @Override public Class<?> relatedModel() { return Void.class; }

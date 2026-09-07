@@ -442,6 +442,47 @@ class AnnotationParserTest {
         assertTrue(ex.getMessage().contains("tiers"));
     }
 
+    // ------- cascadeParent: mapped through, MANY_TO_ONE only ----------------
+
+    @Model
+    @SuppressWarnings("unused")
+    static class CascadeParentOnManyToOneIsAccepted extends AuditableModel {
+        @Field(fieldType = FieldType.MANY_TO_ONE, relatedModel = Customer.class, cascadeParent = true)
+        private Long levelId;
+        @Field(fieldType = FieldType.MANY_TO_ONE, relatedModel = Customer.class)
+        private Long countryId;
+        @Override public Serializable getId() { return null; }
+    }
+
+    @Test
+    void cascadeParent_onManyToOne_isMappedThrough() {
+        AnnotationScanResult result =
+                parser.parse(List.of(CascadeParentOnManyToOneIsAccepted.class), List.of());
+        assertEquals(Boolean.TRUE, byFieldName(result.fields(), "levelId").getCascadeParent());
+        // Un-flagged relations carry an explicit false (not null) — same reason as autoSequence: the
+        // diff against a DB row's 0/false must never report a phantom modification.
+        assertEquals(Boolean.FALSE, byFieldName(result.fields(), "countryId").getCascadeParent());
+    }
+
+    @Model
+    @SuppressWarnings("unused")
+    static class CascadeParentOnStringIsRejected extends AuditableModel {
+        @Field(cascadeParent = true, length = 32)
+        private String code;
+        @Override public Serializable getId() { return null; }
+    }
+
+    @Test
+    void cascadeParent_onNonRelation_isRejectedAtParse() {
+        // A parent is the row this field points at; a STRING points at nothing. Flagging one would
+        // mean nothing and fail nowhere, so it fails here.
+        IllegalStateException ex = assertThrows(IllegalStateException.class,
+                () -> parser.parse(List.of(CascadeParentOnStringIsRejected.class), List.of()));
+        assertTrue(ex.getMessage().contains("CascadeParentOnStringIsRejected.code"));
+        assertTrue(ex.getMessage().contains("cascadeParent = true"));
+        assertTrue(ex.getMessage().contains("MANY_TO_ONE"));
+    }
+
     // ------- autoSequence: mapped through, STRING fields only -------------
 
     @Model
