@@ -54,6 +54,7 @@ import io.softa.starter.file.enums.ImportType;
 import io.softa.starter.file.excel.export.ExcelSheetData;
 import io.softa.starter.file.excel.export.support.ExcelUploadService;
 import io.softa.starter.file.excel.export.support.OptionDropdownHandler;
+import io.softa.starter.file.excel.style.TemporalColumnFormatHandler;
 import io.softa.starter.file.excel.export.support.OptionDropdownResolver;
 import io.softa.starter.file.excel.imports.ImportRowPipeline;
 import io.softa.starter.file.excel.style.CustomHeadStyleHandler;
@@ -137,7 +138,11 @@ public class ImportServiceImpl implements ImportService {
         ExcelSheetData mainSheetData = new ExcelSheetData(importTemplate.getName(), headers, Collections.emptyList(),
                 new WriteHandler[]{
                         headStyleHandler,
-                        new OptionDropdownHandler(dropdowns.optionsByColumn(), dropdowns.cascadesByColumn())
+                        new OptionDropdownHandler(dropdowns.optionsByColumn(), dropdowns.cascadesByColumn()),
+                        // Without this a date column is General, and the format a typed date takes is
+                        // the reader's locale — contradicting the instruction sheet beside it.
+                        TemporalColumnFormatHandler.forFields(importTemplate.getModelName(),
+                                importFields.stream().map(ImportFieldDTO::getFieldName).toList())
                 });
         List<ExcelSheetData> sheetDataList = new ArrayList<>();
         sheetDataList.add(mainSheetData);
