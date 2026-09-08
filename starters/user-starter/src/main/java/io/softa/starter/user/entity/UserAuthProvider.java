@@ -17,7 +17,16 @@ import io.softa.starter.user.enums.OAuthProvider;
 @EqualsAndHashCode(callSuper = true)
 @Model(
         idStrategy = IdStrategy.DISTRIBUTED_LONG,
-        copyable = false
+        copyable = false,
+        // Which social account belongs to which user is per-tenant data, and the page listing it is
+        // reachable by a tenant admin. Without this the tenantId column below is readonly, so every
+        // insert leaves it NULL and every read returns every tenant's bindings (#956).
+        //
+        // The OAuth lookup is exempt by necessity, not by oversight: it runs before anyone is logged
+        // in, so there is no tenant in context to match on — see @CrossTenant on
+        // UserAuthProviderServiceImpl#getUserIdByAuthProvider. Leaving that unmarked turns a returning
+        // social user into a brand-new registration on every login.
+        multiTenant = true
 )
 public class UserAuthProvider extends AuditableModel {
 

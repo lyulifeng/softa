@@ -19,7 +19,15 @@ import io.softa.starter.user.enums.LoginStatus;
 @EqualsAndHashCode(callSuper = true)
 @Model(
         idStrategy = IdStrategy.DISTRIBUTED_LONG,
-        copyable = false
+        copyable = false,
+        // Who logged in from where is per-tenant data, and the audit page is reachable by a tenant
+        // admin — unisolated it showed every tenant's login trail, IP and location included (#956).
+        //
+        // Written by authentication itself, at a point where the tenant IS known (the login has
+        // resolved a user), so rows written from here on carry it. Rows written before this change
+        // have tenantId NULL and stay invisible to tenants until the release backfill runs; the
+        // platform still sees them, since SUPER_ADMIN reads cross-tenant.
+        multiTenant = true
 )
 public class UserLoginHistory extends AuditableModel {
 
