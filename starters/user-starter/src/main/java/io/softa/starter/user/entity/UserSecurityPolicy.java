@@ -17,7 +17,13 @@ import io.softa.starter.user.enums.LoginMethod;
 @Data
 @EqualsAndHashCode(callSuper = true)
 @Model(
-        idStrategy = IdStrategy.DISTRIBUTED_LONG
+        idStrategy = IdStrategy.DISTRIBUTED_LONG,
+        // Password, session and login-method rules are a tenant's own configuration, and the page is
+        // reachable by a tenant admin. Unisolated, one tenant read and edited another's (#956).
+        //
+        // Nothing enforces these rules yet — the service is an empty CRUD shell — so isolating the
+        // model changes what the page shows, not how any login behaves.
+        multiTenant = true
 )
 public class UserSecurityPolicy extends AuditableModel {
 
