@@ -11,11 +11,27 @@ import io.softa.framework.orm.enums.FieldType;
 import io.softa.starter.file.enums.DocumentTemplateType;
 
 /**
- * DocumentTemplate Model
+ * DocumentTemplate Model — the body of a document a tenant sends out.
+ *
+ * <p><b>Tenant-isolated.</b> It carries {@code tenantId} and always did, but without the flag the
+ * column was decoration: {@code fillTenantFieldForInsert} only stamps a model
+ * {@code isMultiTenantControl} says is isolated, and {@code WhereBuilder} only narrows one. So every
+ * row was written with a null tenant and every tenant read every other tenant's contract wording —
+ * the document body, which is the part with names and salaries in it.
+ *
+ * <p>Everything around it in this package is already isolated ({@code ImportTemplate},
+ * {@code ExportTemplate}, {@code SigningRequest}, {@code SigningDocument}), including this model's
+ * own child {@link DocumentTemplateSignSlot}. A parent that is shared while its sign slots are
+ * per-tenant is not a design, so this is a fix rather than a change of scope.
+ *
+ * <p>⚠️ Existing rows have {@code tenant_id IS NULL} and become invisible to everyone the moment the
+ * flag lands — document generation reads the body through {@code searchList("DocumentTemplate", …)}
+ * and would fail with "HTML template not found". The column has to be backfilled before the patched
+ * binary starts; downstream apps own that migration because only they know who each row belongs to.
  */
 @Data
 @EqualsAndHashCode(callSuper = true)
-@Model
+@Model(multiTenant = true)
 public class DocumentTemplate extends AuditableModel {
 
     @Serial
