@@ -56,6 +56,7 @@ import io.softa.starter.file.excel.export.support.ExcelUploadService;
 import io.softa.starter.file.excel.export.support.OptionDropdownHandler;
 import io.softa.starter.file.excel.style.TemporalColumnFormatHandler;
 import io.softa.starter.file.excel.export.support.OptionDropdownResolver;
+import io.softa.starter.file.excel.imports.ImportHeaderMatcher;
 import io.softa.starter.file.excel.imports.ImportRowPipeline;
 import io.softa.starter.file.excel.style.CustomHeadStyleHandler;
 import io.softa.starter.file.message.AsyncImportProducer;
@@ -455,10 +456,9 @@ public class ImportServiceImpl implements ImportService {
      * @return the generated ImportDataDTO object
      */
     private ImportDataDTO generateImportDataDTO(ImportTemplateDTO importTemplateDTO, InputStream inputStream) {
-        Map<String, String> headerToFieldMap = new HashMap<>();
-        importTemplateDTO.getImportFields()
-                .forEach(importField -> headerToFieldMap.put(importField.getHeader(), importField.getFieldName()));
-        List<Map<String, Object>> allDataList = this.extractDataFromExcel(headerToFieldMap, inputStream);
+        ImportHeaderMatcher headerMatcher = ImportHeaderMatcher.of(importTemplateDTO.getImportFields());
+        List<Map<String, Object>> allDataList =
+                this.extractDataFromExcel(headerMatcher, importTemplateDTO.getFileName(), inputStream);
         Assert.notEmpty(allDataList, "No data exists in the excel file `{0}`", importTemplateDTO.getFileName());
         ImportDataDTO importDataDTO = new ImportDataDTO();
         importDataDTO.setRows(allDataList);
@@ -615,10 +615,14 @@ public class ImportServiceImpl implements ImportService {
      * Extract the data from the uploaded Excel file.
      * Load the first sheet of the Excel file by FesodSheet.read(file, {}).sheet(0).doRead().
      *
-     * @param headerToFieldMap the mapping of the header to fieldName
+     * @param headerMatcher pairs the sheet's header row with the template's declared columns
+     * @param fileName the uploaded file's name, for the mismatch message
      * @param inputStream the input stream of the uploaded file
      */
-    private List<Map<String, Object>> extractDataFromExcel(Map<String, String> headerToFieldMap, InputStream inputStream) {
+    // Package-private, not private: the header check only proves itself against a real workbook read
+    // by the real reader, and that read is what a test has to be able to call.
+    List<Map<String, Object>> extractDataFromExcel(ImportHeaderMatcher headerMatcher, String fileName,
+                                                   InputStream inputStream) {
         List<Map<String, Object>> rows = new ArrayList<>();
         FesodSheet.read(inputStream, new AnalysisEventListener<Map<Integer, String>>() {
             // The mapping of column index and header name
@@ -630,7 +634,7 @@ public class ImportServiceImpl implements ImportService {
                 Map<String, Object> mappedRow = new HashMap<>();
                 for (Map.Entry<Integer, String> entry : rowData.entrySet()) {
                     String headerName = headerMap.get(entry.getKey());
-                    String fieldName = headerToFieldMap.get(headerName);
+                    String fieldName = headerMatcher.fieldNameFor(headerName);
                     if (fieldName != null) {
                         mappedRow.put(fieldName, entry.getValue());
                     }
@@ -638,10 +642,13 @@ public class ImportServiceImpl implements ImportService {
                 rows.add(mappedRow);
             }
 
-            // Save the header mapping
+            // Save the header mapping, and settle here whether this file was written from the
+            // selected template at all. Reading on regardless is what turned "wrong template" into
+            // a required-field error on every row, naming fields the file's object does not have.
             @Override
             public void invokeHeadMap(Map<Integer, String> headMap, AnalysisContext context) {
                 this.headerMap = headMap;
+                headerMatcher.assertMatches(headMap.values(), fileName);
             }
 
             @Override
