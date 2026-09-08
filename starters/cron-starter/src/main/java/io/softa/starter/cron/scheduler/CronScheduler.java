@@ -54,13 +54,20 @@ public class CronScheduler {
 
     /**
      * Start all active cron jobs.
+     * A job that cannot be registered — an unparsable cron expression, most often — is logged and skipped, so the remaining jobs still get scheduled.
      */
     @SwitchUser(SystemUser.CRON_USER)
     public void start() {
         List<SysCron> sysCronList = jdbcService.selectMetaEntityList(SysCron.class, null);
         for (SysCron sysCron : sysCronList) {
-            if (Boolean.TRUE.equals(sysCron.getActive())) {
+            if (Boolean.FALSE.equals(sysCron.getActive())) {
+                continue;
+            }
+            // start() runs once per leader election, so an exception escaping this loop would leave every remaining job unscheduled and cost this node its leadership.
+            try {
                 registerCron(sysCron);
+            } catch (Exception e) {
+                log.error("Failed to register cron job {}({}), skipped: {}", sysCron.getName(), sysCron.getCronExpression(), e.getMessage(), e);
             }
         }
     }
