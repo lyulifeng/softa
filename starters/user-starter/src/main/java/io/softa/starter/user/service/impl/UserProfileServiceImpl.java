@@ -13,6 +13,7 @@ import io.softa.framework.base.constant.StringConstant;
 import io.softa.framework.base.context.Context;
 import io.softa.framework.base.context.ContextHolder;
 import io.softa.framework.base.context.UserInfo;
+import io.softa.framework.base.exception.BaseException;
 import io.softa.framework.base.exception.BusinessException;
 import io.softa.framework.base.exception.IllegalArgumentException;
 import io.softa.framework.base.utils.Assert;
@@ -27,6 +28,7 @@ import io.softa.framework.orm.meta.ModelManager;
 import io.softa.framework.orm.service.CacheService;
 import io.softa.framework.orm.service.FileService;
 import io.softa.framework.orm.service.TenantInfoService;
+import io.softa.framework.orm.service.UserInfoService;
 import io.softa.framework.orm.service.impl.EntityServiceImpl;
 import io.softa.starter.user.dto.UserProfileDTO;
 import io.softa.starter.user.entity.UserAccount;
@@ -43,7 +45,8 @@ import io.softa.starter.user.util.LoginIdentifiers;
  */
 @Slf4j
 @Service
-public class UserProfileServiceImpl extends EntityServiceImpl<UserProfile, Long> implements UserProfileService {
+public class UserProfileServiceImpl extends EntityServiceImpl<UserProfile, Long>
+        implements UserProfileService, UserInfoService {
 
     @Autowired
     private FileService fileService;
@@ -209,6 +212,50 @@ public class UserProfileServiceImpl extends EntityServiceImpl<UserProfile, Long>
             this.refreshUserInfo(userId, userInfo);
         }
         return userInfo;
+    }
+
+    /**
+     * The framework-facing half of {@link #getUserInfo(Long)}: same cache-or-database load, but a
+     * missing account / profile answers {@code null} instead of throwing.
+     *
+     * <p>{@code ContextBuilder} calls this on every request whose {@code user-info:} entry is cold,
+     * which is any request following one of this codebase's evictions. It runs before a context
+     * exists, exactly as the tenant gate beside it does, so an exception escaping here would surface
+     * as a server error on what is really "this session cannot be resolved" — a condition the caller
+     * already has a correct answer for.
+     *
+     * <p><b>Why the explicit cross-tenant context</b>: {@code UserAccount} is {@code multiTenant},
+     * and the tenant this read would be filtered by is the one thing it is trying to find out. There
+     * is no context bound at all this early — {@code ContextHolder} hands back an empty one — so the
+     * filter degrades to {@code tenant_id = NULL}, matches nothing, and the rebuild would report
+     * every session as a missing user while looking like it worked. The read is by primary key, and
+     * the key came from {@code session:{sessionId}} — the server's own record of whose session this
+     * is — so the cross-tenant lookup is as narrow as it gets. Same shape as corehr's
+     * {@code EmployeeEventBridge.resolveUserHandle}.
+     *
+     * <p>Set in code rather than with {@code @CrossTenant}: that annotation is Spring-AOP advice and
+     * only fires on calls arriving through the bean proxy, and {@link #getUserInfo(Long)} is reached
+     * here by self-invocation.
+     *
+     * <p>{@link BaseException} and not {@code BusinessException}: the build fails two ways, and they
+     * are siblings rather than one hierarchy. A missing account or profile raises
+     * {@code BusinessException}; the tenant checks inside {@code buildUserInfo} go through
+     * {@code Assert}, which raises {@code IllegalArgumentException}. Both mean the same thing here.
+     */
+    @Override
+    public UserInfo loadUserInfo(Long userId) {
+        if (userId == null) {
+            return null;
+        }
+        Context ctx = ContextHolder.cloneContext();
+        ctx.setCrossTenant(true);
+        ctx.setSkipPermissionCheck(true);
+        try {
+            return ContextHolder.callWith(ctx, () -> this.getUserInfo(userId));
+        } catch (BaseException e) {
+            log.warn("loadUserInfo — cannot build UserInfo for userId={}: {}", userId, e.getMessage());
+            return null;
+        }
     }
 
     @Override
