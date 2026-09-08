@@ -20,6 +20,7 @@ import io.softa.framework.base.exception.UserNotFoundException;
 import io.softa.framework.base.utils.Assert;
 import io.softa.framework.orm.service.CacheService;
 import io.softa.framework.orm.service.TenantInfoService;
+import io.softa.framework.orm.service.UserInfoService;
 import io.softa.framework.web.utils.CookieUtils;
 
 @Slf4j
@@ -31,6 +32,14 @@ public class ContextBuilder implements SmartInitializingSingleton {
 
     @Autowired(required = false)
     private TenantInfoService tenantInfoService;
+
+    /**
+     * Rebuilds a cold {@code user-info:} entry. Optional the same way {@link TenantInfoService} is:
+     * a deployment without user-starter has no UserInfo to build, and degrades to rejecting the
+     * request — which is what it did unconditionally before.
+     */
+    @Autowired(required = false)
+    private UserInfoService userInfoService;
 
     @Autowired(required = false)
     private List<ContextEnricher> contextEnrichers;
@@ -63,8 +72,18 @@ public class ContextBuilder implements SmartInitializingSingleton {
         }
 
         UserInfo userInfo = cacheService.get(RedisConstant.USER_INFO + userId, UserInfo.class);
+        if (userInfo == null && userInfoService != null) {
+            // A cold entry is the NORMAL state after any of this codebase's evictions — an invitee
+            // activating, a bulk unfreeze, a person renaming themselves, an HR-side employee
+            // change. Each of those is written as a refresh and documents the stale value it means
+            // to replace; reading through to the database is what makes them refreshes. Treating
+            // the miss as "missing user" instead turned every one of them into a forced logout of
+            // the very user being updated, with no way back in: the endpoint that could rebuild the
+            // entry sits behind this same gate, so only a fresh login could.
+            userInfo = userInfoService.loadUserInfo(userId);
+        }
         if (userInfo == null) {
-            // Session ID valid but userInfo missing -> also "missing user"
+            // Nothing behind the id — the session names a user that no longer exists.
             throw new UserNotFoundException("User info not found for user ID: " + userId);
         }
         return userInfo;
