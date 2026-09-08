@@ -56,6 +56,7 @@ import io.softa.starter.file.excel.export.support.ExcelUploadService;
 import io.softa.starter.file.excel.export.support.OptionDropdownHandler;
 import io.softa.starter.file.excel.style.TemporalColumnFormatHandler;
 import io.softa.starter.file.excel.export.support.OptionDropdownResolver;
+import io.softa.starter.file.excel.imports.ImportFailureMessage;
 import io.softa.starter.file.excel.imports.ImportHeaderMatcher;
 import io.softa.starter.file.excel.imports.ImportRowPipeline;
 import io.softa.starter.file.excel.style.CustomHeadStyleHandler;
@@ -326,7 +327,7 @@ public class ImportServiceImpl implements ImportService {
             return importHistory;
         } catch (RuntimeException e) {
             importHistory.setStatus(ImportStatus.FAILURE);
-            importHistory.setErrorMessage(e.getMessage());
+            importHistory.setErrorMessage(ImportFailureMessage.forImport(e));
             importException = e;
             throw e;
         } finally {
@@ -376,7 +377,7 @@ public class ImportServiceImpl implements ImportService {
             return importHistory;
         } catch (RuntimeException e) {
             importHistory.setStatus(ImportStatus.VALIDATION_FAILURE);
-            importHistory.setErrorMessage(e.getMessage());
+            importHistory.setErrorMessage(ImportFailureMessage.forImport(e));
             validateException = e;
             throw e;
         } finally {

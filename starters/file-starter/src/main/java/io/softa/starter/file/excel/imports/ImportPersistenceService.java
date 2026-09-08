@@ -64,7 +64,10 @@ public class ImportPersistenceService {
             try {
                 persistByRule(importTemplateDTO, List.of(row));
             } catch (RuntimeException ex) {
-                originalRow.put(FileConstant.FAILED_REASON, ex.getMessage());
+                // Never ex.getMessage(): for a unique violation that is the driver's INSERT plus the
+                // table, every column, the constraint name and the tenant id — handed to the tenant
+                // in a downloadable file. See ImportFailureMessage.
+                originalRow.put(FileConstant.FAILED_REASON, ImportFailureMessage.forRow(ex));
                 failedRows.add(originalRow);
                 rowIterator.remove();
                 originalRowIterator.remove();

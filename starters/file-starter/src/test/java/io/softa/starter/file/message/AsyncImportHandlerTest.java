@@ -66,7 +66,12 @@ class AsyncImportHandlerTest {
         ArgumentCaptor<ImportHistory> updated = ArgumentCaptor.forClass(ImportHistory.class);
         verify(importHistoryService).updateOne(updated.capture());
         assertEquals(ImportStatus.FAILURE, updated.getValue().getStatus());
-        assertEquals("object storage is down", updated.getValue().getErrorMessage());
+        // Not "object storage is down". That message is the storage client's, written for whoever
+        // reads the log — a real one carries the endpoint, the bucket, sometimes a credential
+        // fragment, and this field is shown to the tenant. The detail moves to the log; see
+        // ImportFailureMessage.
+        assertEquals("The import could not be completed because of an unexpected error. "
+                + "The details are in the server log.", updated.getValue().getErrorMessage());
     }
 
     @Test

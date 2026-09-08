@@ -9,6 +9,7 @@ import org.springframework.stereotype.Component;
 
 import io.softa.framework.base.exception.IllegalArgumentException;
 import io.softa.framework.orm.service.FileService;
+import io.softa.starter.file.excel.imports.ImportFailureMessage;
 import io.softa.starter.file.dto.ImportTemplateDTO;
 import io.softa.starter.file.entity.ImportHistory;
 import io.softa.starter.file.enums.ImportStatus;
@@ -60,7 +61,7 @@ public class AsyncImportHandler {
             return;
         }
         importHistory.setStatus(ImportStatus.FAILURE);
-        importHistory.setErrorMessage(cause.getMessage());
+        importHistory.setErrorMessage(ImportFailureMessage.forImport(cause));
         try {
             importHistoryService.updateOne(importHistory);
         } catch (RuntimeException updateException) {
