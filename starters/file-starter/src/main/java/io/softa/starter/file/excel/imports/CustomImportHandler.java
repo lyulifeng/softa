@@ -30,6 +30,32 @@ public interface CustomImportHandler {
     void handleImportData(List<Map<String, Object>> rows, Map<String, Object> env, boolean validateOnly);
 
     /**
+     * Act on the rows that actually landed, after the pipeline has persisted them.
+     *
+     * <p>Called only on a real import, only when at least one row was written, and handed exactly the
+     * rows that reached the database — failed rows have already been taken out, and every row carries
+     * the id the insert assigned it.
+     *
+     * <p>This is the only place a side effect keyed to a row may be produced. {@link
+     * #handleImportData(List, Map, boolean)} runs <b>before</b> persistence and there is no shared
+     * transaction across the two: an import runs without one, so anything a {@code @Transactional}
+     * service writes from there commits on its own and survives a row that later fails to insert.
+     * That is how a partially failed employee import left user accounts behind holding the emails and
+     * mobile numbers of employees that do not exist — each retry stranding another batch.
+     *
+     * <p>Nothing here can roll the import back; the rows are committed. An implementation that acts
+     * per row should therefore catch per row and report, rather than letting one failure abandon the
+     * remaining rows. An escaping exception is recorded against the import history and surfaced, but
+     * the data stays written.
+     *
+     * @param rows the persisted rows, each carrying its assigned id — never empty
+     * @param env environment variables
+     */
+    default void afterPersist(List<Map<String, Object>> rows, Map<String, Object> env) {
+        // Most handlers only shape rows on the way in and have nothing to do here.
+    }
+
+    /**
      * @deprecated Implement {@link #handleImportData(List, Map, boolean)} instead — without the flag a
      *         handler cannot tell a real import from a validation run, so anything it writes happens
      *         twice: once while the user is only asking whether the file is valid. Kept so an existing

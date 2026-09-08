@@ -7,6 +7,7 @@ import org.apache.commons.lang3.StringUtils;
 import org.springframework.beans.factory.NoSuchBeanDefinitionException;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
+import org.springframework.util.CollectionUtils;
 
 import io.softa.framework.base.exception.IllegalArgumentException;
 import io.softa.framework.base.utils.SpringContextUtils;
@@ -48,6 +49,10 @@ public class ImportRowPipeline {
     public void importData(ImportTemplateDTO importTemplateDTO, ImportDataDTO importDataDTO) {
         processRows(importTemplateDTO, importDataDTO, ImportMode.IMPORT);
         importPersistenceService.persist(importTemplateDTO, importDataDTO);
+        // Rows that failed to persist are already out of the list and the rest carry their new ids,
+        // so this is the first point at which "which rows exist now" is answerable. A side effect
+        // produced before it — provisioning an account, say — outlives the row it belongs to.
+        executeAfterPersist(importTemplateDTO.getCustomHandler(), importDataDTO);
     }
 
     /**
@@ -113,19 +118,41 @@ public class ImportRowPipeline {
     }
 
     private void executeCustomHandler(String handlerName, ImportDataDTO importDataDTO, ImportMode mode) {
-        if (StringUtils.isBlank(handlerName)) {
+        CustomImportHandler handler = resolveCustomHandler(handlerName);
+        if (handler == null) {
             return;
+        }
+        List<Map<String, Object>> rows = importDataDTO.getRows();
+        int originalSize = rows.size();
+        List<Integer> rowIdentitySnapshot = rows.stream().map(System::identityHashCode).toList();
+        handler.handleImportData(rows, importDataDTO.getEnv(), mode.isValidateOnly());
+        validateCustomHandlerContract(handlerName, rows, originalSize, rowIdentitySnapshot);
+    }
+
+    /**
+     * Hand the handler the rows that actually landed.
+     *
+     * <p>Skipped when nothing landed: a handler acting on an empty batch has nothing to act on, and
+     * the contract promises a non-empty list so implementations need no guard of their own.
+     */
+    private void executeAfterPersist(String handlerName, ImportDataDTO importDataDTO) {
+        CustomImportHandler handler = resolveCustomHandler(handlerName);
+        if (handler == null || CollectionUtils.isEmpty(importDataDTO.getRows())) {
+            return;
+        }
+        handler.afterPersist(importDataDTO.getRows(), importDataDTO.getEnv());
+    }
+
+    /** The configured handler, or null when the template names none. */
+    private CustomImportHandler resolveCustomHandler(String handlerName) {
+        if (StringUtils.isBlank(handlerName)) {
+            return null;
         }
         if (!StringTools.isBeanName(handlerName)) {
             throw new IllegalArgumentException("The name of custom import handler `{0}` is invalid.", handlerName);
         }
         try {
-            CustomImportHandler handler = SpringContextUtils.getBean(handlerName, CustomImportHandler.class);
-            List<Map<String, Object>> rows = importDataDTO.getRows();
-            int originalSize = rows.size();
-            List<Integer> rowIdentitySnapshot = rows.stream().map(System::identityHashCode).toList();
-            handler.handleImportData(rows, importDataDTO.getEnv(), mode.isValidateOnly());
-            validateCustomHandlerContract(handlerName, rows, originalSize, rowIdentitySnapshot);
+            return SpringContextUtils.getBean(handlerName, CustomImportHandler.class);
         } catch (NoSuchBeanDefinitionException e) {
             throw new IllegalArgumentException("The custom import handler `{0}` is not found.", handlerName);
         }
