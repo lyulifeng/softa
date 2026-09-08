@@ -120,6 +120,29 @@ class EndpointIndexStandardDerivationTest {
     }
 
     @Test
+    void timelineEndpoints_rideOnTheMatchingCrudAction() {
+        // TimelineModelController's four endpoints have no action of their own:
+        // addVersion(AndFetch) inserts a slice → create;
+        // setEndDate rewrites a slice's end date → update;
+        // deleteBySliceId → delete.
+        // Left unmapped they fall to "Endpoint not registered" → 403 for every non-admin caller.
+        try (MockedStatic<ModelManager> mm = Mockito.mockStatic(ModelManager.class)) {
+            mm.when(() -> ModelManager.existModel("Employee")).thenReturn(true);
+            mm.when(() -> ModelManager.getModelFields("Employee")).thenReturn(List.of());
+
+            EndpointIndex idx = build(List.of(
+                    derivedPerm("employee.create", "Employee"),
+                    derivedPerm("employee.update", "Employee"),
+                    derivedPerm("employee.delete", "Employee")));
+
+            assertThat(idx.lookup("/Employee/addVersion", "POST")).containsExactly("employee.create");
+            assertThat(idx.lookup("/Employee/addVersionAndFetch", "POST")).containsExactly("employee.create");
+            assertThat(idx.lookup("/Employee/setEndDate", "POST")).containsExactly("employee.update");
+            assertThat(idx.lookup("/Employee/deleteBySliceId", "POST")).containsExactly("employee.delete");
+        }
+    }
+
+    @Test
     void exportAction_registersSharedAbsoluteEndpoints() {
         // Export is served by shared file-starter controllers (model in a request
         // param), so `export` maps to ABSOLUTE endpoints emitted verbatim — NOT

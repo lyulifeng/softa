@@ -104,16 +104,20 @@ public class EndpointIndex {
     private static final Map<String, List<String>> STANDARD_ACTION_MAP = Map.ofEntries(
             Map.entry("view",   VIEW_ENDPOINTS),
             // getDefaultValues backs the new-record form, so it rides on the create perm.
+            // Timeline addVersion(AndFetch) inserts a new slice row, so it rides on the create perm.
             Map.entry("create", List.of("POST createOne", "POST createOneAndFetch",
                                         "POST createList", "POST createListAndFetch",
-                                        "GET getDefaultValues")),
+                                        "GET getDefaultValues",
+                                        "POST addVersion", "POST addVersionAndFetch")),
             // onChange/{fieldName} is framework-generated per model; field-level change
             // handlers run while editing a record, so they fall under the update perm.
+            // Timeline setEndDate rewrites an existing slice's end date, so it rides on the update perm.
             Map.entry("update", List.of("POST updateOne", "POST updateOneAndFetch",
                                         "POST updateList", "POST updateListAndFetch",
                                         "POST updateByFilter",
                                         "POST updateByIdAndFetch", "POST updateByIdsAndFetch",
-                                        "POST onChange/{fieldName}")),
+                                        "POST onChange/{fieldName}",
+                                        "POST setEndDate")),
             Map.entry("delete", List.of("POST deleteOne", "POST deleteList",
                                         "POST deleteById", "POST deleteByIds", "POST deleteBySliceId")),
             // Export/import are served by shared file-starter controllers whose
