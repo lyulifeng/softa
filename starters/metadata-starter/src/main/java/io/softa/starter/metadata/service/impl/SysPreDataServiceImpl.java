@@ -218,10 +218,14 @@ public class SysPreDataServiceImpl extends EntityServiceImpl<SysPreData, Long> i
      * treated as read-only — it is split into a main-model map and a OneToMany map.
      * When the OneToMany field value is empty, it indicates the deletion of existing associated model data.
      *
+     * <p>Package-private so one seed record — the main row, its frozen state, and the reconciliation
+     * of the children it owns — can be driven from a unit test without a whole file load, the same
+     * reason {@link #bindingScopeOf} is.
+     *
      * @param model Model name
      * @param row Predefined data record
      */
-    private Serializable handlePredefinedData(String model, Map<String, Object> row) {
+    Serializable handlePredefinedData(String model, Map<String, Object> row) {
         validateSeedScope(model);
         Map<String, Object> mainRow = new LinkedHashMap<>();
         Map<String, Object> oneToManyMap = new LinkedHashMap<>();
