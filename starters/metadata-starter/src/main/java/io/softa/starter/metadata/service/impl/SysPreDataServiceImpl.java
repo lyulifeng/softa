@@ -26,6 +26,7 @@ import io.softa.framework.orm.utils.FileUtils;
 import io.softa.framework.orm.utils.IdUtils;
 import io.softa.starter.metadata.entity.SysPreData;
 import io.softa.starter.metadata.service.SysPreDataService;
+import lombok.extern.slf4j.Slf4j;
 
 import static io.softa.framework.orm.constant.ModelConstant.ID;
 
@@ -46,6 +47,7 @@ import static io.softa.framework.orm.constant.ModelConstant.ID;
  * File-format concerns (JSON / CSV / XML) are delegated to {@link PreDataFormatParser}; this service owns the
  * predefined-data domain logic only — preId binding, main/sub-model ordering, and create-or-update reconciliation.
  */
+@Slf4j
 @Service
 public class SysPreDataServiceImpl extends EntityServiceImpl<SysPreData, Long> implements SysPreDataService {
 
@@ -423,16 +425,43 @@ public class SysPreDataServiceImpl extends EntityServiceImpl<SysPreData, Long> i
             SysPreData preData = optionalPreData.get();
             // Update the data and return the data ID
             Serializable rowId = IdUtils.formatId(model, preData.getRowId());
-            resolved.put(ID, rowId);
-            // Clear other fields that do not appear in the predefined data
-            Set<String> updatableStoredFields = ModelManager.getModelUpdatableFieldsWithoutXToMany(model);
-            updatableStoredFields.removeAll(resolved.keySet());
-            updatableStoredFields.forEach(fieldName -> resolved.put(fieldName, null));
-            boolean result = modelService.updateOne(model, resolved);
-            if (!result) {
-                boolean isExist = modelService.exist(model, rowId);
-                Assert.isTrue(isExist, "Updating predefined data for model {0} ({1}) failed " +
-                        "as it has already been physically deleted!", model, preData.getRowId());
+            // The update payload is `resolved` plus a null for every updatable field the file leaves
+            // out — "clear what the seed no longer says". Held apart from `resolved` because the
+            // recreate path below must not inherit those nulls: a default value is filled only when
+            // the key is ABSENT (BaseProcessor's computeIfAbsent), so creating from the cleared map
+            // would write nulls over the model's defaults and produce a row a first load never would.
+            Map<String, Object> updatePayload = new LinkedHashMap<>(resolved);
+            updatePayload.put(ID, rowId);
+            Set<String> clearedFields = ModelManager.getModelUpdatableFieldsWithoutXToMany(model);
+            clearedFields.removeAll(updatePayload.keySet());
+            clearedFields.forEach(fieldName -> updatePayload.put(fieldName, null));
+            boolean result = modelService.updateOne(model, updatePayload);
+            if (!result && !modelService.exist(model, rowId)) {
+                // The binding outlived the row it points at. That is a normal state, not corruption:
+                // seeded rows are ordinary business data afterwards — the role wizard rewrites a
+                // role's data scopes, an admin deletes a navigation — and nothing tells sys_pre_data.
+                // Failing here made the seed permanently un-re-appliable the moment anyone touched
+                // the data. Re-create the row and re-point the binding instead, which is what
+                // create-or-update already does for a preId with no binding; this is the same case one
+                // step later. (`exist` reads through the soft-delete predicate, so a soft-deleted row
+                // counts as gone and is re-created rather than revived.)
+                //
+                // `result` alone is not enough to conclude the row is missing: updateOne also returns
+                // false when nothing changed, which is why the row is probed before recreating.
+                log.warn("Predefined data for model {} ({}) was physically deleted; recreating it and "
+                        + "re-pointing the binding.", model, preData.getRowId());
+                // Same id rule as the create branch above: an EXTERNAL_ID model's id IS its primary
+                // key (code-as-id), so the recreated row keeps the id the binding already names. Every
+                // other strategy assigns a fresh surrogate, which the binding is re-pointed to.
+                if (ModelManager.getIdStrategy(model) == IdStrategy.EXTERNAL_ID) {
+                    resolved.put(ID, rowId);
+                } else {
+                    resolved.remove(ID);
+                }
+                Serializable recreatedId = modelService.createOne(model, resolved);
+                preData.setRowId(String.valueOf(recreatedId));
+                this.updateOne(preData);
+                return recreatedId;
             }
             // The typed id, not `preData.getRowId()` — that column is a String. The caller injects this
             // value into each OneToMany child as the back-reference, and resolveReferencedPreIds reads a
