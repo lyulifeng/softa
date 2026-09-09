@@ -336,7 +336,12 @@ public class SysPreDataServiceImpl extends EntityServiceImpl<SysPreData, Long> i
                 Assert.isTrue(isExist, "Updating predefined data for model {0} ({1}) failed " +
                         "as it has already been physically deleted!", model, preData.getRowId());
             }
-            return preData.getRowId();
+            // The typed id, not `preData.getRowId()` — that column is a String. The caller injects this
+            // value into each OneToMany child as the back-reference, and resolveReferencedPreIds reads a
+            // String on a to-one field as a preId: a raw row id would be looked up in sys_pre_data, found
+            // missing, and reported as "the preIDs … do not exist". Only the UPDATE branch could return
+            // the untyped value, so a seed carrying children loaded once and failed on every re-run.
+            return rowId;
         }
     }
 
