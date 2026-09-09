@@ -272,8 +272,25 @@ public class SysPreDataServiceImpl extends EntityServiceImpl<SysPreData, Long> i
     }
 
     /**
-     * Load OneToMany field data
-     * Based on and retain the existing Many side ids, delete Many side data that does not exist in the predefined data file.
+     * Reconcile a main row's OneToMany children with the file: the children it still declares are
+     * created or updated, the rest are deleted.
+     *
+     * <p>Reconciliation runs BEFORE the writes, and what survives is read from the bindings — the rows
+     * the file's child preIds point at — rather than from what the writes just returned. The order is
+     * the whole point. Writing first and deleting the leftovers afterwards cannot express a RENAMED
+     * preId: a renamed child is one row to delete and one to create, and with the delete last the
+     * create runs while the old row is still there, so any child model with a business unique key
+     * fails on its index. Role.Tenant.json is exactly that shape — renaming
+     * {@code role_navigation.employee.employee} to
+     * {@code role_navigation.employee.core-hr-employee-employee} left the grant itself untouched, and
+     * every re-load died on "This role already has a grant for this navigation", naming a duplicate
+     * that was never going to exist once the delete ran.
+     *
+     * <p>Deleting first is safe in a way the reverse is not: the whole load is one transaction, so a
+     * failure anywhere puts the deleted rows back, and "survives" is decided by the file, not by
+     * write side effects. Rows the tenant added by hand still go — they carry no binding, so the file
+     * does not declare them — which is the pre-existing contract, now applied a step earlier. A
+     * frozen record never reaches here at all.
      *
      * @param model Main model name
      * @param mainId Main model row ID
@@ -284,7 +301,8 @@ public class SysPreDataServiceImpl extends EntityServiceImpl<SysPreData, Long> i
             Assert.isTrue(value instanceof Collection,
                     "The data of OneToMany field {0}:{1} must be a list: {2}", model, field, value);
             MetaField relation = ModelManager.getModelField(model, field);
-            List<Serializable> manyIds = new ArrayList<>();
+            String childModel = relation.getRelatedModel();
+            List<Map<String, Object>> childRows = new ArrayList<>();
             for (Object item : (Collection<?>) value) {
                 Assert.isTrue(item instanceof Map,
                         "The single predefined data of the OneToMany field {0}:{1} must be in Map format: {2}",
@@ -292,15 +310,86 @@ public class SysPreDataServiceImpl extends EntityServiceImpl<SysPreData, Long> i
                 // Copy the child row and inject the back-reference to the main row, leaving the parsed input untouched.
                 Map<String, Object> childRow = new LinkedHashMap<>(Cast.<Map<String, Object>>of(item));
                 childRow.put(relation.getRelatedField(), mainId);
-                manyIds.add(handlePredefinedData(relation.getRelatedModel(), childRow));
+                childRows.add(childRow);
             }
-            // Delete Many side data but retain those that appear in the predefined data file.
+            // The rows the file still declares. A child whose preId has no binding yet contributes
+            // nothing here — it is about to be created, and there is no old row of its own to keep.
+            List<Serializable> keepIds = boundRowIds(childModel, preIdsOf(childModel, childRows));
             Filters deleteFilters = new Filters().eq(relation.getRelatedField(), mainId);
-            if (!manyIds.isEmpty()) {
-                deleteFilters.notIn(ID, manyIds);
+            if (!keepIds.isEmpty()) {
+                deleteFilters.notIn(ID, keepIds);
             }
-            modelService.deleteByFilters(relation.getRelatedModel(), deleteFilters);
+            // Read the doomed ids before the delete: their bindings have to go with them. A binding
+            // left pointing at a deleted row is not inert — the next run finds it and tries to update
+            // a row that is gone, so dropping a child from the seed would poison every later load.
+            List<Serializable> removedIds = modelService.getIds(childModel, deleteFilters);
+            modelService.deleteByFilters(childModel, deleteFilters);
+            deleteBindings(childModel, removedIds);
+            childRows.forEach(childRow -> handlePredefinedData(childModel, childRow));
         });
+    }
+
+    /**
+     * The preIds of a set of child rows, in file order. Validated here rather than at the write, so a
+     * malformed child is refused before anything is deleted.
+     *
+     * @param model Child model name
+     * @param rows Child rows as the file declares them
+     * @return their preIds
+     */
+    private List<String> preIdsOf(String model, List<Map<String, Object>> rows) {
+        return rows.stream().map(row -> {
+            Assert.isTrue(row.containsKey(ID),
+                    "Predefined data for model {0} must include the preID: {1}", model, row);
+            Object preId = row.get(ID);
+            Assert.isTrue(preId instanceof String,
+                    "Model {0} predefined data's preId must be of type String: {1}", model, preId);
+            return (String) preId;
+        }).toList();
+    }
+
+    /**
+     * The row ids these preIds are bound to, skipping the ones with no binding — unlike
+     * {@link #getOriginalRowIdsByPreIds}, which is a reference resolution and must find every one.
+     * Here a missing binding is the ordinary "this child is new" case.
+     *
+     * @param model Model name
+     * @param preIds Predefined IDs
+     * @return the bound row ids, typed for the model's key
+     */
+    private List<Serializable> boundRowIds(String model, List<String> preIds) {
+        if (CollectionUtils.isEmpty(preIds)) {
+            return List.of();
+        }
+        return getScopedBindings(model, preIds, bindingScopeOf(model)).stream()
+                .map(binding -> (Serializable) IdUtils.formatId(model, binding.getRowId()))
+                .toList();
+    }
+
+    /**
+     * Drop the preId bindings of rows that no longer exist.
+     *
+     * <p>Scope-exact like every other binding access, and through the same primitive: the scope comes
+     * from {@link #bindingScopeOf} for the model being addressed, not from the ambient tenant. So one
+     * tenant dropping a seeded child cannot unbind another tenant's copy of it.
+     *
+     * @param model Model name
+     * @param rowIds Ids of the rows that were just deleted
+     */
+    private void deleteBindings(String model, List<Serializable> rowIds) {
+        if (CollectionUtils.isEmpty(rowIds)) {
+            return;
+        }
+        Long tenantId = bindingScopeOf(model);
+        Filters filters = new Filters()
+                .eq(SysPreData::getModel, model)
+                .in(SysPreData::getRowId, rowIds.stream().map(String::valueOf).toList());
+        if (tenantId == null) {
+            filters.isNotSet(SysPreData::getTenantId);
+        } else {
+            filters.eq(SysPreData::getTenantId, tenantId);
+        }
+        this.deleteByFilters(filters);
     }
 
     /**
