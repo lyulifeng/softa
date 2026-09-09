@@ -232,8 +232,17 @@ public class SysPreDataServiceImpl extends EntityServiceImpl<SysPreData, Long> i
                 mainRow.put(field, value);
             }
         });
+        // Frozen is decided here rather than inside createOrUpdateData, so that it covers the whole
+        // record — the main row AND the children it owns. Freezing only the main row protected the
+        // half a re-load barely touches while leaving the destructive half unguarded: child sync
+        // deletes every row the file no longer declares, including the grants and option items an
+        // operator added by hand. That is what a freeze is for.
+        Optional<SysPreData> binding = getPreDataByPreId(model, mainRow);
+        if (binding.isPresent() && Boolean.TRUE.equals(binding.get().getFrozen())) {
+            return IdUtils.formatId(model, binding.get().getRowId());
+        }
         // Load main model data first, then the OneToMany rows it owns.
-        Serializable rowId = createOrUpdateData(model, mainRow);
+        Serializable rowId = createOrUpdateData(model, mainRow, binding);
         loadOneToManyRows(model, rowId, oneToManyMap);
         return rowId;
     }
@@ -297,16 +306,16 @@ public class SysPreDataServiceImpl extends EntityServiceImpl<SysPreData, Long> i
     /**
      * Determine whether to create or update predefined data based on whether the main model preId already exists.
      *
+     * <p>The binding is passed in rather than looked up here: the caller has already read it to
+     * decide whether the record is frozen, and one lookup per seed row is enough.
+     *
      * @param model Model name
      * @param row Predefined data record (main-model fields only)
+     * @param optionalPreData this preId's binding in its scope, empty when the row is new
      * @return Record ID created or updated
      */
-    private Serializable createOrUpdateData(String model, Map<String, Object> row) {
-        Optional<SysPreData> optionalPreData = getPreDataByPreId(model, row);
-        if (optionalPreData.isPresent() && Boolean.TRUE.equals(optionalPreData.get().getFrozen())) {
-            // The current data is frozen, and the data ID is returned directly
-            return IdUtils.formatId(model, optionalPreData.get().getRowId());
-        }
+    private Serializable createOrUpdateData(String model, Map<String, Object> row,
+                                            Optional<SysPreData> optionalPreData) {
         // Resolve the preIds of ManyToOne, OneToOne, and ManyToMany fields to row IDs (returns a new
         // map; the caller's row is left untouched).
         Map<String, Object> resolved = resolveReferencedPreIds(model, row);
