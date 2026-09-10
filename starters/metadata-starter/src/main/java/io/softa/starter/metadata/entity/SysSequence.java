@@ -79,18 +79,31 @@ public class SysSequence extends AuditableModel {
      * back past the highest one in use. That surfaces far from its cause — as a duplicate-key
      * error on the business table, with the code field left blank on screen.
      *
-     * <p>Omitting it costs nothing: the allocator's reset branch keys on {@code lastResetKey},
-     * which is NULL on a fresh row, so the first allocation takes {@code startValue} regardless
-     * of what sits here.
+     * <p>Omitting it from the seed is necessary but not sufficient, which is what {@code readonly}
+     * is here for. {@code loadPreTenantData}'s update branch is a whole-row reconcile: it writes an
+     * explicit null for every updatable field the file does NOT mention, so leaving the counter out
+     * used to null it — the mirror of the rewind above, and worse, because a NULL counter can no
+     * longer advance ({@code current_value + step} is NULL) and reads as a fresh row, re-issuing
+     * numbers from {@code startValue}. Marked readonly, it is not an updatable field, so no re-load
+     * can touch it either way — a readonly field is dropped from the write payload rather than
+     * rejected, so the loader's null never reaches the column. The allocator is unaffected: it
+     * advances the counter in its own {@code UPDATE} through {@code JdbcProxy}, below the field
+     * processors. A first insert leaves the column out entirely and takes the DB-level default this
+     * {@code defaultValue} is materialized into, which is why the declared 0 still lands on a new row.
      */
-    @Field(defaultValue = "0",
+    @Field(readonly = true, defaultValue = "0",
             description = "Last allocated value; next = current_value + step")
     private Long currentValue;
 
     @Field(required = true)
     private ResetCadence resetCadence;
 
-    @Field(description = "Period key of the last reset, e.g. \"2026\" / \"2026-04\"")
+    /**
+     * Runtime state like {@link #currentValue}, and readonly for the same reason: a re-load that
+     * nulled this alongside the counter would make an in-flight period look like a fresh row and
+     * restart the sequence. Written only by the allocator's own UPDATE.
+     */
+    @Field(readonly = true, description = "Period key of the last reset, e.g. \"2026\" / \"2026-04\"")
     private String lastResetKey;
 
     @Field(label = "Allocation Mode", required = true)
