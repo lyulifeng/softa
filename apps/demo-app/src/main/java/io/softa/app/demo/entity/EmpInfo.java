@@ -32,7 +32,8 @@ public class EmpInfo extends AuditableModel {
     @Field(copyable = false)
     private String code;
 
-    @Field(length = 128)
+    // Value domain: the pattern is enforced on every write path and served to the UI as the input's own check.
+    @Field(length = 128, pattern = "[^@\\s]+@[^@\\s]+\\.[^@\\s]+", constraintMessage = "Enter a valid email address.")
     private String email;
 
     // onDelete = RESTRICT: a department that still has employees cannot be deleted.
