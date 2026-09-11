@@ -91,7 +91,7 @@ public class DataUpdatePipeline extends DataPipeline {
             return;
         }
         this.differFields.addAll(FieldConstraintsEnforcer.columnsToRead(metaModel, this.fields,
-                field -> ModelManager.isStored(modelName, field)));
+                field -> ModelManager.getModelFieldOrNull(modelName, field)));
     }
 
     /**

@@ -46,9 +46,19 @@ class FieldConstraintsEnforcerTest {
         return FieldConstraints.of(null, null, null, message, requiredWhen, hiddenWhen, readonlyWhen, invalidWhen, "EmpChangeRequest.x");
     }
 
+    /** Every field of the model the tests use, typed; a name outside TYPES is "no such field". */
+    private static MetaField fieldOf(String name) {
+        return TYPES.containsKey(name) ? field(name, null) : null;
+    }
+
     private static FieldConstraintsEnforcer enforcer(AccessType type, MetaField... fields) {
+        return enforcer(type, FieldConstraintsEnforcerTest::fieldOf, (model, path, id) -> null, fields);
+    }
+
+    private static FieldConstraintsEnforcer enforcer(AccessType type, java.util.function.Function<String, MetaField> fieldOf,
+                                                     FieldConstraintsEnforcer.RelatedRowReader reader, MetaField... fields) {
         EvalContext ctx = new EvalContext(type, 7L, LocalDate.of(2026, 9, 11), LocalDateTime.of(2026, 9, 11, 9, 0));
-        return new FieldConstraintsEnforcer("EmpChangeRequest", type, List.of(fields), TYPES::get, ctx);
+        return new FieldConstraintsEnforcer("EmpChangeRequest", type, List.of(fields), fieldOf, ctx, reader);
     }
 
     private static Map<String, Object> row(Object... kv) {
@@ -156,10 +166,75 @@ class FieldConstraintsEnforcerTest {
     void columnsToReadRegistersBothDirections() {
         io.softa.framework.orm.meta.MetaModel model = new io.softa.framework.orm.meta.MetaModel();
         ReflectionTestUtils.invokeMethod(model, "addConditionalField", REASON_DESCRIPTION);
-        assertThat(FieldConstraintsEnforcer.columnsToRead(model, Set.of("reason"), f -> true))
+        assertThat(FieldConstraintsEnforcer.columnsToRead(model, Set.of("reason"), FieldConstraintsEnforcerTest::fieldOf))
                 .containsExactlyInAnyOrder("reason", "reasonDescription");
-        assertThat(FieldConstraintsEnforcer.columnsToRead(model, Set.of("reasonDescription"), f -> true))
+        assertThat(FieldConstraintsEnforcer.columnsToRead(model, Set.of("reasonDescription"), FieldConstraintsEnforcerTest::fieldOf))
                 .containsExactlyInAnyOrder("reason", "reasonDescription");
-        assertThat(FieldConstraintsEnforcer.columnsToRead(model, Set.of("status"), f -> true)).isEmpty();
+        assertThat(FieldConstraintsEnforcer.columnsToRead(model, Set.of("status"), FieldConstraintsEnforcerTest::fieldOf)).isEmpty();
+    }
+
+    // ---- a condition on a dynamic cascaded field: `bankCode` = bankId.code, no column of its own ----
+
+    private static MetaField bankId() {
+        MetaField f = field("bankId", null);
+        ReflectionTestUtils.setField(f, "fieldType", FieldType.MANY_TO_ONE);
+        ReflectionTestUtils.setField(f, "relatedModel", "Bank");
+        return f;
+    }
+
+    private static MetaField bankCode() {
+        MetaField f = field("bankCode", null);
+        ReflectionTestUtils.setField(f, "fieldType", FieldType.STRING);
+        ReflectionTestUtils.setField(f, "cascadedField", "bankId.code");
+        ReflectionTestUtils.setField(f, "dynamic", true);
+        ReflectionTestUtils.setField(f, "dependentFields", List.of("bankId", "code"));
+        return f;
+    }
+
+    private static final MetaField ORGANISATION_ID =
+            field("organisationId", c("[[\"bankCode\", \"=\", \"DBS\"]]", null, null, null, null));
+
+    private static MetaField bankFieldOf(String name) {
+        return switch (name) {
+            case "bankId" -> bankId();
+            case "bankCode" -> bankCode();
+            case "organisationId" -> field("organisationId", null);
+            default -> fieldOf(name);
+        };
+    }
+
+    @Test
+    void aDynamicCascadedReferenceIsFetchedFromTheRelatedRowByTheForeignKey() {
+        List<String> reads = new java.util.ArrayList<>();
+        FieldConstraintsEnforcer.RelatedRowReader reader = (model, path, id) -> {
+            reads.add(model + "/" + path + "/" + id);
+            return Map.of("id", id, "code", id.equals(1L) ? "DBS" : "OCBC");
+        };
+        FieldConstraintsEnforcer e = enforcer(AccessType.CREATE, FieldConstraintsEnforcerTest::bankFieldOf, reader, ORGANISATION_ID);
+
+        assertThatThrownBy(() -> e.enforceCreate(row("bankId", 1L))).hasMessageContaining("organisationId");
+        assertThatCode(() -> e.enforceCreate(row("bankId", 2L))).doesNotThrowAnyException();
+        assertThatCode(() -> e.enforceCreate(row("bankId", 1L, "organisationId", "ORG-1"))).doesNotThrowAnyException();
+        // one read per FK value for the whole write, and the row written is never touched
+        assertThat(reads).containsExactly("Bank/code/1", "Bank/code/2");
+        Map<String, Object> untouched = row("bankId", 2L);
+        e.enforceCreate(untouched);
+        assertThat(untouched).doesNotContainKey("bankCode");
+    }
+
+    @Test
+    void theForeignKeyOfADynamicReferenceIsWhatTheUpdateReadsAndWhatWakesTheRule() {
+        io.softa.framework.orm.meta.MetaModel model = new io.softa.framework.orm.meta.MetaModel();
+        ReflectionTestUtils.invokeMethod(model, "addConditionalField", ORGANISATION_ID);
+        assertThat(FieldConstraintsEnforcer.columnsToRead(model, Set.of("bankId"), FieldConstraintsEnforcerTest::bankFieldOf))
+                .containsExactlyInAnyOrder("bankId", "organisationId");
+
+        FieldConstraintsEnforcer e = enforcer(AccessType.UPDATE, FieldConstraintsEnforcerTest::bankFieldOf,
+                (m, path, id) -> Map.of("code", "DBS"), ORGANISATION_ID);
+        Map<String, Object> original = row("id", 9L, "bankId", 3L, "organisationId", null);
+        Map<String, Object> patch = row("id", 9L, "bankId", 1L);
+        Map<String, Object> merged = new HashMap<>(original);
+        merged.putAll(patch);
+        assertThatThrownBy(() -> e.enforceUpdate(merged, patch, original)).hasMessageContaining("organisationId");
     }
 }

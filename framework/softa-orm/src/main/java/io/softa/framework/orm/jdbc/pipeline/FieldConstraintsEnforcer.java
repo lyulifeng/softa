@@ -1,16 +1,24 @@
 package io.softa.framework.orm.jdbc.pipeline;
 
+import java.io.Serializable;
+import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
 import java.util.function.Function;
+import org.apache.commons.lang3.StringUtils;
 import org.jspecify.annotations.Nullable;
 
+import io.softa.framework.base.enums.Operator;
 import io.softa.framework.base.exception.IllegalArgumentException;
+import io.softa.framework.orm.constant.ModelConstant;
 import io.softa.framework.orm.domain.EvalContext;
+import io.softa.framework.orm.domain.FilterControl;
 import io.softa.framework.orm.domain.FilterEvaluator;
 import io.softa.framework.orm.domain.Filters;
+import io.softa.framework.orm.domain.FlexQuery;
 import io.softa.framework.orm.enums.AccessType;
 import io.softa.framework.orm.enums.FieldType;
 import io.softa.framework.orm.meta.FieldCondition;
@@ -18,6 +26,8 @@ import io.softa.framework.orm.meta.FieldConstraints;
 import io.softa.framework.orm.meta.MetaField;
 import io.softa.framework.orm.meta.MetaModel;
 import io.softa.framework.orm.meta.ModelManager;
+import io.softa.framework.orm.utils.IdUtils;
+import io.softa.framework.orm.utils.ReflectTool;
 
 /**
  * Applies the conditional field constraints — {@code requiredWhen} / {@code hiddenWhen} /
@@ -44,32 +54,60 @@ import io.softa.framework.orm.meta.ModelManager;
  *       value differs from what is stored (on create: is not null).</li>
  *   <li><b>{@code invalidWhen} rejects with the declared message</b>; without one, a generated sentence
  *       that names the field.</li>
+ *   <li><b>A condition may read a {@code dynamic} cascaded field</b> ({@code bankId.code} declared as
+ *       {@code bankCode}). It has no column, so its value is fetched from the related row by the FK
+ *       the row carries — once per FK value per write — and laid over a working copy of the row
+ *       before the conditions run. A stored cascaded field is a column and needs nothing.</li>
  * </ol>
  * The static {@code required} check stays in the processors — a {@code NOT NULL} column cannot be
  * skipped by hiding the field, the database would reject the row anyway.
  */
 public final class FieldConstraintsEnforcer {
 
+    /** Reads one attribute of a related row by id — the lookup a {@code dynamic} cascaded reference needs. */
+    @FunctionalInterface
+    public interface RelatedRowReader {
+        /**
+         * @param relatedModel the model the FK points at
+         * @param path the attribute to read on it (may be a further cascade, {@code a.b})
+         * @param id the FK value
+         * @return the related row holding {@code path}, or null when it does not exist
+         */
+        @Nullable Map<String, Object> read(String relatedModel, String path, Serializable id);
+    }
+
     private final String modelName;
     private final AccessType accessType;
     private final List<MetaField> conditionalFields;
+    private final Function<String, @Nullable MetaField> fieldOf;
     private final Function<String, @Nullable FieldType> typeOf;
     private final EvalContext ctx;
+    private final RelatedRowReader relatedRows;
+    /** Related rows already fetched during this write: {@code model/id → row}. */
+    private final Map<String, Map<String, Object>> relatedCache = new HashMap<>();
 
     /**
      * @param modelName the model being written
      * @param accessType CREATE or UPDATE
      * @param conditionalFields the fields carrying conditions ({@link MetaModel#getConditionalFields()})
-     * @param typeOf the type of a field of the model, or null when unknown; drives value coercion
+     * @param fieldOf a field of the model by name, or null when unknown; drives value coercion and
+     *                the dynamic-cascade lookup
      * @param ctx reserved variables and environment tokens for this write
+     * @param relatedRows how a dynamic cascaded reference fetches its related row
      */
     public FieldConstraintsEnforcer(String modelName, AccessType accessType, List<MetaField> conditionalFields,
-                                    Function<String, @Nullable FieldType> typeOf, EvalContext ctx) {
+                                    Function<String, @Nullable MetaField> fieldOf, EvalContext ctx,
+                                    RelatedRowReader relatedRows) {
         this.modelName = modelName;
         this.accessType = accessType;
         this.conditionalFields = conditionalFields;
-        this.typeOf = typeOf;
+        this.fieldOf = fieldOf;
+        this.typeOf = field -> {
+            MetaField metaField = fieldOf.apply(field);
+            return metaField == null ? null : metaField.getFieldType();
+        };
         this.ctx = ctx;
+        this.relatedRows = relatedRows;
     }
 
     /**
@@ -81,10 +119,28 @@ public final class FieldConstraintsEnforcer {
         if (conditional.isEmpty()) {
             return null;
         }
-        return new FieldConstraintsEnforcer(modelName, accessType, conditional, field -> {
-            MetaField metaField = ModelManager.getModelFieldOrNull(modelName, field);
-            return metaField == null ? null : metaField.getFieldType();
-        }, EvalContext.of(accessType));
+        return new FieldConstraintsEnforcer(modelName, accessType, conditional,
+                field -> ModelManager.getModelFieldOrNull(modelName, field), EvalContext.of(accessType),
+                FieldConstraintsEnforcer::readRelatedRow);
+    }
+
+    /**
+     * The live lookup: the related row by id, with {@code path} in its field list, permission checks
+     * bypassed — the same read {@code XToOneGroupProcessor} does for a cascaded field.
+     */
+    static @Nullable Map<String, Object> readRelatedRow(String relatedModel, String path, Serializable id) {
+        Filters filters = Filters.of(ModelConstant.ID, Operator.EQUAL, id);
+        MetaModel related = ModelManager.getModel(relatedModel);
+        if (related.isActiveControl()) {
+            filters.in(ModelConstant.ACTIVE_CONTROL_FIELD, List.of(true, false));
+        }
+        if (related.isSoftDelete()) {
+            filters.in(ModelConstant.SOFT_DELETED_FIELD, List.of(true, false));
+        }
+        FlexQuery query = new FlexQuery(Set.of(ModelConstant.ID, path), filters);
+        query.setFilterControl(FilterControl.bypassAll());
+        List<Map<String, Object>> rows = ReflectTool.searchList(relatedModel, query);
+        return rows.isEmpty() ? null : rows.getFirst();
     }
 
     /**
@@ -97,27 +153,47 @@ public final class FieldConstraintsEnforcer {
      * @param patchFields the fields the update carries
      * @param isStored whether a field of the model is a stored column
      */
-    public static Set<String> columnsToRead(MetaModel model, Set<String> patchFields, Function<String, Boolean> isStored) {
-        Set<String> columns = new java.util.HashSet<>();
+    public static Set<String> columnsToRead(MetaModel model, Set<String> patchFields, Function<String, @Nullable MetaField> fieldOf) {
+        Set<String> columns = new HashSet<>();
         for (MetaField field : model.getConditionalFields()) {
-            Set<String> refs = field.getConstraints().referencedFields();
+            Set<String> refs = storedReferences(field, fieldOf);
             boolean touched = patchFields.contains(field.getFieldName())
                     || refs.stream().anyMatch(patchFields::contains);
             if (!touched) {
                 continue;
             }
-            if (isStored.apply(field.getFieldName())) {
+            if (!field.isDynamic()) {
                 columns.add(field.getFieldName());
             }
-            refs.stream().filter(isStored::apply).forEach(columns::add);
+            columns.addAll(refs);
         }
         return columns;
+    }
+
+    /**
+     * The stored columns a field's conditions depend on: every referenced stored field, and for a
+     * {@code dynamic} cascaded reference the FK it hangs on (the attribute itself has no column).
+     */
+    private static Set<String> storedReferences(MetaField field, Function<String, @Nullable MetaField> fieldOf) {
+        Set<String> stored = new HashSet<>();
+        for (String ref : field.getConstraints().referencedFields()) {
+            MetaField referenced = fieldOf.apply(ref);
+            if (referenced == null) {
+                continue;
+            }
+            if (referenced.isDynamicCascadedField()) {
+                stored.add(referenced.getDependentFields().getFirst());
+            } else if (!referenced.isDynamic()) {
+                stored.add(ref);
+            }
+        }
+        return stored;
     }
 
     /** Create: every conditional field is evaluated against the request row. */
     public void enforceCreate(Map<String, Object> row) {
         for (MetaField field : conditionalFields) {
-            enforce(field, row, row, null);
+            enforce(field, withDynamicReferences(field, row), row, null);
         }
     }
 
@@ -130,13 +206,58 @@ public final class FieldConstraintsEnforcer {
      */
     public void enforceUpdate(Map<String, Object> mergedRow, Map<String, Object> patch, @Nullable Map<String, Object> originalRow) {
         for (MetaField field : conditionalFields) {
-            Set<String> refs = field.getConstraints().referencedFields();
+            Set<String> refs = storedReferences(field, fieldOf);
             boolean touched = patch.containsKey(field.getFieldName())
                     || refs.stream().anyMatch(patch::containsKey);
             if (touched) {
-                enforce(field, mergedRow, patch, originalRow);
+                enforce(field, withDynamicReferences(field, mergedRow), patch, originalRow);
             }
         }
+    }
+
+    /**
+     * The row as the conditions see it: the row itself, plus the value of every {@code dynamic}
+     * cascaded field a condition references, fetched from the related row by the FK. A working copy —
+     * the value never enters the row that is written.
+     */
+    private Map<String, Object> withDynamicReferences(MetaField field, Map<String, Object> row) {
+        Map<String, Object> view = null;
+        for (String ref : field.getConstraints().referencedFields()) {
+            MetaField referenced = fieldOf.apply(ref);
+            if (referenced == null || !referenced.isDynamicCascadedField() || row.containsKey(ref)) {
+                continue;
+            }
+            List<String> chain = referenced.getDependentFields();
+            MetaField fk = fieldOf.apply(chain.getFirst());
+            Object fkValue = row.get(chain.getFirst());
+            if (fk == null || StringUtils.isBlank(fk.getRelatedModel()) || !IdUtils.validId(fkValue)) {
+                continue;
+            }
+            String path = chain.get(1);
+            String key = fk.getRelatedModel() + "/" + fkValue;
+            Map<String, Object> relatedRow = relatedCache.computeIfAbsent(key,
+                    k -> relatedRows.read(fk.getRelatedModel(), path, (Serializable) fkValue));
+            if (view == null) {
+                view = new HashMap<>(row);
+            }
+            view.put(ref, relatedRow == null ? null : valueAt(relatedRow, path));
+        }
+        return view == null ? row : view;
+    }
+
+    /** {@code a.b} on a nested map, or the flat key when the read already flattened it. */
+    private static @Nullable Object valueAt(Map<String, Object> row, String path) {
+        if (row.containsKey(path)) {
+            return row.get(path);
+        }
+        Object current = row;
+        for (String segment : path.split("\\.")) {
+            if (!(current instanceof Map<?, ?> map)) {
+                return null;
+            }
+            current = map.get(segment);
+        }
+        return current;
     }
 
     private void enforce(MetaField field, Map<String, Object> row, Map<String, Object> patch,
