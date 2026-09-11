@@ -892,8 +892,14 @@ public class ModelServiceImpl<K extends Serializable> implements ModelService<K>
         if (writeValidators != null && writeValidators.supports(modelName)) {
             List<Map<String, Object>> originals = jdbcService.selectByIds(modelName,
                     Cast.of(new ArrayList<>(targetIds)), Collections.emptyList(), ConvertType.ORIGINAL);
+            // Keyed by logical id and, for a timeline model, by the physical sliceId the patch names.
             Map<Serializable, Map<String, Object>> originalsById = new HashMap<>();
-            originals.forEach(row -> originalsById.put((Serializable) row.get(ModelConstant.ID), row));
+            originals.forEach(row -> {
+                originalsById.put((Serializable) row.get(ModelConstant.ID), row);
+                if (row.get(ModelConstant.SLICE_ID) != null) {
+                    originalsById.put((Serializable) row.get(ModelConstant.SLICE_ID), row);
+                }
+            });
             writeValidators.validateUpdate(modelName, toUpdateRows, originalsById);
         }
         Integer updateCount = strategy.update(modelName, rows, toUpdateFields);

@@ -83,7 +83,10 @@ public class ModelWriteValidatorChain {
             validator.validateBatch(modelName, patches, AccessType.UPDATE);
             for (int i = 0; i < patches.size(); i++) {
                 Map<String, Object> patch = patches.get(i);
-                Map<String, Object> original = originalsById.get((Serializable) patch.get(ModelConstant.ID));
+                // a timeline patch names the slice it edits; an identity patch names the row
+                Serializable key = (Serializable) (patch.get(ModelConstant.ID) != null
+                        ? patch.get(ModelConstant.ID) : patch.get(ModelConstant.SLICE_ID));
+                Map<String, Object> original = key == null ? null : originalsById.get(key);
                 if (original == null) {
                     continue;
                 }
