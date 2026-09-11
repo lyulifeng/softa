@@ -17,7 +17,8 @@ import io.softa.framework.orm.enums.AccessType;
  * Runs the {@link ModelWriteValidator}s that support a model, in {@code @Order}, at the write roots.
  *
  * <p>Collected through {@link ObjectProvider#orderedStream()}, which is the same ordering Spring gives
- * an injected {@code List} — the leave validator chain relies on it already. A validator without
+ * an injected {@code List} — the leave validator chain relies on it already; resolved lazily so a
+ * validator may depend on {@code ModelService} without a bean cycle. A validator without
  * {@code @Order} still runs, last and in an order Spring does not promise; that is logged once at
  * boot because the bands in {@link ModelWriteValidator} only mean something when everyone declares
  * one.
@@ -26,27 +27,48 @@ import io.softa.framework.orm.enums.AccessType;
 @Component
 public class ModelWriteValidatorChain {
 
-    private final List<ModelWriteValidator> validators;
+    private final ObjectProvider<ModelWriteValidator> provider;
+
+    /**
+     * Resolved on first use, not in the constructor. A validator commonly injects a service that
+     * injects {@code ModelService}, whose implementation injects this chain — resolving the beans
+     * eagerly would close that circle at boot. The write roots run long after the context is up.
+     */
+    private volatile List<ModelWriteValidator> validators;
 
     public ModelWriteValidatorChain(ObjectProvider<ModelWriteValidator> provider) {
-        this.validators = provider.orderedStream().toList();
-        for (ModelWriteValidator validator : validators) {
-            boolean ordered = validator instanceof Ordered
-                    || AnnotationUtils.findAnnotation(validator.getClass(), Order.class) != null;
-            if (!ordered) {
-                log.warn("ModelWriteValidator {} declares no @Order; it runs after the ordered ones,"
-                        + " in an order Spring does not promise.", validator.getClass().getName());
+        this.provider = provider;
+    }
+
+    private List<ModelWriteValidator> validators() {
+        List<ModelWriteValidator> resolved = validators;
+        if (resolved == null) {
+            synchronized (this) {
+                resolved = validators;
+                if (resolved == null) {
+                    resolved = provider.orderedStream().toList();
+                    for (ModelWriteValidator validator : resolved) {
+                        boolean ordered = validator instanceof Ordered
+                                || AnnotationUtils.findAnnotation(validator.getClass(), Order.class) != null;
+                        if (!ordered) {
+                            log.warn("ModelWriteValidator {} declares no @Order; it runs after the ordered ones,"
+                                    + " in an order Spring does not promise.", validator.getClass().getName());
+                        }
+                    }
+                    if (!resolved.isEmpty()) {
+                        log.info("Registered {} ModelWriteValidator(s): {}", resolved.size(),
+                                resolved.stream().map(v -> v.getClass().getSimpleName()).toList());
+                    }
+                    validators = resolved;
+                }
             }
         }
-        if (!validators.isEmpty()) {
-            log.info("Registered {} ModelWriteValidator(s): {}", validators.size(),
-                    validators.stream().map(v -> v.getClass().getSimpleName()).toList());
-        }
+        return resolved;
     }
 
     /** Whether any validator applies to the model — lets the caller skip fetching originals. */
     public boolean supports(String modelName) {
-        return validators.stream().anyMatch(v -> v.supports(modelName));
+        return validators().stream().anyMatch(v -> v.supports(modelName));
     }
 
     /** Create: batch first, then each row, per validator; throws once with everything rejected. */
@@ -106,7 +128,7 @@ public class ModelWriteValidatorChain {
     }
 
     private List<ModelWriteValidator> applicable(String modelName) {
-        return validators.stream().filter(v -> v.supports(modelName)).toList();
+        return validators().stream().filter(v -> v.supports(modelName)).toList();
     }
 
     private static void throwIfRejected(WriteValidationErrors errors) {
