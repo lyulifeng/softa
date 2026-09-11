@@ -2,6 +2,7 @@ package io.softa.framework.orm.service.validation;
 
 import java.io.Serializable;
 import java.util.Collections;
+import java.util.List;
 import java.util.Map;
 import org.jspecify.annotations.Nullable;
 
@@ -95,5 +96,10 @@ public final class WriteContext {
     /** Whether any validator has rejected anything in this write so far. */
     public boolean hasErrors() {
         return errors.hasErrors();
+    }
+
+    /** Everything rejected in this write so far — what a validator's unit test reads back. */
+    public List<WriteValidationException.FieldError> errors() {
+        return errors.errors();
     }
 }
