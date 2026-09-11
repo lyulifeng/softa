@@ -4,6 +4,7 @@ import java.lang.reflect.Field;
 import java.lang.reflect.Modifier;
 import java.util.*;
 import java.util.regex.Pattern;
+import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.lang3.StringUtils;
 import org.jspecify.annotations.Nullable;
 
@@ -15,6 +16,7 @@ import io.softa.framework.orm.annotation.Model;
 import io.softa.framework.orm.constant.ModelConstant;
 import io.softa.framework.orm.domain.Orders;
 import io.softa.framework.orm.enums.FieldType;
+import io.softa.framework.orm.meta.FieldConstraints;
 import io.softa.framework.orm.enums.IndexMethod;
 import io.softa.framework.orm.enums.StorageType;
 import io.softa.starter.metadata.ddl.SqlReservedWords;
@@ -52,6 +54,7 @@ import io.softa.starter.metadata.scanner.annotation.inference.TypeInference;
  *
  * <p>Pure POJO — no Spring dependency.
  */
+@Slf4j
 public final class AnnotationParser {
 
     /**
@@ -123,6 +126,7 @@ public final class AnnotationParser {
             guardProjectionDeclaresNoIndexes(clazz, model);
             modelIndexes.addAll(parseIndexes(clazz, sysModel.getTableName(), classFields));
             validateModelFieldRefs(clazz, model, classFields);
+            validateFieldConstraints(clazz, classFields);
         }
         guardSingleTableOwner(models);
 
@@ -570,6 +574,12 @@ public final class AnnotationParser {
                 f.setScale(typeDefault.scale());
             }
         }
+        // Packaged, not validated, here: a condition may name a sibling declared further down the
+        // class, so the cross-field checks run once the class's fields are all parsed
+        // (validateFieldConstraints). Filter syntax is checked now — it needs nothing else.
+        f.setConstraints(FieldConstraints.of(anno.min(), anno.max(), anno.pattern(), anno.constraintMessage(),
+                anno.requiredWhen(), anno.hiddenWhen(), anno.readonlyWhen(), anno.invalidWhen(),
+                modelName + "." + javaField.getName()));
         f.setRequired(anno.required() || javaField.getType().isPrimitive());
         f.setReadonly(anno.readonly());
         f.setTranslatable(anno.translatable());
@@ -1000,6 +1010,35 @@ public final class AnnotationParser {
             orderFields[i] = parts.length > 0 && !parts[0].isEmpty() ? parts[0] : orders[i];
         }
         checkFieldRefs(modelName, "defaultOrder", orderFields, fieldNames);
+    }
+
+    /**
+     * The cross-field half of a field's constraints: bounds against the field's own type, conditions
+     * against the sibling fields they name (existence, comparability, offsets). Everything here is a
+     * mistake in something written by hand and compiled, so it fails the boot in front of whoever
+     * wrote it — never the first save months later in front of a tenant. Warnings (a pattern without
+     * a message, a regex construct JavaScript lacks) are logged, not thrown.
+     */
+    private void validateFieldConstraints(Class<?> clazz, List<SysField> classFields) {
+        String modelName = clazz.getSimpleName();
+        Map<String, FieldType> typeByName = new HashMap<>();
+        for (SysField f : classFields) {
+            typeByName.put(f.getFieldName(), f.getFieldType());
+        }
+        for (SysField f : classFields) {
+            FieldConstraints constraints = f.getConstraints();
+            if (constraints == null) {
+                continue;
+            }
+            String where = modelName + "." + f.getFieldName();
+            List<String> warnings = constraints.validate(f.getFieldType(), Boolean.TRUE.equals(f.getDynamic()),
+                    where, typeByName::get);
+            warnings.forEach(log::warn);
+            if (Boolean.TRUE.equals(f.getRequired()) && constraints.requiredWhen() != null) {
+                log.warn("@Field on {} declares both required = true and requiredWhen; the condition never"
+                        + " applies because the static flag always wins.", where);
+            }
+        }
     }
 
     private void checkFieldRefs(String modelName, String attr, String[] refs, Set<String> fieldNames) {

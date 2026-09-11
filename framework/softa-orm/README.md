@@ -114,6 +114,12 @@ extends `AuditableModel`.
 | `columnName` | String | `""` | `columnName` | empty → `snake_case(fieldName)` |
 | `length` | int | `0` | `length` | `0` → type default: STRING/OPTION 64, MULTI_STRING/ORDERS 256, DOUBLE 24 (measurements), BIG_DECIMAL 32 (money); declare explicitly for anything else. On `TEXT` fields length is optional — purely an app-level guard (the column is unbounded). Legacy: MySQL renders STRING `length > 16383` as TEXT (64KB bytes; prefer `fieldType = TEXT`) |
 | `scale` | int | `0` | `scale` | `0` → type default: DOUBLE 2, BIG_DECIMAL 8 (DECIMAL scale) |
+| `min` / `max` | String | `""` | `constraints` | **value domain**, not a column width — inclusive bounds enforced on every write by `ValueConstraints` (see below); numeric field types only, decimal literals (`"0"`, `"-1.5"`) so a `BigDecimal` bound stays exact. Parsed at scan time: a malformed literal or `min > max` fails the boot |
+| `pattern` | String | `""` | `constraints` | regex the **whole** value must match (`Pattern.matches`, not `find`); STRING / TEXT only, compiled at scan time. Keep to syntax Java and JavaScript agree on — the frontend evaluates the same string |
+| `constraintMessage` | String | `""` | `constraints` (`message`) | sentence shown when `min` / `max` / `pattern` / `invalidWhen` rejects a value; its own i18n key, like `@Index(message)`. Optional for a bound ("must be at least 0" composes itself), effectively required for a `pattern` or an `invalidWhen` |
+| `requiredWhen` | String | `""` | `constraints` | filter expression over the same row under which the field is required, or `"true"` for application-level required on a nullable column (see below) |
+| `hiddenWhen` / `readonlyWhen` | String | `""` | `constraints` | filter expressions under which the field is hidden (and not judged) / rejects an assignment |
+| `invalidWhen` | String | `""` | `constraints` | filter expression that, when it holds, rejects the write with `constraintMessage` — `"[[\"endDate\", \"<\", \"{{ @startDate }}\"]]"` |
 | `required` | boolean | `false` | `required` | NOT NULL constraint |
 | `readonly` | boolean | `false` | `readonly` | UI hint |
 | `translatable` | boolean | `false` | `translatable` | i18n-aware column |
@@ -149,6 +155,97 @@ value-preserving rename would have carried wrong values.
 | (scanner sets) | — | — | `appCode` / `id` | |
 | (FK fixup post-init) | — | — | `modelId` | |
 | (not exposed via `@Field`) | — | — | `hidden` | UI-only flag set via Studio |
+
+#### Field constraints (`constraints` — one column, eight attributes)
+
+`length` says how wide the column is; the eight attributes above say **which values** the field
+accepts and **when** it applies. They travel together as one `FieldConstraints` record in the single
+`sys_field.constraints` column (`FieldType.DTO`, canonical JSON, NULL when nothing is declared) and are
+served unchanged on `MetaFieldDTO.constraints`, so the frontend evaluates the same object against the
+form. Three kinds of key, told apart by one criterion — does the rule look at other fields, and what
+does it conclude:
+
+| | Value domain | Field state | Validity |
+|---|---|---|---|
+| keys | `min` / `max` / `pattern` (+ `message`) | `requiredWhen` / `hiddenWhen` / `readonlyWhen` | `invalidWhen` (+ `message`) |
+| looks at other fields | no | yes | yes — it compares them |
+| concludes | reject | required / hidden / readonly | reject |
+| enforced by | `NumericProcessor` (after coercion) / `StringProcessor` (after trim) via `ValueConstraints` | `FieldConstraintsEnforcer`, before the processor chain, on the raw row | same |
+
+```java
+@Field(label = "Active Employees", min = "0", constraintMessage = "Headcount cannot be negative.")
+private Integer activeEmpCount;
+
+@Field(label = "Reason Description", requiredWhen = "[[\"reason\", \"=\", \"Others\"]]")
+private String reasonDescription;
+
+@Field(label = "End Date", invalidWhen = "[[\"endDate\", \"<\", \"{{ @startDate }}\"]]",
+       constraintMessage = "End date cannot precede start date.")
+private LocalDate endDate;
+
+@Field(label = "Cost Centre", requiredWhen = "true")     // application-level required, column stays nullable
+private Long costCentreId;
+```
+
+Every write reaches the database through the pipeline that checks them — create, update, batch,
+import, seed loading, flow write nodes — so one declaration covers all of them. **No `CHECK` is
+rendered and no DDL changes**: a rule is tightened by redeploying, rows written before it stay valid.
+
+Rules worth knowing before declaring one:
+
+- **Bounds are inclusive, null passes, a blank string is not matched.** Absence is what `required` /
+  `requiredWhen` are for; a bounded optional field has to stay leavable empty.
+- **The pattern matches the whole value**, `STRING` / `TEXT` only; bounds are decimal literals on
+  numeric types only. Keep the regex to the syntax Java and JavaScript agree on.
+- **Conditions are filter expressions** (`Filters` syntax, 16 of the 18 operators — `PARENT OF` /
+  `CHILD OF` need a query and are refused). Values may be literals, `{{ @field }}` (another field of the
+  row), `{{ TODAY }}` / `{{ YESTERDAY }}` / `{{ NOW }}` / `{{ USER_ID }}`, and any of those with an
+  ISO-8601 offset: `{{ TODAY - P13Y }}`, `{{ @hireDate + P6M }}`, `{{ NOW - PT2H }}`. In the field slot,
+  `@mode` (`create` / `update`) and `@userId` read the context.
+- **Semantics both ends share** (`FilterEvaluator`): null and `""` are the same value; equality is
+  value equality (`["country", "!=", "SG"]` is *true* for an empty country, unlike SQL); ordering
+  operators need two values, their negations answer the opposite; values coerce by the field's type
+  (a stored date arrives as text, a patch as `LocalDate`); options compare by item code, relations by
+  id, a multi-value field is a set.
+- **Static flags win, conditions add.** `effectiveRequired = required || requiredWhen`; declaring both
+  is logged at boot. `requiredWhen` renders no `NOT NULL` — that is its point. "Required by default,
+  optional in one case" is written as `required = false` + the negated condition.
+- **`requiredWhen = "true"`** is application-level required on a column that must stay nullable
+  (`ProjectTeam.costCentreId`): demanded on create and when the field is sent — clearing is rejected,
+  omitting is not. Only `requiredWhen` has the always-form.
+- **On update, a condition is evaluated only when the patch touches the field or a field it reads**,
+  on the patch merged onto the stored row. `DataUpdatePipeline` registers the referenced columns into
+  `differFields` in both directions so they are fetched — without that, `PATCH {reason: Others}` would
+  slip past a rule that lives on `reasonDescription`. **Hidden fields (`hidden` / `hiddenWhen`) are not
+  judged.** `readonlyWhen` rejects an assignment (a changed value), not the value itself.
+- **Everything is validated at scan time** against the field's type and the sibling fields a condition
+  names: malformed literal, `min > max`, uncompilable regex, wrong field type, unknown sibling,
+  incomparable types (`DATE` vs `STRING`), a time offset on a calendar day, a condition on a `dynamic`
+  field ⇒ boot failure. A studio / hand-written row failing the same check is logged and dropped at
+  catalog load — one bad row must not stop a model from being written.
+
+What the object cannot express — a query, another row, external configuration (`CountryAddressFormat`),
+a collection, a permission — goes to the **`ModelWriteValidator` SPI** (`io.softa.framework.orm.service.validation`):
+
+```java
+@Component
+@Order(110)
+public class CountryAddressRuleValidator implements ModelWriteValidator {
+    @Override public boolean supports(String modelName) { return "Company".equals(modelName); }
+    @Override public void validateCreate(WriteContext ctx) { check(ctx.row(), ctx); }
+    @Override public void validateUpdate(WriteContext ctx) { check(ctx.mergedRow(), ctx); }  // patch merged onto the stored row
+    private void check(Map<String, Object> row, WriteContext ctx) {
+        … ctx.reject("postalCode", "Postal Code is required");   // accumulates; thrown once as WriteValidationException
+    }
+}
+```
+
+Business code never calls a validator: `ModelWriteValidatorChain` runs every bean whose `supports`
+answers true, in `@Order` (bands: 0–99 preconditions with `ctx.fail`, 100–199 field / configuration
+rules, 200–299 collection / cross-row, 300+ batch-wide and expensive), at the three write roots of
+`ModelServiceImpl` — `createList` / `updateList` / `deleteByIds` — so the generic endpoint, a custom
+endpoint, the import, a flow write node and a direct `service.createOne` are all covered. Per validator
+the batch method runs first, then the rows; values are the caller's, before the pipeline coerces them.
 
 #### Delete strategy (`onDelete`)
 

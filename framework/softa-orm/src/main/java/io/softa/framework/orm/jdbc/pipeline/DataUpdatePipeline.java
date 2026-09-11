@@ -69,7 +69,29 @@ public class DataUpdatePipeline extends DataPipeline {
         // Add the affected cascaded fields and computed fields to this.fields
         this.updateEffectedFields();
         this.updateDifferFields();
+        this.registerConstraintDependencies();
         this.processorChain = buildFieldProcessorChain();
+    }
+
+    /**
+     * Make the update read the columns the conditional constraints need.
+     *
+     * <p>The original row is fetched by {@code differFields} only, so a condition such as
+     * {@code reasonDescription.requiredWhen = [["reason", "=", "Others"]]} would otherwise see
+     * neither {@code reason} (when the patch carries only {@code reasonDescription}) nor
+     * {@code reasonDescription} (when the patch carries only {@code reason}). Both directions are
+     * registered, the same way a computed field registers its dependencies above; reading a few more
+     * columns in the one {@code IN} query that already runs is the whole cost. Fields registered here
+     * but absent from {@code fields} get no processor and are never written — their merged value is
+     * the stored one, so the diff sees no change.
+     */
+    private void registerConstraintDependencies() {
+        MetaModel metaModel = ModelManager.getModel(modelName);
+        if (metaModel.getConditionalFields().isEmpty()) {
+            return;
+        }
+        this.differFields.addAll(FieldConstraintsEnforcer.columnsToRead(metaModel, this.fields,
+                field -> ModelManager.isStored(modelName, field)));
     }
 
     /**
@@ -100,6 +122,7 @@ public class DataUpdatePipeline extends DataPipeline {
     @Override
     public List<Map<String, Object>> processUpdateData(List<Map<String, Object>> rows, Map<Serializable, Map<String, Object>> originalRowsMap, LocalDateTime updatedTime) {
         List<Map<String, Object>> mergedRows = mergeToOriginalData(rows, originalRowsMap);
+        enforceConstraints(rows, mergedRows, originalRowsMap);
         processorChain.processInputRows(mergedRows);
         // TODO: Compare the encrypted fields using plaintext to be compatible with different encryption algorithms,
         //  to avoid the situation where the plaintext is the same but the ciphertext is different.
@@ -168,6 +191,27 @@ public class DataUpdatePipeline extends DataPipeline {
             // When changing the `effectiveStartDate` field of the timeline model,
             // get the original `effectiveEndDate` field at the same time for time comparison.
             this.differFields.add(ModelConstant.EFFECTIVE_END_DATE);
+        }
+    }
+
+    /**
+     * Apply the conditional constraints to each merged row, against the patch that produced it.
+     * Runs before the processor chain so the conditions read the raw values (create does the same).
+     */
+    private void enforceConstraints(List<Map<String, Object>> patches, List<Map<String, Object>> mergedRows,
+                                    Map<Serializable, Map<String, Object>> originalRowsMap) {
+        FieldConstraintsEnforcer enforcer = FieldConstraintsEnforcer.forModel(modelName, accessType);
+        if (enforcer == null) {
+            return;
+        }
+        Map<Serializable, Map<String, Object>> patchByKey = new HashMap<>();
+        patches.forEach(patch -> patchByKey.put((Serializable) patch.get(primaryKey), patch));
+        for (Map<String, Object> merged : mergedRows) {
+            Serializable pKey = (Serializable) merged.get(primaryKey);
+            Map<String, Object> patch = patchByKey.get(pKey);
+            if (patch != null) {
+                enforcer.enforceUpdate(merged, patch, originalRowsMap.get(pKey));
+            }
         }
     }
 

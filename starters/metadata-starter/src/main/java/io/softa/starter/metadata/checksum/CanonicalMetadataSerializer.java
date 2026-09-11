@@ -4,6 +4,9 @@ import java.util.List;
 import java.util.Map;
 import java.util.TreeSet;
 
+import io.softa.framework.orm.dto.DTOFieldObject;
+import io.softa.starter.metadata.catalog.CanonicalJson;
+
 /**
  * Deterministic canonical serialization of a metadata aggregate's key attributes,
  * used to compute the per-aggregate checksum. The SAME logical state on
@@ -52,6 +55,16 @@ public final class CanonicalMetadataSerializer {
             case Boolean b -> sb.append("b:").append(b);
             case Enum<?> e -> sb.append("e:").append(e.name());
             case Number n -> sb.append("n:").append(n);             // metadata numerics are Integer/Long — no float drift
+            // A DTO column hashes as its canonical JSON, so key order and spelling in the stored text
+            // cannot move the checksum; the default branch would hash a record's toString().
+            case DTOFieldObject d -> {
+                String json = CanonicalJson.of(d);
+                if (json == null) {
+                    sb.append('∅');
+                } else {
+                    sb.append("j:").append(json);
+                }
+            }
             case List<?> list -> {
                 sb.append('[');
                 boolean first = true;
