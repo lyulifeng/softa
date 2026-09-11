@@ -1,6 +1,7 @@
 package io.softa.framework.web.response;
 
 import java.util.Map;
+import com.fasterxml.jackson.annotation.JsonInclude;
 import io.swagger.v3.oas.annotations.media.Schema;
 import lombok.Data;
 import lombok.EqualsAndHashCode;
@@ -40,6 +41,7 @@ public class ApiResponseErrorDetails<T> extends ApiResponse<T> {
      * absent (null) for every other error, so existing clients see the same body they always did.
      */
     @Schema(description = "Field-level rejections: field name -> message; present only for validation failures")
+    @JsonInclude(JsonInclude.Include.NON_NULL)
     private Map<String, String> fieldErrors;
 
     private ApiResponseErrorDetails(Integer code, String message, T data, String error) {

@@ -12,7 +12,6 @@ import org.apache.commons.lang3.StringUtils;
 import org.jspecify.annotations.Nullable;
 
 import io.softa.framework.base.enums.Operator;
-import io.softa.framework.base.exception.IllegalArgumentException;
 import io.softa.framework.orm.constant.ModelConstant;
 import io.softa.framework.orm.domain.EvalContext;
 import io.softa.framework.orm.domain.FilterControl;
@@ -26,6 +25,7 @@ import io.softa.framework.orm.meta.FieldConstraints;
 import io.softa.framework.orm.meta.MetaField;
 import io.softa.framework.orm.meta.MetaModel;
 import io.softa.framework.orm.meta.ModelManager;
+import io.softa.framework.orm.service.validation.WriteValidationException;
 import io.softa.framework.orm.utils.IdUtils;
 import io.softa.framework.orm.utils.ReflectTool;
 
@@ -270,18 +270,18 @@ public final class FieldConstraintsEnforcer {
         Object value = row.get(name);
         if (c.readonlyWhen() != null && patch.containsKey(name) && matches(c.readonlyWhen(), row)
                 && assigned(value, originalRow == null ? null : originalRow.get(name))) {
-            throw new IllegalArgumentException(
+            throw WriteValidationException.forField(name,
                     "Model field {0}:{1} is readonly in its current state and cannot be assigned!", modelName, name);
         }
         if (requiredNow(c.requiredWhen(), row) && FilterEvaluator.isBlank(value)) {
-            throw new IllegalArgumentException(
+            throw WriteValidationException.forField(name,
                     "Model field {0}:{1} is required and cannot be empty!", modelName, name);
         }
         if (c.invalidWhen() != null && matches(c.invalidWhen(), row)) {
             String message = c.message() != null
                     ? c.message()
                     : "Model field {0}:{1} is not valid: the value {2} does not satisfy the field''s rule.";
-            throw new IllegalArgumentException(message, modelName, name, String.valueOf(value));
+            throw WriteValidationException.forField(name, message, modelName, name, String.valueOf(value));
         }
     }
 

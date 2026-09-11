@@ -4,7 +4,7 @@ import java.math.BigDecimal;
 import java.util.regex.Pattern;
 import org.apache.commons.lang3.StringUtils;
 
-import io.softa.framework.base.exception.IllegalArgumentException;
+import io.softa.framework.orm.service.validation.WriteValidationException;
 
 /**
  * Enforces a field's declared value domain — {@code constraints.min / max / pattern}.
@@ -55,7 +55,7 @@ public final class ValueConstraints {
         boolean belowMin = min != null && actual.compareTo(min) < 0;
         boolean aboveMax = max != null && actual.compareTo(max) > 0;
         if (belowMin || aboveMax) {
-            throw new IllegalArgumentException(rangeMessage(c),
+            throw WriteValidationException.forField(metaField.getFieldName(), rangeMessage(c),
                     metaField.getModelName(), metaField.getFieldName(),
                     c.min(), c.max(), String.valueOf(value));
         }
@@ -76,7 +76,7 @@ public final class ValueConstraints {
             return;
         }
         if (!Pattern.matches(c.pattern(), value)) {
-            throw new IllegalArgumentException(patternMessage(c),
+            throw WriteValidationException.forField(metaField.getFieldName(), patternMessage(c),
                     metaField.getModelName(), metaField.getFieldName(), value);
         }
     }

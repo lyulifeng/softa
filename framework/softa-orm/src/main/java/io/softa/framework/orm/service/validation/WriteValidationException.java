@@ -35,6 +35,22 @@ public class WriteValidationException extends IllegalArgumentException {
         this.errors = List.of();
     }
 
+    /**
+     * One field, one sentence — what a field constraint throws from the pipeline. The message goes
+     * through the framework's formatting ({@code {0}} placeholders, i18n) like every other
+     * {@code IllegalArgumentException}, and the same sentence is recorded against the field so the
+     * body carries it as {@code fieldErrors} too.
+     */
+    public static WriteValidationException forField(String field, String message, Object... args) {
+        WriteValidationException e = new WriteValidationException(message, args);
+        return new WriteValidationException(List.of(new FieldError(0, field, e.getMessage())), e.getMessage());
+    }
+
+    private WriteValidationException(List<FieldError> errors, String formattedMessage) {
+        super(formattedMessage);
+        this.errors = List.copyOf(errors);
+    }
+
     /** Field → message, first rejection per field; what an API response would carry as fieldErrors. */
     public Map<String, String> fieldErrors() {
         Map<String, String> map = new LinkedHashMap<>();
