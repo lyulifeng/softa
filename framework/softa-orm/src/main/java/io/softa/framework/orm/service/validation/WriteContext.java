@@ -22,23 +22,35 @@ public final class WriteContext {
     private final AccessType accessType;
     private final int rowIndex;
     private final Map<String, Object> row;
+    private final Map<String, Object> patch;
     private final @Nullable Map<String, Object> originalRow;
     private final WriteValidationErrors errors;
 
     WriteContext(String modelName, AccessType accessType, int rowIndex, Map<String, Object> row,
-                 @Nullable Map<String, Object> originalRow, WriteValidationErrors errors) {
+                 Map<String, Object> patch, @Nullable Map<String, Object> originalRow, WriteValidationErrors errors) {
         this.modelName = modelName;
         this.accessType = accessType;
         this.rowIndex = rowIndex;
         this.row = row;
+        this.patch = patch;
         this.originalRow = originalRow;
         this.errors = errors;
     }
 
-    /** A context for a single row outside the framework chain — what a unit test hands to a validator. */
+    /**
+     * A context for a single row outside the framework chain — what a unit test hands to a validator.
+     * On update {@code row} is the merged row and doubles as the patch; use the five-argument form to
+     * tell them apart.
+     */
     public static WriteContext of(String modelName, AccessType accessType, Map<String, Object> row,
                                   @Nullable Map<String, Object> originalRow) {
-        return new WriteContext(modelName, accessType, 0, row, originalRow, new WriteValidationErrors());
+        return of(modelName, accessType, row, row, originalRow);
+    }
+
+    /** A context with the request patch separate from the merged row. */
+    public static WriteContext of(String modelName, AccessType accessType, Map<String, Object> row,
+                                  Map<String, Object> patch, @Nullable Map<String, Object> originalRow) {
+        return new WriteContext(modelName, accessType, 0, row, patch, originalRow, new WriteValidationErrors());
     }
 
     public String modelName() {
@@ -78,9 +90,13 @@ public final class WriteContext {
         return id instanceof Serializable s ? s : null;
     }
 
-    /** The fields the request sent — on update, the patch keys. */
+    /**
+     * The fields the request actually sent — on update, only the patch; on create the same as
+     * {@link #row()}. "May omit but may not clear" reads this: a key present with a blank value is
+     * a clear, an absent key is an omission.
+     */
     public Map<String, Object> patch() {
-        return Collections.unmodifiableMap(row);
+        return Collections.unmodifiableMap(patch);
     }
 
     /** Record a field-level rejection and keep going; thrown together with the others at the end. */

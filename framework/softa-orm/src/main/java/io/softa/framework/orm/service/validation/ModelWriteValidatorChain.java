@@ -81,7 +81,7 @@ public class ModelWriteValidatorChain {
         for (ModelWriteValidator validator : applicable) {
             validator.validateBatch(modelName, rows, AccessType.CREATE);
             for (int i = 0; i < rows.size(); i++) {
-                validator.validateCreate(new WriteContext(modelName, AccessType.CREATE, i, rows.get(i), null, errors));
+                validator.validateCreate(new WriteContext(modelName, AccessType.CREATE, i, rows.get(i), rows.get(i), null, errors));
             }
         }
         throwIfRejected(errors);
@@ -114,7 +114,7 @@ public class ModelWriteValidatorChain {
                 }
                 Map<String, Object> merged = new java.util.HashMap<>(original);
                 merged.putAll(patch);
-                validator.validateUpdate(new WriteContext(modelName, AccessType.UPDATE, i, merged, original, errors));
+                validator.validateUpdate(new WriteContext(modelName, AccessType.UPDATE, i, merged, patch, original, errors));
             }
         }
         throwIfRejected(errors);

@@ -13,10 +13,18 @@ import java.util.regex.Pattern;
 import java.util.regex.PatternSyntaxException;
 import com.fasterxml.jackson.annotation.JsonIgnore;
 import com.fasterxml.jackson.annotation.JsonInclude;
+import lombok.extern.slf4j.Slf4j;
+import tools.jackson.core.JacksonException;
+import tools.jackson.core.JsonParser;
+import tools.jackson.databind.DeserializationContext;
+import tools.jackson.databind.JsonNode;
+import tools.jackson.databind.ValueDeserializer;
+import tools.jackson.databind.annotation.JsonDeserialize;
 import org.apache.commons.lang3.StringUtils;
 import org.jspecify.annotations.Nullable;
 
 import io.softa.framework.base.enums.Operator;
+import io.softa.framework.base.utils.JsonUtils;
 import io.softa.framework.orm.domain.FilterEvaluator;
 import io.softa.framework.orm.domain.FilterEvaluator.RefKind;
 import io.softa.framework.orm.domain.FilterEvaluator.ValueRef;
@@ -61,6 +69,7 @@ import io.softa.framework.orm.enums.FilterType;
  * @param invalidWhen when the row's values make this field invalid
  */
 @JsonInclude(JsonInclude.Include.NON_NULL)
+@JsonDeserialize(using = FieldConstraints.Deserializer.class)
 public record FieldConstraints(
         @Nullable String min,
         @Nullable String max,
@@ -393,5 +402,65 @@ public record FieldConstraints(
             case FILE, ONE_TO_ONE, MANY_TO_ONE -> "id";
             default -> "text";
         };
+    }
+
+    /**
+     * Reads the stored JSON leniently: a row that does not parse — a hand-written {@code sys_field}
+     * row, a studio payload from an older shape — is logged and read as <b>no constraints</b>, so one
+     * bad declaration cannot stop the catalog from loading and every write to the model from working.
+     * The semantic checks ({@link #validate}) run afterwards in {@code ModelManager} and drop a
+     * declaration the same way.
+     */
+    @Slf4j
+    public static final class Deserializer extends ValueDeserializer<FieldConstraints> {
+        @Override
+        public @Nullable FieldConstraints deserialize(JsonParser p, DeserializationContext ctxt) throws JacksonException {
+            JsonNode node = p.readValueAsTree();
+            if (node == null || node.isNull()) {
+                return null;
+            }
+            try {
+                FieldConstraints c = new FieldConstraints(
+                        text(node, "min"), text(node, "max"), text(node, "pattern"), text(node, "message"),
+                        condition(node.get("requiredWhen")),
+                        filters(node.get("hiddenWhen"), "hiddenWhen"),
+                        filters(node.get("readonlyWhen"), "readonlyWhen"),
+                        filters(node.get("invalidWhen"), "invalidWhen"));
+                return c.isEmpty() ? null : c;
+            } catch (RuntimeException e) {
+                log.error("Field constraints {} do not parse and are ignored: {}", node, e.getMessage());
+                return null;
+            }
+        }
+
+        private static @Nullable String text(JsonNode node, String key) {
+            JsonNode value = node.get(key);
+            return value == null || value.isNull() ? null : blankToNull(value.asString());
+        }
+
+        private static @Nullable FieldCondition condition(@Nullable JsonNode value) {
+            if (value == null || value.isNull()) {
+                return null;
+            }
+            if (value.isBoolean()) {
+                return value.asBoolean() ? FieldCondition.ALWAYS : null;
+            }
+            if (value.isTextual()) {
+                return FieldCondition.parse(value.asString());
+            }
+            Filters f = Filters.of((List<?>) JsonUtils.jsonNodeToObject(value));
+            return Filters.isEmpty(f) ? null : FieldCondition.of(f);
+        }
+
+        private static @Nullable Filters filters(@Nullable JsonNode value, String key) {
+            if (value == null || value.isNull()) {
+                return null;
+            }
+            if (value.isBoolean()) {
+                throw new IllegalStateException(key + " does not accept a boolean; only requiredWhen has an always-form");
+            }
+            Filters f = value.isTextual() ? Filters.of(value.asString()) : Filters.of((List<?>) JsonUtils.jsonNodeToObject(value));
+            return Filters.isEmpty(f) ? null : f;
+        }
     }
 }

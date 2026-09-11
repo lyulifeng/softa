@@ -120,4 +120,20 @@ class FieldConstraintsTest {
         assertThatThrownBy(() -> of(null, null, null, "[]")).hasMessageContaining("empty condition");
         assertThatThrownBy(() -> of("[[\"reason\", \"=\"", null, null, null)).hasMessageContaining("not a filter expression");
     }
+
+    @Test
+    void aStoredRowThatDoesNotParseReadsAsNoConstraintsInsteadOfFailingTheLoad() {
+        // hand-written rows and older studio payloads must not stop the catalog from loading
+        assertThat(JsonUtils.stringToObject("{\"hiddenWhen\":true}", FieldConstraints.class)).isNull();
+        assertThat(JsonUtils.stringToObject("{\"requiredWhen\":[[\"reason\", \"=\"]]}", FieldConstraints.class)).isNull();
+        assertThat(JsonUtils.stringToObject("{}", FieldConstraints.class)).isNull();
+        // and a valid row of every shape still reads
+        FieldConstraints c = JsonUtils.stringToObject(
+                "{\"min\":\"0\",\"requiredWhen\":true,\"invalidWhen\":[\"endDate\",\"<\",\"{{ @startDate }}\"],\"hiddenWhen\":\"[[\\\"a\\\", \\\"=\\\", 1]]\"}",
+                FieldConstraints.class);
+        assertThat(c.min()).isEqualTo("0");
+        assertThat(c.requiredWhen().isAlways()).isTrue();
+        assertThat(c.invalidWhen()).isEqualTo(Filters.of("[[\"endDate\",\"<\",\"{{ @startDate }}\"]]"));
+        assertThat(c.hiddenWhen()).isEqualTo(Filters.of("[[\"a\", \"=\", 1]]"));
+    }
 }
