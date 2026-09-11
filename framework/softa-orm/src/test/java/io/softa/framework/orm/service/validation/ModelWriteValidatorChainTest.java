@@ -103,6 +103,20 @@ class ModelWriteValidatorChainTest {
     }
 
     @Test
+    void aTimelinePatchIsMergedOntoTheSliceItNamesNotOntoAnotherSliceOfTheSameId() {
+        ModelWriteValidatorChain chain = chain(new CountryAddressRule());
+        // two slices of logical id 7: the one the patch names has a postal code, the other does not
+        Map<Serializable, Map<String, Object>> originals = Map.of(
+                7L, Map.of("id", 7L, "sliceId", 72L, "country", "MY"),
+                71L, Map.of("id", 7L, "sliceId", 71L, "country", "MY", "postalCode", "12345"),
+                72L, Map.of("id", 7L, "sliceId", 72L, "country", "MY"));
+        assertThatCode(() -> chain.validateUpdate("Company", List.of(Map.of("id", 7L, "sliceId", 71L, "country", "SG")), originals))
+                .doesNotThrowAnyException();
+        assertThatThrownBy(() -> chain.validateUpdate("Company", List.of(Map.of("id", 7L, "sliceId", 72L, "country", "SG")), originals))
+                .isInstanceOf(WriteValidationException.class).hasMessageContaining("postalCode");
+    }
+
+    @Test
     void modelsWithoutAValidatorPayNothing() {
         ModelWriteValidatorChain chain = chain(new CountryAddressRule());
         assertThat(chain.supports("Employee")).isFalse();

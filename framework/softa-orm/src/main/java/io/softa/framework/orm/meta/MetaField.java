@@ -151,11 +151,6 @@ public class MetaField implements Serializable {
         }
     }
 
-    /** Whether the field carries conditions that read other fields of the row. */
-    public boolean hasConditionalConstraints() {
-        return constraints != null && constraints.hasConditions();
-    }
-
     public boolean isDynamicCascadedField() {
         return dynamic && StringUtils.isNotBlank(cascadedField);
     }

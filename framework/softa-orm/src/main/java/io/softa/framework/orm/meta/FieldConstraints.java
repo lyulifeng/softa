@@ -24,7 +24,6 @@ import org.apache.commons.lang3.StringUtils;
 import org.jspecify.annotations.Nullable;
 
 import io.softa.framework.base.enums.Operator;
-import io.softa.framework.base.utils.JsonUtils;
 import io.softa.framework.orm.domain.FilterEvaluator;
 import io.softa.framework.orm.domain.FilterEvaluator.RefKind;
 import io.softa.framework.orm.domain.FilterEvaluator.ValueRef;
@@ -147,11 +146,6 @@ public record FieldConstraints(
     /** Whether any of the four conditions is declared — the part that reads other fields. */
     public boolean hasConditions() {
         return requiredWhen != null || hiddenWhen != null || readonlyWhen != null || invalidWhen != null;
-    }
-
-    /** Whether a value domain is declared — the part the numeric / string processors enforce. */
-    public boolean hasValueDomain() {
-        return min != null || max != null || pattern != null;
     }
 
     /**
@@ -420,47 +414,25 @@ public record FieldConstraints(
                 return null;
             }
             try {
-                FieldConstraints c = new FieldConstraints(
-                        text(node, "min"), text(node, "max"), text(node, "pattern"), text(node, "message"),
-                        condition(node.get("requiredWhen")),
-                        filters(node.get("hiddenWhen"), "hiddenWhen"),
-                        filters(node.get("readonlyWhen"), "readonlyWhen"),
-                        filters(node.get("invalidWhen"), "invalidWhen"));
-                return c.isEmpty() ? null : c;
+                // Every member is read back as the text the annotation would have carried — a condition
+                // stored as a JSON array is its own text — and parsed by the one factory the annotation
+                // lane uses, so the two lanes cannot drift in what they accept.
+                return of(text(node, "min"), text(node, "max"), text(node, "pattern"), text(node, "message"),
+                        text(node, "requiredWhen"), text(node, "hiddenWhen"),
+                        text(node, "readonlyWhen"), text(node, "invalidWhen"), "stored constraints");
             } catch (RuntimeException e) {
                 log.error("Field constraints {} do not parse and are ignored: {}", node, e.getMessage());
                 return null;
             }
         }
 
+        /** A member as text: a scalar's value, a structured value's JSON, an absent or null member as null. */
         private static @Nullable String text(JsonNode node, String key) {
             JsonNode value = node.get(key);
-            return value == null || value.isNull() ? null : blankToNull(value.asString());
-        }
-
-        private static @Nullable FieldCondition condition(@Nullable JsonNode value) {
             if (value == null || value.isNull()) {
                 return null;
             }
-            if (value.isBoolean()) {
-                return value.asBoolean() ? FieldCondition.ALWAYS : null;
-            }
-            if (value.isTextual()) {
-                return FieldCondition.parse(value.asString());
-            }
-            Filters f = Filters.of((List<?>) JsonUtils.jsonNodeToObject(value));
-            return Filters.isEmpty(f) ? null : FieldCondition.of(f);
-        }
-
-        private static @Nullable Filters filters(@Nullable JsonNode value, String key) {
-            if (value == null || value.isNull()) {
-                return null;
-            }
-            if (value.isBoolean()) {
-                throw new IllegalStateException(key + " does not accept a boolean; only requiredWhen has an always-form");
-            }
-            Filters f = value.isTextual() ? Filters.of(value.asString()) : Filters.of((List<?>) JsonUtils.jsonNodeToObject(value));
-            return Filters.isEmpty(f) ? null : f;
+            return blankToNull(value.isObject() || value.isArray() ? value.toString() : value.asString());
         }
     }
 }

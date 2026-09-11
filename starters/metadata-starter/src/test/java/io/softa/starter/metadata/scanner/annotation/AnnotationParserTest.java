@@ -516,6 +516,23 @@ class AnnotationParserTest {
         assertTrue(ex.getMessage().contains("dynamic"), ex.getMessage());
     }
 
+    @Model
+    static class ConditionOnAToManyFieldIsRejected extends AuditableModel {
+        @Field private Boolean active;
+        @Field(fieldType = FieldType.ONE_TO_MANY, relatedField = "deptId",
+               requiredWhen = "[[\"active\", \"=\", true]]") private List<AuditableModel> empIds;
+        @Override public Serializable getId() { return null; }
+    }
+
+    @Test
+    void aCondition_onAToManyField_isRejectedAtParse_notDroppedAtLoad() {
+        // the catalog load forces dynamic on TO_MANY fields and would drop the condition silently;
+        // the boot check must judge the state the field ends up in
+        IllegalStateException ex = assertThrows(IllegalStateException.class,
+                () -> parser.parse(List.of(ConditionOnAToManyFieldIsRejected.class), List.of()));
+        assertTrue(ex.getMessage().contains("dynamic"), ex.getMessage());
+    }
+
     // ------- OPTION / MULTI_OPTION are forward-inferred only ------------
     // OPTION / MULTI_OPTION can never be written explicitly in
     // @Field(fieldType = ...). They are always derived from the Java type

@@ -3,6 +3,7 @@ package io.softa.starter.metadata.checksum;
 import java.util.List;
 import java.util.Map;
 import java.util.TreeSet;
+import tools.jackson.databind.JsonNode;
 
 import io.softa.framework.orm.dto.DTOFieldObject;
 import io.softa.starter.metadata.catalog.CanonicalJson;
@@ -56,15 +57,11 @@ public final class CanonicalMetadataSerializer {
             case Enum<?> e -> sb.append("e:").append(e.name());
             case Number n -> sb.append("n:").append(n);             // metadata numerics are Integer/Long — no float drift
             // A DTO column hashes as its canonical JSON, so key order and spelling in the stored text
-            // cannot move the checksum; the default branch would hash a record's toString().
-            case DTOFieldObject d -> {
-                String json = CanonicalJson.of(d);
-                if (json == null) {
-                    sb.append('∅');
-                } else {
-                    sb.append("j:").append(json);
-                }
-            }
+            // cannot move the checksum. It arrives as the record when read through the catalog codec and
+            // as a JsonNode when read through modelService.searchList (the JSON processor parses the
+            // text); the default branch would hash toString() of either.
+            case DTOFieldObject d -> appendJson(CanonicalJson.of(d), sb);
+            case JsonNode node -> appendJson(CanonicalJson.of(node), sb);
             case List<?> list -> {
                 sb.append('[');
                 boolean first = true;
@@ -78,6 +75,14 @@ public final class CanonicalMetadataSerializer {
                 sb.append(']');
             }
             default -> sb.append("s:").append(value);
+        }
+    }
+
+    private static void appendJson(String canonical, StringBuilder sb) {
+        if (canonical == null) {
+            sb.append('∅');
+        } else {
+            sb.append("j:").append(canonical);
         }
     }
 }

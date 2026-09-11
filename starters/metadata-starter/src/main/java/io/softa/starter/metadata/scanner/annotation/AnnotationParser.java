@@ -1031,8 +1031,10 @@ public final class AnnotationParser {
                 continue;
             }
             String where = modelName + "." + f.getFieldName();
-            List<String> warnings = constraints.validate(f.getFieldType(), Boolean.TRUE.equals(f.getDynamic()),
-                    where, typeByName::get);
+            // The catalog load forces dynamic on every TO_MANY field; check the state it will end up in,
+            // or a condition on such a field passes here and is dropped there without failing the boot.
+            boolean dynamic = Boolean.TRUE.equals(f.getDynamic()) || FieldType.TO_MANY_TYPES.contains(f.getFieldType());
+            List<String> warnings = constraints.validate(f.getFieldType(), dynamic, where, typeByName::get);
             warnings.forEach(log::warn);
             if (Boolean.TRUE.equals(f.getRequired()) && constraints.requiredWhen() != null) {
                 log.warn("@Field on {} declares both required = true and requiredWhen; the condition never"

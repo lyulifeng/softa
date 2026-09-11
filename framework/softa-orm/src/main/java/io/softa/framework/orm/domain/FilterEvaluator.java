@@ -5,6 +5,7 @@ import java.time.Duration;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.LocalTime;
+import java.time.OffsetDateTime;
 import java.time.Period;
 import java.time.format.DateTimeParseException;
 import java.time.temporal.Temporal;
@@ -13,9 +14,9 @@ import java.util.ArrayList;
 import java.util.Collection;
 import java.util.List;
 import java.util.Map;
-import java.util.Objects;
 import java.util.Set;
 import java.util.function.Function;
+import java.util.function.IntPredicate;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import org.apache.commons.lang3.StringUtils;
@@ -297,7 +298,12 @@ public final class FilterEvaluator {
                 || (value instanceof Collection<?> c && c.isEmpty());
     }
 
-    private static boolean equal(@Nullable Object left, @Nullable Object right, @Nullable FieldType type) {
+    /**
+     * Value equality under the field's type: two empties are equal, a multi-value left side matches
+     * when any element does, and two values that both coerce compare as {@code 0}. A value that does
+     * not coerce ({@code "n/a"} on a DATE field) is equal to nothing — not even to another such value.
+     */
+    public static boolean equal(@Nullable Object left, @Nullable Object right, @Nullable FieldType type) {
         if (left instanceof Collection<?> set) {
             return set.stream().anyMatch(element -> equal(element, right, type));
         }
@@ -306,28 +312,13 @@ public final class FilterEvaluator {
         if (leftBlank || rightBlank) {
             return leftBlank && rightBlank;
         }
-        Kind kind = kindOf(type, left, right);
-        return switch (kind) {
-            case NUMBER -> {
-                BigDecimal a = toNumber(left);
-                BigDecimal b = toNumber(right);
-                yield a != null && b != null && a.compareTo(b) == 0;
-            }
-            case DATE -> Objects.equals(toDate(left), toDate(right));
-            case DATETIME -> Objects.equals(toDateTime(left), toDateTime(right));
-            case TIME -> Objects.equals(toTime(left), toTime(right));
-            case BOOLEAN -> Objects.equals(toBoolean(left), toBoolean(right));
-            case TEXT -> text(left).equals(text(right));
-        };
-    }
-
-    private interface Verdict {
-        boolean of(int comparison);
-    }
-
-    private static boolean compare(@Nullable Object left, @Nullable Object right, @Nullable FieldType type, Verdict verdict) {
         Integer c = compareOrNull(left, right, type);
-        return c != null && verdict.of(c);
+        return c != null && c == 0;
+    }
+
+    private static boolean compare(@Nullable Object left, @Nullable Object right, @Nullable FieldType type, IntPredicate verdict) {
+        Integer c = compareOrNull(left, right, type);
+        return c != null && verdict.test(c);
     }
 
     /** The ordering of two values, or null when either is empty or not comparable under the kind. */
@@ -428,41 +419,49 @@ public final class FilterEvaluator {
     }
 
     static @Nullable LocalDate toDate(Object value) {
-        return switch (value) {
-            case LocalDate d -> d;
-            case LocalDateTime dt -> dt.toLocalDate();
-            case java.util.Date d -> DateUtils.dateToLocalDate(d);
-            case String s -> {
-                String t = s.trim();
-                try {
-                    yield t.length() > 10
-                            ? LocalDateTime.parse(t, TimeConstant.DATETIME_FORMATTER).toLocalDate()
-                            : LocalDate.parse(t, TimeConstant.DATE_FORMATTER);
-                } catch (DateTimeParseException e) {
-                    yield null;
-                }
-            }
-            default -> null;
-        };
+        if (value instanceof LocalDate d) {
+            return d;
+        }
+        LocalDateTime dateTime = toDateTime(value);
+        return dateTime == null ? null : dateTime.toLocalDate();
     }
 
+    /**
+     * A date-time from what a row may carry: the temporal types, {@code java.util.Date}, or text in
+     * the framework's {@code yyyy-MM-dd HH:mm:ss} / {@code yyyy-MM-dd} shapes and in ISO-8601
+     * ({@code 2024-01-31T09:30:00}, with or without a zone offset) — the pipeline's type cast accepts
+     * both spellings, so a patch may arrive in either.
+     */
     static @Nullable LocalDateTime toDateTime(Object value) {
         return switch (value) {
             case LocalDateTime dt -> dt;
             case LocalDate d -> d.atStartOfDay();
             case java.util.Date d -> DateUtils.dateToLocalDateTime(d);
-            case String s -> {
-                String t = s.trim();
-                try {
-                    yield t.length() > 10
-                            ? LocalDateTime.parse(t, TimeConstant.DATETIME_FORMATTER)
-                            : LocalDate.parse(t, TimeConstant.DATE_FORMATTER).atStartOfDay();
-                } catch (DateTimeParseException e) {
-                    yield null;
-                }
-            }
+            case String s -> parseDateTime(s.trim());
             default -> null;
         };
+    }
+
+    private static @Nullable LocalDateTime parseDateTime(String text) {
+        if (text.length() <= 10) {
+            return parse(() -> LocalDate.parse(text, TimeConstant.DATE_FORMATTER).atStartOfDay());
+        }
+        LocalDateTime parsed = parse(() -> LocalDateTime.parse(text, TimeConstant.DATETIME_FORMATTER));
+        if (parsed == null) {
+            parsed = parse(() -> LocalDateTime.parse(text));
+        }
+        if (parsed == null) {
+            parsed = parse(() -> OffsetDateTime.parse(text).toLocalDateTime());
+        }
+        return parsed;
+    }
+
+    private static <T> @Nullable T parse(java.util.function.Supplier<T> parser) {
+        try {
+            return parser.get();
+        } catch (DateTimeParseException e) {
+            return null;
+        }
     }
 
     static @Nullable LocalTime toTime(Object value) {
@@ -470,11 +469,9 @@ public final class FilterEvaluator {
             case LocalTime t -> t;
             case LocalDateTime dt -> dt.toLocalTime();
             case String s -> {
-                try {
-                    yield LocalTime.parse(s.trim(), TimeConstant.TIME_FORMATTER);
-                } catch (DateTimeParseException e) {
-                    yield null;
-                }
+                String t = s.trim();
+                LocalTime parsed = parse(() -> LocalTime.parse(t, TimeConstant.TIME_FORMATTER));
+                yield parsed != null ? parsed : parse(() -> LocalTime.parse(t));
             }
             default -> null;
         };

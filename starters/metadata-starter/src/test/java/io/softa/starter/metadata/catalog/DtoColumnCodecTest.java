@@ -73,4 +73,17 @@ class DtoColumnCodecTest {
         assertEquals(CanonicalMetadataSerializer.canonical(Map.of(), List.of("constraints")),
                 CanonicalMetadataSerializer.canonical(java.util.Collections.singletonMap("constraints", null), List.of("constraints")));
     }
+
+    @Test
+    void aRowReadThroughTheModelServiceCarriesTheColumnAsJsonNodeAndHashesTheSame() {
+        // both checksum lanes read their rows via searchList, whose JSON processor parses the text into a
+        // JsonNode — a differently spelled or null-carrying text must still hash as the same declaration
+        Object node = io.softa.framework.base.utils.JsonUtils.stringToObject(
+                "{\"min\":\"0\",\"message\":\"Headcount cannot be negative.\",\"max\":null}", tools.jackson.databind.JsonNode.class);
+        assertEquals(CanonicalMetadataSerializer.canonical(Map.of("constraints", DECLARED), List.of("constraints")),
+                CanonicalMetadataSerializer.canonical(Map.of("constraints", node), List.of("constraints")));
+        Object empty = io.softa.framework.base.utils.JsonUtils.stringToObject("{}", tools.jackson.databind.JsonNode.class);
+        assertEquals(CanonicalMetadataSerializer.canonical(Map.of(), List.of("constraints")),
+                CanonicalMetadataSerializer.canonical(Map.of("constraints", empty), List.of("constraints")));
+    }
 }

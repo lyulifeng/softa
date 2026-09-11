@@ -36,10 +36,13 @@ public class WriteValidationException extends IllegalArgumentException {
     }
 
     /**
-     * One field, one sentence — what a field constraint throws from the pipeline. The message goes
-     * through the framework's formatting ({@code {0}} placeholders, i18n) like every other
-     * {@code IllegalArgumentException}, and the same sentence is recorded against the field so the
-     * body carries it as {@code fieldErrors} too.
+     * One field, one sentence — what a field constraint throws from the pipeline. With arguments the
+     * message is a {@code MessageFormat} pattern ({@code {0}} placeholders) and goes through the
+     * framework's formatting and i18n like every other {@code IllegalArgumentException}; with none it
+     * is looked up for translation and otherwise shown as written — the form for a sentence a
+     * developer declared ({@code constraintMessage}), whose apostrophes and braces are text, not
+     * syntax. Either way the sentence is recorded against the field so the body carries it as
+     * {@code fieldErrors} too.
      */
     public static WriteValidationException forField(String field, String message, Object... args) {
         WriteValidationException e = new WriteValidationException(message, args);

@@ -5,7 +5,6 @@ import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
-import java.util.Objects;
 import java.util.Set;
 import java.util.function.Function;
 import org.apache.commons.lang3.StringUtils;
@@ -33,8 +32,10 @@ import io.softa.framework.orm.utils.ReflectTool;
  * Applies the conditional field constraints — {@code requiredWhen} / {@code hiddenWhen} /
  * {@code readonlyWhen} / {@code invalidWhen} — to the rows of one write.
  *
- * <p>Runs <b>before</b> the field-processor chain, on the raw values: on create the request row, on
- * update the patch merged onto the stored row. The chain converts field by field, so a neighbour a
+ * <p>Runs <b>before</b> the field-processor chain, on the raw values: on create the request row with
+ * the declared {@code defaultValue}s filled in (the chain fills them later, and a condition reading
+ * {@code active} must see the default {@code true} a form never sent), on update the patch merged
+ * onto the stored row. The chain converts field by field, so a neighbour a
  * condition reads might or might not have been coerced yet depending on declaration order; reading
  * the values as they arrived gives create and update — and the frontend, which reads the form — the
  * same picture. The value domain ({@code min} / {@code max} / {@code pattern}) is the opposite case
@@ -83,6 +84,12 @@ public final class FieldConstraintsEnforcer {
     private final Function<String, @Nullable FieldType> typeOf;
     private final EvalContext ctx;
     private final RelatedRowReader relatedRows;
+    /** Per conditional field, the names its conditions read — computed once, not per row. */
+    private final Map<String, Set<String>> referencedByField = new HashMap<>();
+    /** Per conditional field, the stored columns those references live in. */
+    private final Map<String, Set<String>> storedByField = new HashMap<>();
+    /** On create: the declared defaults of every field a condition may read, filled into the view. */
+    private final Map<String, Object> createDefaults = new HashMap<>();
     /** Related rows already fetched during this write: {@code model/id → row}. */
     private final Map<String, Map<String, Object>> relatedCache = new HashMap<>();
 
@@ -108,6 +115,21 @@ public final class FieldConstraintsEnforcer {
         };
         this.ctx = ctx;
         this.relatedRows = relatedRows;
+        for (MetaField field : conditionalFields) {
+            Set<String> refs = field.getConstraints().referencedFields();
+            referencedByField.put(field.getFieldName(), refs);
+            storedByField.put(field.getFieldName(), storedReferences(field, fieldOf));
+            if (AccessType.CREATE.equals(accessType)) {
+                rememberDefault(field);
+                refs.forEach(ref -> rememberDefault(fieldOf.apply(ref)));
+            }
+        }
+    }
+
+    private void rememberDefault(@Nullable MetaField field) {
+        if (field != null && field.getDefaultValueObject() != null) {
+            createDefaults.put(field.getFieldName(), field.getDefaultValueObject());
+        }
     }
 
     /**
@@ -190,10 +212,23 @@ public final class FieldConstraintsEnforcer {
         return stored;
     }
 
-    /** Create: every conditional field is evaluated against the request row. */
+    /**
+     * Create: every conditional field is evaluated against the request row, seen with the declared
+     * defaults of the fields it reads — the same fill the chain applies afterwards
+     * ({@code computeIfAbsent}: an explicit null takes the default too).
+     */
     public void enforceCreate(Map<String, Object> row) {
+        Map<String, Object> view = row;
+        for (Map.Entry<String, Object> dflt : createDefaults.entrySet()) {
+            if (row.get(dflt.getKey()) == null) {
+                if (view == row) {
+                    view = new HashMap<>(row);
+                }
+                view.put(dflt.getKey(), dflt.getValue());
+            }
+        }
         for (MetaField field : conditionalFields) {
-            enforce(field, withDynamicReferences(field, row), row, null);
+            enforce(field, withDynamicReferences(field, view), row, null);
         }
     }
 
@@ -206,7 +241,7 @@ public final class FieldConstraintsEnforcer {
      */
     public void enforceUpdate(Map<String, Object> mergedRow, Map<String, Object> patch, @Nullable Map<String, Object> originalRow) {
         for (MetaField field : conditionalFields) {
-            Set<String> refs = storedReferences(field, fieldOf);
+            Set<String> refs = storedByField.get(field.getFieldName());
             boolean touched = patch.containsKey(field.getFieldName())
                     || refs.stream().anyMatch(patch::containsKey);
             if (touched) {
@@ -222,7 +257,7 @@ public final class FieldConstraintsEnforcer {
      */
     private Map<String, Object> withDynamicReferences(MetaField field, Map<String, Object> row) {
         Map<String, Object> view = null;
-        for (String ref : field.getConstraints().referencedFields()) {
+        for (String ref : referencedByField.get(field.getFieldName())) {
             MetaField referenced = fieldOf.apply(ref);
             if (referenced == null || !referenced.isDynamicCascadedField() || row.containsKey(ref)) {
                 continue;
@@ -268,8 +303,10 @@ public final class FieldConstraintsEnforcer {
             return;
         }
         Object value = row.get(name);
+        // The readonly check looks at what the request assigned, not at the evaluation view (which on
+        // create may hold the field's own default).
         if (c.readonlyWhen() != null && patch.containsKey(name) && matches(c.readonlyWhen(), row)
-                && assigned(value, originalRow == null ? null : originalRow.get(name))) {
+                && assigned(field, patch.get(name), originalRow == null ? null : originalRow.get(name))) {
             throw WriteValidationException.forField(name,
                     "Model field {0}:{1} is readonly in its current state and cannot be assigned!", modelName, name);
         }
@@ -278,10 +315,12 @@ public final class FieldConstraintsEnforcer {
                     "Model field {0}:{1} is required and cannot be empty!", modelName, name);
         }
         if (c.invalidWhen() != null && matches(c.invalidWhen(), row)) {
-            String message = c.message() != null
-                    ? c.message()
-                    : "Model field {0}:{1} is not valid: the value {2} does not satisfy the field''s rule.";
-            throw WriteValidationException.forField(name, message, modelName, name, String.valueOf(value));
+            // The declared sentence is shown as written — it is not a MessageFormat pattern.
+            throw c.message() != null
+                    ? WriteValidationException.forField(name, c.message())
+                    : WriteValidationException.forField(name,
+                            "Model field {0}:{1} is not valid: the value {2} does not satisfy the field''s rule.",
+                            modelName, name, String.valueOf(value));
         }
     }
 
@@ -296,18 +335,15 @@ public final class FieldConstraintsEnforcer {
         return condition != null && FilterEvaluator.matches(condition, row, ctx, typeOf);
     }
 
-    /** Whether the patch changes the field: a new non-null value on create, a different value on update. */
-    private boolean assigned(@Nullable Object value, @Nullable Object original) {
+    /**
+     * Whether the patch changes the field: a new non-null value on create, on update a value that
+     * differs from the stored one under the field's type — a stored date arrives as text and the
+     * patch as {@code LocalDate}, {@code 10} and {@code 10.00} are the same amount.
+     */
+    private boolean assigned(MetaField field, @Nullable Object value, @Nullable Object original) {
         if (AccessType.CREATE.equals(accessType)) {
             return value != null;
         }
-        if (Objects.equals(value, original)) {
-            return false;
-        }
-        // A stored date arrives as text, the patch as LocalDate — compare the text forms before
-        // calling it a change.
-        return !FilterEvaluator.isBlank(value) || !FilterEvaluator.isBlank(original)
-                ? !Objects.equals(String.valueOf(value), String.valueOf(original))
-                : false;
+        return !FilterEvaluator.equal(value, original, field.getFieldType());
     }
 }

@@ -86,6 +86,18 @@ class ValueDomainIsEnforcedOnWriteTest {
     }
 
     @Test
+    void aDeclaredMessageWithBracesOrAnApostropheIsShownAsWritten() {
+        StringProcessor processor = new StringProcessor(field(FieldType.STRING, "code",
+                domain(null, null, "[A-Z]{2}\\d{6}", "Use the form {CC}{NNNNNN}, e.g. SG000123; it's the employee's code.")), AccessType.CREATE);
+        assertThatThrownBy(() -> processor.processInputRow(row("code", "abc")))
+                .hasMessage("Use the form {CC}{NNNNNN}, e.g. SG000123; it's the employee's code.");
+        NumericProcessor bounded = new NumericProcessor(field(FieldType.INTEGER, "headcount",
+                domain("0", null, null, "Headcount can't be negative {ever}.")), AccessType.CREATE);
+        assertThatThrownBy(() -> bounded.processInputRow(row("headcount", -1)))
+                .hasMessage("Headcount can't be negative {ever}.");
+    }
+
+    @Test
     void thePatternIsMatchedAfterTheTrimAndAnEmptyOptionalStringPasses() {
         StringProcessor processor = new StringProcessor(field(FieldType.STRING, "code",
                 domain(null, null, "[A-Z]{2}\\d{6}", null)), AccessType.UPDATE);

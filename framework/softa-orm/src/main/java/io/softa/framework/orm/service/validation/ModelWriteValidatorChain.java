@@ -3,6 +3,7 @@ package io.softa.framework.orm.service.validation;
 import java.io.Serializable;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.core.Ordered;
@@ -36,6 +37,9 @@ public class ModelWriteValidatorChain {
      */
     private volatile List<ModelWriteValidator> validators;
 
+    /** Model → the validators that support it; {@code supports} is a fixed property of a validator. */
+    private final Map<String, List<ModelWriteValidator>> applicableByModel = new ConcurrentHashMap<>();
+
     public ModelWriteValidatorChain(ObjectProvider<ModelWriteValidator> provider) {
         this.provider = provider;
     }
@@ -68,7 +72,7 @@ public class ModelWriteValidatorChain {
 
     /** Whether any validator applies to the model — lets the caller skip fetching originals. */
     public boolean supports(String modelName) {
-        return validators().stream().anyMatch(v -> v.supports(modelName));
+        return !applicable(modelName).isEmpty();
     }
 
     /** Create: batch first, then each row, per validator; throws once with everything rejected. */
@@ -105,9 +109,10 @@ public class ModelWriteValidatorChain {
             validator.validateBatch(modelName, patches, AccessType.UPDATE);
             for (int i = 0; i < patches.size(); i++) {
                 Map<String, Object> patch = patches.get(i);
-                // a timeline patch names the slice it edits; an identity patch names the row
-                Serializable key = (Serializable) (patch.get(ModelConstant.ID) != null
-                        ? patch.get(ModelConstant.ID) : patch.get(ModelConstant.SLICE_ID));
+                // A timeline patch names the slice it edits — its id is the logical key shared by every
+                // slice, so the sliceId must win; an identity patch names the row by id.
+                Serializable key = (Serializable) (patch.get(ModelConstant.SLICE_ID) != null
+                        ? patch.get(ModelConstant.SLICE_ID) : patch.get(ModelConstant.ID));
                 Map<String, Object> original = key == null ? null : originalsById.get(key);
                 if (original == null) {
                     continue;
@@ -128,7 +133,8 @@ public class ModelWriteValidatorChain {
     }
 
     private List<ModelWriteValidator> applicable(String modelName) {
-        return validators().stream().filter(v -> v.supports(modelName)).toList();
+        return applicableByModel.computeIfAbsent(modelName,
+                name -> validators().stream().filter(v -> v.supports(name)).toList());
     }
 
     private static void throwIfRejected(WriteValidationErrors errors) {

@@ -122,7 +122,6 @@ public class DataUpdatePipeline extends DataPipeline {
     @Override
     public List<Map<String, Object>> processUpdateData(List<Map<String, Object>> rows, Map<Serializable, Map<String, Object>> originalRowsMap, LocalDateTime updatedTime) {
         List<Map<String, Object>> mergedRows = mergeToOriginalData(rows, originalRowsMap);
-        enforceConstraints(rows, mergedRows, originalRowsMap);
         processorChain.processInputRows(mergedRows);
         // TODO: Compare the encrypted fields using plaintext to be compatible with different encryption algorithms,
         //  to avoid the situation where the plaintext is the same but the ciphertext is different.
@@ -195,43 +194,29 @@ public class DataUpdatePipeline extends DataPipeline {
     }
 
     /**
-     * Apply the conditional constraints to each merged row, against the patch that produced it.
-     * Runs before the processor chain so the conditions read the raw values (create does the same).
-     */
-    private void enforceConstraints(List<Map<String, Object>> patches, List<Map<String, Object>> mergedRows,
-                                    Map<Serializable, Map<String, Object>> originalRowsMap) {
-        FieldConstraintsEnforcer enforcer = FieldConstraintsEnforcer.forModel(modelName, accessType);
-        if (enforcer == null) {
-            return;
-        }
-        Map<Serializable, Map<String, Object>> patchByKey = new HashMap<>();
-        patches.forEach(patch -> patchByKey.put((Serializable) patch.get(primaryKey), patch));
-        for (Map<String, Object> merged : mergedRows) {
-            Serializable pKey = (Serializable) merged.get(primaryKey);
-            Map<String, Object> patch = patchByKey.get(pKey);
-            if (patch != null) {
-                enforcer.enforceUpdate(merged, patch, originalRowsMap.get(pKey));
-            }
-        }
-    }
-
-    /**
      * Combine the dependent fields of cascaded fields and computed fields with the request data,
-     * by overwriting the original data with the request data.
+     * by overwriting the original data with the request data. Each merged row is checked against
+     * the conditional constraints as it is built — before the processor chain, so the conditions
+     * read the raw values (create does the same).
      *
      * @param newRows request data to be updated
      * @return merged result data
      */
     private List<Map<String, Object>> mergeToOriginalData(Collection<Map<String, Object>> newRows, Map<Serializable, Map<String, Object>> originalRowsMap) {
         // TODO: Skip when there no affected cascaded fields and computed fields.
+        FieldConstraintsEnforcer enforcer = FieldConstraintsEnforcer.forModel(modelName, accessType);
         List<Map<String, Object>> mergedRows = new ArrayList<>();
         newRows.forEach(newRow -> {
             Serializable pKey = (Serializable) newRow.get(primaryKey);
             // Ignore the update data when the id does not exist
             if (originalRowsMap.containsKey(pKey)) {
+                Map<String, Object> originalRow = originalRowsMap.get(pKey);
                 Map<String, Object> mergedRow = new HashMap<>();
-                mergedRow.putAll(originalRowsMap.get(pKey));
+                mergedRow.putAll(originalRow);
                 mergedRow.putAll(newRow);
+                if (enforcer != null) {
+                    enforcer.enforceUpdate(mergedRow, newRow, originalRow);
+                }
                 mergedRows.add(mergedRow);
             }
         });

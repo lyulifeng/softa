@@ -279,30 +279,28 @@ attributes are stored together in the single `sys_field.constraints` column and 
 unchanged, which evaluates the same rules in the form.
 
 ```java
-@Field(label = "Active Employees", min = "0",
-       constraintMessage = "Headcount cannot be negative.")
+@Field(label = "Active Employees", min = "0", constraintMessage = "Headcount cannot be negative.")
 private Integer activeEmpCount;
 
-@Field(label = "Employee Code", pattern = "[A-Z]{2}\\d{6}",
-       constraintMessage = "Employee code must be two letters and six digits.")
+@Field(pattern = "[A-Z]{2}\\d{6}", constraintMessage = "Employee code must be two letters and six digits.")
 private String code;
 
 // required only when the reason is "Others" — the frontend shows the star from the same rule
-@Field(label = "Reason Description", requiredWhen = "[[\"reason\", \"=\", \"Others\"]]")
+@Field(requiredWhen = "[[\"reason\", \"=\", \"Others\"]]")
 private String reasonDescription;
 
 // compares two fields of the row; {{ @field }} reads a sibling, TODAY / NOW / USER_ID read the context
-@Field(label = "End Date", invalidWhen = "[[\"endDate\", \"<\", \"{{ @startDate }}\"]]",
+@Field(invalidWhen = "[[\"endDate\", \"<\", \"{{ @startDate }}\"]]",
        constraintMessage = "End date cannot precede start date.")
 private LocalDate endDate;
 
-@Field(label = "Date of Birth", invalidWhen = "[[\"dateOfBirth\", \">\", \"{{ TODAY - P13Y }}\"]]",
+@Field(invalidWhen = "[[\"dateOfBirth\", \">\", \"{{ TODAY - P13Y }}\"]]",
        constraintMessage = "Date of Birth must be at least 13 years before today.")
 private LocalDate dateOfBirth;
 
 // application-level required on a column that must stay nullable (no NOT NULL is rendered)
 @Field(label = "Cost Centre", requiredWhen = "true")
-private Long costCentreId;
+private Long costCentreId;   // label: humanize gives "Cost Centre Id"
 ```
 
 Enforced on **every** write — API, batch, import, seed loading, flow write nodes — because they all
@@ -319,8 +317,9 @@ redeploy rather than a migration and existing rows are not retroactively invalid
 - On update a condition is evaluated only when the patch touches the field or a field it reads, on
   the patch merged onto the stored row; **hidden fields are not judged**; `readonlyWhen` rejects an
   assignment. Static `required` / `readonly` / `hidden` always win — do not declare both.
-- `constraintMessage` is what the user sees (its own i18n key). Skip it on a bound; always write one
-  for a `pattern` or an `invalidWhen`.
+- `constraintMessage` is what the user sees, as written (its own i18n key, not a `{0}` pattern).
+  Optional on a bound — "must be at least 0" composes itself; always write one for a `pattern` or
+  an `invalidWhen`.
 
 A bad declaration fails the boot, not the first save: an unparseable literal, `min` above `max`, an
 uncompilable regex, the attribute on the wrong field type, a condition naming a sibling that does not

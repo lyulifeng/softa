@@ -55,6 +55,30 @@ class FilterEvaluatorTest {
     }
 
     @Test
+    void datesAreReadInTheFrameworkShapeAndInIso8601() {
+        // the pipeline's type cast accepts both spellings, so a patch may carry either
+        assertThat(eval("[[\"startDate\", \"=\", \"2026-01-31\"]]", row("startDate", "2026-01-31T00:00:00"))).isTrue();
+        assertThat(eval("[[\"startDate\", \"<\", \"{{ TODAY }}\"]]", row("startDate", "2026-01-31T09:30:00Z"))).isTrue();
+        assertThat(eval("[[\"startDate\", \"=\", \"2026-01-31\"]]", row("startDate", "2026-01-31 09:30:00"))).isTrue();
+    }
+
+    @Test
+    void aValueThatDoesNotCoerceIsEqualToNothing() {
+        // Objects.equals(null, null) must not make two unparseable dates "equal"
+        assertThat(eval("[[\"startDate\", \"=\", \"n/a\"]]", row("startDate", "tbd"))).isFalse();
+        assertThat(eval("[[\"startDate\", \"!=\", \"n/a\"]]", row("startDate", "tbd"))).isTrue();
+        assertThat(eval("[[\"isPrimary\", \"=\", \"maybe\"]]", row("isPrimary", "perhaps"))).isFalse();
+    }
+
+    @Test
+    void typedEqualityIsExposedForTheAssignmentCheck() {
+        assertThat(FilterEvaluator.equal(10, "10.00", FieldType.BIG_DECIMAL)).isTrue();
+        assertThat(FilterEvaluator.equal(LocalDate.of(2026, 1, 31), "2026-01-31", FieldType.DATE)).isTrue();
+        assertThat(FilterEvaluator.equal("", null, FieldType.STRING)).isTrue();
+        assertThat(FilterEvaluator.equal("a", "b", FieldType.STRING)).isFalse();
+    }
+
+    @Test
     void numbersCompareByValueWhateverTheirJavaClass() {
         assertThat(eval("[[\"amount\", \">\", 100]]", row("amount", new BigDecimal("100.50")))).isTrue();
         assertThat(eval("[[\"amount\", \">\", 100]]", row("amount", "100.50"))).isTrue();

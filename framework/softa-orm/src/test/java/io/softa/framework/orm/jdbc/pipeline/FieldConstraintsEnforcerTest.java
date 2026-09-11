@@ -16,6 +16,7 @@ import io.softa.framework.orm.enums.AccessType;
 import io.softa.framework.orm.enums.FieldType;
 import io.softa.framework.orm.meta.FieldConstraints;
 import io.softa.framework.orm.meta.MetaField;
+import io.softa.framework.orm.service.validation.WriteValidationException;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatCode;
@@ -34,11 +35,16 @@ class FieldConstraintsEnforcerTest {
             "checkInStatus", FieldType.OPTION, "lateMinutes", FieldType.INTEGER, "costCentreId", FieldType.LONG);
 
     private static MetaField field(String name, FieldConstraints constraints) {
+        return field(name, constraints, null);
+    }
+
+    private static MetaField field(String name, FieldConstraints constraints, Object defaultValue) {
         MetaField f = new MetaField();
         ReflectionTestUtils.setField(f, "modelName", "EmpChangeRequest");
         ReflectionTestUtils.setField(f, "fieldName", name);
         ReflectionTestUtils.setField(f, "fieldType", TYPES.get(name));
         ReflectionTestUtils.setField(f, "constraints", constraints);
+        ReflectionTestUtils.setField(f, "defaultValueObject", defaultValue);
         return f;
     }
 
@@ -128,6 +134,43 @@ class FieldConstraintsEnforcerTest {
         FieldConstraintsEnforcer e = enforcer(AccessType.CREATE, lateMinutes);
         assertThatCode(() -> e.enforceCreate(row("checkInStatus", "Normal"))).doesNotThrowAnyException();
         assertThatThrownBy(() -> e.enforceCreate(row("checkInStatus", "Late"))).hasMessageContaining("lateMinutes");
+    }
+
+    @Test
+    void onCreateAConditionReadsTheDefaultsTheChainWillFillIn() {
+        // status defaults to Draft; a form that never sends it must be judged as Draft, not as empty
+        MetaField statusWithDefault = field("status", null, "Draft");
+        MetaField amount = field("amount", c("[[\"status\", \"=\", \"Draft\"]]", null, null, null, null));
+        FieldConstraintsEnforcer e = enforcer(AccessType.CREATE,
+                name -> "status".equals(name) ? statusWithDefault : fieldOf(name), (m, p, id) -> null, amount);
+        assertThatThrownBy(() -> e.enforceCreate(row("reason", "Others"))).hasMessageContaining("required");
+        // an explicit null takes the default too — the chain's computeIfAbsent does the same
+        assertThatThrownBy(() -> e.enforceCreate(row("status", null))).hasMessageContaining("required");
+        // the default never enters the row that is written
+        Map<String, Object> sent = row("status", "Approved");
+        assertThatCode(() -> e.enforceCreate(sent)).doesNotThrowAnyException();
+        assertThat(sent).doesNotContainKey("amount").containsEntry("status", "Approved");
+    }
+
+    @Test
+    void readonlyWhenComparesTheAssignedValueUnderTheFieldType() {
+        MetaField amount = field("amount", c(null, null, "[[\"status\", \"!=\", \"Draft\"]]", null, null));
+        FieldConstraintsEnforcer e = enforcer(AccessType.UPDATE, amount);
+        Map<String, Object> original = row("id", 1L, "status", "Approved", "amount", "10.00");
+        Map<String, Object> sameAmount = row("id", 1L, "amount", 10);
+        Map<String, Object> merged = new HashMap<>(original);
+        merged.putAll(sameAmount);
+        assertThatCode(() -> e.enforceUpdate(merged, sameAmount, original)).doesNotThrowAnyException();
+    }
+
+    @Test
+    void theDeclaredMessageIsShownAsWrittenNotAsAFormatPattern() {
+        MetaField endDate = field("endDate", c(null, null, null,
+                "[[\"endDate\", \"<\", \"{{ @startDate }}\"]]", "Use the form {CC}-{NNNN}; it's the end date's rule."));
+        FieldConstraintsEnforcer e = enforcer(AccessType.CREATE, endDate);
+        assertThatThrownBy(() -> e.enforceCreate(row("startDate", "2026-07-01", "endDate", "2026-01-01")))
+                .isInstanceOf(WriteValidationException.class)
+                .hasMessage("Use the form {CC}-{NNNN}; it's the end date's rule.");
     }
 
     @Test

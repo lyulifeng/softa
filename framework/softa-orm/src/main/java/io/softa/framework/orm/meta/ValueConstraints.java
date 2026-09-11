@@ -1,6 +1,9 @@
 package io.softa.framework.orm.meta;
 
 import java.math.BigDecimal;
+import java.util.Map;
+import java.util.Optional;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.regex.Pattern;
 import org.apache.commons.lang3.StringUtils;
 
@@ -21,14 +24,18 @@ import io.softa.framework.orm.service.validation.WriteValidationException;
  * written before a bound existed is not retroactively invalid — which is the behaviour you want
  * from a business rule and would not get from a CHECK.
  *
- * <p>The patterns are compiled per call rather than cached. {@link Pattern#matches} does the same
- * thing internally, the JDK caches nothing either way, and a per-field cache here would have to be
- * invalidated when {@code ModelManager} reloads its catalog — a correctness risk for a cost that
- * does not show up next to the surrounding JDBC round trip.
+ * <p>Compiled patterns and parsed bounds are cached by their declared text, not by field: the
+ * mapping from a regex string to its {@link Pattern} never changes, so a catalog reload needs no
+ * invalidation — a redeclared field simply keys a new entry. The message a field declares is shown
+ * as written; only the composed fallbacks are {@code MessageFormat} patterns.
  */
 public final class ValueConstraints {
 
     private ValueConstraints() {}
+
+    private static final Map<String, Pattern> PATTERNS = new ConcurrentHashMap<>();
+    /** Declared bound text → parsed value; an empty Optional marks text that does not parse. */
+    private static final Map<String, Optional<BigDecimal>> BOUNDS = new ConcurrentHashMap<>();
 
     /**
      * Rejects a numeric value outside the field's declared bounds.
@@ -55,9 +62,11 @@ public final class ValueConstraints {
         boolean belowMin = min != null && actual.compareTo(min) < 0;
         boolean aboveMax = max != null && actual.compareTo(max) > 0;
         if (belowMin || aboveMax) {
-            throw WriteValidationException.forField(metaField.getFieldName(), rangeMessage(c),
-                    metaField.getModelName(), metaField.getFieldName(),
-                    c.min(), c.max(), String.valueOf(value));
+            throw c.message() != null
+                    ? WriteValidationException.forField(metaField.getFieldName(), c.message())
+                    : WriteValidationException.forField(metaField.getFieldName(), rangeMessage(c),
+                            metaField.getModelName(), metaField.getFieldName(),
+                            c.min(), c.max(), String.valueOf(value));
         }
     }
 
@@ -75,23 +84,23 @@ public final class ValueConstraints {
         if (StringUtils.isBlank(value) || c == null || c.pattern() == null) {
             return;
         }
-        if (!Pattern.matches(c.pattern(), value)) {
-            throw WriteValidationException.forField(metaField.getFieldName(), patternMessage(c),
-                    metaField.getModelName(), metaField.getFieldName(), value);
+        if (!PATTERNS.computeIfAbsent(c.pattern(), Pattern::compile).matcher(value).matches()) {
+            throw c.message() != null
+                    ? WriteValidationException.forField(metaField.getFieldName(), c.message())
+                    : WriteValidationException.forField(metaField.getFieldName(),
+                            "Model field {0}:{1} is not in the required format: {2}.",
+                            metaField.getModelName(), metaField.getFieldName(), value);
         }
     }
 
     /**
-     * The sentence for a rejected bound: the field's own if it has one, otherwise composed.
+     * The composed sentence for a rejected bound, used when the field declares none.
      *
      * <p>Composing works here because a bound describes itself — "must be at least 0" needs nothing
      * a reader does not already have. It does not work for a pattern, which is why
      * {@code @Field(pattern)} asks for a message.
      */
     private static String rangeMessage(FieldConstraints c) {
-        if (c.message() != null) {
-            return c.message();
-        }
         if (c.min() != null && c.max() != null) {
             return "Model field {0}:{1} must be between {2} and {3}, but the value is {4}.";
         }
@@ -100,25 +109,21 @@ public final class ValueConstraints {
                 : "Model field {0}:{1} must be at most {3}, but the value is {4}.";
     }
 
-    private static String patternMessage(FieldConstraints c) {
-        return c.message() != null
-                ? c.message()
-                : "Model field {0}:{1} is not in the required format: {2}.";
-    }
-
     /** The declared bound, or null when it is absent or unparseable. */
     private static BigDecimal bound(String declared) {
         if (declared == null) {
             return null;
         }
-        try {
-            return new BigDecimal(declared);
-        } catch (NumberFormatException e) {
-            // Rejected at scan time and dropped at catalog load, so reaching here means a row written
-            // straight into sys_field. Ignoring it keeps one bad catalog row from failing every write
-            // to the model; the drift audit is the channel for the row itself.
-            return null;
-        }
+        return BOUNDS.computeIfAbsent(declared, text -> {
+            try {
+                return Optional.of(new BigDecimal(text));
+            } catch (NumberFormatException e) {
+                // Rejected at scan time and dropped at catalog load, so reaching here means a row
+                // written straight into sys_field. Ignoring it keeps one bad catalog row from failing
+                // every write to the model; the drift audit is the channel for the row itself.
+                return Optional.empty();
+            }
+        }).orElse(null);
     }
 
     private static BigDecimal toDecimal(Object value) {
