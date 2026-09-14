@@ -43,7 +43,8 @@ public class SearchNameParams {
     @Schema(description = "Ordering for the search results.")
     private Orders orders;
 
-    @Schema(description = "Limit size for search, default 10.", example = "10")
+    @Schema(description = "Limit size for search, default 10 when omitted. Must be within "
+            + "[1, 10000] when stated; 0 or a negative value is rejected.", example = "10")
     private Integer limitSize = BaseConstant.DEFAULT_NAME_LIST_SIZE;
 
     @Schema(description = "Effective date, default is `Today`.")
@@ -74,11 +75,16 @@ public class SearchNameParams {
         flexQuery.setFields(searchNameParams.getAdditionalFields());
         // Set the convert type to REFERENCE.
         flexQuery.setConvertType(ConvertType.REFERENCE);
-        // Default limitSize for searchName.
+        // An omitted limitSize takes the default; a stated one is honoured or rejected.
         Integer limitSize = searchNameParams.getLimitSize();
-        limitSize = limitSize == null || limitSize < 1 ? BaseConstant.DEFAULT_NAME_LIST_SIZE : limitSize;
-        Assert.isTrue(limitSize <= BaseConstant.MAX_BATCH_SIZE,
-                "API `searchName` cannot exceed the maximum limit of {0}.", BaseConstant.MAX_BATCH_SIZE);
+        if (limitSize == null) {
+            limitSize = BaseConstant.DEFAULT_NAME_LIST_SIZE;
+        } else {
+            Assert.isTrue(limitSize > 0,
+                    "API `searchName`: limitSize must be a positive number, but got {0}.", limitSize);
+            Assert.isTrue(limitSize <= BaseConstant.MAX_BATCH_SIZE,
+                    "API `searchName` cannot exceed the maximum limit of {0}.", BaseConstant.MAX_BATCH_SIZE);
+        }
         flexQuery.setLimitSize(limitSize);
         ContextHolder.getContext().setEffectiveDate(searchNameParams.getEffectiveDate());
         return flexQuery;

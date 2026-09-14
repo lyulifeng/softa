@@ -90,9 +90,14 @@ public class Page<T> implements Serializable {
 
     /**
      * Default first page, page size is 50, and ensure that pageSize is between [1, MAX_BATCH_SIZE]
+     * <p>
+     * An <b>omitted</b> {@code pageSize} takes the default; a <b>stated</b> one is honoured or
+     * rejected, never quietly replaced. Silently turning `pageSize: 0` into 50 answered a request
+     * nobody made — the caller asked for no rows and got a full page, and a caller that had computed
+     * its size wrongly (an off-by-one, an empty id list) learned nothing about it.
      *
      * @param pageNumber Current page number
-     * @param pageSize Page size
+     * @param pageSize Page size, null for the default; must be within [1, MAX_BATCH_SIZE] when stated
      * @param cursorPage Whether to enforce a stable order
      * @param count Whether to perform a count query first
      */
@@ -103,9 +108,11 @@ public class Page<T> implements Serializable {
         } else {
             this.pageNumber = pageNumber == null || pageNumber < 1 ? BaseConstant.DEFAULT_PAGE_NUMBER : pageNumber;
         }
-        if (pageSize == null || pageSize < 1) {
+        if (pageSize == null) {
             this.pageSize = BaseConstant.DEFAULT_PAGE_SIZE;
         } else {
+            Assert.isTrue(pageSize > 0,
+                    "Page size must be a positive number, but got {0}.", pageSize);
             Assert.isTrue(pageSize <= BaseConstant.MAX_BATCH_SIZE,
                     "Page size {0} cannot exceed the maximum limit: {1}", pageSize, BaseConstant.MAX_BATCH_SIZE);
             this.pageSize = pageSize;
