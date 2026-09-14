@@ -29,6 +29,8 @@ import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
+import io.softa.framework.base.exception.BusinessException;
+import io.softa.framework.orm.service.ConsultantAccessChecker;
 
 class PermissionInterceptorTest {
 
@@ -487,7 +489,7 @@ class PermissionInterceptorTest {
     /** Installs a checker that answers the given verdict for every account. */
     private void consultantAccessIs(boolean stillAuthorized) {
         org.springframework.test.util.ReflectionTestUtils.setField(interceptor, "consultantAccessChecker",
-                (io.softa.framework.orm.service.ConsultantAccessChecker) id -> stillAuthorized);
+                (ConsultantAccessChecker) id -> stillAuthorized);
     }
 
     @Test
@@ -504,7 +506,7 @@ class PermissionInterceptorTest {
         inCtx(10L, 42L, () -> {
             assertThatThrownBy(() ->
                     interceptor.preHandle(r, new MockHttpServletResponse(), null))
-                    .isInstanceOf(io.softa.framework.base.exception.BusinessException.class)
+                    .isInstanceOf(BusinessException.class)
                     .hasMessageContaining("authorization for this tenant has ended");
             return null;
         });
@@ -565,7 +567,7 @@ class PermissionInterceptorTest {
         inCtx(10L, 42L, () -> {
             assertThatThrownBy(() ->
                     interceptor.preHandle(r, new MockHttpServletResponse(), null))
-                    .isInstanceOf(io.softa.framework.base.exception.BusinessException.class)
+                    .isInstanceOf(BusinessException.class)
                     .hasMessageContaining("authorization for this tenant has ended");
             return null;
         });
