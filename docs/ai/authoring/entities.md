@@ -285,18 +285,30 @@ private Integer activeEmpCount;
 @Field(pattern = "[A-Z]{2}\\d{6}", constraintMessage = "Employee code must be two letters and six digits.")
 private String code;
 
-// required only when the reason is "Others" — the frontend shows the star from the same rule
-@Field(requiredWhen = "[[\"reason\", \"=\", \"Others\"]]")
+// required only when the reason is "Others" — the frontend shows the star from the same rule.
+// A text block keeps the expression free of escapes; write conditions this way.
+@Field(requiredWhen = """
+        reason = "Others"
+        """)
 private String reasonDescription;
 
 // compares two fields of the row; {{ @field }} reads a sibling, TODAY / NOW / USER_ID read the context
-@Field(invalidWhen = "[[\"endDate\", \"<\", \"{{ @startDate }}\"]]",
+@Field(invalidWhen = """
+        endDate < "{{ @startDate }}"
+        """,
        constraintMessage = "End date cannot precede start date.")
 private LocalDate endDate;
 
-@Field(invalidWhen = "[[\"dateOfBirth\", \">\", \"{{ TODAY - P13Y }}\"]]",
+@Field(invalidWhen = """
+        dateOfBirth > "{{ TODAY - P13Y }}"
+        """,
        constraintMessage = "Date of Birth must be at least 13 years before today.")
 private LocalDate dateOfBirth;
+
+// IS SET / IS NOT SET take no value, which the expression grammar cannot parse — those stay in the
+// JSON spelling, and the unit needs its third element even though the operator ignores it
+@Field(requiredWhen = "[[\"terminationDate\", \"IS NOT SET\", null]]")
+private String activeOnlyNote;
 
 // application-level required on a column that must stay nullable (no NOT NULL is rendered)
 @Field(label = "Cost Centre", requiredWhen = "true")
@@ -310,6 +322,13 @@ redeploy rather than a migration and existing rows are not retroactively invalid
 - Bounds are **inclusive**, numeric field types only, written as decimal literals (`min = "0.01"`).
   `pattern` matches the **whole** value, `STRING` / `TEXT` only, Java/JavaScript-shared syntax.
 - **Empty passes** the value domain. Use `required` (NOT NULL) or `requiredWhen` for "must be filled in".
+- Conditions are written as an **expression in a text block** — `reason = "Others"`, no escapes.
+  The same rule in the JSON spelling (`[["reason", "=", "Others"]]`) parses to exactly the same tree;
+  use it only for `IS SET` / `IS NOT SET`, which the expression grammar cannot parse, and give those
+  units a third element (`null`). The expression grammar names fields as `[a-z][a-zA-Z0-9]*` — no dots
+  and no underscores — so a related row's attribute is reached by declaring a `cascadedField` on this
+  model and referencing it by its own name. Compare an option by its **item code**, never its display
+  label: a wrong code makes the condition silently never fire.
 - Conditions are filter expressions: nested AND/OR, 16 operators (`PARENT OF` / `CHILD OF` refused),
   `{{ @field }}`, `{{ TODAY }}` / `{{ NOW }}` / `{{ USER_ID }}` with optional ISO-8601 offsets
   (`P13Y`, `P6M`, `PT2H`), `@mode` / `@userId` in the field slot. Options compare by item code,

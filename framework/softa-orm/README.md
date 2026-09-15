@@ -119,7 +119,16 @@ extends `AuditableModel`.
 | `constraintMessage` | String | `""` | `constraints` (`message`) | sentence shown as written when `min` / `max` / `pattern` / `invalidWhen` rejects a value; its own i18n key, like `@Index(message)`, not a `{0}` pattern. Optional for a bound ("must be at least 0" composes itself), effectively required for a `pattern` or an `invalidWhen` |
 | `requiredWhen` | String | `""` | `constraints` | filter expression over the same row under which the field is required, or `"true"` for application-level required on a nullable column (see below) |
 | `hiddenWhen` / `readonlyWhen` | String | `""` | `constraints` | filter expressions under which the field is hidden (and not judged) / rejects an assignment |
-| `invalidWhen` | String | `""` | `constraints` | filter expression that, when it holds, rejects the write with `constraintMessage` — `"[[\"endDate\", \"<\", \"{{ @startDate }}\"]]"` |
+| `invalidWhen` | String | `""` | `constraints` | filter expression that, when it holds, rejects the write with `constraintMessage` |
+
+A condition is written as an expression in a text block, which needs no escapes:
+`requiredWhen = """\n        reason = "Others"\n        """`. The JSON spelling
+(`[["reason", "=", "Others"]]`) parses to the same tree and is kept for `IS SET` / `IS NOT SET`, which
+the expression grammar cannot parse — write those as a three-element unit,
+`[["terminationDate", "IS NOT SET", null]]`. The grammar names fields as `[a-z][a-zA-Z0-9]*`, so a
+related row's attribute is reached through a `cascadedField` declared on this model rather than a
+dotted path, and values are numbers, booleans or double-quoted strings. Compare an option by its item
+code: a wrong code never fires and never reports.
 | `required` | boolean | `false` | `required` | NOT NULL constraint |
 | `readonly` | boolean | `false` | `readonly` | UI hint |
 | `translatable` | boolean | `false` | `translatable` | i18n-aware column |
@@ -176,10 +185,14 @@ does it conclude:
 @Field(label = "Active Employees", min = "0", constraintMessage = "Headcount cannot be negative.")
 private Integer activeEmpCount;
 
-@Field(label = "Reason Description", requiredWhen = "[[\"reason\", \"=\", \"Others\"]]")
+@Field(requiredWhen = """
+        reason = "Others"
+        """)
 private String reasonDescription;
 
-@Field(label = "End Date", invalidWhen = "[[\"endDate\", \"<\", \"{{ @startDate }}\"]]",
+@Field(label = "End Date", invalidWhen = """
+        endDate < "{{ @startDate }}"
+        """,
        constraintMessage = "End date cannot precede start date.")
 private LocalDate endDate;
 

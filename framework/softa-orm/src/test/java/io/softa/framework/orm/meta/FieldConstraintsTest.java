@@ -52,6 +52,42 @@ class FieldConstraintsTest {
     }
 
     @Test
+    void theExpressionFormCoversTheShapesAnEntityActuallyDeclares() {
+        // Pinned because the expression grammar is a separate lane from the JSON one: an entity that
+        // switches spelling must not silently lose a placeholder, an offset or a nested group.
+        assertThat(Filters.of("""
+                endDate < "{{ @startDate }}"
+                """)).isEqualTo(Filters.of("[[\"endDate\", \"<\", \"{{ @startDate }}\"]]"));
+        assertThat(Filters.of("""
+                dateOfBirth > "{{ TODAY - P13Y }}"
+                """)).isEqualTo(Filters.of("[[\"dateOfBirth\", \">\", \"{{ TODAY - P13Y }}\"]]"));
+        assertThat(Filters.of("""
+                reason = "Others" AND status = "Draft"
+                """)).isEqualTo(Filters.of(
+                        "[[\"reason\", \"=\", \"Others\"], \"AND\", [\"status\", \"=\", \"Draft\"]]"));
+        // The one shape the expression grammar does NOT cover: an operator with no value. Its visitor
+        // demands a value context, so a valueless unit has to stay in the JSON spelling.
+        assertThatThrownBy(() -> Filters.of("""
+                costCentreId IS NOT SET
+                """)).hasMessageContaining("Unsupported value context");
+        assertThat(Filters.of("[[\"costCentreId\", \"IS NOT SET\", null]]")).isNotNull();
+    }
+
+    @Test
+    void aConditionReadsTheSameWhetherItIsWrittenAsJsonOrAsAnExpression() {
+        // The JSON spelling needs an escaped quote per token; the expression spelling needs none at
+        // all when it is written as a text block, which is what an entity should be able to declare.
+        FieldConstraints json = FieldConstraints.of(null, null, null, null,
+                "[[\"reason\", \"=\", \"Others\"]]", null, null, null, "X.y");
+        FieldConstraints expression = FieldConstraints.of(null, null, null, null, """
+                reason = "Others"
+                """, null, null, null, "X.y");
+        assertThat(expression).isNotNull();
+        assertThat(expression.requiredWhen().getFilters()).isEqualTo(json.requiredWhen().getFilters());
+        assertThat(expression.referencedFields()).containsExactly("reason");
+    }
+
+    @Test
     void referencedFieldsCoverBothSlotsAndSkipReservedVariables() {
         FieldConstraints c = of("[[\"reason\", \"=\", \"Others\"], [\"@mode\", \"=\", \"update\"]]",
                 null, null, "[[\"endDate\", \"<\", \"{{ @startDate }}\"]]");
