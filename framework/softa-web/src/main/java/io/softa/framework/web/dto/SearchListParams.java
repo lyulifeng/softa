@@ -35,7 +35,8 @@ public class SearchListParams {
 
     private AggFunctions aggFunctions;
 
-    @Schema(description = "Limit size for searchList, default 50.", example = "50")
+    @Schema(description = "Limit size for searchList, default 50 when omitted. Must be within "
+            + "[1, 10000] when stated; 0 or a negative value is rejected.", example = "50")
     private Integer limitSize;
 
     @Schema(description = "Fields to group by, empty means no grouping.", example = "[]")
@@ -71,11 +72,16 @@ public class SearchListParams {
         flexQuery.setGroupBy(searchListParams.getGroupBy());
         // Set AggFunction parameters
         flexQuery.setAggFunctions(searchListParams.getAggFunctions());
-        // Default limitSize for searchList.
+        // An omitted limitSize takes the default; a stated one is honoured or rejected.
         Integer limitSize = searchListParams.getLimitSize();
-        limitSize = limitSize == null || limitSize < 1 ? BaseConstant.DEFAULT_PAGE_SIZE : limitSize;
-        Assert.isTrue(limitSize <= BaseConstant.MAX_BATCH_SIZE,
-                "API `searchList` cannot exceed the maximum limit of {0}.", BaseConstant.MAX_BATCH_SIZE);
+        if (limitSize == null) {
+            limitSize = BaseConstant.DEFAULT_PAGE_SIZE;
+        } else {
+            Assert.isTrue(limitSize > 0,
+                    "API `searchList`: limitSize must be a positive number, but got {0}.", limitSize);
+            Assert.isTrue(limitSize <= BaseConstant.MAX_BATCH_SIZE,
+                    "API `searchList` cannot exceed the maximum limit of {0}.", BaseConstant.MAX_BATCH_SIZE);
+        }
         flexQuery.setLimitSize(limitSize);
         // Set SubQuery parameters
         if (!CollectionUtils.isEmpty(searchListParams.getSubQueries())) {

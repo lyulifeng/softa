@@ -38,7 +38,8 @@ public class QueryParams {
     @Schema(description = "Page number, start from 1, default 1.", example = "1")
     private Integer pageNumber;
 
-    @Schema(description = "Page size, or limit size for searchList, default 50.", example = "50")
+    @Schema(description = "Page size, default 50 when omitted. Must be within [1, 10000] when "
+            + "stated; 0 or a negative value is rejected.", example = "50")
     private Integer pageSize;
 
     @Schema(description = "Fields to group by, empty means no grouping.", example = "[]")
