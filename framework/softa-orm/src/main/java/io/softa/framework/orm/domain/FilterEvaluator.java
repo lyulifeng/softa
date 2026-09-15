@@ -6,6 +6,7 @@ import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.LocalTime;
 import java.time.OffsetDateTime;
+import java.time.ZoneId;
 import java.time.Period;
 import java.time.format.DateTimeParseException;
 import java.time.temporal.Temporal;
@@ -304,13 +305,15 @@ public final class FilterEvaluator {
      * not coerce ({@code "n/a"} on a DATE field) is equal to nothing — not even to another such value.
      */
     public static boolean equal(@Nullable Object left, @Nullable Object right, @Nullable FieldType type) {
-        if (left instanceof Collection<?> set) {
-            return set.stream().anyMatch(element -> equal(element, right, type));
-        }
+        // Emptiness is decided before the set semantics: an empty multi-value field is "nothing there",
+        // the same value as null and "", and asking an empty set for a member would answer no to both.
         boolean leftBlank = isBlank(left);
         boolean rightBlank = isBlank(right);
         if (leftBlank || rightBlank) {
             return leftBlank && rightBlank;
+        }
+        if (left instanceof Collection<?> set) {
+            return set.stream().anyMatch(element -> equal(element, right, type));
         }
         Integer c = compareOrNull(left, right, type);
         return c != null && c == 0;
@@ -436,6 +439,10 @@ public final class FilterEvaluator {
         return switch (value) {
             case LocalDateTime dt -> dt;
             case LocalDate d -> d.atStartOfDay();
+            // java.sql.Date and java.sql.Time refuse toInstant(), which is how DateUtils converts a
+            // java.util.Date — they carry only half a timestamp and answer for their own half.
+            case java.sql.Date d -> d.toLocalDate().atStartOfDay();
+            case java.sql.Timestamp ts -> ts.toLocalDateTime();
             case java.util.Date d -> DateUtils.dateToLocalDateTime(d);
             case String s -> parseDateTime(s.trim());
             default -> null;
@@ -451,7 +458,11 @@ public final class FilterEvaluator {
             parsed = parse(() -> LocalDateTime.parse(text));
         }
         if (parsed == null) {
-            parsed = parse(() -> OffsetDateTime.parse(text).toLocalDateTime());
+            // An offset names an instant; read it on the clock the rest of the framework reads
+            // ({@code LocalDate.now()}, {@code Date.toInstant().atZone(systemDefault())}), so the same
+            // instant spelled with two offsets is one value rather than two.
+            parsed = parse(() -> OffsetDateTime.parse(text)
+                    .atZoneSameInstant(ZoneId.systemDefault()).toLocalDateTime());
         }
         return parsed;
     }
@@ -468,6 +479,7 @@ public final class FilterEvaluator {
         return switch (value) {
             case LocalTime t -> t;
             case LocalDateTime dt -> dt.toLocalTime();
+            case java.sql.Time t -> t.toLocalTime();
             case String s -> {
                 String t = s.trim();
                 LocalTime parsed = parse(() -> LocalTime.parse(t, TimeConstant.TIME_FORMATTER));

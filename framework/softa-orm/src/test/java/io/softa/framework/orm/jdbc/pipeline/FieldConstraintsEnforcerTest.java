@@ -32,7 +32,8 @@ class FieldConstraintsEnforcerTest {
     private static final Map<String, FieldType> TYPES = Map.of(
             "reason", FieldType.OPTION, "reasonDescription", FieldType.STRING, "status", FieldType.OPTION,
             "amount", FieldType.BIG_DECIMAL, "startDate", FieldType.DATE, "endDate", FieldType.DATE,
-            "checkInStatus", FieldType.OPTION, "lateMinutes", FieldType.INTEGER, "costCentreId", FieldType.LONG);
+            "checkInStatus", FieldType.OPTION, "lateMinutes", FieldType.INTEGER, "costCentreId", FieldType.LONG,
+            "tags", FieldType.MULTI_OPTION);
 
     private static MetaField field(String name, FieldConstraints constraints) {
         return field(name, constraints, null);
@@ -161,6 +162,49 @@ class FieldConstraintsEnforcerTest {
         Map<String, Object> merged = new HashMap<>(original);
         merged.putAll(sameAmount);
         assertThatCode(() -> e.enforceUpdate(merged, sameAmount, original)).doesNotThrowAnyException();
+    }
+
+    @Test
+    void anUnchangedMultiValueFieldIsNotAnAssignment() {
+        // the plain case: both sides already the same list object-for-object
+        MetaField tags = field("tags", c(null, null, "[[\"status\", \"!=\", \"Draft\"]]", null, null));
+        FieldConstraintsEnforcer e = enforcer(AccessType.UPDATE, tags);
+        Map<String, Object> original = row("id", 1L, "status", "Approved", "tags", List.of("a", "b"));
+        Map<String, Object> same = row("id", 1L, "tags", List.of("a", "b"));
+        Map<String, Object> mergedSame = new HashMap<>(original);
+        mergedSame.putAll(same);
+        assertThatCode(() -> e.enforceUpdate(mergedSame, same, original)).doesNotThrowAnyException();
+        Map<String, Object> changed = row("id", 1L, "tags", List.of("a"));
+        Map<String, Object> mergedChanged = new HashMap<>(original);
+        mergedChanged.putAll(changed);
+        assertThatThrownBy(() -> e.enforceUpdate(mergedChanged, changed, original)).hasMessageContaining("readonly");
+    }
+
+    @Test
+    void aMultiValueFieldIsComparedAsASetAcrossItsTwoShapes() {
+        // the patch carries a list, the stored row the comma-joined text the write produced
+        MetaField tags = field("tags", c(null, null, "[[\"status\", \"!=\", \"Draft\"]]", null, null));
+        FieldConstraintsEnforcer e = enforcer(AccessType.UPDATE, tags);
+        Map<String, Object> original = row("id", 1L, "status", "Approved", "tags", "a,b");
+        for (Object unchanged : List.of(List.of("a", "b"), List.of("b", "a"))) {
+            Map<String, Object> patch = row("id", 1L, "tags", unchanged);
+            Map<String, Object> merged = new HashMap<>(original);
+            merged.putAll(patch);
+            assertThatCode(() -> e.enforceUpdate(merged, patch, original))
+                    .as("%s against a,b", unchanged).doesNotThrowAnyException();
+        }
+        Map<String, Object> changed = row("id", 1L, "tags", List.of("a", "c"));
+        Map<String, Object> mergedChanged = new HashMap<>(original);
+        mergedChanged.putAll(changed);
+        assertThatThrownBy(() -> e.enforceUpdate(mergedChanged, changed, original)).hasMessageContaining("readonly");
+        // and an untouched multi-select that submits an empty list against a stored null is no assignment
+        MetaField tags2 = field("tags", c(null, null, "[[\"status\", \"!=\", \"Draft\"]]", null, null));
+        FieldConstraintsEnforcer e2 = enforcer(AccessType.UPDATE, tags2);
+        Map<String, Object> emptyOriginal = row("id", 1L, "status", "Approved", "tags", null);
+        Map<String, Object> emptyPatch = row("id", 1L, "tags", List.of());
+        Map<String, Object> mergedEmpty = new HashMap<>(emptyOriginal);
+        mergedEmpty.putAll(emptyPatch);
+        assertThatCode(() -> e2.enforceUpdate(mergedEmpty, emptyPatch, emptyOriginal)).doesNotThrowAnyException();
     }
 
     @Test

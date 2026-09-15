@@ -122,6 +122,24 @@ class FieldConstraintsTest {
     }
 
     @Test
+    void aMemberSpelledAsExplicitlyNothingDoesNotDiscardTheRestOfTheRow() {
+        // "no condition here" has several spellings in stored rows; none of them may cost the row
+        // its value domain, which is what discarding the whole object would do
+        for (String nothing : List.of("[]", "{}", "false", "null")) {
+            FieldConstraints c = JsonUtils.stringToObject(
+                    "{\"min\":\"0\",\"max\":\"100\",\"requiredWhen\":" + nothing + "}", FieldConstraints.class);
+            assertThat(c).as("requiredWhen: %s", nothing).isNotNull();
+            assertThat(c.min()).isEqualTo("0");
+            assertThat(c.max()).isEqualTo("100");
+            assertThat(c.requiredWhen()).isNull();
+        }
+        FieldConstraints hidden = JsonUtils.stringToObject("{\"min\":\"0\",\"hiddenWhen\":[]}", FieldConstraints.class);
+        assertThat(hidden).isNotNull();
+        assertThat(hidden.min()).isEqualTo("0");
+        assertThat(hidden.hiddenWhen()).isNull();
+    }
+
+    @Test
     void aStoredRowThatDoesNotParseReadsAsNoConstraintsInsteadOfFailingTheLoad() {
         // hand-written rows and older studio payloads must not stop the catalog from loading
         assertThat(JsonUtils.stringToObject("{\"hiddenWhen\":true}", FieldConstraints.class)).isNull();

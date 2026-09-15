@@ -1,10 +1,12 @@
 package io.softa.framework.orm.jdbc.pipeline;
 
 import java.io.Serializable;
+import java.util.Collection;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Set;
 import java.util.function.Function;
 import org.apache.commons.lang3.StringUtils;
@@ -344,6 +346,30 @@ public final class FieldConstraintsEnforcer {
         if (AccessType.CREATE.equals(accessType)) {
             return value != null;
         }
+        if (Objects.equals(value, original)) {
+            return false;
+        }
+        if (value instanceof Collection<?> || original instanceof Collection<?>) {
+            // A multi-value field arrives as a list and is stored as comma-joined text, so the two
+            // sides never match as objects. It is a set: same members, same value, whatever the
+            // order and whichever shape each side happens to be in.
+            return !members(value).equals(members(original));
+        }
         return !FilterEvaluator.equal(value, original, field.getFieldType());
+    }
+
+    /** The members of a multi-value value, from a collection or from comma-joined text. */
+    private static Set<String> members(@Nullable Object value) {
+        Collection<?> elements = value instanceof Collection<?> c
+                ? c
+                : (value == null ? List.of() : List.of(StringUtils.split(String.valueOf(value), ',')));
+        Set<String> members = new HashSet<>();
+        for (Object element : elements) {
+            String text = StringUtils.trimToNull(String.valueOf(element));
+            if (text != null) {
+                members.add(text);
+            }
+        }
+        return members;
     }
 }

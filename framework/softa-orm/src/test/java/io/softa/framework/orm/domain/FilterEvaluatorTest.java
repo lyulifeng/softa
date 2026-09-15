@@ -71,6 +71,36 @@ class FilterEvaluatorTest {
     }
 
     @Test
+    void anEmptyMultiValueFieldIsTheSameValueAsNullAndEmptyText() {
+        // the set semantics must not swallow the emptiness rule: asking an empty set for a member
+        // would answer no to both "is it empty" and "does it hold x"
+        assertThat(FilterEvaluator.equal(List.of(), null, FieldType.MULTI_OPTION)).isTrue();
+        assertThat(FilterEvaluator.equal(List.of(), "", FieldType.MULTI_OPTION)).isTrue();
+        assertThat(FilterEvaluator.equal(List.of(), "a", FieldType.MULTI_OPTION)).isFalse();
+        assertThat(FilterEvaluator.equal(List.of("a"), null, FieldType.MULTI_OPTION)).isFalse();
+        assertThat(eval("[[\"tags\", \"=\", \"\"]]", row("tags", List.of()))).isTrue();
+        assertThat(eval("[[\"tags\", \"=\", \"a\"]]", row("tags", List.of("a", "b")))).isTrue();
+    }
+
+    @Test
+    void anOffsetNamesAnInstantAndIsReadOnTheFrameworkClock() {
+        // the same instant spelled two ways is one value
+        assertThat(FilterEvaluator.equal("2026-01-31T09:30:00+08:00",
+                java.time.OffsetDateTime.parse("2026-01-31T09:30:00+08:00").atZoneSameInstant(
+                        java.time.ZoneId.systemDefault()).toLocalDateTime(), FieldType.DATE_TIME)).isTrue();
+        assertThat(FilterEvaluator.equal("2026-01-31T09:30:00+08:00", "2026-01-31T01:30:00Z",
+                FieldType.DATE_TIME)).isTrue();
+    }
+
+    @Test
+    void theSqlTemporalTypesCoerceInsteadOfThrowing() {
+        // java.sql.Date refuses toInstant(); a condition must still get an answer
+        assertThat(FilterEvaluator.equal(java.sql.Date.valueOf("2026-01-31"), "2026-01-31", FieldType.DATE)).isTrue();
+        assertThat(FilterEvaluator.equal(java.sql.Timestamp.valueOf("2026-01-31 09:30:00"),
+                "2026-01-31 09:30:00", FieldType.DATE_TIME)).isTrue();
+    }
+
+    @Test
     void typedEqualityIsExposedForTheAssignmentCheck() {
         assertThat(FilterEvaluator.equal(10, "10.00", FieldType.BIG_DECIMAL)).isTrue();
         assertThat(FilterEvaluator.equal(LocalDate.of(2026, 1, 31), "2026-01-31", FieldType.DATE)).isTrue();

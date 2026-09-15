@@ -426,13 +426,25 @@ public record FieldConstraints(
             }
         }
 
-        /** A member as text: a scalar's value, a structured value's JSON, an absent or null member as null. */
+        /**
+         * A member as the text the annotation would have carried: a scalar's value, a structured
+         * value's JSON, and every spelling of "nothing declared here" as null — absent, null, an
+         * empty array or object, and {@code false} (the sibling {@code FieldCondition} lane reads
+         * {@code false} as no condition). {@code true} keeps its literal, so only {@code requiredWhen}
+         * accepts it and the other three still reject it.
+         */
         private static @Nullable String text(JsonNode node, String key) {
             JsonNode value = node.get(key);
             if (value == null || value.isNull()) {
                 return null;
             }
-            return blankToNull(value.isObject() || value.isArray() ? value.toString() : value.asString());
+            if (value.isBoolean()) {
+                return value.asBoolean() ? FieldCondition.ALWAYS_LITERAL : null;
+            }
+            if (value.isObject() || value.isArray()) {
+                return value.isEmpty() ? null : value.toString();
+            }
+            return blankToNull(value.asString());
         }
     }
 }

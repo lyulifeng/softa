@@ -26,16 +26,37 @@ import io.softa.framework.orm.service.validation.WriteValidationException;
  *
  * <p>Compiled patterns and parsed bounds are cached by their declared text, not by field: the
  * mapping from a regex string to its {@link Pattern} never changes, so a catalog reload needs no
- * invalidation — a redeclared field simply keys a new entry. The message a field declares is shown
- * as written; only the composed fallbacks are {@code MessageFormat} patterns.
+ * invalidation — a redeclared field simply keys a new entry. Nothing removes an entry either, and a
+ * studio that lets an admin retype a rule produces a new key every time, so the caches stop growing
+ * at {@link #MAX_CACHED} and compile afresh beyond it: a bounded cost for the declarations a
+ * deployment actually writes with, and no unbounded retention for one that churns them.
+ *
+ * <p>The message a field declares is shown as written; only the composed fallbacks are
+ * {@code MessageFormat} patterns.
  */
 public final class ValueConstraints {
 
     private ValueConstraints() {}
 
+    /** How many distinct declarations each cache keeps before it stops admitting new ones. */
+    static final int MAX_CACHED = 2048;
+
     private static final Map<String, Pattern> PATTERNS = new ConcurrentHashMap<>();
     /** Declared bound text → parsed value; an empty Optional marks text that does not parse. */
     private static final Map<String, Optional<BigDecimal>> BOUNDS = new ConcurrentHashMap<>();
+
+    /** The cached value, computed and kept while there is room, computed and dropped once there is not. */
+    private static <T> T cached(Map<String, T> cache, String key, java.util.function.Function<String, T> compute) {
+        T hit = cache.get(key);
+        if (hit != null) {
+            return hit;
+        }
+        T value = compute.apply(key);
+        if (cache.size() < MAX_CACHED) {
+            cache.putIfAbsent(key, value);
+        }
+        return value;
+    }
 
     /**
      * Rejects a numeric value outside the field's declared bounds.
@@ -84,7 +105,7 @@ public final class ValueConstraints {
         if (StringUtils.isBlank(value) || c == null || c.pattern() == null) {
             return;
         }
-        if (!PATTERNS.computeIfAbsent(c.pattern(), Pattern::compile).matcher(value).matches()) {
+        if (!cached(PATTERNS, c.pattern(), Pattern::compile).matcher(value).matches()) {
             throw c.message() != null
                     ? WriteValidationException.forField(metaField.getFieldName(), c.message())
                     : WriteValidationException.forField(metaField.getFieldName(),
@@ -114,7 +135,7 @@ public final class ValueConstraints {
         if (declared == null) {
             return null;
         }
-        return BOUNDS.computeIfAbsent(declared, text -> {
+        return cached(BOUNDS, declared, text -> {
             try {
                 return Optional.of(new BigDecimal(text));
             } catch (NumberFormatException e) {
@@ -124,6 +145,7 @@ public final class ValueConstraints {
                 return Optional.empty();
             }
         }).orElse(null);
+
     }
 
     private static BigDecimal toDecimal(Object value) {
