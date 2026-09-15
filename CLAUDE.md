@@ -211,8 +211,10 @@ public enum CustomerTier {
   `@Order`, run by `ModelWriteValidatorChain` at the three write roots of
   `ModelServiceImpl` (`createList` / `updateList` / `deleteByIds`) before any
   database work; `ctx.reject(field, message)` accumulates into one
-  `WriteValidationException` (400), `ctx.fail` aborts. Migration `V42` adds the
-  column for empty-`scanner-scope` environments and `design_field`.
+  `WriteValidationException` (400), `ctx.fail` aborts. The `sys_field` column
+  self-applies under a non-empty `scanner-scope`; an empty-scope environment and
+  `design_field` need the column added the way that deployment adds catalog
+  columns.
 - `id` is always emitted to `sys_field` as the PK; its type is inferred from the
   declared Java field (`Long` / `String`). **Convention: write an explicit
   `@Field(label = "ID")` on `id`** (consistent with "annotate every declared field");

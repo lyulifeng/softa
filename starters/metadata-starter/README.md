@@ -186,8 +186,10 @@ rows and drops a bad one with an ERROR instead of failing the boot — a row who
 parse is read as "no constraints" the same way. `design_field.constraints` is the structural twin the
 cross-lane checksum requires (`SysDesignAttributeParityTest`). Enforcement and the expression language
 are documented in [framework/softa-orm/README.md](../../framework/softa-orm/README.md) §Field
-constraints; the catalog column self-applies under a non-empty `scanner-scope` and ships as migration
-`V42` for empty-scope environments and `design_field`.
+constraints. The `sys_field` column self-applies at boot under a non-empty `scanner-scope` (the
+catalog reconcile runs before the strict read). An empty-scope environment — the production shape —
+and `design_field`, which no deployment here keeps in scope, need the column added however that
+deployment applies catalog DDL.
 
 ## Runtime catalog identity (`app_code`)
 
