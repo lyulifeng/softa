@@ -128,8 +128,10 @@ grammar in [queries.md](../../docs/ai/authoring/queries.md). The JSON spelling
 the expression grammar cannot parse — write those as a three-element unit,
 `[["terminationDate", "IS NOT SET", null]]`. The grammar names fields as `[a-z][a-zA-Z0-9]*`, so a
 related row's attribute is reached through a `cascadedField` declared on this model rather than a
-dotted path, and values are numbers, booleans or double-quoted strings. Compare an option by its item
-code: a wrong code never fires and never reports.
+dotted path, and values are numbers, booleans or double-quoted strings. A value is a constant, a
+reference to this row (`{{ @startDate }}`) or an environment token (`{{ TODAY }}`) — see
+[placeholders.md](../../docs/ai/authoring/placeholders.md). Compare an option by its item code: a
+wrong code never fires and never reports.
 | `required` | boolean | `false` | `required` | NOT NULL constraint |
 | `readonly` | boolean | `false` | `readonly` | UI hint |
 | `translatable` | boolean | `false` | `translatable` | i18n-aware column |

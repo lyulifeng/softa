@@ -104,6 +104,10 @@ sorts after `100`.
 | `@mode = "update"` | the write's mode, read from the context, not the row |
 | `@userId = 42` | the signed-in user, likewise |
 
+The `@` does different work on each side: in the field slot it names a context variable, inside
+`{{ }}` on the right it names a field of this row. `docs/ai/authoring/placeholders.md` is where that
+is spelled out for authors.
+
 `TODAY` / `YESTERDAY` / `NOW` resolve on the server's clock here and on the browser's clock in a form.
 The corpus pins them by **supplying the instant** in the case rather than reading a real clock, so it
 tests the arithmetic, not the timezone. The timezone difference is a known open question and is not

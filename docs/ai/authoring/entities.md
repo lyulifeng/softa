@@ -333,7 +333,9 @@ redeploy rather than a migration and existing rows are not retroactively invalid
   label: a wrong code makes the condition silently never fire.
 - Conditions are filter expressions: nested AND/OR, 16 operators (`PARENT OF` / `CHILD OF` refused),
   `{{ @field }}`, `{{ TODAY }}` / `{{ NOW }}` / `{{ USER_ID }}` with optional ISO-8601 offsets
-  (`P13Y`, `P6M`, `PT2H`), `@mode` / `@userId` in the field slot. Options compare by item code,
+  (`P13Y`, `P6M`, `PT2H`), `@mode` / `@userId` in the field slot — what each form means, and which
+  mistakes fail the boot rather than failing silently, is in
+  [placeholders.md](placeholders.md#filters--comparing-one-field-to-another). Options compare by item code,
   relations by id; null and `""` are the same value.
 - On update a condition is evaluated only when the patch touches the field or a field it reads, on
   the patch merged onto the stored row; **hidden fields are not judged**; `readonlyWhen` rejects an
