@@ -310,6 +310,13 @@ private LocalDate dateOfBirth;
 @Field(requiredWhen = "[[\"terminationDate\", \"IS NOT SET\", null]]")
 private String activeOnlyNote;
 
+// more than one condition: AND binds tighter than OR, parentheses override it
+@Field(invalidWhen = """
+        endDate < "{{ @startDate }}" OR (grade = 1 AND amount > 1000)
+        """,
+       constraintMessage = "Check the dates, or the amount against the grade.")
+private BigDecimal amount;
+
 // application-level required on a column that must stay nullable (no NOT NULL is rendered)
 @Field(label = "Cost Centre", requiredWhen = "true")
 private Long costCentreId;   // label: humanize gives "Cost Centre Id"

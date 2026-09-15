@@ -199,9 +199,22 @@ private String reasonDescription;
        constraintMessage = "End date cannot precede start date.")
 private LocalDate endDate;
 
+// more than one condition: AND binds tighter than OR, parentheses override it
+@Field(invalidWhen = """
+        endDate < "{{ @startDate }}" OR (grade = 1 AND amount > 1000)
+        """,
+       constraintMessage = "Check the dates, or the amount against the grade.")
+private BigDecimal amount;
+
 @Field(label = "Cost Centre", requiredWhen = "true")     // application-level required, column stays nullable
 private Long costCentreId;
 ```
+
+A condition is an expression in a text block, so nothing is escaped; the grammar — operators, value
+forms, `AND` / `OR` precedence, and the shapes it refuses — is in
+[queries.md](../../docs/ai/authoring/queries.md). The JSON spelling parses to the same tree but has
+**no precedence**: a group mixing `AND` and `OR` is refused rather than guessed, so it has to be nested
+by hand.
 
 Every write reaches the database through the pipeline that checks them — create, update, batch,
 import, seed loading, flow write nodes — so one declaration covers all of them. **No `CHECK` is
