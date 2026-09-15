@@ -11,7 +11,6 @@ same authoring guidance with the internals stripped out.
 | Prompt | Covers | Downstream how-to |
 |---|---|---|
 | [annotation-lane.md](annotation-lane.md) | how the scanner processes the 5 annotations: `sys_*` reconciliation, DDL policy, verification recipe, manual migrations | [../authoring/entities.md](../authoring/entities.md) |
-| [field-constraints-conformance.md](field-constraints-conformance.md) | The `(declaration, row, expected)` corpus that keeps a second evaluator — a form, another client — answering as `FilterEvaluator` does |
 
 App-config and seed-data have **no separate contributor doc** — their authoring
 lives in [../authoring/config.md](../authoring/config.md) and
