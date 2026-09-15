@@ -121,8 +121,9 @@ extends `AuditableModel`.
 | `hiddenWhen` / `readonlyWhen` | String | `""` | `constraints` | filter expressions under which the field is hidden (and not judged) / rejects an assignment |
 | `invalidWhen` | String | `""` | `constraints` | filter expression that, when it holds, rejects the write with `constraintMessage` |
 
-A condition is written as an expression in a text block, which needs no escapes:
-`requiredWhen = """\n        reason = "Others"\n        """`. The JSON spelling
+A condition is written as an expression — `reason = "Others"` — which in a Java text block needs no
+escapes; the full declaration is shown in [entities.md](../../docs/ai/authoring/entities.md) and the
+grammar in [queries.md](../../docs/ai/authoring/queries.md). The JSON spelling
 (`[["reason", "=", "Others"]]`) parses to the same tree and is kept for `IS SET` / `IS NOT SET`, which
 the expression grammar cannot parse — write those as a three-element unit,
 `[["terminationDate", "IS NOT SET", null]]`. The grammar names fields as `[a-z][a-zA-Z0-9]*`, so a
