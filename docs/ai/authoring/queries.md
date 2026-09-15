@@ -64,8 +64,29 @@ The grammar, in full:
 | field | `[a-z][a-zA-Z0-9]*` — **no dots, no underscores**; reach a related row's attribute through a `cascadedField` declared on this model |
 | operator | `=` `!=` `>` `>=` `<` `<=` `CONTAINS` `NOT CONTAINS` `START WITH` `NOT START WITH` `IN` `NOT IN` `BETWEEN` `NOT BETWEEN` `IS SET` `IS NOT SET` `PARENT OF` `CHILD OF` |
 | value | a number, `true` / `false`, or a **double-quoted** string (single quotes are not a string); a list as `["a", "b"]` |
-| combining | `AND` / `OR`, grouped with parentheses to any depth |
+| combining | `AND` / `OR`, grouped with parentheses to any depth; **`AND` binds tighter**, so `a AND b OR c` is `(a AND b) OR c` |
 | whitespace | ignored, so a text block's trailing newline is harmless |
+
+Combining more than two conditions is the case where the two forms genuinely differ. The expression
+form has precedence, so a mixed rule needs no nesting — and parentheses override it where the default
+reading is not what you meant:
+
+```java
+@Field(requiredWhen = """
+        reason = "Others" AND status = "Draft"
+        """)
+
+@Field(invalidWhen = """
+        endDate < "{{ @startDate }}" OR (grade = 1 AND amount > 1000)
+        """)
+```
+
+The **list form has no precedence at all**, so a group that mixes `AND` and `OR` is refused rather
+than guessed — `The logic operator is not unique` — and you have to nest the groups by hand:
+
+```
+[[["a", "=", 1], "AND", ["b", "=", 2]], "OR", ["c", "=", 3]]
+```
 
 Two limits worth knowing before you choose the form:
 
