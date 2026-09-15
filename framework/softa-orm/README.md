@@ -123,7 +123,7 @@ extends `AuditableModel`.
 
 A condition is written as an expression — `reason = "Others"` — which in a Java text block needs no
 escapes; the full declaration is shown in [entities.md](../../docs/ai/authoring/entities.md) and the
-grammar in [queries.md](../../docs/ai/authoring/queries.md). The JSON spelling
+grammar is below under "The expression grammar". The JSON spelling
 (`[["reason", "=", "Others"]]`) parses to the same tree and is kept for `IS SET` / `IS NOT SET`, which
 the expression grammar cannot parse — write those as a three-element unit,
 `[["terminationDate", "IS NOT SET", null]]`. The grammar names fields as `[a-z][a-zA-Z0-9]*`, so a
@@ -211,8 +211,8 @@ private Long costCentreId;
 ```
 
 A condition is an expression in a text block, so nothing is escaped; the grammar — operators, value
-forms, `AND` / `OR` precedence, and the shapes it refuses — is in
-[queries.md](../../docs/ai/authoring/queries.md). The JSON spelling parses to the same tree but has
+forms, `AND` / `OR` precedence, and the shapes it refuses — is below under "The expression grammar".
+The JSON spelling parses to the same tree but has
 **no precedence**: a group mixing `AND` and `OR` is refused rather than guessed, so it has to be nested
 by hand.
 
@@ -275,6 +275,58 @@ rules, 200–299 collection / cross-row, 300+ batch-wide and expensive), at the 
 `ModelServiceImpl` — `createList` / `updateList` / `deleteByIds` — so the generic endpoint, a custom
 endpoint, the import, a flow write node and a direct `service.createOne` are all covered. Per validator
 the batch method runs first, then the rows; values are the caller's, before the pipeline coerces them.
+
+##### The expression grammar
+
+`Filters.of` picks the form by the first character: a leading `[` is the list form, anything else is
+parsed as an expression. Both produce the same tree; the expression form is what a `@Field` condition
+should use, because in a text block it needs no escapes.
+
+```java
+Filters.of("status = \"ACTIVE\"")
+Filters.of("status = \"ACTIVE\" AND grade >= 6")
+Filters.of("title = \"PM\" OR (code = \"A010\" AND grade = 1)")
+```
+
+
+| Part | Accepts |
+|---|---|
+| field | `[a-z][a-zA-Z0-9]*` — **no dots, no underscores**; reach a related row's attribute through a `cascadedField` declared on this model |
+| operator | `=` `!=` `>` `>=` `<` `<=` `CONTAINS` `NOT CONTAINS` `START WITH` `NOT START WITH` `IN` `NOT IN` `BETWEEN` `NOT BETWEEN` `IS SET` `IS NOT SET` `PARENT OF` `CHILD OF` |
+| value | a number, `true` / `false`, or a **double-quoted** string (single quotes are not a string); a list as `["a", "b"]` |
+| combining | `AND` / `OR`, grouped with parentheses to any depth; **`AND` binds tighter**, so `a AND b OR c` is `(a AND b) OR c` |
+| whitespace | ignored, so a text block's trailing newline is harmless |
+
+Combining more than two conditions is the case where the two forms genuinely differ. The expression
+form has precedence, so a mixed rule needs no nesting — and parentheses override it where the default
+reading is not what you meant:
+
+```java
+@Field(requiredWhen = """
+        reason = "Others" AND status = "Draft"
+        """)
+
+@Field(invalidWhen = """
+        endDate < "{{ @startDate }}" OR (grade = 1 AND amount > 1000)
+        """)
+```
+
+The **list form has no precedence at all**, so a group that mixes `AND` and `OR` is refused rather
+than guessed — `The logic operator is not unique` — and you have to nest the groups by hand:
+
+```
+[[["a", "=", 1], "AND", ["b", "=", 2]], "OR", ["c", "=", 3]]
+```
+
+Two limits worth knowing before you choose the form:
+
+- **`IS SET` / `IS NOT SET` have no expression form.** They take no value, and the visitor demands
+  one, so they throw. Write those in the list form, and give the unit a third element that the
+  operator then ignores: `[["terminationDate", "IS NOT SET", null]]`.
+- **`PARENT OF` / `CHILD OF` need a query**, so they are refused in a field constraint (a constraint
+  is evaluated against one row in hand). They are available in a query's own filters.
+
+Both forms parse to the same `Filters` tree; a test pins that equivalence.
 
 ##### Keeping a second evaluator in step
 

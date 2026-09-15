@@ -46,57 +46,14 @@ with the `Filters` builder.)
 
 ### Filters as an expression
 
-The same condition can be written as an expression instead of nested lists, which is what
-`@Field(requiredWhen / hiddenWhen / readonlyWhen / invalidWhen)` should use — in a Java text block it
-needs no escapes. `Filters.of` picks the form by the first character: a leading `[` is the list form,
-anything else is parsed as an expression.
+The same condition can be written as an expression instead of nested lists — `status = "ACTIVE"`,
+`status = "ACTIVE" AND grade >= 6` — which is the form `@Field(requiredWhen / hiddenWhen /
+readonlyWhen / invalidWhen)` should use, because in a Java text block it needs no escapes.
+`Filters.of` picks the form by the first character: a leading `[` is the list form, anything else is
+parsed as an expression, and both produce the same tree.
 
-```java
-Filters.of("status = \"ACTIVE\"")
-Filters.of("status = \"ACTIVE\" AND grade >= 6")
-Filters.of("title = \"PM\" OR (code = \"A010\" AND grade = 1)")
-```
-
-The grammar, in full:
-
-| Part | Accepts |
-|---|---|
-| field | `[a-z][a-zA-Z0-9]*` — **no dots, no underscores**; reach a related row's attribute through a `cascadedField` declared on this model |
-| operator | `=` `!=` `>` `>=` `<` `<=` `CONTAINS` `NOT CONTAINS` `START WITH` `NOT START WITH` `IN` `NOT IN` `BETWEEN` `NOT BETWEEN` `IS SET` `IS NOT SET` `PARENT OF` `CHILD OF` |
-| value | a number, `true` / `false`, or a **double-quoted** string (single quotes are not a string); a list as `["a", "b"]` |
-| combining | `AND` / `OR`, grouped with parentheses to any depth; **`AND` binds tighter**, so `a AND b OR c` is `(a AND b) OR c` |
-| whitespace | ignored, so a text block's trailing newline is harmless |
-
-Combining more than two conditions is the case where the two forms genuinely differ. The expression
-form has precedence, so a mixed rule needs no nesting — and parentheses override it where the default
-reading is not what you meant:
-
-```java
-@Field(requiredWhen = """
-        reason = "Others" AND status = "Draft"
-        """)
-
-@Field(invalidWhen = """
-        endDate < "{{ @startDate }}" OR (grade = 1 AND amount > 1000)
-        """)
-```
-
-The **list form has no precedence at all**, so a group that mixes `AND` and `OR` is refused rather
-than guessed — `The logic operator is not unique` — and you have to nest the groups by hand:
-
-```
-[[["a", "=", 1], "AND", ["b", "=", 2]], "OR", ["c", "=", 3]]
-```
-
-Two limits worth knowing before you choose the form:
-
-- **`IS SET` / `IS NOT SET` have no expression form.** They take no value, and the visitor demands
-  one, so they throw. Write those in the list form, and give the unit a third element that the
-  operator then ignores: `[["terminationDate", "IS NOT SET", null]]`.
-- **`PARENT OF` / `CHILD OF` need a query**, so they are refused in a field constraint (a constraint
-  is evaluated against one row in hand). They are available in a query's own filters.
-
-Both forms parse to the same `Filters` tree; a test pins that equivalence.
+The grammar in full — operators, value forms, `AND` / `OR` precedence, and the two shapes it refuses —
+is in [softa-orm's README](../../../framework/softa-orm/README.md) under Field constraints.
 
 ### Orders format
 List form `[["createdTime", "DESC"], ["name", "ASC"]]` or string form
