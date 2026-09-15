@@ -6,7 +6,6 @@ import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.LocalTime;
 import java.time.OffsetDateTime;
-import java.time.ZoneId;
 import java.time.Period;
 import java.time.format.DateTimeParseException;
 import java.time.temporal.Temporal;
@@ -440,9 +439,10 @@ public final class FilterEvaluator {
             case LocalDateTime dt -> dt;
             case LocalDate d -> d.atStartOfDay();
             // java.sql.Date and java.sql.Time refuse toInstant(), which is how DateUtils converts a
-            // java.util.Date — they carry only half a timestamp and answer for their own half.
+            // java.util.Date, so both must be answered before that arm: a calendar day starts its day,
+            // and a clock time names no day at all. (java.sql.Timestamp converts fine and needs none.)
             case java.sql.Date d -> d.toLocalDate().atStartOfDay();
-            case java.sql.Timestamp ts -> ts.toLocalDateTime();
+            case java.sql.Time ignored -> null;
             case java.util.Date d -> DateUtils.dateToLocalDateTime(d);
             case String s -> parseDateTime(s.trim());
             default -> null;
@@ -458,11 +458,12 @@ public final class FilterEvaluator {
             parsed = parse(() -> LocalDateTime.parse(text));
         }
         if (parsed == null) {
-            // An offset names an instant; read it on the clock the rest of the framework reads
-            // ({@code LocalDate.now()}, {@code Date.toInstant().atZone(systemDefault())}), so the same
-            // instant spelled with two offsets is one value rather than two.
-            parsed = parse(() -> OffsetDateTime.parse(text)
-                    .atZoneSameInstant(ZoneId.systemDefault()).toLocalDateTime());
+            // The local part of an offset spelling, not the instant re-zoned: every stored DATE_TIME is
+            // zone-less wall clock (DateTimeProcessor refuses an offset outright), so only a rule's own
+            // literal can carry one. Re-zoning it would move the rule relative to every value it is
+            // compared against, and make one declaration answer differently per server timezone — and
+            // differently again from the browser, which evaluates the same rule on the form.
+            parsed = parse(() -> OffsetDateTime.parse(text).toLocalDateTime());
         }
         return parsed;
     }

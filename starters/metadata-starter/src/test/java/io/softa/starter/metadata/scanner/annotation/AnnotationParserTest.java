@@ -533,6 +533,30 @@ class AnnotationParserTest {
         assertTrue(ex.getMessage().contains("dynamic"), ex.getMessage());
     }
 
+    @Model
+    static class DefaultValueOutsideItsOwnBoundIsRejected extends AuditableModel {
+        @Field(min = "1", defaultValue = "0") private Integer headcount;
+        @Override public Serializable getId() { return null; }
+    }
+
+    @Model
+    static class DefaultValueAgainstItsOwnPatternIsRejected extends AuditableModel {
+        @Field(pattern = "[A-Z]{2}", constraintMessage = "Two capitals.", defaultValue = "n/a") private String code;
+        @Override public Serializable getId() { return null; }
+    }
+
+    @Test
+    void aDefaultValue_itsOwnDomainRejects_failsTheBoot() {
+        // the create path fills the default without running the domain check, so such a row is stored
+        // and then rejected the first time anything sends the field back
+        IllegalStateException bound = assertThrows(IllegalStateException.class,
+                () -> parser.parse(List.of(DefaultValueOutsideItsOwnBoundIsRejected.class), List.of()));
+        assertTrue(bound.getMessage().contains("defaultValue"), bound.getMessage());
+        IllegalStateException pattern = assertThrows(IllegalStateException.class,
+                () -> parser.parse(List.of(DefaultValueAgainstItsOwnPatternIsRejected.class), List.of()));
+        assertTrue(pattern.getMessage().contains("defaultValue"), pattern.getMessage());
+    }
+
     // ------- OPTION / MULTI_OPTION are forward-inferred only ------------
     // OPTION / MULTI_OPTION can never be written explicitly in
     // @Field(fieldType = ...). They are always derived from the Java type

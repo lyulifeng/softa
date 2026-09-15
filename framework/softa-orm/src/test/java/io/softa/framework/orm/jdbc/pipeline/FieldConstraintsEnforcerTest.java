@@ -281,13 +281,69 @@ class FieldConstraintsEnforcerTest {
     private static final MetaField ORGANISATION_ID =
             field("organisationId", c("[[\"bankCode\", \"=\", \"DBS\"]]", null, null, null, null));
 
+    private static MetaField bankName() {
+        MetaField f = field("bankName", null);
+        ReflectionTestUtils.setField(f, "fieldType", FieldType.STRING);
+        ReflectionTestUtils.setField(f, "cascadedField", "bankId.name");
+        ReflectionTestUtils.setField(f, "dynamic", true);
+        ReflectionTestUtils.setField(f, "dependentFields", List.of("bankId", "name"));
+        return f;
+    }
+
     private static MetaField bankFieldOf(String name) {
         return switch (name) {
             case "bankId" -> bankId();
             case "bankCode" -> bankCode();
-            case "organisationId" -> field("organisationId", null);
+            case "bankName" -> bankName();
+            case "organisationId", "branchNote" -> field(name, null);
             default -> fieldOf(name);
         };
+    }
+
+    @Test
+    void twoCascadedReferencesToTheSameRelatedRowEachReadTheirOwnAttribute() {
+        // the read selects one attribute, so the cache must not answer a second reference from the
+        // row fetched for the first — it would find the column missing and resolve to null
+        MetaField branchNote = field("branchNote", c(null, null, null,
+                "[[\"bankName\", \"=\", \"DBS Bank Ltd\"]]", "Branch note does not apply to this bank."));
+        List<String> reads = new java.util.ArrayList<>();
+        FieldConstraintsEnforcer.RelatedRowReader reader = (model, path, id) -> {
+            reads.add(model + "/" + path + "/" + id);
+            return Map.of("id", id, path, "code".equals(path) ? "DBS" : "DBS Bank Ltd");
+        };
+        FieldConstraintsEnforcer e = enforcer(AccessType.CREATE, FieldConstraintsEnforcerTest::bankFieldOf,
+                reader, ORGANISATION_ID, branchNote);
+        assertThatThrownBy(() -> e.enforceCreate(row("bankId", 1L, "organisationId", "ORG-1")))
+                .hasMessage("Branch note does not apply to this bank.");
+        assertThat(reads).containsExactly("Bank/code/1", "Bank/name/1");
+    }
+
+    @Test
+    void aDanglingForeignKeyIsLookedUpOnceForTheWholeWrite() {
+        List<String> reads = new java.util.ArrayList<>();
+        FieldConstraintsEnforcer.RelatedRowReader reader = (model, path, id) -> {
+            reads.add(model + "/" + path + "/" + id);
+            return null;
+        };
+        FieldConstraintsEnforcer e = enforcer(AccessType.CREATE, FieldConstraintsEnforcerTest::bankFieldOf,
+                reader, ORGANISATION_ID);
+        e.enforceCreate(row("bankId", 7L));
+        e.enforceCreate(row("bankId", 7L));
+        assertThat(reads).containsExactly("Bank/code/7");
+    }
+
+    @Test
+    void aJsonFieldIsNotComparedAsCommaJoinedMembers() {
+        // a JSON column also arrives as a list and stores as its own text; splitting it on commas
+        // would make an untouched resubmission look like an assignment
+        MetaField payload = field("payload", c(null, null, "[[\"status\", \"!=\", \"Draft\"]]", null, null));
+        ReflectionTestUtils.setField(payload, "fieldType", FieldType.JSON);
+        FieldConstraintsEnforcer e = enforcer(AccessType.UPDATE, payload);
+        Map<String, Object> original = row("id", 1L, "status", "Approved", "payload", "[\"a\",\"b\"]");
+        Map<String, Object> patch = row("id", 1L, "payload", List.of("a", "b"));
+        Map<String, Object> merged = new HashMap<>(original);
+        merged.putAll(patch);
+        assertThatCode(() -> e.enforceUpdate(merged, patch, original)).doesNotThrowAnyException();
     }
 
     @Test

@@ -413,15 +413,38 @@ public record FieldConstraints(
             if (node == null || node.isNull()) {
                 return null;
             }
+            // Every member is read back as the text the annotation would have carried — a condition
+            // stored as a JSON array is its own text — and parsed by the one factory the annotation
+            // lane uses, so the two lanes cannot drift in what they accept. A member that does not
+            // parse is dropped on its own: a hand-written or older-studio row costs the field that one
+            // rule, never the rest of its declaration, and never the catalog load.
+            FieldConstraints c = of(
+                    text(node, "min"), text(node, "max"), text(node, "pattern"), text(node, "message"),
+                    member(node, "requiredWhen"), member(node, "hiddenWhen"),
+                    member(node, "readonlyWhen"), member(node, "invalidWhen"), "stored constraints");
+            return c == null || c.isEmpty() ? null : c;
+        }
+
+        /** One condition member as text, or null when it is absent or does not parse. */
+        private static @Nullable String member(JsonNode node, String key) {
+            String declared = text(node, key);
+            if (declared == null) {
+                return null;
+            }
             try {
-                // Every member is read back as the text the annotation would have carried — a condition
-                // stored as a JSON array is its own text — and parsed by the one factory the annotation
-                // lane uses, so the two lanes cannot drift in what they accept.
-                return of(text(node, "min"), text(node, "max"), text(node, "pattern"), text(node, "message"),
-                        text(node, "requiredWhen"), text(node, "hiddenWhen"),
-                        text(node, "readonlyWhen"), text(node, "invalidWhen"), "stored constraints");
+                // parsed here only to find out whether it parses; `of` does the real work
+                if ("requiredWhen".equals(key)) {
+                    FieldCondition.parse(declared);
+                } else if (!FieldCondition.ALWAYS_LITERAL.equalsIgnoreCase(declared.trim())
+                        && Filters.isEmpty(Filters.of(declared))) {
+                    throw new IllegalStateException("empty condition");
+                } else if (FieldCondition.ALWAYS_LITERAL.equalsIgnoreCase(declared.trim())) {
+                    throw new IllegalStateException("only requiredWhen has an always-form");
+                }
+                return declared;
             } catch (RuntimeException e) {
-                log.error("Field constraints {} do not parse and are ignored: {}", node, e.getMessage());
+                log.error("Stored field constraint {} = {} does not parse and that rule is ignored: {}",
+                        key, declared, e.getMessage());
                 return null;
             }
         }

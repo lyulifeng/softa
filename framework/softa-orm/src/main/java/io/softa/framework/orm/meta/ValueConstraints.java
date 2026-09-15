@@ -1,9 +1,9 @@
 package io.softa.framework.orm.meta;
 
 import java.math.BigDecimal;
+import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.Optional;
-import java.util.concurrent.ConcurrentHashMap;
 import java.util.regex.Pattern;
 import org.apache.commons.lang3.StringUtils;
 
@@ -27,9 +27,10 @@ import io.softa.framework.orm.service.validation.WriteValidationException;
  * <p>Compiled patterns and parsed bounds are cached by their declared text, not by field: the
  * mapping from a regex string to its {@link Pattern} never changes, so a catalog reload needs no
  * invalidation — a redeclared field simply keys a new entry. Nothing removes an entry either, and a
- * studio that lets an admin retype a rule produces a new key every time, so the caches stop growing
- * at {@link #MAX_CACHED} and compile afresh beyond it: a bounded cost for the declarations a
- * deployment actually writes with, and no unbounded retention for one that churns them.
+ * studio that lets an admin retype a rule produces a new key every time, so each cache is a small LRU:
+ * the declarations actually being written with stay compiled, and a churn of one-off texts evicts
+ * itself instead of either growing without bound or — as a plain cap would — filling up once and
+ * leaving every later write to recompile forever.
  *
  * <p>The message a field declares is shown as written; only the composed fallbacks are
  * {@code MessageFormat} patterns.
@@ -38,24 +39,30 @@ public final class ValueConstraints {
 
     private ValueConstraints() {}
 
-    /** How many distinct declarations each cache keeps before it stops admitting new ones. */
-    static final int MAX_CACHED = 2048;
+    /** How many distinct declarations each cache keeps; the least recently used one goes. */
+    static final int MAX_CACHED = 512;
 
-    private static final Map<String, Pattern> PATTERNS = new ConcurrentHashMap<>();
+    private static final Map<String, Pattern> PATTERNS = lru();
     /** Declared bound text → parsed value; an empty Optional marks text that does not parse. */
-    private static final Map<String, Optional<BigDecimal>> BOUNDS = new ConcurrentHashMap<>();
+    private static final Map<String, Optional<BigDecimal>> BOUNDS = lru();
 
-    /** The cached value, computed and kept while there is room, computed and dropped once there is not. */
+    private static <T> Map<String, T> lru() {
+        return new LinkedHashMap<>(64, 0.75f, true) {
+            @Override
+            protected boolean removeEldestEntry(Map.Entry<String, T> eldest) {
+                return size() > MAX_CACHED;
+            }
+        };
+    }
+
+    /**
+     * The cached value, computed on a miss. Synchronized because an access-ordered
+     * {@link LinkedHashMap} reorders itself on a read, so even lookups mutate it.
+     */
     private static <T> T cached(Map<String, T> cache, String key, java.util.function.Function<String, T> compute) {
-        T hit = cache.get(key);
-        if (hit != null) {
-            return hit;
+        synchronized (cache) {
+            return cache.computeIfAbsent(key, compute);
         }
-        T value = compute.apply(key);
-        if (cache.size() < MAX_CACHED) {
-            cache.putIfAbsent(key, value);
-        }
-        return value;
     }
 
     /**

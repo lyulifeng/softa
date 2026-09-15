@@ -14,6 +14,7 @@ import io.softa.framework.orm.enums.AccessType;
 import io.softa.framework.orm.enums.FieldType;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 /**
@@ -83,21 +84,23 @@ class FilterEvaluatorTest {
     }
 
     @Test
-    void anOffsetNamesAnInstantAndIsReadOnTheFrameworkClock() {
-        // the same instant spelled two ways is one value
-        assertThat(FilterEvaluator.equal("2026-01-31T09:30:00+08:00",
-                java.time.OffsetDateTime.parse("2026-01-31T09:30:00+08:00").atZoneSameInstant(
-                        java.time.ZoneId.systemDefault()).toLocalDateTime(), FieldType.DATE_TIME)).isTrue();
-        assertThat(FilterEvaluator.equal("2026-01-31T09:30:00+08:00", "2026-01-31T01:30:00Z",
+    void anOffsetSpellingIsReadAsWallClockSoTheVerdictDoesNotFollowTheServerZone() {
+        // stored date-times are zone-less; re-zoning the literal would move the rule against them
+        assertThat(FilterEvaluator.equal("2026-01-31T09:30:00+08:00", "2026-01-31 09:30:00",
                 FieldType.DATE_TIME)).isTrue();
+        assertThat(eval("[[\"startDate\", \"=\", \"2026-01-31\"]]", row("startDate", "2026-01-31T00:00:00Z"))).isTrue();
     }
 
     @Test
     void theSqlTemporalTypesCoerceInsteadOfThrowing() {
-        // java.sql.Date refuses toInstant(); a condition must still get an answer
+        // java.sql.Date and java.sql.Time refuse toInstant(); a condition must still get an answer
         assertThat(FilterEvaluator.equal(java.sql.Date.valueOf("2026-01-31"), "2026-01-31", FieldType.DATE)).isTrue();
         assertThat(FilterEvaluator.equal(java.sql.Timestamp.valueOf("2026-01-31 09:30:00"),
                 "2026-01-31 09:30:00", FieldType.DATE_TIME)).isTrue();
+        assertThat(FilterEvaluator.equal(java.sql.Time.valueOf("09:30:00"), "09:30:00", FieldType.TIME)).isTrue();
+        // and a clock time names no day, so a date-time comparison simply has no answer for it
+        assertThatCode(() -> FilterEvaluator.equal(java.sql.Time.valueOf("09:30:00"),
+                "2026-01-31 09:30:00", FieldType.DATE_TIME)).doesNotThrowAnyException();
     }
 
     @Test

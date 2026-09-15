@@ -140,8 +140,26 @@ class FieldConstraintsTest {
     }
 
     @Test
+    void aConditionThatDoesNotParseCostsTheFieldThatRuleAndNothingElse() {
+        // the value domain is a separate declaration; one bad condition must not silently switch it off
+        FieldConstraints always = JsonUtils.stringToObject(
+                "{\"min\":\"0\",\"pattern\":\"^[A-Z]{2}$\",\"hiddenWhen\":true}", FieldConstraints.class);
+        assertThat(always).isNotNull();
+        assertThat(always.min()).isEqualTo("0");
+        assertThat(always.pattern()).isEqualTo("^[A-Z]{2}$");
+        assertThat(always.hiddenWhen()).isNull();
+
+        FieldConstraints malformed = JsonUtils.stringToObject(
+                "{\"min\":\"0\",\"requiredWhen\":[[\"reason\", \"=\"]]}", FieldConstraints.class);
+        assertThat(malformed).isNotNull();
+        assertThat(malformed.min()).isEqualTo("0");
+        assertThat(malformed.requiredWhen()).isNull();
+    }
+
+    @Test
     void aStoredRowThatDoesNotParseReadsAsNoConstraintsInsteadOfFailingTheLoad() {
         // hand-written rows and older studio payloads must not stop the catalog from loading
+        // nothing else declared, so dropping the unusable rule leaves nothing at all
         assertThat(JsonUtils.stringToObject("{\"hiddenWhen\":true}", FieldConstraints.class)).isNull();
         assertThat(JsonUtils.stringToObject("{\"requiredWhen\":[[\"reason\", \"=\"]]}", FieldConstraints.class)).isNull();
         assertThat(JsonUtils.stringToObject("{}", FieldConstraints.class)).isNull();

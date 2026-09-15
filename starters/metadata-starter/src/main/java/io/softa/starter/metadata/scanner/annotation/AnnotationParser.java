@@ -3,9 +3,12 @@ package io.softa.starter.metadata.scanner.annotation;
 import java.lang.reflect.Field;
 import java.lang.reflect.Modifier;
 import java.util.*;
+import java.math.BigDecimal;
 import java.util.regex.Pattern;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.lang3.StringUtils;
+
+import io.softa.framework.base.constant.EnvConstant;
 import org.jspecify.annotations.Nullable;
 
 import io.softa.framework.base.annotation.OptionItem;
@@ -1036,10 +1039,45 @@ public final class AnnotationParser {
             boolean dynamic = Boolean.TRUE.equals(f.getDynamic()) || FieldType.TO_MANY_TYPES.contains(f.getFieldType());
             List<String> warnings = constraints.validate(f.getFieldType(), dynamic, where, typeByName::get);
             warnings.forEach(log::warn);
+            checkDefaultValueAgainstDomain(f, constraints, where);
             if (Boolean.TRUE.equals(f.getRequired()) && constraints.requiredWhen() != null) {
                 log.warn("@Field on {} declares both required = true and requiredWhen; the condition never"
                         + " applies because the static flag always wins.", where);
             }
+        }
+    }
+
+    /**
+     * A field's own {@code defaultValue} must satisfy the value domain it declares. The create path
+     * fills the default without running the domain check — the value never passed through the request —
+     * so a default outside the bound is stored happily and then rejected the first time anything sends
+     * the field back, including a form that merely re-submits what it read. Caught here, where whoever
+     * wrote the two attributes can see both.
+     */
+    private void checkDefaultValueAgainstDomain(SysField f, FieldConstraints constraints, String where) {
+        String declared = f.getDefaultValue();
+        if (StringUtils.isBlank(declared) || EnvConstant.ENV_PARAMS.contains(declared.trim().toUpperCase())) {
+            return;
+        }
+        String value = declared.trim();
+        if (constraints.pattern() != null && !Pattern.matches(constraints.pattern(), value)) {
+            throw new IllegalStateException("@Field(defaultValue) on " + where + " is `" + value
+                    + "`, which its own pattern `" + constraints.pattern() + "` rejects.");
+        }
+        if (constraints.min() == null && constraints.max() == null) {
+            return;
+        }
+        BigDecimal actual;
+        try {
+            actual = new BigDecimal(value);
+        } catch (NumberFormatException e) {
+            return;   // not a number: the field type's own conversion is the authority on that
+        }
+        if ((constraints.min() != null && actual.compareTo(new BigDecimal(constraints.min())) < 0)
+                || (constraints.max() != null && actual.compareTo(new BigDecimal(constraints.max())) > 0)) {
+            throw new IllegalStateException("@Field(defaultValue) on " + where + " is `" + value
+                    + "`, which its own bounds (min " + constraints.min() + ", max " + constraints.max()
+                    + ") reject.");
         }
     }
 

@@ -7,12 +7,14 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Optional;
 import java.util.Set;
 import java.util.function.Function;
 import org.apache.commons.lang3.StringUtils;
 import org.jspecify.annotations.Nullable;
 
 import io.softa.framework.base.enums.Operator;
+import io.softa.framework.base.utils.JsonUtils;
 import io.softa.framework.orm.constant.ModelConstant;
 import io.softa.framework.orm.domain.EvalContext;
 import io.softa.framework.orm.domain.FilterControl;
@@ -79,6 +81,11 @@ public final class FieldConstraintsEnforcer {
         @Nullable Map<String, Object> read(String relatedModel, String path, Serializable id);
     }
 
+    /** The types whose value is a set of members, stored as comma-joined text. */
+    private static final Set<FieldType> MULTI_VALUE_TYPES = Set.of(
+            FieldType.MULTI_OPTION, FieldType.MULTI_STRING, FieldType.MULTI_FILE,
+            FieldType.ONE_TO_MANY, FieldType.MANY_TO_MANY);
+
     private final String modelName;
     private final AccessType accessType;
     private final List<MetaField> conditionalFields;
@@ -92,8 +99,13 @@ public final class FieldConstraintsEnforcer {
     private final Map<String, Set<String>> storedByField = new HashMap<>();
     /** On create: the declared defaults of every field a condition may read, filled into the view. */
     private final Map<String, Object> createDefaults = new HashMap<>();
-    /** Related rows already fetched during this write: {@code model/id → row}. */
-    private final Map<String, Map<String, Object>> relatedCache = new HashMap<>();
+    /**
+     * Related rows already fetched during this write: {@code model/id#path → row}. The path belongs in
+     * the key because the read selects only that one attribute — two cascaded references to the same
+     * related row ask for different columns, and the second would read a column the first never
+     * fetched. A miss is remembered as an absent row, so a dangling FK is looked up once, not per row.
+     */
+    private final Map<String, Optional<Map<String, Object>>> relatedCache = new HashMap<>();
 
     /**
      * @param modelName the model being written
@@ -271,9 +283,10 @@ public final class FieldConstraintsEnforcer {
                 continue;
             }
             String path = chain.get(1);
-            String key = fk.getRelatedModel() + "/" + fkValue;
+            String key = fk.getRelatedModel() + "/" + fkValue + "#" + path;
             Map<String, Object> relatedRow = relatedCache.computeIfAbsent(key,
-                    k -> relatedRows.read(fk.getRelatedModel(), path, (Serializable) fkValue));
+                    k -> Optional.ofNullable(relatedRows.read(fk.getRelatedModel(), path, (Serializable) fkValue)))
+                    .orElse(null);
             if (view == null) {
                 view = new HashMap<>(row);
             }
@@ -349,23 +362,39 @@ public final class FieldConstraintsEnforcer {
         if (Objects.equals(value, original)) {
             return false;
         }
-        if (value instanceof Collection<?> || original instanceof Collection<?>) {
+        if (FieldType.JSON.equals(field.getFieldType()) || FieldType.DTO.equals(field.getFieldType())) {
+            // A JSON column arrives as an object or a list and is stored as the text the write will
+            // produce; compare the two in that same text form, not as objects that can never match.
+            return !Objects.equals(jsonText(value), jsonText(original));
+        }
+        if (MULTI_VALUE_TYPES.contains(field.getFieldType())) {
             // A multi-value field arrives as a list and is stored as comma-joined text, so the two
             // sides never match as objects. It is a set: same members, same value, whatever the
-            // order and whichever shape each side happens to be in.
+            // order and whichever shape each side happens to be in. Decided by the declared type, not
+            // by the Java shape — a JSON column also arrives as a list and is stored as its own text,
+            // which splitting on commas would mangle.
             return !members(value).equals(members(original));
         }
         return !FilterEvaluator.equal(value, original, field.getFieldType());
     }
 
-    /** The members of a multi-value value, from a collection or from comma-joined text. */
+    /** A JSON value as the text a write stores it as; text is handed back unchanged. */
+    private static @Nullable String jsonText(@Nullable Object value) {
+        if (value == null) {
+            return null;
+        }
+        return value instanceof String text ? text : JsonUtils.objectToString(value);
+    }
+
+    /** The members of a multi-value value, from a collection or from the comma-joined text it stores as. */
     private static Set<String> members(@Nullable Object value) {
         Collection<?> elements = value instanceof Collection<?> c
                 ? c
                 : (value == null ? List.of() : List.of(StringUtils.split(String.valueOf(value), ',')));
         Set<String> members = new HashSet<>();
         for (Object element : elements) {
-            String text = StringUtils.trimToNull(String.valueOf(element));
+            // a null element writes as nothing (StringUtils.join), so it is not a member here either
+            String text = element == null ? null : StringUtils.trimToNull(String.valueOf(element));
             if (text != null) {
                 members.add(text);
             }

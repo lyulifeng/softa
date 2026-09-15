@@ -28,8 +28,18 @@
 -- catalog and reports everything as drift. Deployments without studio-starter have no design_*
 -- tables — skip that section.
 
-ALTER TABLE sys_field
-    ADD COLUMN constraints MEDIUMTEXT COMMENT 'Value domain and conditional state / validity rules; see FieldConstraints' AFTER scale;
+-- MySQL has no ADD COLUMN IF NOT EXISTS, and this column has a second way of appearing: a non-empty
+-- scanner-scope auto-adds sys_field.constraints on boot. An environment that booted the patched binary
+-- before Flyway ran would meet ER_DUP_FIELDNAME here and block every later migration, so each ALTER is
+-- issued only when information_schema says the column is missing. Re-running the script is a no-op.
+SET @ddl := (SELECT IF(COUNT(*) > 0, 'SELECT 1',
+    'ALTER TABLE sys_field ADD COLUMN constraints MEDIUMTEXT COMMENT ''Value domain and conditional state / validity rules; see FieldConstraints'' AFTER scale')
+    FROM information_schema.COLUMNS
+    WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'sys_field' AND COLUMN_NAME = 'constraints');
+PREPARE stmt FROM @ddl; EXECUTE stmt; DEALLOCATE PREPARE stmt;
 
-ALTER TABLE design_field
-    ADD COLUMN constraints MEDIUMTEXT COMMENT 'Value domain and conditional state / validity rules; see FieldConstraints' AFTER scale;
+SET @ddl := (SELECT IF(COUNT(*) > 0, 'SELECT 1',
+    'ALTER TABLE design_field ADD COLUMN constraints MEDIUMTEXT COMMENT ''Value domain and conditional state / validity rules; see FieldConstraints'' AFTER scale')
+    FROM information_schema.COLUMNS
+    WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'design_field' AND COLUMN_NAME = 'constraints');
+PREPARE stmt FROM @ddl; EXECUTE stmt; DEALLOCATE PREPARE stmt;
