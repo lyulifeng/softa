@@ -1060,21 +1060,31 @@ public final class AnnotationParser {
             return;
         }
         String value = declared.trim();
-        if (constraints.pattern() != null && !Pattern.matches(constraints.pattern(), value)) {
+        // Only where the runtime would actually apply the rule: a pattern runs in StringProcessor and a
+        // bound in NumericProcessor, so a domain declared against the wrong field type is a warning
+        // elsewhere in this validation and must not become a boot failure here.
+        if (constraints.pattern() != null && FieldConstraints.PATTERN_TYPES.contains(f.getFieldType())
+                && !Pattern.matches(constraints.pattern(), value)) {
             throw new IllegalStateException("@Field(defaultValue) on " + where + " is `" + value
                     + "`, which its own pattern `" + constraints.pattern() + "` rejects.");
         }
-        if (constraints.min() == null && constraints.max() == null) {
+        if (!FieldType.NUMERIC_TYPES.contains(f.getFieldType())
+                || (constraints.min() == null && constraints.max() == null)) {
             return;
         }
         BigDecimal actual;
+        BigDecimal min;
+        BigDecimal max;
         try {
             actual = new BigDecimal(value);
+            // A bound that does not parse is an inert state the runtime tolerates; it is reported by
+            // the bound's own validation, not by escaping as a raw NumberFormatException from here.
+            min = constraints.min() == null ? null : new BigDecimal(constraints.min());
+            max = constraints.max() == null ? null : new BigDecimal(constraints.max());
         } catch (NumberFormatException e) {
             return;   // not a number: the field type's own conversion is the authority on that
         }
-        if ((constraints.min() != null && actual.compareTo(new BigDecimal(constraints.min())) < 0)
-                || (constraints.max() != null && actual.compareTo(new BigDecimal(constraints.max())) > 0)) {
+        if ((min != null && actual.compareTo(min) < 0) || (max != null && actual.compareTo(max) > 0)) {
             throw new IllegalStateException("@Field(defaultValue) on " + where + " is `" + value
                     + "`, which its own bounds (min " + constraints.min() + ", max " + constraints.max()
                     + ") reject.");

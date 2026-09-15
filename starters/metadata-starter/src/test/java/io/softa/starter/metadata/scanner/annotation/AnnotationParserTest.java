@@ -545,6 +545,20 @@ class AnnotationParserTest {
         @Override public Serializable getId() { return null; }
     }
 
+    @Model
+    static class PatternOnANonTextFieldIsRejectedByItsOwnCheck extends AuditableModel {
+        @Field(pattern = "^\\d{4}$", defaultValue = "0") private Integer year;
+        @Override public Serializable getId() { return null; }
+    }
+
+    @Test
+    void aDomainDeclaredAgainstTheWrongTypeIsReportedByTheDomainCheckNotTheDefaultValueCheck() {
+        // the type mismatch is the earlier, better-worded failure; the defaultValue check never sees it
+        IllegalStateException ex = assertThrows(IllegalStateException.class,
+                () -> parser.parse(List.of(PatternOnANonTextFieldIsRejectedByItsOwnCheck.class), List.of()));
+        assertTrue(ex.getMessage().contains("applies to STRING and"), ex.getMessage());
+    }
+
     @Test
     void aDefaultValue_itsOwnDomainRejects_failsTheBoot() {
         // the create path fills the default without running the domain check, so such a row is stored

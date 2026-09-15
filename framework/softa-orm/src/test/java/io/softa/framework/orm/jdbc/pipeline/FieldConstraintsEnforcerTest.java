@@ -344,6 +344,14 @@ class FieldConstraintsEnforcerTest {
         Map<String, Object> merged = new HashMap<>(original);
         merged.putAll(patch);
         assertThatCode(() -> e.enforceUpdate(merged, patch, original)).doesNotThrowAnyException();
+
+        // and the stored text as a database may hand it back: keys reordered, spaces added
+        Map<String, Object> storedObject = row("id", 1L, "status", "Approved", "payload", "{\"id\": 1, \"name\": \"x\"}");
+        Map<String, Object> objectPatch = row("id", 1L, "payload", new java.util.LinkedHashMap<>(
+                java.util.Map.of("name", "x", "id", 1)));
+        Map<String, Object> mergedObject = new HashMap<>(storedObject);
+        mergedObject.putAll(objectPatch);
+        assertThatCode(() -> e.enforceUpdate(mergedObject, objectPatch, storedObject)).doesNotThrowAnyException();
     }
 
     @Test

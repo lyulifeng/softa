@@ -12,6 +12,7 @@ import java.util.Set;
 import java.util.function.Function;
 import org.apache.commons.lang3.StringUtils;
 import org.jspecify.annotations.Nullable;
+import tools.jackson.databind.JsonNode;
 
 import io.softa.framework.base.enums.Operator;
 import io.softa.framework.base.utils.JsonUtils;
@@ -81,10 +82,12 @@ public final class FieldConstraintsEnforcer {
         @Nullable Map<String, Object> read(String relatedModel, String path, Serializable id);
     }
 
-    /** The types whose value is a set of members, stored as comma-joined text. */
+    /**
+     * The types whose value is a set of members stored as comma-joined text. A to-many relation is
+     * deliberately absent: it has no column of its own, so there is no stored side to compare with.
+     */
     private static final Set<FieldType> MULTI_VALUE_TYPES = Set.of(
-            FieldType.MULTI_OPTION, FieldType.MULTI_STRING, FieldType.MULTI_FILE,
-            FieldType.ONE_TO_MANY, FieldType.MANY_TO_MANY);
+            FieldType.MULTI_OPTION, FieldType.MULTI_STRING, FieldType.MULTI_FILE);
 
     private final String modelName;
     private final AccessType accessType;
@@ -363,9 +366,10 @@ public final class FieldConstraintsEnforcer {
             return false;
         }
         if (FieldType.JSON.equals(field.getFieldType()) || FieldType.DTO.equals(field.getFieldType())) {
-            // A JSON column arrives as an object or a list and is stored as the text the write will
-            // produce; compare the two in that same text form, not as objects that can never match.
-            return !Objects.equals(jsonText(value), jsonText(original));
+            // A JSON column arrives as an object or a list and is stored as text; compare the two as
+            // parsed JSON, where an object is equal by its members and an array by its order — so a
+            // column the database normalized (key order, spacing) still reads as the value sent.
+            return !Objects.equals(jsonNode(value), jsonNode(original));
         }
         if (MULTI_VALUE_TYPES.contains(field.getFieldType())) {
             // A multi-value field arrives as a list and is stored as comma-joined text, so the two
@@ -378,12 +382,18 @@ public final class FieldConstraintsEnforcer {
         return !FilterEvaluator.equal(value, original, field.getFieldType());
     }
 
-    /** A JSON value as the text a write stores it as; text is handed back unchanged. */
-    private static @Nullable String jsonText(@Nullable Object value) {
+    /** A JSON value as a parsed tree, or its text when it does not parse. */
+    private static @Nullable Object jsonNode(@Nullable Object value) {
         if (value == null) {
             return null;
         }
-        return value instanceof String text ? text : JsonUtils.objectToString(value);
+        try {
+            return value instanceof String text
+                    ? JsonUtils.stringToObject(text, JsonNode.class)
+                    : JsonUtils.objectToJsonNode(value);
+        } catch (RuntimeException e) {
+            return String.valueOf(value);   // not JSON after all: compare it as the text it is
+        }
     }
 
     /** The members of a multi-value value, from a collection or from the comma-joined text it stores as. */
