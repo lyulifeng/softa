@@ -322,7 +322,9 @@ redeploy rather than a migration and existing rows are not retroactively invalid
 - Bounds are **inclusive**, numeric field types only, written as decimal literals (`min = "0.01"`).
   `pattern` matches the **whole** value, `STRING` / `TEXT` only, Java/JavaScript-shared syntax.
 - **Empty passes** the value domain. Use `required` (NOT NULL) or `requiredWhen` for "must be filled in".
-- Conditions are written as an **expression in a text block** — `reason = "Others"`, no escapes.
+- Conditions are written as an **expression in a text block** — `reason = "Others"`, no escapes. The
+  grammar (operators, value forms, grouping, and the two shapes it refuses) is in
+  [queries.md](queries.md) under "Filters as an expression".
   The same rule in the JSON spelling (`[["reason", "=", "Others"]]`) parses to exactly the same tree;
   use it only for `IS SET` / `IS NOT SET`, which the expression grammar cannot parse, and give those
   units a third element (`null`). The expression grammar names fields as `[a-z][a-zA-Z0-9]*` — no dots

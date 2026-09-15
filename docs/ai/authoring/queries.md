@@ -44,6 +44,39 @@ Each condition is `[field, operator, value]`, e.g. `["status", "=", "ACTIVE"]`.
 Combine multiple in the `filters` list. (In service code the same is expressed
 with the `Filters` builder.)
 
+### Filters as an expression
+
+The same condition can be written as an expression instead of nested lists, which is what
+`@Field(requiredWhen / hiddenWhen / readonlyWhen / invalidWhen)` should use — in a Java text block it
+needs no escapes. `Filters.of` picks the form by the first character: a leading `[` is the list form,
+anything else is parsed as an expression.
+
+```java
+Filters.of("status = \"ACTIVE\"")
+Filters.of("status = \"ACTIVE\" AND grade >= 6")
+Filters.of("title = \"PM\" OR (code = \"A010\" AND grade = 1)")
+```
+
+The grammar, in full:
+
+| Part | Accepts |
+|---|---|
+| field | `[a-z][a-zA-Z0-9]*` — **no dots, no underscores**; reach a related row's attribute through a `cascadedField` declared on this model |
+| operator | `=` `!=` `>` `>=` `<` `<=` `CONTAINS` `NOT CONTAINS` `START WITH` `NOT START WITH` `IN` `NOT IN` `BETWEEN` `NOT BETWEEN` `IS SET` `IS NOT SET` `PARENT OF` `CHILD OF` |
+| value | a number, `true` / `false`, or a **double-quoted** string (single quotes are not a string); a list as `["a", "b"]` |
+| combining | `AND` / `OR`, grouped with parentheses to any depth |
+| whitespace | ignored, so a text block's trailing newline is harmless |
+
+Two limits worth knowing before you choose the form:
+
+- **`IS SET` / `IS NOT SET` have no expression form.** They take no value, and the visitor demands
+  one, so they throw. Write those in the list form, and give the unit a third element that the
+  operator then ignores: `[["terminationDate", "IS NOT SET", null]]`.
+- **`PARENT OF` / `CHILD OF` need a query**, so they are refused in a field constraint (a constraint
+  is evaluated against one row in hand). They are available in a query's own filters.
+
+Both forms parse to the same `Filters` tree; a test pins that equivalence.
+
 ### Orders format
 List form `[["createdTime", "DESC"], ["name", "ASC"]]` or string form
 `"createdTime DESC, name ASC"`.

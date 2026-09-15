@@ -65,6 +65,11 @@ class FieldConstraintsTest {
                 reason = "Others" AND status = "Draft"
                 """)).isEqualTo(Filters.of(
                         "[[\"reason\", \"=\", \"Others\"], \"AND\", [\"status\", \"=\", \"Draft\"]]"));
+        // grouping to depth, which is what a complex rule actually needs
+        assertThat(Filters.of("""
+                title = "PM" OR (code = "A010" AND grade = 1)
+                """)).isEqualTo(Filters.of(
+                        "[[\"title\", \"=\", \"PM\"], \"OR\", [[\"code\", \"=\", \"A010\"], \"AND\", [\"grade\", \"=\", 1]]]"));
         // The one shape the expression grammar does NOT cover: an operator with no value. Its visitor
         // demands a value context, so a valueless unit has to stay in the JSON spelling.
         assertThatThrownBy(() -> Filters.of("""
