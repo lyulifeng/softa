@@ -220,6 +220,18 @@ Every write reaches the database through the pipeline that checks them — creat
 import, seed loading, flow write nodes — so one declaration covers all of them. **No `CHECK` is
 rendered and no DDL changes**: a rule is tightened by redeploying, rows written before it stay valid.
 
+**Writes only. A query is never judged by a constraint**, and that is a decision rather than an
+omission. `DataReadPipeline` runs the output half of the processor chain, which checks nothing, and
+`FieldConstraintsEnforcer` is built only by the create and update pipelines. Since a rule may be
+declared long after the rows were written, refusing a query that describes what the rule forbids
+would make the rows it forbids unfindable — and finding them is the first thing anyone does after
+declaring one. `activeEmpCount < 0` is how you list the headcounts a new `min = "0"` has just made
+illegal; `["startDate", ">", "{{ @endDate }}"]` (a reserved field reference, compiled to
+`t.start_date > t.end_date`) lists every row an `invalidWhen` comparing two dates would now reject.
+A client that filters on a value outside the domain gets no rows, which is the correct answer, not
+an error. A UI may still refuse to *build* such a filter — narrowing what someone can construct is
+not the same as enforcing the rule, and only this pipeline does the latter.
+
 Rules worth knowing before declaring one:
 
 - **Bounds are inclusive, null passes, a blank string is not matched.** Absence is what `required` /
