@@ -6,6 +6,7 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.regex.Pattern;
 import java.util.regex.PatternSyntaxException;
+import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.lang3.StringUtils;
 
 import io.softa.framework.orm.service.validation.WriteValidationException;
@@ -36,6 +37,7 @@ import io.softa.framework.orm.service.validation.WriteValidationException;
  * <p>The message a field declares is shown as written; only the composed fallbacks are
  * {@code MessageFormat} patterns.
  */
+@Slf4j
 public final class ValueConstraints {
 
     private ValueConstraints() {}
@@ -115,12 +117,86 @@ public final class ValueConstraints {
             return;
         }
         Pattern pattern = compiled(c.pattern());
-        if (pattern != null && !pattern.matcher(value).matches()) {
-            throw c.message() != null
-                    ? WriteValidationException.forField(metaField.getFieldName(), c.message())
-                    : WriteValidationException.forField(metaField.getFieldName(),
-                            "Model field {0}:{1} is not in the required format: {2}.",
-                            metaField.getModelName(), metaField.getFieldName(), value);
+        if (pattern == null || matchesWithinBudget(pattern, value, metaField)) {
+            return;
+        }
+        throw c.message() != null
+                ? WriteValidationException.forField(metaField.getFieldName(), c.message())
+                : WriteValidationException.forField(metaField.getFieldName(),
+                        "Model field {0}:{1} is not in the required format: {2}.",
+                        metaField.getModelName(), metaField.getFieldName(), value);
+    }
+
+    /** How many character reads one match may cost before the pattern is treated as unusable. */
+    static final int MATCH_BUDGET = 200_000;
+
+    /**
+     * Whether the value matches, under a cap on how much work the match may do.
+     *
+     * <p>A regex is a declaration an admin can type in the studio, and it is then run against input an
+     * ordinary user controls. Java's engine backtracks, and a nested-quantifier shape like
+     * {@code (x+x+)+y} costs work that grows with the cube of the value's length — measured here at
+     * 170 million character reads for 800 characters, a second of one thread, and eight times that for
+     * every doubling. A {@code TEXT} field is long enough for that to matter, and {@code validate()}
+     * compiles the regex without analysing it. No static analysis is reliable enough to be the only
+     * guard either.
+     *
+     * <p>The cap is counted rather than timed — a wall clock makes the same write pass on an idle node
+     * and fail on a busy one. A match that exceeds it is treated the way an uncompilable pattern is:
+     * the rule is ignored and the write goes on to the rest of its checks. Refusing the value instead
+     * would turn a bad declaration into a user's problem; this leaves it as an operator's, and says so
+     * in the log. An ordinary pattern on an ordinary value costs a few reads per character.
+     */
+    private static boolean matchesWithinBudget(Pattern pattern, String value, MetaField metaField) {
+        try {
+            return pattern.matcher(new BudgetedCharSequence(value, MATCH_BUDGET)).matches();
+        } catch (BudgetExceeded e) {
+            log.error("Field pattern on {}.{} did not finish within {} character reads and is ignored"
+                            + " for this write; the declared regular expression backtracks and needs rewriting: {}",
+                    metaField.getModelName(), metaField.getFieldName(), MATCH_BUDGET, pattern.pattern());
+            return true;
+        }
+    }
+
+    /** Raised from inside the regex engine when a match has read more than it is allowed to. */
+    private static final class BudgetExceeded extends RuntimeException {
+        BudgetExceeded() {
+            super(null, null, false, false);   // no message, no stack: it is control flow, not a report
+        }
+    }
+
+    /**
+     * The value as the regex engine sees it, counting every character it reads. Backtracking shows up
+     * as re-reading, which is the whole of what makes a catastrophic pattern expensive, so counting
+     * reads bounds the work without depending on the clock.
+     */
+    private record BudgetedCharSequence(CharSequence text, int[] remaining) implements CharSequence {
+
+        BudgetedCharSequence(CharSequence text, int budget) {
+            this(text, new int[] {budget});
+        }
+
+        @Override
+        public int length() {
+            return text.length();
+        }
+
+        @Override
+        public char charAt(int index) {
+            if (--remaining[0] < 0) {
+                throw new BudgetExceeded();
+            }
+            return text.charAt(index);
+        }
+
+        @Override
+        public CharSequence subSequence(int start, int end) {
+            return new BudgetedCharSequence(text.subSequence(start, end), remaining);
+        }
+
+        @Override
+        public String toString() {
+            return text.toString();
         }
     }
 

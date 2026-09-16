@@ -70,4 +70,25 @@ class ValueConstraintsTest {
         MetaField amount = field("amount", c("not-a-number", null, null, null));
         assertThatCode(() -> ValueConstraints.checkRange(amount, new java.math.BigDecimal("-99"))).doesNotThrowAnyException();
     }
+
+    @Test
+    void aPatternThatBacktracksIsCutOffInsteadOfHoldingTheThread() {
+        // A regex is typed by an admin in the studio and then run against input an ordinary user
+        // controls. `(x+x+)+y` costs work growing with the cube of the value's length: 150 characters
+        // already pass the cap, 800 cost a second of one thread, and every doubling costs eight times
+        // more. The rule is dropped for that write rather than the value refused — a declaration that
+        // cannot be run is an operator's problem, not the problem of whoever is filling in the form.
+        MetaField code = field("code", c(null, null, "(x+x+)+y", null));
+        String value = "x".repeat(150) + "!";
+        assertThatCode(() -> ValueConstraints.checkPattern(code, value)).doesNotThrowAnyException();
+        // and a value short enough to finish inside the cap is still judged
+        assertThatThrownBy(() -> ValueConstraints.checkPattern(code, "xx!"))
+                .isInstanceOf(WriteValidationException.class);
+
+        // an ordinary pattern is nowhere near the cap, on a value far longer than that one
+        MetaField country = field("country", c(null, null, "[A-Z]{2}", null));
+        assertThatCode(() -> ValueConstraints.checkPattern(country, "SG")).doesNotThrowAnyException();
+        assertThatThrownBy(() -> ValueConstraints.checkPattern(country, "A".repeat(10_000)))
+                .isInstanceOf(WriteValidationException.class);
+    }
 }
