@@ -17,7 +17,7 @@ import tools.jackson.databind.JsonNode;
 import io.softa.framework.base.enums.Operator;
 import io.softa.framework.base.utils.JsonUtils;
 import io.softa.framework.orm.constant.ModelConstant;
-import io.softa.framework.orm.domain.EvalContext;
+import io.softa.framework.orm.domain.FilterEvaluator.EvalContext;
 import io.softa.framework.orm.domain.FilterControl;
 import io.softa.framework.orm.domain.FilterEvaluator;
 import io.softa.framework.orm.domain.Filters;

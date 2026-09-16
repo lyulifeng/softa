@@ -10,6 +10,7 @@ import java.util.function.Function;
 
 import org.junit.jupiter.api.Test;
 
+import io.softa.framework.orm.domain.FilterEvaluator.EvalContext;
 import io.softa.framework.orm.enums.AccessType;
 import io.softa.framework.orm.enums.FieldType;
 

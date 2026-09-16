@@ -11,7 +11,7 @@ import org.junit.jupiter.api.Test;
 import org.springframework.test.util.ReflectionTestUtils;
 
 import io.softa.framework.base.exception.IllegalArgumentException;
-import io.softa.framework.orm.domain.EvalContext;
+import io.softa.framework.orm.domain.FilterEvaluator.EvalContext;
 import io.softa.framework.orm.enums.AccessType;
 import io.softa.framework.orm.enums.FieldType;
 import io.softa.framework.orm.meta.FieldConstraints;

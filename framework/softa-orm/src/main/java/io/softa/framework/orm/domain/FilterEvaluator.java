@@ -22,10 +22,12 @@ import java.util.regex.Pattern;
 import org.apache.commons.lang3.StringUtils;
 import org.jspecify.annotations.Nullable;
 
+import io.softa.framework.base.context.ContextHolder;
 import io.softa.framework.base.constant.EnvConstant;
 import io.softa.framework.base.constant.TimeConstant;
 import io.softa.framework.base.enums.Operator;
 import io.softa.framework.base.utils.DateUtils;
+import io.softa.framework.orm.enums.AccessType;
 import io.softa.framework.orm.enums.FieldType;
 import io.softa.framework.orm.enums.FilterType;
 import io.softa.framework.orm.enums.LogicOperator;
@@ -82,6 +84,37 @@ public final class FilterEvaluator {
             "^\\{\\{\\s*(@?[A-Za-z_][A-Za-z0-9_.]*)\\s*(?:([+-])\\s*(P[0-9A-Z.]+))?\\s*}}$");
 
     private FilterEvaluator() {}
+
+    /**
+     * What an evaluation can see besides the row itself.
+     *
+     * <p>Two kinds of thing: the reserved variables a condition may name in the field slot
+     * ({@code @mode}, {@code @userId}) and the environment tokens it may name as a value
+     * ({@code {{ USER_ID }}}, {@code {{ TODAY }}}, {@code {{ NOW }}}). All four are fixed for the
+     * whole evaluation of one write, which is why they travel as one immutable value rather than
+     * being read from thread-locals inside the evaluator — a test can hand in a Tuesday, and one
+     * write cannot straddle midnight.
+     *
+     * @param mode the write being evaluated ({@code CREATE} / {@code UPDATE}); {@code @mode}
+     *             compares against its lower-case name, matching the frontend's {@code create} /
+     *             {@code update}
+     * @param userId the current user, or null when there is none (seed loading, system jobs)
+     * @param today the calendar day {@code TODAY} resolves to; date offsets are applied to it
+     * @param now the instant {@code NOW} resolves to
+     */
+    public record EvalContext(AccessType mode, Long userId, LocalDate today, LocalDateTime now) {
+
+        /** The context for a write happening now, by the user bound to the current request. */
+        public static EvalContext of(AccessType mode) {
+            LocalDateTime now = LocalDateTime.now();
+            return new EvalContext(mode, ContextHolder.getContext().getUserId(), now.toLocalDate(), now);
+        }
+
+        /** The value {@code @mode} takes in a condition: the access type's lower-case name. */
+        public String modeName() {
+            return mode == null ? null : mode.name().toLowerCase();
+        }
+    }
 
     /**
      * How a placeholder value resolves. {@code LITERAL} is "not a placeholder — use the value as is".
