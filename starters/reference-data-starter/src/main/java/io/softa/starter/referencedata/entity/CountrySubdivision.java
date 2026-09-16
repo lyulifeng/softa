@@ -30,7 +30,8 @@ import io.softa.framework.orm.enums.IdStrategy;
 @Model(
         idStrategy = IdStrategy.EXTERNAL_ID,
         businessKey = {"id"},
-        description = "ISO 3166-2 country subdivisions"
+        description = "ISO 3166-2 country subdivisions",
+        searchName = {"id", "name"}
 )
 @Index(indexName = "idx_country", fields = {"countryCode"})
 @Index(indexName = "idx_parent", fields = {"parentCode"})

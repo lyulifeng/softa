@@ -31,7 +31,8 @@ import io.softa.starter.referencedata.enums.Continent;
         label = "Country / Region",
         idStrategy = IdStrategy.EXTERNAL_ID,
         businessKey = {"id"},
-        description = "ISO 3166-1 alpha-2 country/region master"
+        description = "ISO 3166-1 alpha-2 country/region master",
+        searchName = {"id", "alpha3Code", "name"}
 )
 @Index(indexName = "idx_continent", fields = {"continent"})
 @Index(indexName = "idx_currency_code", fields = {"currencyCode"})
