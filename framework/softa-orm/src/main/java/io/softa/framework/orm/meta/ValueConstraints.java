@@ -5,6 +5,7 @@ import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.Optional;
 import java.util.regex.Pattern;
+import java.util.regex.PatternSyntaxException;
 import org.apache.commons.lang3.StringUtils;
 
 import io.softa.framework.orm.service.validation.WriteValidationException;
@@ -42,7 +43,8 @@ public final class ValueConstraints {
     /** How many distinct declarations each cache keeps; the least recently used one goes. */
     static final int MAX_CACHED = 512;
 
-    private static final Map<String, Pattern> PATTERNS = lru();
+    /** Declared pattern text → compiled regex; an empty Optional marks text that does not compile. */
+    private static final Map<String, Optional<Pattern>> PATTERNS = lru();
     /** Declared bound text → parsed value; an empty Optional marks text that does not parse. */
     private static final Map<String, Optional<BigDecimal>> BOUNDS = lru();
 
@@ -112,7 +114,8 @@ public final class ValueConstraints {
         if (StringUtils.isBlank(value) || c == null || c.pattern() == null) {
             return;
         }
-        if (!cached(PATTERNS, c.pattern(), Pattern::compile).matcher(value).matches()) {
+        Pattern pattern = compiled(c.pattern());
+        if (pattern != null && !pattern.matcher(value).matches()) {
             throw c.message() != null
                     ? WriteValidationException.forField(metaField.getFieldName(), c.message())
                     : WriteValidationException.forField(metaField.getFieldName(),
@@ -135,6 +138,21 @@ public final class ValueConstraints {
         return c.min() != null
                 ? "Model field {0}:{1} must be at least {2}, but the value is {4}."
                 : "Model field {0}:{1} must be at most {3}, but the value is {4}.";
+    }
+
+    /** The declared pattern compiled, or null when it does not compile. */
+    private static Pattern compiled(String declared) {
+        return cached(PATTERNS, declared, text -> {
+            try {
+                return Optional.of(Pattern.compile(text));
+            } catch (PatternSyntaxException e) {
+                // Same reasoning as an unparseable bound below: rejected at scan time and dropped at
+                // catalog load, so a regex that reaches here was written straight into sys_field. It is
+                // ignored rather than allowed to fail every write to the model — and remembered as
+                // ignored, or a throwing mapper would leave the cache empty and recompile each time.
+                return Optional.empty();
+            }
+        }).orElse(null);
     }
 
     /** The declared bound, or null when it is absent or unparseable. */

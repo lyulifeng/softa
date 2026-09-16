@@ -164,6 +164,7 @@ public class MetaModel implements Serializable {
     protected void sealModelFields() {
         this.storedComputedFields = Collections.unmodifiableList(this.storedComputedFields);
         this.storedCascadedFields = Collections.unmodifiableList(this.storedCascadedFields);
+        this.conditionalFields = Collections.unmodifiableList(this.conditionalFields);
         this.auditCreateFields = Collections.unmodifiableSet(this.auditCreateFields);
         this.auditUpdateFields = Collections.unmodifiableSet(this.auditUpdateFields);
         this.childModels = Collections.unmodifiableSet(this.childModels);
