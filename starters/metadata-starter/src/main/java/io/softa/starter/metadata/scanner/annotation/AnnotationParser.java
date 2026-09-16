@@ -1016,6 +1016,17 @@ public final class AnnotationParser {
     }
 
     /**
+     * A scanned field as the constraint validation reads it. The catalog load forces {@code dynamic} on
+     * every TO_MANY field, so that is the state checked here — otherwise a condition on such a field
+     * passes at scan time and is dropped at load without ever failing the boot.
+     */
+    private static FieldConstraints.FieldRef fieldRef(SysField f) {
+        boolean dynamic = Boolean.TRUE.equals(f.getDynamic()) || FieldType.TO_MANY_TYPES.contains(f.getFieldType());
+        return new FieldConstraints.FieldRef(f.getFieldType(), dynamic,
+                dynamic && StringUtils.isNotBlank(f.getCascadedField()), Boolean.TRUE.equals(f.getComputed()));
+    }
+
+    /**
      * The cross-field half of a field's constraints: bounds against the field's own type, conditions
      * against the sibling fields they name (existence, comparability, offsets). Everything here is a
      * mistake in something written by hand and compiled, so it fails the boot in front of whoever
@@ -1024,9 +1035,9 @@ public final class AnnotationParser {
      */
     private void validateFieldConstraints(Class<?> clazz, List<SysField> classFields) {
         String modelName = clazz.getSimpleName();
-        Map<String, FieldType> typeByName = new HashMap<>();
+        Map<String, FieldConstraints.FieldRef> refByName = new HashMap<>();
         for (SysField f : classFields) {
-            typeByName.put(f.getFieldName(), f.getFieldType());
+            refByName.put(f.getFieldName(), fieldRef(f));
         }
         for (SysField f : classFields) {
             FieldConstraints constraints = f.getConstraints();
@@ -1034,10 +1045,7 @@ public final class AnnotationParser {
                 continue;
             }
             String where = modelName + "." + f.getFieldName();
-            // The catalog load forces dynamic on every TO_MANY field; check the state it will end up in,
-            // or a condition on such a field passes here and is dropped there without failing the boot.
-            boolean dynamic = Boolean.TRUE.equals(f.getDynamic()) || FieldType.TO_MANY_TYPES.contains(f.getFieldType());
-            List<String> warnings = constraints.validate(f.getFieldType(), dynamic, where, typeByName::get);
+            List<String> warnings = constraints.validate(fieldRef(f), where, refByName::get);
             warnings.forEach(log::warn);
             checkDefaultValueAgainstDomain(f, constraints, where);
             if (Boolean.TRUE.equals(f.getRequired()) && constraints.requiredWhen() != null) {

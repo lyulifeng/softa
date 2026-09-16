@@ -215,15 +215,15 @@ public record FieldConstraints(
      *         JavaScript does not share)
      * @throws IllegalStateException on the first error
      */
-    public List<String> validate(MetaField field, String where, Function<String, @Nullable MetaField> fieldOf) {
-        FieldType fieldType = field.getFieldType();
+    public List<String> validate(FieldRef field, String where, Function<String, @Nullable FieldRef> fieldOf) {
+        FieldType fieldType = field.type();
         Function<String, @Nullable FieldType> fieldTypeOf = name -> {
-            MetaField sibling = fieldOf.apply(name);
-            return sibling == null ? null : sibling.getFieldType();
+            FieldRef sibling = fieldOf.apply(name);
+            return sibling == null ? null : sibling.type();
         };
         List<String> warnings = new ArrayList<>();
         validateValueDomain(fieldType, where, warnings);
-        if (field.isComputed()) {
+        if (field.computed()) {
             // The chain computes the value after both the enforcer and the processors' value-domain
             // check have run, so neither ever sees it: a bound is not applied at all, and a condition
             // reads null on every write — `requiredWhen` on one makes the model unwritable. Declare the
@@ -233,7 +233,7 @@ public record FieldConstraints(
                     + " so they would judge the value it had before the computation — never the one stored."
                     + " Declare the rule on the fields the expression reads.");
         }
-        if (hasConditions() && field.isDynamic()) {
+        if (hasConditions() && field.dynamic()) {
             throw new IllegalStateException("@Field conditions on " + where
                     + " are declared on a dynamic field: a dynamic field is not stored and cannot be"
                     + " required, hidden, readonly or invalid. Dynamic fields can be referenced by a condition.");
@@ -311,7 +311,7 @@ public record FieldConstraints(
     }
 
     private static void validateCondition(String attribute, Filters filters, String where,
-                                          Function<String, @Nullable MetaField> fieldOf) {
+                                          Function<String, @Nullable FieldRef> fieldOf) {
         if (FilterType.TREE.equals(filters.getType())) {
             filters.getChildren().forEach(child -> validateCondition(attribute, child, where, fieldOf));
             return;
@@ -320,8 +320,8 @@ public record FieldConstraints(
             return;
         }
         Function<String, @Nullable FieldType> fieldTypeOf = name -> {
-            MetaField sibling = fieldOf.apply(name);
-            return sibling == null ? null : sibling.getFieldType();
+            FieldRef sibling = fieldOf.apply(name);
+            return sibling == null ? null : sibling.type();
         };
         FilterUnit unit = filters.getFilterUnit();
         String prefix = "@Field(" + attribute + ") on " + where + ": ";
@@ -362,23 +362,45 @@ public record FieldConstraints(
      * and a dynamic computed field are never on the row the rules see — neither is selected on update
      * nor filled by the enforcer — so a condition naming one answers the same thing forever.
      */
-    private static FieldType validateReference(@Nullable MetaField referenced, String name, String prefix) {
+    private static FieldType validateReference(@Nullable FieldRef referenced, String name, String prefix) {
         if (referenced == null) {
             throw new IllegalStateException(prefix + "references field `" + name
                     + "`, which does not exist on the model.");
         }
-        if (FieldType.TO_MANY_TYPES.contains(referenced.getFieldType())) {
+        if (FieldType.TO_MANY_TYPES.contains(referenced.type())) {
             throw new IllegalStateException(prefix + "references `" + name + "`, a "
-                    + referenced.getFieldType() + " field: it has no value on the row being written, so the"
+                    + referenced.type() + " field: it has no value on the row being written, so the"
                     + " condition would answer the same thing on every write.");
         }
-        if (referenced.isDynamic() && !referenced.isDynamicCascadedField()) {
+        if (referenced.dynamic() && !referenced.cascaded()) {
             throw new IllegalStateException(prefix + "references `" + name + "`, a dynamic field with no"
                     + " column and no cascade to read it from: it is never selected and never computed"
                     + " before these rules run, so the condition would always see it empty."
                     + " A dynamic cascaded field (a.b) can be referenced; a dynamic computed one cannot.");
         }
-        return referenced.getFieldType();
+        return referenced.type();
+    }
+
+    /**
+     * What {@link #validate} needs to know about a field: its comparison kind, and whether it can ever
+     * carry a value on the row the rules see.
+     *
+     * <p>Not a {@link MetaField}: the same check runs in the annotation lane at scan time, on the
+     * {@code SysField} rows a class was just parsed into, long before any {@code MetaField} exists. One
+     * shape both lanes can build is what keeps the two from drifting into two different checks.
+     *
+     * @param type the field's resolved type
+     * @param dynamic whether it is dynamic — not a column of its own
+     * @param cascaded whether it reads its value from a related row ({@code a.b}), which the enforcer
+     *                 fetches; a dynamic field that is not cascaded is never filled at all
+     * @param computed whether the chain produces its value, after these rules have run
+     */
+    public record FieldRef(FieldType type, boolean dynamic, boolean cascaded, boolean computed) {
+
+        public static FieldRef of(MetaField field) {
+            return new FieldRef(field.getFieldType(), field.isDynamic(),
+                    field.isDynamicCascadedField(), field.isComputed());
+        }
     }
 
     private static void validateValue(@Nullable Object value, @Nullable FieldType leftType, String leftField,

@@ -5,7 +5,6 @@ import java.util.Map;
 import java.util.function.Function;
 
 import org.junit.jupiter.api.Test;
-import org.springframework.test.util.ReflectionTestUtils;
 
 import io.softa.framework.base.utils.JsonUtils;
 import io.softa.framework.orm.domain.Filters;
@@ -24,21 +23,17 @@ class FieldConstraintsTest {
             "reason", FieldType.OPTION, "reasonDescription", FieldType.STRING, "startDate", FieldType.DATE,
             "endDate", FieldType.DATE, "name", FieldType.STRING, "hireDate", FieldType.DATE,
             "amount", FieldType.BIG_DECIMAL, "reportsTo", FieldType.MANY_TO_ONE, "id", FieldType.LONG);
-    /** The field carrying the declaration, as `validate` reads it: type, dynamic, computed. */
-    private static MetaField self(FieldType type) {
+    /** The field carrying the declaration, as `validate` reads it. */
+    private static FieldConstraints.FieldRef self(FieldType type) {
         return self(type, false, false);
     }
 
-    private static MetaField self(FieldType type, boolean dynamic, boolean computed) {
-        MetaField f = new MetaField();
-        ReflectionTestUtils.setField(f, "fieldType", type);
-        ReflectionTestUtils.setField(f, "dynamic", dynamic);
-        ReflectionTestUtils.setField(f, "computed", computed);
-        return f;
+    private static FieldConstraints.FieldRef self(FieldType type, boolean dynamic, boolean computed) {
+        return new FieldConstraints.FieldRef(type, dynamic, false, computed);
     }
 
     /** Every sibling the conditions below name — an ordinary stored field of the listed type. */
-    private static final Function<String, MetaField> FIELD_OF =
+    private static final Function<String, FieldConstraints.FieldRef> FIELD_OF =
             name -> SIBLINGS.containsKey(name) ? self(SIBLINGS.get(name)) : null;
 
     private static FieldConstraints of(String requiredWhen, String hiddenWhen, String readonlyWhen, String invalidWhen) {
@@ -268,7 +263,7 @@ class FieldConstraintsTest {
         // A to-many field has no value on the row being written and a dynamic computed field is neither
         // selected nor computed before the rules run — a condition naming one answers the same thing
         // forever, which is the worst way for a rule to be wrong.
-        Function<String, MetaField> withOddSiblings = name -> switch (name) {
+        Function<String, FieldConstraints.FieldRef> withOddSiblings = name -> switch (name) {
             case "children" -> self(FieldType.ONE_TO_MANY);
             case "headcount" -> self(FieldType.INTEGER, true, true);
             default -> FIELD_OF.apply(name);
