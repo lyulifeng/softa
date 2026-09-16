@@ -348,6 +348,10 @@ redeploy rather than a migration and existing rows are not retroactively invalid
   mistakes fail the boot rather than failing silently, is in
   [placeholders.md](placeholders.md#filters--comparing-one-field-to-another). Options compare by item code,
   relations by id; null and `""` are the same value.
+- A **negated operator answers true for an empty field** (`!=`, `NOT IN`, `NOT BETWEEN`) — value
+  equality, and the frontend answers the same. Right for `hiddenWhen` (nothing chosen yet ⇒ show the
+  field), rarely right for `requiredWhen` / `invalidWhen`, where it fires on a row nobody has filled in
+  yet. Pair it with the field being set, or list the cases positively with `IN`.
 - On update a condition is evaluated only when the patch touches the field or a field it reads, on
   the patch merged onto the stored row; **hidden fields are not judged**; `readonlyWhen` rejects an
   assignment. Static `required` / `readonly` / `hidden` always win — do not declare both.

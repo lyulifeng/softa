@@ -170,6 +170,20 @@ class FilterEvaluatorTest {
     }
 
     @Test
+    void theWayToWriteANegationThatDoesNotFireOnAnUnfilledRow() {
+        // A negation holding for an empty field is right for `hiddenWhen` — nothing chosen yet, so show
+        // the field — and wrong for `requiredWhen` / `invalidWhen`, which then fire on a row nobody has
+        // filled in. This is the spelling the docs point at, pinned so the advice stays executable.
+        assertThat(eval("[[\"reason\", \"!=\", \"Standard\"]]", row("reason", null))).isTrue();
+        assertThat(eval("[[\"reason\", \"IS SET\", null], [\"reason\", \"!=\", \"Standard\"]]",
+                row("reason", null))).isFalse();
+        assertThat(eval("[[\"reason\", \"IS SET\", null], [\"reason\", \"!=\", \"Standard\"]]",
+                row("reason", "Others"))).isTrue();
+        assertThat(eval("[[\"reason\", \"IS SET\", null], [\"reason\", \"!=\", \"Standard\"]]",
+                row("reason", "Standard"))).isFalse();
+    }
+
+    @Test
     void stringOperatorsTreatEmptyAsEmptyString() {
         assertThat(eval("[[\"country\", \"CONTAINS\", \"S\"]]", row("country", null))).isFalse();
         assertThat(eval("[[\"country\", \"NOT CONTAINS\", \"S\"]]", row("country", null))).isTrue();

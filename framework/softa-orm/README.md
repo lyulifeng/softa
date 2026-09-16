@@ -250,7 +250,15 @@ Rules worth knowing before declaring one:
   id, a multi-value field is a set.
 - **Static flags win, conditions add.** `effectiveRequired = required || requiredWhen`; declaring both
   is logged at boot. `requiredWhen` renders no `NOT NULL` — that is its point. "Required by default,
-  optional in one case" is written as `required = false` + the negated condition.
+  optional in one case" is written as `required = false` + the negated condition — but see the next
+  bullet before writing one.
+- **A negated operator answers *true* for an empty field.** `["reason", "!=", "Standard"]` holds when
+  `reason` is empty, and so do `NOT IN` and `NOT BETWEEN`; that is value equality, and the frontend
+  answers the same. It is what you want on `hiddenWhen` (nothing chosen yet ⇒ show the field) and
+  rarely what you want on `requiredWhen` / `invalidWhen`, where it fires on a row the user has not
+  filled in yet: `salary NOT BETWEEN [1000, 9000]` rejects a record with no salary at all. Pair the
+  negation with the field being set — `[["reason", "IS SET", null], ["reason", "!=", "Standard"]]` —
+  or list the cases positively with `IN`.
 - **`requiredWhen = "true"`** is application-level required on a column that must stay nullable
   (`ProjectTeam.costCentreId`): demanded on create and when the field is sent — clearing is rejected,
   omitting is not. Only `requiredWhen` has the always-form.
