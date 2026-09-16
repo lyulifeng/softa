@@ -104,8 +104,19 @@ public @interface Field {
 
     /**
      * Condition under which the field is required, as a filter expression over the same row —
-     * {@code "[[\"reason\", \"=\", \"Others\"]]"} — or the literal {@code "true"} for
-     * "always required at the application level" on a column that must stay nullable.
+     * {@code reason = "Others"} — or the literal {@code "true"} for "always required at the
+     * application level" on a column that must stay nullable.
+     *
+     * <p>Write it in a text block so the quotes stay quotes:
+     * <pre>
+     * &#64;Field(requiredWhen = """
+     *         reason = "Others"
+     *         """)
+     * </pre>
+     * The JSON list form ({@code [["reason", "=", "Others"]]}) parses too, and it is the only way to
+     * say {@code IS SET} / {@code IS NOT SET} — those take no value, which the grammar has no
+     * spelling for, so the unit carries a null third element the operator ignores. Put that in a
+     * text block as well; reach for the form only when an expression cannot say the rule.
      *
      * <p>Unlike {@link #required()} this renders no {@code NOT NULL}: it is a business rule, evaluated
      * by both ends against the row's other values ({@code {{ @field }}} references, {@code TODAY} /
@@ -132,7 +143,7 @@ public @interface Field {
 
     /**
      * Condition that, when it holds for the row, makes the value <b>invalid</b> and rejects the write
-     * with {@link #constraintMessage()} — {@code "[[\"endDate\", \"<\", \"{{ @startDate }}\"]]"}.
+     * with {@link #constraintMessage()} — {@code endDate < "{{ @startDate }}"}.
      * Reads the other fields of the same row; compare a relation by id, an option by its item code.
      * Same expression language as {@link #requiredWhen()}.
      */

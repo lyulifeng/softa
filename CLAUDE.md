@@ -184,7 +184,7 @@ public enum CustomerTier {
 - **Field constraints — one column, eight attributes.** `min` / `max` / `pattern`
   (+ `constraintMessage`) declare a field's **value domain**; `requiredWhen` /
   `hiddenWhen` / `readonlyWhen` / `invalidWhen` declare **conditions over the same
-  row** (filter expressions — `"[[\"reason\", \"=\", \"Others\"]]"`, nested AND/OR,
+  row** (filter expressions in a text block — `reason = "Others"`, nested AND/OR,
   `{{ @field }}` references, `TODAY` / `NOW` / `USER_ID` tokens, ISO-8601 offsets
   such as `{{ TODAY - P13Y }}`, reserved `@mode` / `@userId`). `AnnotationParser`
   packs all eight into one `FieldConstraints` record stored in the single

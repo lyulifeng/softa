@@ -306,8 +306,12 @@ private LocalDate endDate;
 private LocalDate dateOfBirth;
 
 // IS SET / IS NOT SET take no value, which the expression grammar cannot parse — those stay in the
-// JSON spelling, and the unit needs its third element even though the operator ignores it
-@Field(requiredWhen = "[[\"terminationDate\", \"IS NOT SET\", null]]")
+// JSON spelling, and the unit needs its third element even though the operator ignores it. Still a
+// text block: the JSON form is the fallback for what an expression cannot say, not a reason to
+// start escaping quotes.
+@Field(requiredWhen = """
+        [["terminationDate", "IS NOT SET", null]]
+        """)
 private String activeOnlyNote;
 
 // more than one condition: AND binds tighter than OR, parentheses override it
