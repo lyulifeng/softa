@@ -29,11 +29,13 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
  */
 class FieldConstraintsEnforcerTest {
 
-    private static final Map<String, FieldType> TYPES = Map.of(
-            "reason", FieldType.OPTION, "reasonDescription", FieldType.STRING, "status", FieldType.OPTION,
-            "amount", FieldType.BIG_DECIMAL, "startDate", FieldType.DATE, "endDate", FieldType.DATE,
-            "checkInStatus", FieldType.OPTION, "lateMinutes", FieldType.INTEGER, "costCentreId", FieldType.LONG,
-            "tags", FieldType.MULTI_OPTION);
+    private static final Map<String, FieldType> TYPES = Map.ofEntries(
+            Map.entry("reason", FieldType.OPTION), Map.entry("reasonDescription", FieldType.STRING),
+            Map.entry("status", FieldType.OPTION), Map.entry("amount", FieldType.BIG_DECIMAL),
+            Map.entry("startDate", FieldType.DATE), Map.entry("endDate", FieldType.DATE),
+            Map.entry("checkInStatus", FieldType.OPTION), Map.entry("lateMinutes", FieldType.INTEGER),
+            Map.entry("costCentreId", FieldType.LONG), Map.entry("tags", FieldType.MULTI_OPTION),
+            Map.entry("companyId", FieldType.MANY_TO_ONE));
 
     private static MetaField field(String name, FieldConstraints constraints) {
         return field(name, constraints, null);
@@ -53,9 +55,17 @@ class FieldConstraintsEnforcerTest {
         return FieldConstraints.of(null, null, null, message, requiredWhen, hiddenWhen, readonlyWhen, invalidWhen, "EmpChangeRequest.x");
     }
 
+    /** The fields the model declares {@code readonly} — a form echoes them back, the write drops them. */
+    private static final Set<String> READONLY = Set.of("checkInStatus");
+
     /** Every field of the model the tests use, typed; a name outside TYPES is "no such field". */
     private static MetaField fieldOf(String name) {
-        return TYPES.containsKey(name) ? field(name, null) : null;
+        if (!TYPES.containsKey(name)) {
+            return null;
+        }
+        MetaField f = field(name, null);
+        ReflectionTestUtils.setField(f, "readonly", READONLY.contains(name));
+        return f;
     }
 
     private static FieldConstraintsEnforcer enforcer(AccessType type, MetaField... fields) {
@@ -98,6 +108,60 @@ class FieldConstraintsEnforcerTest {
         merged.putAll(patch);
         assertThatThrownBy(() -> e.enforceUpdate(merged, patch, original))
                 .isInstanceOf(IllegalArgumentException.class).hasMessageContaining("reasonDescription");
+    }
+
+    @Test
+    void onUpdateAReadonlyFieldEchoedByTheFormDoesNotWakeTheRule() {
+        // A form that PUTs the whole record back sends readonly columns too. `updateList` drops them
+        // before the write and `columnsToRead` never registers them, so the update does not fetch what
+        // the rule reads: `lateMinutes` comes back null from a row that has one, and a filled field is
+        // reported empty. The echo must not wake the rule.
+        MetaField lateMinutes = field("lateMinutes", c("[[\"checkInStatus\", \"=\", \"Late\"]]", null, null, null, null));
+        FieldConstraintsEnforcer e = enforcer(AccessType.UPDATE, lateMinutes);
+        Map<String, Object> patch = row("id", 7L, "status", "Approved", "checkInStatus", "Late");
+        // `lateMinutes` and `checkInStatus` were never fetched — the registration did not ask for them.
+        Map<String, Object> original = row("id", 7L, "status", "Draft");
+        Map<String, Object> merged = new HashMap<>(original);
+        merged.putAll(patch);
+        assertThatCode(() -> e.enforceUpdate(merged, patch, original)).doesNotThrowAnyException();
+    }
+
+    @Test
+    void onUpdateARelationResentAsItWasReadIsNotAnAssignment() {
+        // A relation is read as {id, displayName} and sent back the same way — `XToOneProcessor` unwraps
+        // it to the id, but that is the chain, which runs after this. Comparing the object with the
+        // stored id would read an untouched relation as reassigned and reject the write.
+        MetaField companyId = field("companyId", c(null, null, "[[\"status\", \"=\", \"Approved\"]]", null, null));
+        FieldConstraintsEnforcer e = enforcer(AccessType.UPDATE, companyId);
+        Map<String, Object> original = row("id", 7L, "status", "Approved", "companyId", 5L);
+        Map<String, Object> patch = row("id", 7L, "companyId", row("id", "5", "displayName", "ACME Pte Ltd"));
+        Map<String, Object> merged = new HashMap<>(original);
+        merged.putAll(patch);
+        assertThatCode(() -> e.enforceUpdate(merged, patch, original)).doesNotThrowAnyException();
+
+        // Pointing it at another company is still an assignment.
+        Map<String, Object> moved = row("id", 7L, "companyId", row("id", "9", "displayName", "Other Pte Ltd"));
+        Map<String, Object> mergedMoved = new HashMap<>(original);
+        mergedMoved.putAll(moved);
+        assertThatThrownBy(() -> e.enforceUpdate(mergedMoved, moved, original))
+                .isInstanceOf(IllegalArgumentException.class).hasMessageContaining("companyId");
+    }
+
+    @Test
+    void oneRequestCannotHideAFieldAndAssignItPastReadonly() {
+        // `amount` is readonly once approved and hidden for a contractor. A request that flips both at
+        // once must not get the value in: nothing re-checks an assignment after it is stored, so the
+        // row would keep a value readonly should have refused, visible again the moment the type flips
+        // back.
+        MetaField amount = field("amount", c(null, "[[\"reason\", \"=\", \"Contractor\"]]",
+                "[[\"status\", \"=\", \"Approved\"]]", null, null));
+        FieldConstraintsEnforcer e = enforcer(AccessType.UPDATE, amount);
+        Map<String, Object> original = row("id", 7L, "status", "Approved", "reason", "Relocation", "amount", new java.math.BigDecimal("1000"));
+        Map<String, Object> patch = row("id", 7L, "reason", "Contractor", "amount", new java.math.BigDecimal("999999"));
+        Map<String, Object> merged = new HashMap<>(original);
+        merged.putAll(patch);
+        assertThatThrownBy(() -> e.enforceUpdate(merged, patch, original))
+                .isInstanceOf(IllegalArgumentException.class).hasMessageContaining("readonly");
     }
 
     @Test

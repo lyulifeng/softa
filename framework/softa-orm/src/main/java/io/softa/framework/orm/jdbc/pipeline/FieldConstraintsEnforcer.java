@@ -103,6 +103,13 @@ public final class FieldConstraintsEnforcer {
     /** On create: the declared defaults of every field a condition may read, filled into the view. */
     private final Map<String, Object> createDefaults = new HashMap<>();
     /**
+     * The TO_ONE fields the conditions touch. A {@code ModelReference} round-trip sends a relation as
+     * {@code {id, displayName}} and {@code XToOneProcessor} unwraps it to the id — but that is the
+     * chain, which runs after this. Unwrapped here too, or every condition would compare a Map with
+     * the stored id and read an untouched relation as changed.
+     */
+    private final Set<String> relationFields = new HashSet<>();
+    /**
      * Related rows already fetched during this write: {@code model/id#path → row}. The path belongs in
      * the key because the read selects only that one attribute — two cascaded references to the same
      * related row ask for different columns, and the second would read a column the first never
@@ -136,11 +143,38 @@ public final class FieldConstraintsEnforcer {
             Set<String> refs = field.getConstraints().referencedFields();
             referencedByField.put(field.getFieldName(), refs);
             storedByField.put(field.getFieldName(), storedReferences(field, fieldOf));
+            rememberRelation(field);
+            refs.forEach(ref -> rememberRelation(fieldOf.apply(ref)));
             if (AccessType.CREATE.equals(accessType)) {
                 rememberDefault(field);
                 refs.forEach(ref -> rememberDefault(fieldOf.apply(ref)));
             }
         }
+    }
+
+    private void rememberRelation(@Nullable MetaField field) {
+        if (field != null && FieldType.TO_ONE_TYPES.contains(field.getFieldType())) {
+            relationFields.add(field.getFieldName());
+        }
+    }
+
+    /**
+     * The row with every relation value replaced by the id it carries. A nested object without an id
+     * is an inline create — it stays as it is, which is what "the relation is set" has to look like
+     * until the chain gives it one.
+     */
+    private Map<String, Object> withRelationIds(Map<String, Object> row) {
+        Map<String, Object> view = null;
+        for (String name : relationFields) {
+            if (!(row.get(name) instanceof Map<?, ?> reference) || !IdUtils.validId(reference.get(ModelConstant.ID))) {
+                continue;
+            }
+            if (view == null) {
+                view = new HashMap<>(row);
+            }
+            view.put(name, reference.get(ModelConstant.ID));
+        }
+        return view == null ? row : view;
     }
 
     private void rememberDefault(@Nullable MetaField field) {
@@ -244,8 +278,10 @@ public final class FieldConstraintsEnforcer {
                 view.put(dflt.getKey(), dflt.getValue());
             }
         }
+        view = withRelationIds(view);
+        Map<String, Object> assignments = withRelationIds(row);
         for (MetaField field : conditionalFields) {
-            enforce(field, withDynamicReferences(field, view), row, null);
+            enforce(field, withDynamicReferences(field, view), assignments, null);
         }
     }
 
@@ -257,14 +293,35 @@ public final class FieldConstraintsEnforcer {
      * @param originalRow the stored row (the columns that were fetched), for the readonly comparison
      */
     public void enforceUpdate(Map<String, Object> mergedRow, Map<String, Object> patch, @Nullable Map<String, Object> originalRow) {
+        Map<String, Object> assignments = withRelationIds(assignmentsOf(patch));
+        Map<String, Object> view = withRelationIds(mergedRow);
         for (MetaField field : conditionalFields) {
             Set<String> refs = storedByField.get(field.getFieldName());
-            boolean touched = patch.containsKey(field.getFieldName())
-                    || refs.stream().anyMatch(patch::containsKey);
+            boolean touched = assignments.containsKey(field.getFieldName())
+                    || refs.stream().anyMatch(assignments::containsKey);
             if (touched) {
-                enforce(field, withDynamicReferences(field, mergedRow), patch, originalRow);
+                enforce(field, withDynamicReferences(field, view), assignments, originalRow);
             }
         }
+    }
+
+    /**
+     * The patch as the write sees it: the keys the update may actually assign. A form that PUTs the
+     * whole record back echoes readonly columns too, and {@code updateList} drops those before the row
+     * is written — so they must not wake a rule here either. They are not registered by
+     * {@link #columnsToRead} (it is given the same filtered set), so a rule woken by one would judge a
+     * column the update never fetched: the stored value reads as null and a filled field is reported
+     * empty. Keys that name no field of the model are not assignments at all.
+     */
+    private Map<String, Object> assignmentsOf(Map<String, Object> patch) {
+        Map<String, Object> assignments = new HashMap<>();
+        patch.forEach((name, value) -> {
+            MetaField field = fieldOf.apply(name);
+            if (field != null && !field.isReadonly()) {
+                assignments.put(name, value);
+            }
+        });
+        return assignments;
     }
 
     /**
@@ -317,17 +374,21 @@ public final class FieldConstraintsEnforcer {
                          @Nullable Map<String, Object> originalRow) {
         FieldConstraints c = field.getConstraints();
         String name = field.getFieldName();
-        if (field.isHidden() || matches(c.hiddenWhen(), row)) {
-            return;
-        }
-        Object value = row.get(name);
-        // The readonly check looks at what the request assigned, not at the evaluation view (which on
-        // create may hold the field's own default).
+        // Checked before the hidden exemption: hiding a field excuses it from being *demanded*, it does
+        // not license *writing* it. One request that both hides the field and assigns it would otherwise
+        // slip a value past readonly for good — nothing re-checks an assignment once it is stored, so
+        // un-hiding the field afterwards would not catch it.
+        // Looks at what the request assigned, not at the evaluation view (which on create may hold the
+        // field's own default).
         if (c.readonlyWhen() != null && patch.containsKey(name) && matches(c.readonlyWhen(), row)
                 && assigned(field, patch.get(name), originalRow == null ? null : originalRow.get(name))) {
             throw WriteValidationException.forField(name,
                     "Model field {0}:{1} is readonly in its current state and cannot be assigned!", modelName, name);
         }
+        if (field.isHidden() || matches(c.hiddenWhen(), row)) {
+            return;
+        }
+        Object value = row.get(name);
         if (requiredNow(c.requiredWhen(), row) && FilterEvaluator.isBlank(value)) {
             throw WriteValidationException.forField(name,
                     "Model field {0}:{1} is required and cannot be empty!", modelName, name);
