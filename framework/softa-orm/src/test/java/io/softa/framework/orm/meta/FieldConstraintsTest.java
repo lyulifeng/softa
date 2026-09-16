@@ -5,6 +5,7 @@ import java.util.Map;
 import java.util.function.Function;
 
 import org.junit.jupiter.api.Test;
+import org.springframework.test.util.ReflectionTestUtils;
 
 import io.softa.framework.base.utils.JsonUtils;
 import io.softa.framework.orm.domain.Filters;
@@ -23,7 +24,22 @@ class FieldConstraintsTest {
             "reason", FieldType.OPTION, "reasonDescription", FieldType.STRING, "startDate", FieldType.DATE,
             "endDate", FieldType.DATE, "name", FieldType.STRING, "hireDate", FieldType.DATE,
             "amount", FieldType.BIG_DECIMAL, "reportsTo", FieldType.MANY_TO_ONE, "id", FieldType.LONG);
-    private static final Function<String, FieldType> TYPE_OF = SIBLINGS::get;
+    /** The field carrying the declaration, as `validate` reads it: type, dynamic, computed. */
+    private static MetaField self(FieldType type) {
+        return self(type, false, false);
+    }
+
+    private static MetaField self(FieldType type, boolean dynamic, boolean computed) {
+        MetaField f = new MetaField();
+        ReflectionTestUtils.setField(f, "fieldType", type);
+        ReflectionTestUtils.setField(f, "dynamic", dynamic);
+        ReflectionTestUtils.setField(f, "computed", computed);
+        return f;
+    }
+
+    /** Every sibling the conditions below name — an ordinary stored field of the listed type. */
+    private static final Function<String, MetaField> FIELD_OF =
+            name -> SIBLINGS.containsKey(name) ? self(SIBLINGS.get(name)) : null;
 
     private static FieldConstraints of(String requiredWhen, String hiddenWhen, String readonlyWhen, String invalidWhen) {
         return FieldConstraints.of("", "", "", "", requiredWhen, hiddenWhen, readonlyWhen, invalidWhen, "M.f");
@@ -103,55 +119,55 @@ class FieldConstraintsTest {
     @Test
     void valueDomainIsCheckedAgainstTheFieldType() {
         assertThatThrownBy(() -> FieldConstraints.of("0", "", "", "", "", "", "", "", "M.name")
-                .validate(FieldType.STRING, false, "M.name", TYPE_OF))
+                .validate(self(FieldType.STRING), "M.name", FIELD_OF))
                 .isInstanceOf(IllegalStateException.class).hasMessageContaining("numeric");
         assertThatThrownBy(() -> FieldConstraints.of("", "", "\\d+", "", "", "", "", "", "M.n")
-                .validate(FieldType.INTEGER, false, "M.n", TYPE_OF))
+                .validate(self(FieldType.INTEGER), "M.n", FIELD_OF))
                 .isInstanceOf(IllegalStateException.class).hasMessageContaining("STRING");
         assertThatThrownBy(() -> FieldConstraints.of("100", "1", "", "", "", "", "", "", "M.n")
-                .validate(FieldType.INTEGER, false, "M.n", TYPE_OF))
+                .validate(self(FieldType.INTEGER), "M.n", FIELD_OF))
                 .isInstanceOf(IllegalStateException.class).hasMessageContaining("no value can satisfy");
         assertThatThrownBy(() -> FieldConstraints.of("zero", "", "", "", "", "", "", "", "M.n")
-                .validate(FieldType.INTEGER, false, "M.n", TYPE_OF))
+                .validate(self(FieldType.INTEGER), "M.n", FIELD_OF))
                 .isInstanceOf(IllegalStateException.class).hasMessageContaining("decimal literal");
         assertThatThrownBy(() -> FieldConstraints.of("", "", "[A-Z", "", "", "", "", "", "M.name")
-                .validate(FieldType.STRING, false, "M.name", TYPE_OF))
+                .validate(self(FieldType.STRING), "M.name", FIELD_OF))
                 .isInstanceOf(IllegalStateException.class).hasMessageContaining("valid regular expression");
         List<String> warnings = FieldConstraints.of("", "", "[A-Z]{2}", "", "", "", "", "", "M.name")
-                .validate(FieldType.STRING, false, "M.name", TYPE_OF);
+                .validate(self(FieldType.STRING), "M.name", FIELD_OF);
         assertThat(warnings).anyMatch(w -> w.contains("constraintMessage"));
     }
 
     @Test
     void conditionsAreCheckedAgainstTheSiblings() {
         assertThatThrownBy(() -> of("[[\"contry\", \"=\", \"SG\"]]", null, null, null)
-                .validate(FieldType.STRING, false, "M.f", TYPE_OF))
+                .validate(self(FieldType.STRING), "M.f", FIELD_OF))
                 .hasMessageContaining("`contry`").hasMessageContaining("does not exist");
         assertThatThrownBy(() -> of(null, null, null, "[[\"endDate\", \"<\", \"{{ @name }}\"]]")
-                .validate(FieldType.DATE, false, "M.endDate", TYPE_OF))
+                .validate(self(FieldType.DATE), "M.endDate", FIELD_OF))
                 .hasMessageContaining("not comparable");
         assertThatThrownBy(() -> of(null, null, null, "[[\"endDate\", \"<\", \"{{ @amount }}\"]]")
-                .validate(FieldType.DATE, false, "M.endDate", TYPE_OF))
+                .validate(self(FieldType.DATE), "M.endDate", FIELD_OF))
                 .hasMessageContaining("not comparable");
         assertThatThrownBy(() -> of("[[\"reason\", \"PARENT OF\", [\"1\"]]]", null, null, null)
-                .validate(FieldType.STRING, false, "M.f", TYPE_OF))
+                .validate(self(FieldType.STRING), "M.f", FIELD_OF))
                 .hasMessageContaining("PARENT OF");
         assertThatThrownBy(() -> of(null, null, null, "[[\"endDate\", \"<\", \"{{ TODAY - PT2H }}\"]]")
-                .validate(FieldType.DATE, false, "M.endDate", TYPE_OF))
+                .validate(self(FieldType.DATE), "M.endDate", FIELD_OF))
                 .hasMessageContaining("calendar day");
         assertThatThrownBy(() -> of(null, null, null, "[[\"name\", \"<\", \"{{ @name + P1D }}\"]]")
-                .validate(FieldType.STRING, false, "M.name", TYPE_OF))
+                .validate(self(FieldType.STRING), "M.name", FIELD_OF))
                 .hasMessageContaining("date base");
         assertThatThrownBy(() -> of(null, null, null, "[[\"endDate\", \"<\", \"{{ SOMEWHERE }}\"]]")
-                .validate(FieldType.DATE, false, "M.endDate", TYPE_OF))
+                .validate(self(FieldType.DATE), "M.endDate", FIELD_OF))
                 .hasMessageContaining("unknown placeholder");
         assertThatThrownBy(() -> of("[[\"reason\", \"=\", \"Others\"]]", null, null, null)
-                .validate(FieldType.STRING, true, "M.f", TYPE_OF))
+                .validate(self(FieldType.STRING, true, false), "M.f", FIELD_OF))
                 .hasMessageContaining("dynamic");
         // a relation id compares with a number, and a field compares with itself shifted
         assertThatCode(() -> of(null, null, null,
                 "[[\"reportsTo\", \"=\", \"{{ @id }}\"], [\"endDate\", \">\", \"{{ @hireDate + P6M }}\"]]")
-                .validate(FieldType.MANY_TO_ONE, false, "M.reportsTo", TYPE_OF)).doesNotThrowAnyException();
+                .validate(self(FieldType.MANY_TO_ONE), "M.reportsTo", FIELD_OF)).doesNotThrowAnyException();
     }
 
     @Test
@@ -212,5 +228,56 @@ class FieldConstraintsTest {
         assertThat(c.requiredWhen().isAlways()).isTrue();
         assertThat(c.invalidWhen()).isEqualTo(Filters.of("[[\"endDate\",\"<\",\"{{ @startDate }}\"]]"));
         assertThat(c.hiddenWhen()).isEqualTo(Filters.of("[[\"a\", \"=\", 1]]"));
+    }
+
+    @Test
+    void aComputedFieldCannotCarryConstraintsAtAll() {
+        // The chain computes the value after both the enforcer and the processors' value-domain check
+        // have run. A bound would never be applied; `requiredWhen` would see null on every write and
+        // make the model unwritable. Neither fails loudly at runtime, so it has to fail here.
+        assertThatThrownBy(() -> FieldConstraints.of("0", null, null, null, null, null, null, null, "M.total")
+                .validate(self(FieldType.BIG_DECIMAL, false, true), "M.total", FIELD_OF))
+                .isInstanceOf(IllegalStateException.class).hasMessageContaining("computed field");
+        assertThatThrownBy(() -> of("true", null, null, null)
+                .validate(self(FieldType.BIG_DECIMAL, false, true), "M.total", FIELD_OF))
+                .isInstanceOf(IllegalStateException.class).hasMessageContaining("computed field");
+    }
+
+    @Test
+    void anOrderingOperatorNeedsAFieldThatHasAnOrder() {
+        // An option is compared by item code and a relation by id, both as text, so "10" sorts before
+        // "3" — the opposite of what anyone writing `grade > 3` means.
+        assertThatThrownBy(() -> of(null, "[[\"reason\", \">\", \"3\"]]", null, null)
+                .validate(self(FieldType.STRING), "M.f", FIELD_OF))
+                .isInstanceOf(IllegalStateException.class).hasMessageContaining("has no order");
+        assertThatThrownBy(() -> of(null, null, null, "[[\"reportsTo\", \"BETWEEN\", [1, 100]]]")
+                .validate(self(FieldType.STRING), "M.f", FIELD_OF))
+                .isInstanceOf(IllegalStateException.class).hasMessageContaining("has no order");
+        // dates, numbers and text keep their order
+        assertThatCode(() -> of(null, null, null, "[[\"endDate\", \"<\", \"{{ @startDate }}\"]]")
+                .validate(self(FieldType.DATE), "M.endDate", FIELD_OF)).doesNotThrowAnyException();
+        assertThatCode(() -> of(null, null, null, "[[\"amount\", \">\", 0]]")
+                .validate(self(FieldType.BIG_DECIMAL), "M.amount", FIELD_OF)).doesNotThrowAnyException();
+        // equality on an option is exactly what options are for
+        assertThatCode(() -> of("[[\"reason\", \"=\", \"Others\"]]", null, null, null)
+                .validate(self(FieldType.STRING), "M.f", FIELD_OF)).doesNotThrowAnyException();
+    }
+
+    @Test
+    void aConditionCannotReadAFieldThatIsNeverOnTheRow() {
+        // A to-many field has no value on the row being written and a dynamic computed field is neither
+        // selected nor computed before the rules run — a condition naming one answers the same thing
+        // forever, which is the worst way for a rule to be wrong.
+        Function<String, MetaField> withOddSiblings = name -> switch (name) {
+            case "children" -> self(FieldType.ONE_TO_MANY);
+            case "headcount" -> self(FieldType.INTEGER, true, true);
+            default -> FIELD_OF.apply(name);
+        };
+        assertThatThrownBy(() -> of(null, "[[\"children\", \"IS SET\", null]]", null, null)
+                .validate(self(FieldType.STRING), "M.f", withOddSiblings))
+                .isInstanceOf(IllegalStateException.class).hasMessageContaining("no value on the row");
+        assertThatThrownBy(() -> of(null, "[[\"headcount\", \"=\", 0]]", null, null)
+                .validate(self(FieldType.STRING), "M.f", withOddSiblings))
+                .isInstanceOf(IllegalStateException.class).hasMessageContaining("dynamic field");
     }
 }

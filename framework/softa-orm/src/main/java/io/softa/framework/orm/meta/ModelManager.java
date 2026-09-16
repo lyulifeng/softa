@@ -280,12 +280,9 @@ public class ModelManager {
         FieldConstraints constraints = metaField.getConstraints();
         String modelName = metaField.getModelName();
         try {
-            List<String> warnings = constraints.validate(metaField.getFieldType(), metaField.isDynamic(),
+            List<String> warnings = constraints.validate(metaField,
                     modelName + "." + metaField.getFieldName(),
-                    field -> {
-                        MetaField sibling = getModelFieldOrNull(modelName, field);
-                        return sibling == null ? null : sibling.getFieldType();
-                    });
+                    field -> getModelFieldOrNull(modelName, field));
             warnings.forEach(log::warn);
         } catch (RuntimeException e) {
             log.error("Field constraints on {}.{} are invalid and will be ignored: {}",

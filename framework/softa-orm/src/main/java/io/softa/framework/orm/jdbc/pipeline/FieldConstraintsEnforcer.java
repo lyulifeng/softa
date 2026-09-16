@@ -333,24 +333,32 @@ public final class FieldConstraintsEnforcer {
         Map<String, Object> view = null;
         for (String ref : referencedByField.get(field.getFieldName())) {
             MetaField referenced = fieldOf.apply(ref);
-            if (referenced == null || !referenced.isDynamicCascadedField() || row.containsKey(ref)) {
+            if (referenced == null || !referenced.isDynamicCascadedField()) {
                 continue;
             }
+            // Always the related row, never what the request carried under this name. The attribute has
+            // no column, so nothing downstream reads the key: no processor is built for it, the readonly
+            // guard exempts it, and the INSERT/UPDATE filters it out. A request could therefore put any
+            // value there and steer a rule with it — silence the whole way, including on the way back.
             List<String> chain = referenced.getDependentFields();
             MetaField fk = fieldOf.apply(chain.getFirst());
             Object fkValue = row.get(chain.getFirst());
-            if (fk == null || StringUtils.isBlank(fk.getRelatedModel()) || !IdUtils.validId(fkValue)) {
+            if (fk == null || StringUtils.isBlank(fk.getRelatedModel())) {
                 continue;
             }
-            String path = chain.get(1);
-            String key = fk.getRelatedModel() + "/" + fkValue + "#" + path;
-            Map<String, Object> relatedRow = relatedCache.computeIfAbsent(key,
-                    k -> Optional.ofNullable(relatedRows.read(fk.getRelatedModel(), path, (Serializable) fkValue)))
-                    .orElse(null);
+            Object resolved = null;
+            if (IdUtils.validId(fkValue)) {
+                String path = chain.get(1);
+                String key = fk.getRelatedModel() + "/" + fkValue + "#" + path;
+                Map<String, Object> relatedRow = relatedCache.computeIfAbsent(key,
+                        k -> Optional.ofNullable(relatedRows.read(fk.getRelatedModel(), path, (Serializable) fkValue)))
+                        .orElse(null);
+                resolved = relatedRow == null ? null : valueAt(relatedRow, path);
+            }
             if (view == null) {
                 view = new HashMap<>(row);
             }
-            view.put(ref, relatedRow == null ? null : valueAt(relatedRow, path));
+            view.put(ref, resolved);
         }
         return view == null ? row : view;
     }
@@ -421,7 +429,9 @@ public final class FieldConstraintsEnforcer {
      */
     private boolean assigned(MetaField field, @Nullable Object value, @Nullable Object original) {
         if (AccessType.CREATE.equals(accessType)) {
-            return value != null;
+            // Blank is "nothing there" everywhere else in these rules — a form that serialises every
+            // field sends the untouched ones as "", and that is not an assignment.
+            return !FilterEvaluator.isBlank(value);
         }
         if (Objects.equals(value, original)) {
             return false;

@@ -9,6 +9,8 @@ import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Set;
 import java.util.function.Function;
+import java.util.stream.Collectors;
+import java.util.stream.Stream;
 import java.util.regex.Pattern;
 import java.util.regex.PatternSyntaxException;
 import com.fasterxml.jackson.annotation.JsonIgnore;
@@ -206,30 +208,43 @@ public record FieldConstraints(
      * failure in front of whoever wrote it; the catalog load logs it and drops the declaration, because
      * one bad row must not stop a model from being written.
      *
-     * @param fieldType the resolved type of the field carrying the declaration
-     * @param dynamic whether that field is dynamic (not stored — nothing to require or reject)
+     * @param field the field carrying the declaration
      * @param where {@code Model.field}, for messages
-     * @param fieldTypeOf the type of a sibling field by name, or null when the model has no such field
+     * @param fieldOf a sibling field of the model by name, or null when the model has no such field
      * @return warnings worth logging that are not errors (a pattern without a message, a regex construct
      *         JavaScript does not share)
      * @throws IllegalStateException on the first error
      */
-    public List<String> validate(FieldType fieldType, boolean dynamic, String where,
-                                 Function<String, @Nullable FieldType> fieldTypeOf) {
+    public List<String> validate(MetaField field, String where, Function<String, @Nullable MetaField> fieldOf) {
+        FieldType fieldType = field.getFieldType();
+        Function<String, @Nullable FieldType> fieldTypeOf = name -> {
+            MetaField sibling = fieldOf.apply(name);
+            return sibling == null ? null : sibling.getFieldType();
+        };
         List<String> warnings = new ArrayList<>();
         validateValueDomain(fieldType, where, warnings);
-        if (hasConditions() && dynamic) {
+        if (field.isComputed()) {
+            // The chain computes the value after both the enforcer and the processors' value-domain
+            // check have run, so neither ever sees it: a bound is not applied at all, and a condition
+            // reads null on every write — `requiredWhen` on one makes the model unwritable. Declare the
+            // rule on the fields the expression reads instead.
+            throw new IllegalStateException("@Field constraints on " + where
+                    + " are declared on a computed field: its value is produced after these rules run,"
+                    + " so they would judge the value it had before the computation — never the one stored."
+                    + " Declare the rule on the fields the expression reads.");
+        }
+        if (hasConditions() && field.isDynamic()) {
             throw new IllegalStateException("@Field conditions on " + where
                     + " are declared on a dynamic field: a dynamic field is not stored and cannot be"
                     + " required, hidden, readonly or invalid. Dynamic fields can be referenced by a condition.");
         }
         if (requiredWhen != null && !requiredWhen.isAlways()) {
-            validateCondition("requiredWhen", requiredWhen.getFilters(), where, fieldTypeOf);
+            validateCondition("requiredWhen", requiredWhen.getFilters(), where, fieldOf);
         }
-        if (hiddenWhen != null) validateCondition("hiddenWhen", hiddenWhen, where, fieldTypeOf);
-        if (readonlyWhen != null) validateCondition("readonlyWhen", readonlyWhen, where, fieldTypeOf);
+        if (hiddenWhen != null) validateCondition("hiddenWhen", hiddenWhen, where, fieldOf);
+        if (readonlyWhen != null) validateCondition("readonlyWhen", readonlyWhen, where, fieldOf);
         if (invalidWhen != null) {
-            validateCondition("invalidWhen", invalidWhen, where, fieldTypeOf);
+            validateCondition("invalidWhen", invalidWhen, where, fieldOf);
             if (message == null) {
                 warnings.add("@Field(invalidWhen) on " + where + " has no constraintMessage; the user will"
                         + " see a generated sentence that cannot explain the rule.");
@@ -237,6 +252,17 @@ public record FieldConstraints(
         }
         return warnings;
     }
+
+    /** The operators that ask for an order between two values. */
+    private static final Set<Operator> ORDERING_OPERATORS = Set.of(
+            Operator.GREATER_THAN, Operator.GREATER_THAN_OR_EQUAL, Operator.LESS_THAN,
+            Operator.LESS_THAN_OR_EQUAL, Operator.BETWEEN, Operator.NOT_BETWEEN);
+
+    /** The field types that have one. Text orders lexicographically, which is an order a rule can mean. */
+    private static final Set<FieldType> ORDERED_TYPES = Stream.concat(
+            FieldType.NUMERIC_TYPES.stream(),
+            Stream.of(FieldType.DATE, FieldType.DATE_TIME, FieldType.TIME, FieldType.STRING, FieldType.TEXT))
+            .collect(Collectors.toUnmodifiableSet());
 
     private void validateValueDomain(FieldType fieldType, String where, List<String> warnings) {
         if ((min != null || max != null) && !FieldType.NUMERIC_TYPES.contains(fieldType)) {
@@ -285,14 +311,18 @@ public record FieldConstraints(
     }
 
     private static void validateCondition(String attribute, Filters filters, String where,
-                                          Function<String, @Nullable FieldType> fieldTypeOf) {
+                                          Function<String, @Nullable MetaField> fieldOf) {
         if (FilterType.TREE.equals(filters.getType())) {
-            filters.getChildren().forEach(child -> validateCondition(attribute, child, where, fieldTypeOf));
+            filters.getChildren().forEach(child -> validateCondition(attribute, child, where, fieldOf));
             return;
         }
         if (!FilterType.LEAF.equals(filters.getType())) {
             return;
         }
+        Function<String, @Nullable FieldType> fieldTypeOf = name -> {
+            MetaField sibling = fieldOf.apply(name);
+            return sibling == null ? null : sibling.getFieldType();
+        };
         FilterUnit unit = filters.getFilterUnit();
         String prefix = "@Field(" + attribute + ") on " + where + ": ";
         Operator op = unit.getOperator();
@@ -309,16 +339,46 @@ public record FieldConstraints(
                 }
                 continue;
             }
-            FieldType type = fieldTypeOf.apply(field);
-            if (type == null) {
-                throw new IllegalStateException(prefix + "references field `" + field
-                        + "`, which does not exist on the model.");
-            }
-            leftType = type;
+            leftType = validateReference(fieldOf.apply(field), field, prefix);
         }
-        if (!unit.isTuple()) {
+        if (leftType != null && ORDERING_OPERATORS.contains(op) && !ORDERED_TYPES.contains(leftType)) {
+            throw new IllegalStateException(prefix + op.getName() + " orders " + leftType + " `"
+                    + unit.getField() + "`, which has no order: an option is compared by its item code and"
+                    + " a relation by its id, both as text, so `10` would sort before `3`."
+                    + " Use =, !=, IN, NOT IN or IS SET.");
+        }
+        if (unit.isTuple()) {
+            // A tuple's values are validated too — only the type pairing is left out, since each
+            // position has its own field. Skipping them entirely let a `{{ @typo }}` through to a
+            // runtime that resolves it to null and quietly answers no.
+            validateValue(unit.getValue(), null, unit.getField(), prefix, fieldTypeOf);
+        } else {
             validateValue(unit.getValue(), leftType, unit.getField(), prefix, fieldTypeOf);
         }
+    }
+
+    /**
+     * A field a condition reads, and the type it compares as. Existing is not enough: a to-many field
+     * and a dynamic computed field are never on the row the rules see — neither is selected on update
+     * nor filled by the enforcer — so a condition naming one answers the same thing forever.
+     */
+    private static FieldType validateReference(@Nullable MetaField referenced, String name, String prefix) {
+        if (referenced == null) {
+            throw new IllegalStateException(prefix + "references field `" + name
+                    + "`, which does not exist on the model.");
+        }
+        if (FieldType.TO_MANY_TYPES.contains(referenced.getFieldType())) {
+            throw new IllegalStateException(prefix + "references `" + name + "`, a "
+                    + referenced.getFieldType() + " field: it has no value on the row being written, so the"
+                    + " condition would answer the same thing on every write.");
+        }
+        if (referenced.isDynamic() && !referenced.isDynamicCascadedField()) {
+            throw new IllegalStateException(prefix + "references `" + name + "`, a dynamic field with no"
+                    + " column and no cascade to read it from: it is never selected and never computed"
+                    + " before these rules run, so the condition would always see it empty."
+                    + " A dynamic cascaded field (a.b) can be referenced; a dynamic computed one cannot.");
+        }
+        return referenced.getFieldType();
     }
 
     private static void validateValue(@Nullable Object value, @Nullable FieldType leftType, String leftField,

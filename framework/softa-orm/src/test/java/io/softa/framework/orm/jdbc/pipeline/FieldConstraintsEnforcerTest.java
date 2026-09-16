@@ -397,6 +397,42 @@ class FieldConstraintsEnforcerTest {
     }
 
     @Test
+    void aCascadedReferenceIsReadFromTheRelatedRowEvenWhenTheRequestCarriesTheName() {
+        // `bankCode` has no column. Nothing downstream reads the key — no processor is built for it,
+        // the readonly guard exempts it, the INSERT filters it out — so a request could put any value
+        // there, in silence, and point somebody else's rule at it. The related row is the only source.
+        List<String> reads = new java.util.ArrayList<>();
+        FieldConstraintsEnforcer.RelatedRowReader reader = (model, path, id) -> {
+            reads.add(model + "/" + path + "/" + id);
+            return Map.of("id", id, path, "DBS");
+        };
+        FieldConstraintsEnforcer e = enforcer(AccessType.CREATE, FieldConstraintsEnforcerTest::bankFieldOf,
+                reader, ORGANISATION_ID);
+        // The bank really is DBS, so `organisationId` is required whatever the request claims.
+        assertThatThrownBy(() -> e.enforceCreate(row("bankId", 1L, "bankCode", "OCBC")))
+                .isInstanceOf(IllegalArgumentException.class).hasMessageContaining("organisationId");
+        assertThat(reads).containsExactly("Bank/code/1");
+    }
+
+    @Test
+    void aCascadedReferenceWithNoForeignKeyReadsAsNothingNotAsWhatWasSent() {
+        FieldConstraintsEnforcer e = enforcer(AccessType.CREATE, FieldConstraintsEnforcerTest::bankFieldOf,
+                (model, path, id) -> Map.of("id", id, path, "DBS"), ORGANISATION_ID);
+        assertThatCode(() -> e.enforceCreate(row("bankCode", "DBS"))).doesNotThrowAnyException();
+    }
+
+    @Test
+    void onCreateAnEmptyStringIsNotAnAssignment() {
+        // A form that serialises every field sends the untouched ones as "". Blank is "nothing there"
+        // everywhere else in these rules, and the update path already compares it as null.
+        MetaField approvedBy = field("reasonDescription", c(null, null, "[[\"@mode\", \"=\", \"create\"]]", null, null));
+        FieldConstraintsEnforcer e = enforcer(AccessType.CREATE, approvedBy);
+        assertThatCode(() -> e.enforceCreate(row("status", "Draft", "reasonDescription", ""))).doesNotThrowAnyException();
+        assertThatThrownBy(() -> e.enforceCreate(row("status", "Draft", "reasonDescription", "me")))
+                .isInstanceOf(IllegalArgumentException.class).hasMessageContaining("readonly");
+    }
+
+    @Test
     void aJsonFieldIsNotComparedAsCommaJoinedMembers() {
         // a JSON column also arrives as a list and stores as its own text; splitting it on commas
         // would make an untouched resubmission look like an assignment
