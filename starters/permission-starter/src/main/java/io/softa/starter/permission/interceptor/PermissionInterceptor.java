@@ -87,12 +87,21 @@ public class PermissionInterceptor implements HandlerInterceptor {
         // Authenticated-bypass: caller IS logged in (above check passed) but the
         // endpoint is exempt from the permission gate. Used for "self-service"
         // endpoints every user needs: /UserProfile/getMy*, /me/**,
-        // /UserAccount/logout, /UserAccount/changeMyPassword, etc. Returned BEFORE
-        // any snapshot work — bypassed endpoints don't consume the snapshot (and
-        // /me builds its own on a cache miss), so there's no reason to read/build
-        // it for them. Role codes are intentionally NOT bridged on bypass paths,
-        // so {@code @RequireRole} on a whitelisted path still fails closed.
-        if (matchAny(properties.getAuthenticatedBypassPatterns(), uri)) return true;
+        // /UserAccount/logout, /UserAccount/changeMyPassword, etc. No gate runs,
+        // and role codes are intentionally NOT bridged on bypass paths, so
+        // {@code @RequireRole} on a whitelisted path still fails closed.
+        //
+        // The caller's companies and countries ARE bridged, though. They are not a
+        // permission — they are the domain a value list or a template list narrows
+        // to — and several bypass paths serve exactly such lists (/ImportTemplate/
+        // listByModel, /SysOptionSet/getOptionItems, /metadata). Left unbridged,
+        // those requests fall back to the country of the company the caller
+        // belongs to and a two-country administrator sees one country's templates.
+        // Cache-aside: after the first request this is one Redis read.
+        if (matchAny(properties.getAuthenticatedBypassPatterns(), uri)) {
+            bridgeAccessSetsToContext(ctx, snapshotProvider.get(ctx.getTenantId(), ctx.getUserId()));
+            return true;
+        }
 
         // Non-bypass: build (cache-aside via the SnapshotProvider) the per-user
         // snapshot the gate needs. This same read warms the user's cache for any
@@ -199,10 +208,17 @@ public class PermissionInterceptor implements HandlerInterceptor {
             // from the role-code bypass below, not from tenant isolation.
         }
         ctx.setRoleCodes(codes);
-        // Same bridge, one more fact: the companies and countries the caller may act for, for the
-        // ORM's per-country narrowing and for anything that asks "which countries am I in" once the
-        // header switcher is gone. Nothing here decides access — that stays with the grant
-        // applied by PermissionServiceImpl; this only lets the framework layer read what was decided.
+        bridgeAccessSetsToContext(ctx, pi);
+    }
+
+    /**
+     * The companies and countries the caller may act for, onto the Context — for the ORM's
+     * per-country narrowing and for anything that asks "which countries am I in" once the header
+     * switcher is gone. Nothing here decides access: that stays with the grant applied by
+     * {@code PermissionServiceImpl}; this only lets the framework layer read what was decided. Also
+     * run on authenticated-bypass paths, where the role codes deliberately are not.
+     */
+    private static void bridgeAccessSetsToContext(Context ctx, PermissionInfo pi) {
         if (pi != null) {
             ctx.setAccessibleCompanyIds(pi.getGrantedCompanyIds());
             ctx.setAccessibleCountries(pi.getGrantedCountries());

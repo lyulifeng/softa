@@ -30,37 +30,26 @@ public class Context implements Serializable {
     private Long tenantId;
 
     /**
-     * The company this request is being made under — "which company am I looking at", chosen in the
-     * header switcher and carried on {@code X-Company-Id}. What the per-company and per-country
-     * narrowing read.
+     * No longer set by the framework. This carried the company selected in a header switcher
+     * ({@code X-Company-Id}); the switcher is gone and nothing reads the header any more, so this is
+     * always {@code null} on a request. Kept for one release so that application code which clears it
+     * (an isolated read that "drops the selection") still compiles; readers must treat it as absent.
+     * Which companies a request may see is {@link #accessibleCompanyIds}, the grant — a view narrower
+     * than the grant does not exist any more.
      *
-     * <p>Not the company the caller belongs to. That one lives on {@code EmpInfo.companyId} and
-     * anchors permission rules ({@code USER_COMP_ID}); it answers "whose records are these", while
-     * this answers "which company's books am I in right now". A role may reach several companies and
-     * switch between them, so a rule anchored on this field would widen with every switch — which is
-     * why the two are kept apart rather than merged. The nesting is the reminder:
-     * {@code context.getCompanyId()} is the selection, {@code context.getEmpInfo().getCompanyId()}
-     * is the affiliation.
-     *
-     * <p>The HR app calls this a legal entity; the framework says company throughout, the same
-     * translation {@code USER_COMP_ID} already makes.
-     *
-     * <p>Never cached in the session: a cached value defeats switching, and multiple browser tabs
-     * would overwrite each other.
+     * @deprecated always null; use {@link #accessibleCompanyIds} for "my companies"
      */
+    @Deprecated
     private Long companyId;
 
     /**
-     * ISO 3166-1 alpha-2 country of {@link #companyId}, resolved server-side by a
-     * ContextEnricher (the app supplies it, since only the app knows what a company row is).
-     * Never read from the client — a forged value would bypass per-country narrowing.
+     * ISO 3166-1 alpha-2 country of the company the caller <b>belongs to</b> ({@code EmpInfo.companyId}),
+     * resolved server-side by a ContextEnricher. Never read from the client.
      *
-     * <p>May be set while {@link #companyId} is null: a caller with no company to select — a role
-     * granted no company, which is what a self-service employee is — falls back to the country of the
-     * company it belongs to, so that per-country value domains still narrow. The reverse asymmetry
-     * also exists and predates it (a selected company whose row carries no country). So this field
-     * answers "which country's data applies to this request", not "the selected company's country";
-     * the {@code SELECTED_COMP_COUNTRY} placeholder answers the latter and is guarded accordingly.
+     * <p>Only a fallback now. The per-country narrowing reads {@link #accessibleCountries} — the
+     * countries of the companies the caller's roles reach — and consults this only when that set is
+     * unknown or empty: a self-service employee whose roles reach no company still sees their own
+     * country's value domains, because they belong to exactly one. For everyone else this is not read.
      */
     private String companyCountry;
 

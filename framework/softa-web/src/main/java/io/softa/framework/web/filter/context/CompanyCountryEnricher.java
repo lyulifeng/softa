@@ -1,6 +1,5 @@
 package io.softa.framework.web.filter.context;
 
-import java.util.Map;
 
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -8,26 +7,22 @@ import org.apache.commons.lang3.StringUtils;
 import org.springframework.core.annotation.Order;
 import org.springframework.stereotype.Component;
 
-import io.softa.framework.base.constant.RedisConstant;
 import io.softa.framework.base.context.Context;
 import io.softa.framework.base.context.EmpInfo;
-import io.softa.framework.orm.annotation.SkipPermissionCheck;
 import io.softa.framework.orm.constant.ModelConstant;
 import io.softa.framework.orm.meta.ModelManager;
-import io.softa.framework.orm.service.CacheService;
-import io.softa.framework.orm.service.ModelService;
 
 /**
- * Fills {@link Context#getCompanyCountry()} — the country that
- * {@code MultiCountryScope} narrows {@code @Model(multiCountry)} models by. The company id arrives
- * in the {@code X-Company-Id} header and is put on the context by {@link ContextBuilder}; this turns
- * it into a country.
+ * Fills {@link Context#getCompanyCountry()} — the country of the company the caller <b>belongs to</b>,
+ * read through {@code EmpInfo.companyId}. The affiliation, in one word.
  *
- * <p>Usually the selected company, but not always: a caller that can select none falls back to the
- * company it belongs to, see {@link #ownCompanyId}. So {@code companyCountry} may be populated with
- * {@code companyId} still null — the one asymmetry between the two fields, and the reason the
- * {@code SELECTED_COMP_COUNTRY} placeholder is guarded on {@code companyId} rather than on the country
- * being present.
+ * <p>This used to resolve the company selected in a header switcher first and fall back to the
+ * affiliation only when nothing was selected. The switcher is gone, so the fallback is all that is
+ * left, and it serves one purpose: the caller whose roles reach no company — a self-service employee —
+ * has an empty country set on the context, and {@code MultiCountryScope} would otherwise show them
+ * every country's value domains. They belong to exactly one company, so its country is never in doubt.
+ * For everyone else the narrowing reads {@code Context.accessibleCountries}, which the permission layer
+ * bridges from the grant, and this field is not consulted.
  *
  * <h3>Convention, not configuration</h3>
  * The lookup carries no domain knowledge — read a model by id, take a field, cache it. The two names
@@ -40,12 +35,12 @@ import io.softa.framework.orm.service.ModelService;
  *
  * <h3>Resolved once per request, on purpose</h3>
  * Narrowing is applied per model, so a single page (a table, a few dropdowns, a count) would
- * otherwise repeat this lookup many times. Once here — and usually zero times, because the
- * company → country mapping is stable enough to cache.
+ * otherwise repeat this lookup many times. Once here, through {@link CompanyCountryResolver} — and
+ * usually zero times, because the company → country mapping is stable enough to cache.
  *
  * <h3>The country never comes from the client</h3>
- * The header carries only the id. Accepting a client-supplied country would let a caller choose
- * which country's value domain it sees, which is the decision the narrowing exists to make.
+ * Nothing in the request names a company or a country. Accepting a client-supplied country would let a
+ * caller choose which country's value domain it sees, which is the decision the narrowing exists to make.
  */
 @Slf4j
 @Component
@@ -53,57 +48,41 @@ import io.softa.framework.orm.service.ModelService;
 @RequiredArgsConstructor
 public class CompanyCountryEnricher implements ContextEnricher {
 
-    /** Shared with the multi-company narrowing, so the two cannot disagree on what "the company" is. */
     private static final String COMPANY_MODEL = ModelConstant.COMPANY_MODEL;
-    private static final String COUNTRY_FIELD = "country";
 
-    private final ModelService<Long> modelService;
-    private final CacheService cacheService;
-
+    private final CompanyCountryResolver countryResolver;
 
     @Override
     public void enrich(Context context) {
         if (!modelPresent()) {
             return;
         }
-        // A country already on the context came from the request naming one without a company
-        // (ContextBuilder), which is a deliberate "look across my companies, within this country".
-        // The fallback below answers a different question — "nobody told me, so use where the caller
-        // works" — and must not overwrite an answer that was given.
-        if (context.getCompanyId() == null && StringUtils.isNotBlank(context.getCompanyCountry())) {
-            return;
-        }
-        Long companyId = context.getCompanyId() != null ? context.getCompanyId() : ownCompanyId(context);
+        Long companyId = ownCompanyId(context);
         if (companyId == null) {
             return;
         }
-        String country = loadCached(companyId);
+        String country = countryResolver.resolveCountry(companyId);
         if (StringUtils.isBlank(country)) {
-            // Leaves the context without a country, so the narrowing skips instead of narrowing to
-            // nothing — an unfiltered dropdown beats an empty required one. WARN because on a running
-            // system it means either a stale header or a company row with no country.
+            // Leaves the context without a country. For a caller with a country set of their own that
+            // changes nothing; for a self-service employee the narrowing then skips instead of narrowing
+            // to nothing — an unfiltered dropdown beats an empty required one. WARN because on a running
+            // system it means a company row with no country.
             log.warn("Could not resolve a country for company {}; "
-                    + "multi-country models will not be narrowed for this request", companyId);
+                    + "multi-country models fall back to the caller's country set for this request", companyId);
             return;
         }
         context.setCompanyCountry(country);
     }
 
     /**
-     * The company the caller belongs to — used only when nothing is selected.
+     * The company the caller belongs to.
      *
      * <p>Without this a role that can reach no company at all sees <b>every</b> country's value
-     * domains: it is granted no legal entity, so the switcher offers nothing, so no header goes out,
-     * so there is nothing to narrow by. That is a self-service employee — the one user for whom the
-     * right country is never in doubt, since they belong to exactly one company. The narrowing is
-     * data correctness rather than authorization (see {@code MultiCountryScope}), and showing someone
-     * another country's pass types is wrong regardless of what they are allowed to read.
-     *
-     * <p>Deliberately not a widening of the header's meaning. {@code Context.companyCountry} feeds one
-     * consumer, the per-country narrowing; the {@code SELECTED_COMP_COUNTRY} placeholder that scope
-     * rules may name keeps meaning strictly "the selected company's country" and resolves to null here
-     * (guarded in {@code FilterUnitParser}), so a rule written against the header does not silently
-     * start matching this instead — which would widen a configured data scope.
+     * domains: its country set is empty, so there is nothing to narrow by. That is a self-service
+     * employee — the one user for whom the right country is never in doubt, since they belong to
+     * exactly one company. The narrowing is data correctness rather than authorization (see
+     * {@code MultiCountryScope}), and showing someone another country's pass types is wrong regardless
+     * of what they are allowed to read.
      *
      * <p>Reads {@code EmpInfo} rather than resolving the employee itself: this enricher deliberately
      * carries no domain knowledge (see the class comment), and duplicating the {@code Employee} lookup
@@ -134,45 +113,5 @@ public class CompanyCountryEnricher implements ContextEnricher {
         log.debug("No '{}' model in this application; the selected company's country is not resolved "
                 + "and multi-country models are not narrowed", COMPANY_MODEL);
         return false;
-    }
-
-    String loadCached(Long companyId) {
-        String key = RedisConstant.COMPANY_COUNTRY + companyId;
-        String cached = cacheService.get(key, String.class);
-        if (cached != null) {
-            return cached;
-        }
-        String country = readCountryFromDb(companyId);
-        if (StringUtils.isBlank(country)) {
-            return null;
-        }
-        // Short TTL, deliberately not the long one EmpInfo uses. The country IS editable — it is an
-        // ordinary field on the company's own form — so an entry made in the wrong country gets
-        // corrected, and until this expires the correction has no effect: the forms keep offering the
-        // old country's value domains, with nothing on screen saying why.
-        //
-        // A cached mapping needs either an eviction hook or a short life. There is no natural hook
-        // here: companies are written through the generic model CRUD, so eviction would mean matching
-        // on a model name inside a shared write path — a special case bolted onto infrastructure that
-        // is otherwise model-agnostic, and one nobody would think to look for. Bounding the staleness
-        // instead costs one query per company per five minutes, which against a per-request read is
-        // still better than 99% saved.
-        cacheService.save(key, country, RedisConstant.FIVE_MINUTES);
-        return country;
-    }
-
-    /**
-     * {@code @SkipPermissionCheck} keeps this read out of the scope aspect chain — the chain it would
-     * re-enter is the one being set up by this very enrich pass.
-     */
-    @SkipPermissionCheck
-    String readCountryFromDb(Long companyId) {
-        Map<String, Object> row = modelService.getById(COMPANY_MODEL, companyId).orElse(null);
-        if (row == null) {
-            log.warn("Selected company {} does not exist in model {}", companyId, COMPANY_MODEL);
-            return null;
-        }
-        Object country = row.get(COUNTRY_FIELD);
-        return country == null ? null : country.toString().trim();
     }
 }

@@ -206,82 +206,48 @@ public enum CustomerTier {
   a `CASCADE`/`SET_NULL` affecting more than `MAX_BATCH_SIZE` referrers per level is rejected (accidental
   high-fanout), and large deletes are chunked to `DEFAULT_BATCH_SIZE` to bound statement size.
 
-- `multiCountry` / `multiCompany` (**request-scoped narrowing**): mark a model whose rows are
-  partitioned by country / belong to one employing company, and the ORM narrows every read to the
-  country / company selected for the current request. One input normally drives both — the client sends
-  a company id (`X-Company-Id`), the country is resolved server-side from it and is **never** taken from
-  the client while one is selected. A request that deliberately sends **no** company may name the country
-  itself (`X-Company-Country`): a screen configuring across the caller's companies needs to say "not this
-  company, but this country", which the absence of a company id cannot express. Sending both is not a
-  third mode — the company wins. That header is a view preference, not a permission input: nothing bounds
-  a country the way the grant bounds a company, so what keeps it safe is that `SELECTED_COMP_COUNTRY`
-  stays null without a *selected* company and a CUSTOM rule naming it cannot be steered by a client.
-  The anchor field is **fixed by name, never declared**: `country` (a to-one onto
-  `CountryRegion`) / `legalEntityId` (a to-one onto `LegalEntity`), asserted at boot. Fixing the name is
-  what separates the axis from an attribute — a model may reference a country or a company for other
-  reasons (`PayGroup.payingEntityId` names who pays a group, it does not make the group belong to them),
-  and only the reserved name says "these rows belong to it". A model with no company column of its own —
-  a per-department statistic — declares the anchor as a **`dynamic` cascaded field**
-  (`@Field(cascadedField = "deptId.legalEntityId", dynamic = true, fieldType = MANY_TO_ONE,
-  relatedModel = LegalEntity.class)`), which takes no column and is joined at query time; `WhereBuilder`
-  rewrites a condition on it back to the cascade path, so the narrowing compiles to a LEFT JOIN and the
-  anchor stays a plain field name that can also be filtered, sorted and displayed. Boot-rejected: the
-  anchor field missing, a field of that name that is not a to-one onto the target model, and the company
-  model itself being `multiCompany`. **`multiCountry` also decides a permission default**: a
-  `multiCountry` model that is not `multiTenant` is a *country value domain* — a table whose rows are one
-  country's allowed values for a field — and reads of it skip row-scope entirely (`PermissionServiceImpl`,
-  reached only after the anchor check, so business data can never qualify). Row-scoping a dropdown's own
-  domain is meaningless, and the country axis already narrows it; writes stay gated by the endpoint
-  permission. So **removing `multiCountry` from a catalogue silently empties every dropdown it feeds** —
-  the symptom appears far from the change. Seven models qualify today; `CountryRegion` / `Currency` /
-  `CountrySubdivision` deliberately do not (they *are* the masters, not data partitioned by country) and
-  still need an explicit grant.
+- `multiCountry` / `multiCompany` (**request-scoped narrowing and the company axis**): `multiCountry`
+  marks a model whose rows are partitioned by country, and the ORM narrows every read of it to **the
+  countries the caller works in** — `Context.accessibleCountries`, the countries of the companies the
+  caller's roles reach, bridged from the permission snapshot. Nothing is read from the request: a header
+  switcher once selected a company and the narrowing followed it (`X-Company-Id` / `X-Company-Country`,
+  `Context.companyId`, the `SELECTED_COMP_*` placeholders); all of that is gone, and `Context.companyId`
+  is kept only as a deprecated always-null slot for one release. The anchor field is **fixed by name,
+  never declared**: `country` (a to-one onto `CountryRegion`) / `companyId` (a to-one onto `Company`),
+  asserted at boot. Fixing the name is what separates the axis from an attribute — a model may reference
+  a country or a company for other reasons (`PayGroup.payingEntityId` names who pays a group, it does not
+  make the group belong to them), and only the reserved name says "these rows belong to it". A model with
+  no company column of its own — a per-department statistic — declares the anchor as a **`dynamic`
+  cascaded field** (`@Field(cascadedField = "deptId.companyId", dynamic = true, fieldType = MANY_TO_ONE,
+  relatedModel = Company.class)`), joined at query time; `WhereBuilder` rewrites a condition on it back to
+  the cascade path. Boot-rejected: the anchor missing, a field of that name that is not a to-one onto the
+  target model, and the company model itself being `multiCompany`. **`multiCountry` also decides a
+  permission default**: a `multiCountry` model that is not `multiTenant` is a *country value domain* and
+  reads of it skip row-scope entirely (`PermissionServiceImpl`) — so **removing `multiCountry` from a
+  catalogue silently empties every dropdown it feeds**. Seven models qualify today; `CountryRegion` /
+  `Currency` / `CountrySubdivision` deliberately do not.
 
-  **Selection, grant, affiliation — three different things, never merged.** The narrowing above applies
-  the *selection* (`Context.companyId`, from `X-Company-Id`): which of my companies am I looking at. What
-  bounds the set it picks from is the role's *grant* (`PermissionInfo.grantedCompanyIds`, applied by
-  `PermissionServiceImpl.appendCompanyGrant`), and they compose as `selected ∧ granted`, so a header
-  switch can never reach outside the grant. The switcher offers exactly the companies the role's data
-  scope on the company model holds, so the selection is always a subset and never empties a screen the
-  user was allowed to open. The grant and its countries are bridged onto the Context as
-  `accessibleCompanyIds` / `accessibleCountries` ("my companies / my countries") — `null` = unknown,
-  never "none"; the country set is concrete even for an unrestricted grant (every company of the tenant). The grant is keyed on the **field name**, not on `multiCompany`: a model
-  carrying `companyId` without the flag (a pay group) is bounded by the grant while staying indifferent
-  to the header — grant follows the field, selection follows the flag. The grant has **no store of its
-  own**: it is the role's data
-  scope on the company model (`role_data_scope` where `model = 'LegalEntity'`), resolved into ids by
-  `DefaultPermissionSnapshotProvider.readGrantedCompanyIds` — one row bounds both the company switcher
-  and every model belonging to a company, because two stores for one boundary can disagree (that was
-  `RoleCompany`, now deleted). `ALL` resolves to `null`, never to the materialised list of every id. There
-  is deliberately **no company scope type**: `ScopeType.LEGAL_ENTITY` compiled to
-  `legalEntityId = USER_COMP_ID` — the caller's own company — so one role behaved differently per holder;
-  it is retired (migration `V40`, which must run *before* the patched binary: the snapshot silently drops
-  a scope type it cannot parse, so a stored rule would widen to unrestricted). `RoleController` refuses
-  the one ambiguous configuration — `ALL` rows on a `multiCompany` model with no company scope — because
-  "I meant all companies" and "I forgot" are otherwise the same payload. The grant is **tri-state**:
-  `null` = unrestricted (what an
-  unconfigured role resolves to, so shipping the axis blanks nobody's screens), **empty** = reaches no
-  company at all (only ever an explicit configuration — a self-service role whose own `SELF` row scope is
-  what lets it see itself), non-empty = exactly those. Collapsing the first two, as it used to, makes
-  "configured to reach nothing" inexpressible. The *affiliation* — `EmpInfo.companyId` /
-  `USER_COMP_ID`, "the company I belong to" — anchors permission rules and must stay out of both: a rule
-  anchored on the selection widens with every switch, and a grant derived from the affiliation makes one
-  role behave differently per user (an HR in company A seeing all of A's salaries, the same role in B
-  seeing B's). Narrowing is skipped — silently, because an over-eager condition empties a list the
-  user needs — when nothing is selected, when the caller filters by `id` (display expansion / by-id
-  read / cascade), or when the caller already constrains the anchor field. **One exception, on the
-  country axis only**: a role granted no company selects none, so skipping would show a self-service
-  employee every country's value domains — the enricher falls back to the country of
-  `EmpInfo.companyId`, so `Context.companyCountry` may be set with `Context.companyId` null. The
-  `SELECTED_COMP_COUNTRY` placeholder does **not** follow it (guarded on `companyId` in
-  `FilterUnitParser`; `MultiCountryScope` emits the resolved value instead): partitioning is data
-  correctness, but a scope rule written against the header is authorization and must keep matching what
-  it matched when it was written. No such fallback on the company axis — that would be a grant invented
-  from an affiliation. Applied in
-  `ModelServiceImpl.scopedAccess` as the **input** to
-  `PermissionService.appendScopeAccessFilters`, never around its result: fed as the input the selection
-  narrows *within* a role's grant, whereas wrapping the output would make a multi-company grant look
-  like a caller that already chose one and the selection would skip. Full reference:
+  **Grant, countries, affiliation — three different things, never merged.** The *grant*
+  (`PermissionInfo.grantedCompanyIds` → `Context.accessibleCompanyIds`, applied by
+  `PermissionServiceImpl.appendCompanyGrant`) decides which companies' records a caller sees, keyed on the
+  **field name** `companyId`, not on the `multiCompany` flag; there is **no per-company read narrowing**
+  any more (`MultiCompanyScope` is retired — the grant is the whole answer). It is the role's data scope
+  on the company model (`role_data_scope` where `model = 'Company'`), resolved by
+  `DefaultPermissionSnapshotProvider.readGrantedCompanyIds`, with no store of its own and no company
+  scope type (`ScopeType.LEGAL_ENTITY` is retired, migration `V40`). Tri-state: `null` = unrestricted,
+  **empty** = reaches no company, non-empty = exactly those. The *countries* (`grantedCountries` →
+  `Context.accessibleCountries`) are read in the same build and are **concrete even for an unrestricted
+  grant** — every company of the tenant — because "no company restriction" is not "every country"; `null`
+  means unknown (no snapshot consulted) and readers treat it as "do not narrow", never "none". The
+  *affiliation* (`EmpInfo.companyId` / `USER_COMP_ID`) anchors permission rules and stays out of the
+  grant; on the country axis it is the fallback — a self-service employee whose roles reach no company
+  has an empty set, and `CompanyCountryEnricher` puts their own company's country on
+  `Context.companyCountry` so their dropdowns still narrow. Narrowing is skipped — silently, because an
+  over-eager condition empties a list the user needs — when nothing is known, when the caller filters by
+  `id` (display expansion / by-id read / cascade), or when the caller already constrains `country`
+  (a form scoping by the legal entity picked in the form; an import resolving a row in its own country).
+  Applied in `ModelServiceImpl.scopedAccess` as the **input** to
+  `PermissionService.appendScopeAccessFilters`, never around its result. Full reference:
   [`framework/softa-orm/README.md`](framework/softa-orm/README.md) §Request-scoped narrowing.
 
 - `projection` (**shared / external tables**): `@Model(projection = true)` marks a read-only model

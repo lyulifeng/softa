@@ -13,6 +13,10 @@ import io.softa.framework.orm.meta.MetaField;
 import io.softa.framework.orm.meta.ModelManager;
 import io.softa.framework.orm.service.ModelService;
 import io.softa.starter.file.dto.ImportFieldDTO;
+import io.softa.framework.web.filter.context.CompanyCountryResolver;
+import io.softa.framework.orm.meta.MetaModel;
+import io.softa.framework.orm.domain.Filters;
+import org.mockito.ArgumentCaptor;
 
 import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.ArgumentMatchers.any;
@@ -469,6 +473,138 @@ class RelationLookupResolverTest {
 
         assertEquals(Map.of("notes", "n1"), rows.getFirst().get("profileId"));
         verifyNoInteractions(getModelService(resolver));
+    }
+
+
+    // ---- country-partitioned targets resolve in the row's own country -------------------------
+
+    /**
+     * "Full Time" is a different Employment Type in Singapore and in New Zealand. One file carrying both
+     * countries' employees must resolve each row in the country of the company that row names — not in
+     * the importer's countries, where the same name matches twice and fails as a duplicate key.
+     */
+    @Test
+    @SuppressWarnings("unchecked")
+    void resolvesAPartitionedTargetPerRowCountry() {
+        try (MockedStatic<ModelManager> mm = Mockito.mockStatic(ModelManager.class)) {
+            partitionedSetup(mm);
+            RelationLookupResolver resolver = createResolver();
+            CompanyCountryResolver countries = mock(CompanyCountryResolver.class);
+            when(countries.resolveCountry(1L)).thenReturn("SG");
+            when(countries.resolveCountry(2L)).thenReturn("NZ");
+            ReflectionTestUtils.setField(resolver, "companyCountryResolver", countries);
+            ModelService<Long> models = (ModelService<Long>) getModelService(resolver);
+            when(models.getIdsByBusinessKeys(eq("EmploymentType"), eq(List.of("name")), anyCollection(), any()))
+                    .thenAnswer(invocation -> {
+                        Filters scope = invocation.getArgument(3);
+                        String text = String.valueOf(scope);
+                        return text.contains("\"SG\"") ? Map.of(List.<Object>of("Full Time"), 101L)
+                                : Map.of(List.<Object>of("Full Time"), 202L);
+                    });
+
+            var group = new RelationLookupResolver.LookupGroup("employmentType", "EmploymentType",
+                    List.of("name"), List.of("employmentType.name"), true, false, false, null);
+            Map<String, Object> sgRow = new LinkedHashMap<>(Map.of("legalEntityId", 1L, "employmentType.name", "Full Time"));
+            Map<String, Object> nzRow = new LinkedHashMap<>(Map.of("legalEntityId", 2L, "employmentType.name", "Full Time"));
+
+            resolver.resolveRows("Employee", new ArrayList<>(List.of(sgRow, nzRow)), List.of(group), true);
+
+            assertEquals(101L, sgRow.get("employmentType"));
+            assertEquals(202L, nzRow.get("employmentType"));
+            // One query per country, each bounded to that country on top of the field's own filters.
+            ArgumentCaptor<Filters> scopes = ArgumentCaptor.forClass(Filters.class);
+            verify(models, times(2)).getIdsByBusinessKeys(eq("EmploymentType"), eq(List.of("name")), anyCollection(), scopes.capture());
+            assertTrue(scopes.getAllValues().stream().map(String::valueOf).anyMatch(t -> t.contains("[\"country\",\"=\",\"SG\"]")));
+            assertTrue(scopes.getAllValues().stream().map(String::valueOf).anyMatch(t -> t.contains("[\"country\",\"=\",\"NZ\"]")));
+        }
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void theCompanyGroupResolvesFirstWhateverTheColumnOrder() {
+        // The company itself may arrive as a lookup (legalEntityId.name). It has to be written back
+        // before the partitioned lookup reads it, so the order is decided here, not by the template.
+        try (MockedStatic<ModelManager> mm = Mockito.mockStatic(ModelManager.class)) {
+            partitionedSetup(mm);
+            RelationLookupResolver resolver = createResolver();
+            CompanyCountryResolver countries = mock(CompanyCountryResolver.class);
+            when(countries.resolveCountry(1L)).thenReturn("SG");
+            ReflectionTestUtils.setField(resolver, "companyCountryResolver", countries);
+            ModelService<Long> models = (ModelService<Long>) getModelService(resolver);
+            when(models.getIdsByBusinessKeys(eq("Company"), eq(List.of("name")), anyCollection(), any()))
+                    .thenReturn(Map.of(List.<Object>of("Zingkey SG"), 1L));
+            when(models.getIdsByBusinessKeys(eq("EmploymentType"), eq(List.of("name")), anyCollection(), any()))
+                    .thenReturn(Map.of(List.<Object>of("Full Time"), 101L));
+
+            var typeGroup = new RelationLookupResolver.LookupGroup("employmentType", "EmploymentType",
+                    List.of("name"), List.of("employmentType.name"), true, false, false, null);
+            var companyGroup = new RelationLookupResolver.LookupGroup("legalEntityId", "Company",
+                    List.of("name"), List.of("legalEntityId.name"), true, false, false, null);
+            Map<String, Object> row = new LinkedHashMap<>(Map.of("legalEntityId.name", "Zingkey SG", "employmentType.name", "Full Time"));
+
+            // Type group listed first on purpose.
+            resolver.resolveRows("Employee", new ArrayList<>(List.of(row)), List.of(typeGroup, companyGroup), true);
+
+            assertEquals(1L, row.get("legalEntityId"));
+            assertEquals(101L, row.get("employmentType"));
+            verify(countries).resolveCountry(1L);
+        }
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void aRowNamingNoCompanyResolvesUnbucketedAsBefore() {
+        try (MockedStatic<ModelManager> mm = Mockito.mockStatic(ModelManager.class)) {
+            partitionedSetup(mm);
+            RelationLookupResolver resolver = createResolver();
+            ReflectionTestUtils.setField(resolver, "companyCountryResolver", mock(CompanyCountryResolver.class));
+            ModelService<Long> models = (ModelService<Long>) getModelService(resolver);
+            when(models.getIdsByBusinessKeys(eq("EmploymentType"), eq(List.of("name")), anyCollection(), any()))
+                    .thenReturn(Map.of(List.<Object>of("Full Time"), 101L));
+            var group = new RelationLookupResolver.LookupGroup("employmentType", "EmploymentType",
+                    List.of("name"), List.of("employmentType.name"), true, false, false, null);
+            Map<String, Object> row = new LinkedHashMap<>(Map.of("employmentType.name", "Full Time"));
+
+            resolver.resolveRows("Employee", new ArrayList<>(List.of(row)), List.of(group), true);
+
+            assertEquals(101L, row.get("employmentType"));
+            // No country bound: the caller's own set (MultiCountryScope) is the domain, as before.
+            ArgumentCaptor<Filters> scope = ArgumentCaptor.forClass(Filters.class);
+            verify(models).getIdsByBusinessKeys(eq("EmploymentType"), eq(List.of("name")), anyCollection(), scope.capture());
+            assertTrue(Filters.isEmpty(scope.getValue()), String.valueOf(scope.getValue()));
+        }
+    }
+
+    @Test
+    void aTemplateWithoutACompanyColumnIsFlaggedForPartitionedLookups() {
+        try (MockedStatic<ModelManager> mm = Mockito.mockStatic(ModelManager.class)) {
+            partitionedSetup(mm);
+            RelationLookupResolver resolver = createResolver();
+            var group = new RelationLookupResolver.LookupGroup("employmentType", "EmploymentType",
+                    List.of("name"), List.of("employmentType.name"), true, false, false, null);
+
+            assertEquals(List.of("employmentType.name"), resolver.partitionedLookupsWithoutCompanyColumn(
+                    "Employee", List.of(importField("employmentType.name", null), importField("code", null)), List.of(group)));
+            assertTrue(resolver.partitionedLookupsWithoutCompanyColumn(
+                    "Employee", List.of(importField("employmentType.name", null), importField("legalEntityId", null)), List.of(group)).isEmpty());
+            assertTrue(resolver.partitionedLookupsWithoutCompanyColumn(
+                    "Employee", List.of(importField("employmentType.name", null), importField("legalEntityId.name", null)), List.of(group)).isEmpty());
+        }
+    }
+
+    /** Employee → legalEntityId (M2O Company) and employmentType (M2O EmploymentType, multiCountry). */
+    private void partitionedSetup(MockedStatic<ModelManager> mm) {
+        MetaField legalEntity = metaField("Employee", "legalEntityId", FieldType.MANY_TO_ONE, "Company");
+        MetaField type = metaField("Employee", "employmentType", FieldType.MANY_TO_ONE, "EmploymentType");
+        MetaModel employmentType = new MetaModel();
+        ReflectionTestUtils.setField(employmentType, "multiCountry", true);
+        MetaModel company = new MetaModel();
+        mm.when(() -> ModelManager.existModel("Employee")).thenReturn(true);
+        mm.when(() -> ModelManager.existModel("EmploymentType")).thenReturn(true);
+        mm.when(() -> ModelManager.existModel("Company")).thenReturn(true);
+        mm.when(() -> ModelManager.getModelFields("Employee")).thenReturn(List.of(legalEntity, type));
+        mm.when(() -> ModelManager.getModel("EmploymentType")).thenReturn(employmentType);
+        mm.when(() -> ModelManager.getModel("Company")).thenReturn(company);
     }
 
     private RelationLookupResolver.LookupGroup nestedGroup() {

@@ -110,9 +110,36 @@ class PermissionInterceptorTest {
         boolean allowed = inCtx(10L, 42L,
                 () -> interceptor.preHandle(r, new MockHttpServletResponse(), null));
         assertThat(allowed).isTrue();
-        // Never called EndpointIndex/provider for this bypass path.
+        // Never called EndpointIndex for this bypass path — no gate runs.
         org.mockito.Mockito.verify(endpointIndex, org.mockito.Mockito.never())
                 .lookup(anyString(), anyString());
+    }
+
+    @Test
+    void authenticatedBypass_stillBridgesTheAccessSets_butNotRoleCodes() {
+        // /ImportTemplate/listByModel is a bypass path AND narrows its list to the caller's
+        // countries. Without the bridge a two-country administrator got one country's templates,
+        // because the narrowing fell back to the company they belong to. Role codes stay off the
+        // context on purpose: @RequireRole on a whitelisted path must keep failing closed.
+        props.setAuthenticatedBypassPatterns(List.of("/ImportTemplate/**"));
+        PermissionInfo pi = PermissionInfo.builder()
+                .roleCodes(Set.of(PermissionInfo.CODE_TENANT_ADMIN))
+                .grantedCountries(Set.of("SG", "NZ"))
+                .build();
+        when(snapshotProvider.get(eq(10L), eq(42L))).thenReturn(pi);
+
+        MockHttpServletRequest r = req("POST", "/ImportTemplate/listByModel");
+        Context ctx = new Context();
+        ctx.setTenantId(10L);
+        ctx.setUserId(42L);
+        boolean allowed = ContextHolder.callWith(ctx,
+                () -> interceptor.preHandle(r, new MockHttpServletResponse(), null));
+
+        assertThat(allowed).isTrue();
+        assertThat(ctx.getAccessibleCountries()).containsExactlyInAnyOrder("SG", "NZ");
+        assertThat(ctx.getAccessibleCompanyIds()).isNull();
+        assertThat(ctx.getRoleCodes()).isNull();
+        org.mockito.Mockito.verify(endpointIndex, org.mockito.Mockito.never()).lookup(anyString(), anyString());
     }
 
     // ─── super-admin short-circuit ───

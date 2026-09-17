@@ -64,16 +64,4 @@ public interface BaseConstant {
     // TraceId in the request header
     String X_B3_TRACEID = "X-B3-TraceId";
 
-    /** Carries the company selected in the UI header; read into Context per request. */
-    String COMPANY_ID_HEADER = "X-Company-Id";
-
-    /**
-     * Names the country to narrow by on a request that deliberately sends no company — a screen that
-     * must reach across the caller's companies while still belonging to one country.
-     *
-     * <p>Ignored whenever {@link #COMPANY_ID_HEADER} is present: there the country is resolved from
-     * that company server-side, so the two can never disagree.
-     */
-    String COMPANY_COUNTRY_HEADER = "X-Company-Country";
-
 }

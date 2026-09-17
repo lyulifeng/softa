@@ -13,6 +13,7 @@ import org.apache.commons.lang3.StringUtils;
 import io.softa.framework.base.context.ContextHolder;
 import io.softa.framework.base.enums.Operator;
 import io.softa.framework.orm.domain.Filters;
+import io.softa.framework.orm.scope.MultiCountryScope;
 import io.softa.framework.orm.domain.FlexQuery;
 import io.softa.framework.orm.dto.FileInfo;
 import io.softa.framework.web.controller.EntityController;
@@ -54,29 +55,29 @@ public class ImportTemplateController extends EntityController<ImportTemplateSer
     }
 
     /**
-     * Narrows the listing to the country in play, or returns null to leave it alone.
+     * Narrows the listing to the countries the caller works in, or returns null to leave it alone.
      *
-     * <p>Written as <b>country is null OR country = selected</b>, never a bare equality: a template
-     * with no country applies to all of them, and that is the overwhelming majority — the ones with a
-     * country are the exception (employee and legal-entity templates), and every row holds null on the
-     * release that adds the column. A bare equality would empty the dialog for every tenant.
+     * <p>Written as <b>country is null OR country in (my countries)</b>, never a bare membership test:
+     * a template with no country applies to all of them, and that is the overwhelming majority — the
+     * ones with a country are the exception (employee and legal-entity templates), and every row holds
+     * null on the release that adds the column. A bare membership test would empty the dialog for every
+     * tenant.
      *
-     * <p>When nothing is selected the filter is skipped rather than tightened. The country comes from
-     * whichever company the request is acting for; before one is chosen there is no country to narrow
-     * by, and showing every template beats showing none.
+     * <p>The set is the caller's own countries — those of the companies their roles reach — the same
+     * set {@code MultiCountryScope} narrows value domains by, resolved the same way (falling back to the
+     * country of the company the caller belongs to). When neither is known the filter is skipped rather
+     * than tightened: showing every template beats showing none.
      *
-     * <p>The country is resolved server-side from the request context and never read off the payload,
-     * matching how the company axis is already handled.
+     * <p>Resolved server-side from the request context and never read off the payload.
      */
     Filters countryScope() {
-        String country = ContextHolder.getContext().getCompanyCountry();
-        if (StringUtils.isBlank(country)) {
+        List<String> countries = MultiCountryScope.countriesInPlay(ContextHolder.getContext());
+        if (countries.isEmpty()) {
             return null;
         }
         return new Filters().add(ImportTemplate::getCountry, Operator.IS_NOT_SET, null)
-                .or(new Filters().eq(ImportTemplate::getCountry, country));
+                .or(new Filters().in(ImportTemplate::getCountry, countries));
     }
-
     /**
      * Get the fileInfo of the import template by template ID.
      * The fileInfo contains the download URL.
