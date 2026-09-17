@@ -88,6 +88,22 @@ public class PermissionInfo implements Serializable {
     private Set<Long> grantedCompanyIds;
 
     /**
+     * The countries of {@link #grantedCompanyIds}, ISO 3166-1 alpha-2, deduplicated — "my countries".
+     * Read from the company model in the same build as the ids, so the two cannot
+     * disagree, and cached with the snapshot on the same terms (a company created or re-countried
+     * afterwards shows up when the snapshot expires or a role write evicts it).
+     *
+     * <p>Not three-state like the ids. An unrestricted grant ({@code grantedCompanyIds == null})
+     * still resolves to a concrete set — the countries of every company in the tenant — because
+     * "every country" is not what an unrestricted role works in: an SG-only tenant's administrator
+     * must see SG value domains, not the six countries a domain happens to be seeded for. Empty
+     * when the caller reaches no company or none carries a country. {@code null} only when the
+     * company model is absent (no company dimension in this application) or the snapshot predates
+     * this field.
+     */
+    private Set<String> grantedCountries;
+
+    /**
      * Single source of truth for the SUPER_ADMIN short-circuit consulted by every
      * layer (route-admission + data-plane + enricher). True iff the user holds the
      * {@link #CODE_SUPER_ADMIN} role.

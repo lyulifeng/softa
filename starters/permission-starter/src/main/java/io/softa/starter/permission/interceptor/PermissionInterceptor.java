@@ -199,6 +199,14 @@ public class PermissionInterceptor implements HandlerInterceptor {
             // from the role-code bypass below, not from tenant isolation.
         }
         ctx.setRoleCodes(codes);
+        // Same bridge, one more fact: the companies and countries the caller may act for, for the
+        // ORM's per-country narrowing and for anything that asks "which countries am I in" once the
+        // header switcher is gone. Nothing here decides access — that stays with the grant
+        // applied by PermissionServiceImpl; this only lets the framework layer read what was decided.
+        if (pi != null) {
+            ctx.setAccessibleCompanyIds(pi.getGrantedCompanyIds());
+            ctx.setAccessibleCountries(pi.getGrantedCountries());
+        }
     }
 
     private boolean isPublic(String uri) {

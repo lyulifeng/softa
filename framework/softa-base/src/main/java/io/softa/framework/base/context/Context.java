@@ -77,6 +77,34 @@ public class Context implements Serializable {
     private Set<String> roleCodes;
 
     /**
+     * The companies the caller may act for — "my companies" — bridged from the permission snapshot
+     * ({@code PermissionInfo.grantedCompanyIds}) by the enforce layer, the same way {@link #roleCodes}
+     * is, so the ORM can read it without depending on the permission model.
+     *
+     * <p>Same three states as its source: {@code null} — unrestricted, no company axis configured for
+     * this role; empty — no company at all; non-empty — exactly those. Distinct from
+     * {@link #companyId}, the one company being looked at right now: that is a selection made from this
+     * set, and it goes away when an application drops its header switcher, while this stays.
+     *
+     * <p>Unset on requests that never consult the snapshot — public and authenticated-bypass
+     * endpoints, scheduler and MQ threads — where {@code null} therefore means "unknown", which every
+     * reader must treat as "do not narrow", never as "narrow to nothing".
+     */
+    private Set<Long> accessibleCompanyIds;
+
+    /**
+     * The countries of {@link #accessibleCompanyIds} — "my countries" — ISO 3166-1 alpha-2, deduplicated.
+     * For an unrestricted grant it is the countries of every company in the tenant, so unlike the id
+     * set it is never "all": an SG-only tenant's administrator works in SG, and a value domain seeded
+     * for six countries must still narrow to that one. This is what replaces {@link #companyCountry}
+     * as the per-country narrowing's input once nothing is selected.
+     *
+     * <p>{@code null} when unknown (see {@link #accessibleCompanyIds}); empty when the caller reaches
+     * no company, or none of them carries a country.
+     */
+    private Set<String> accessibleCountries;
+
+    /**
      * Whether to skip permission verification (including model permission and data range),
      * the default is to perform permission verification.
      */
@@ -161,6 +189,8 @@ public class Context implements Serializable {
         newContext.setUserInfo(this.userInfo);
         newContext.setEmpInfo(this.empInfo);
         newContext.setRoleCodes(this.roleCodes);
+        newContext.setAccessibleCompanyIds(this.accessibleCompanyIds);
+        newContext.setAccessibleCountries(this.accessibleCountries);
         newContext.setSkipAutoAudit(this.skipAutoAudit);
         newContext.setCrossTenant(this.crossTenant);
         newContext.setDataMask(this.dataMask);
