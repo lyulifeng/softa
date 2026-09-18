@@ -174,6 +174,50 @@ class PermissionInterceptorTest {
                 .containsAll(Arrays.stream(SystemRole.values()).map(SystemRole::getCode).toList());
     }
 
+    @Test
+    void bridgesTheCompanyGrantAndItsCountriesOntoTheContext() {
+        // "My companies / my countries" (PRD #1041) travel the same bridge as the role codes: the ORM's
+        // per-country narrowing reads them off the Context and must not depend on the permission model.
+        PermissionInfo pi = PermissionInfo.builder()
+                .roleCodes(Set.of("HR"))
+                .permissions(Set.of("employee.view"))
+                .grantedCompanyIds(Set.of(11L, 12L))
+                .grantedCountries(Set.of("SG", "NZ"))
+                .build();
+        when(snapshotProvider.get(eq(10L), eq(42L))).thenReturn(pi);
+        when(endpointIndex.lookup("/Employee/searchList", "POST")).thenReturn(Set.of("employee.view"));
+
+        MockHttpServletRequest r = req("POST", "/Employee/searchList");
+        Context ctx = new Context();
+        ctx.setTenantId(10L);
+        ctx.setUserId(42L);
+        ContextHolder.runWith(ctx, () -> interceptor.preHandle(r, new MockHttpServletResponse(), null));
+
+        assertThat(ctx.getGrantedCompanyIds()).containsExactlyInAnyOrder(11L, 12L);
+        assertThat(ctx.getGrantedCountries()).containsExactlyInAnyOrder("SG", "NZ");
+    }
+
+    @Test
+    void anUnrestrictedGrantBridgesAsNull_neverAsEmpty() {
+        // null is the three-state grant's "no company axis"; turning it into an empty set here would
+        // read downstream as "no company at all" and blank every multi-company screen for the role.
+        PermissionInfo pi = PermissionInfo.builder()
+                .roleCodes(Set.of(PermissionInfo.CODE_TENANT_ADMIN))
+                .permissions(Set.of())
+                .grantedCountries(Set.of("SG"))
+                .build();
+        when(snapshotProvider.get(eq(10L), eq(42L))).thenReturn(pi);
+
+        MockHttpServletRequest r = req("POST", "/Employee/searchList");
+        Context ctx = new Context();
+        ctx.setTenantId(10L);
+        ctx.setUserId(42L);
+        ContextHolder.runWith(ctx, () -> interceptor.preHandle(r, new MockHttpServletResponse(), null));
+
+        assertThat(ctx.getGrantedCompanyIds()).isNull();
+        assertThat(ctx.getGrantedCountries()).containsExactly("SG");
+    }
+
     // ─── unmapped endpoint → 403 ───
 
     @Test

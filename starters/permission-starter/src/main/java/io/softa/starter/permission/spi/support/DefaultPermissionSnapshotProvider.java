@@ -252,6 +252,45 @@ public class DefaultPermissionSnapshotProvider implements PermissionSnapshotProv
         return grantedCompanyIds;
     }
 
+    /**
+     * The countries behind a company grant — "my countries" — read from the company model.
+     *
+     * <p>{@code null} ids mean an unrestricted grant, and resolve to the countries of <b>every</b>
+     * company in the tenant rather than to "no restriction": a role nobody limited to a company still
+     * works in the countries its tenant has companies in, and that set — not the six a value domain is
+     * seeded for — is what its dropdowns should offer. An empty id set means no company, hence no
+     * country, without a query. Rows with no country are skipped, so a company awaiting its country
+     * contributes nothing rather than a blank bucket.
+     *
+     * <p>Same staleness as the ids (see {@link #readGrantedCompanyIds}), and the same degradation for
+     * an application with no company model: {@code null}, costing neither a query nor an exception.
+     * Runs under the {@code @SkipPermissionCheck} that {@code get()} set for the whole build.
+     *
+     * @param grantedCompanyIds the grant just resolved; {@code null} = unrestricted
+     * @return the distinct country codes, or {@code null} when there is no company model
+     */
+    Set<String> readGrantedCountries(Set<Long> grantedCompanyIds) {
+        if (!ModelManager.existModel(ModelConstant.COMPANY_MODEL)) {
+            return null;
+        }
+        if (grantedCompanyIds != null && grantedCompanyIds.isEmpty()) {
+            return Collections.emptySet();
+        }
+        Filters filters = grantedCompanyIds == null
+                ? new Filters()
+                : new Filters().in(ModelConstant.ID, new ArrayList<>(grantedCompanyIds));
+        List<Map<String, Object>> rows = modelService.searchList(ModelConstant.COMPANY_MODEL,
+                new FlexQuery(List.of(ModelConstant.COUNTRY_FIELD), filters));
+        Set<String> countries = new HashSet<>();
+        for (Map<String, Object> row : rows) {
+            Object country = row.get(ModelConstant.COUNTRY_FIELD);
+            if (country != null && !country.toString().isBlank()) {
+                countries.add(country.toString().trim());
+            }
+        }
+        return countries;
+    }
+
     private PermissionInfo loadFromDb(Long tenantId, Long userId) {
         try {
             return doLoadFromDb(tenantId, userId);
@@ -272,7 +311,11 @@ public class DefaultPermissionSnapshotProvider implements PermissionSnapshotProv
                 .collect(Collectors.toSet());
 
         if (roleCodes.contains(SUPER_ADMIN_CODE)) {
-            return emptyGrantsSnapshot(roleCodes);
+            PermissionInfo info = emptyGrantsSnapshot(roleCodes);
+            // Bypasses everything, so the grant stays unrestricted — but "my countries" is still a
+            // fact about this tenant's companies, and the value domains narrow by it for admins too.
+            info.setGrantedCountries(readGrantedCountries(null));
+            return info;
         }
         if (roleCodes.contains(TENANT_ADMIN_CODE)) {
             return tenantAdminSnapshot(roleCodes, tenantId);
@@ -318,8 +361,10 @@ public class DefaultPermissionSnapshotProvider implements PermissionSnapshotProv
             }
         }
 
-        // 3b-2. The company axis, derived from the scope just read for the company model.
+        // 3b-2. The company axis, derived from the scope just read for the company model, and the
+        // countries behind it.
         Set<Long> grantedCompanyIds = readGrantedCompanyIds(modelScopeMap);
+        Set<String> grantedCountries = readGrantedCountries(grantedCompanyIds);
         // 3c. Sensitive-field-set grants, keyed by the SFS's canonical model.
         Map<String, Set<String>> modelSensitiveFieldSetsMap = new HashMap<>();
         List<RoleSfsView> sfsGrants = modelService.searchList(M_ROLE_SFS,
@@ -346,6 +391,7 @@ public class DefaultPermissionSnapshotProvider implements PermissionSnapshotProv
         info.setModelScopeMap(modelScopeMap);
         info.setModelSensitiveFieldSetsMap(modelSensitiveFieldSetsMap);
         info.setGrantedCompanyIds(grantedCompanyIds);
+        info.setGrantedCountries(grantedCountries);
         return info;
     }
 
@@ -508,6 +554,8 @@ public class DefaultPermissionSnapshotProvider implements PermissionSnapshotProv
         info.setPermissions(permissions);
         info.setModelScopeMap(Collections.emptyMap());
         info.setModelSensitiveFieldSetsMap(Collections.emptyMap());
+        // Unrestricted grant, so every company of the tenant — and the countries of all of them.
+        info.setGrantedCountries(readGrantedCountries(null));
         return info;
     }
 
