@@ -95,7 +95,8 @@ public class ImportRowPipeline {
         List<RelationLookupResolver.LookupGroup> lookupGroups =
                 relationLookupResolver.detectLookupGroups(importTemplateDTO.getModelName(), importTemplateDTO.getImportFields());
         if (!lookupGroups.isEmpty()) {
-            relationLookupResolver.resolveRows(importDataDTO.getRows(), lookupGroups, skipException);
+            relationLookupResolver.resolveRows(importTemplateDTO.getModelName(), importDataDTO.getRows(),
+                    lookupGroups, skipException);
         }
         // Keep only the first of any rows in this file sharing a unique key. Before the database
         // check, so that only sees first occurrences; after the lookup resolution, because a unique

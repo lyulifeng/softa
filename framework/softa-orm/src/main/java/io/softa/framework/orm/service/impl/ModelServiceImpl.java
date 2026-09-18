@@ -34,7 +34,6 @@ import io.softa.framework.orm.jdbc.JdbcService;
 import io.softa.framework.orm.meta.MetaField;
 import io.softa.framework.orm.meta.ModelManager;
 import io.softa.framework.orm.service.ModelService;
-import io.softa.framework.orm.scope.MultiCompanyScope;
 import io.softa.framework.orm.scope.MultiCountryScope;
 import io.softa.framework.orm.service.PermissionService;
 import io.softa.framework.orm.service.relation.RelationDeleteHandler;
@@ -447,32 +446,29 @@ public class ModelServiceImpl<K extends Serializable> implements ModelService<K>
     }
 
     /**
-     * Single exit applying the access scopes: the request's selected company and country, then the
-     * role data scope on top.
+     * Single exit applying the access scopes: the countries the caller works in, then the role data
+     * scope on top.
      *
-     * <p>Neither selection is applied <b>inside</b> {@code appendScopeAccessFilters} — see
+     * <p>The country narrowing is not applied <b>inside</b> {@code appendScopeAccessFilters} — see
      * {@link MultiCountryScope}. In short, that method returns the caller's filters untouched on
      * several paths (bypass, admin, an {@code ALL} rule, a shared reference/config model), so a
-     * condition added inside would never reach an admin, who is exactly who needs the company switch
-     * to work.
+     * condition added inside would never reach an admin, whose value domains must narrow like anyone
+     * else's.
      *
-     * <p><b>They feed the permission call rather than wrap its result, and that is not
-     * interchangeable.</b> Both selections skip when the caller already constrains their field, which
-     * is what lets a form scope its dropdowns by the entity picked in the form. Applied to the
-     * permission call's <i>output</i>, that check would also see the conditions the role grant just
-     * added — so a role granting {@code legalEntityId IN (A, B, C)} would look like a caller that
-     * already chose a company, the selection would skip, and the user would get all three companies
-     * mixed together with the switch doing nothing. Fed as the <i>input</i>, the check sees only the
-     * caller's own filters, and the grant is AND-ed on afterwards: the selection narrows within what
-     * the role allows ({@code selected ∧ granted}), which is a subset and therefore never empty for a
-     * company the switcher was allowed to offer.
+     * <p><b>It feeds the permission call rather than wraps its result, and that is not
+     * interchangeable.</b> The narrowing skips when the caller already constrains the country field,
+     * which is what lets a form scope its dropdowns by the entity picked in the form. Applied to the
+     * permission call's <i>output</i>, that check would also see conditions the role grant just added.
+     * Fed as the <i>input</i>, it sees only the caller's own filters, and the grant is AND-ed on
+     * afterwards — the narrowing works within what the role allows.
+     *
+     * <p>There is no per-company narrowing here any more. Which companies' records a caller sees is the
+     * grant ({@code appendCompanyGrant}) and nothing else; the header selection that used to narrow
+     * within it went with the header switcher.
      */
     private Filters scopedAccess(String modelName, Filters filters) {
-        // Order between the two selections is irrelevant — independent AND terms on different fields.
-        // Their position relative to the permission call is NOT (see above).
         return permissionService.appendScopeAccessFilters(modelName,
-                MultiCompanyScope.append(modelName,
-                        MultiCountryScope.append(modelName, filters)));
+                MultiCountryScope.append(modelName, filters));
     }
 
     /**

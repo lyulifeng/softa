@@ -214,8 +214,8 @@ reach is a property of the role. It is configured as the role's ordinary data sc
 model itself** (`role_data_scope` where `model = ModelConstant.COMPANY_MODEL`), which
 `DefaultPermissionSnapshotProvider.readGrantedCompanyIds` compiles through this same engine and
 materialises into `PermissionInfo.grantedCompanyIds`; `appendCompanyGrant` then bounds every
-`@Model(multiCompany)` read by it, and `MultiCompanyScope` narrows within it to the company the header
-selected. The same build reads the **countries** behind the grant into `PermissionInfo.grantedCountries`
+`@Model(multiCompany)` read by it — the grant is the only company narrowing there is; the header-driven
+selection that used to narrow within it went with the header switcher. The same build reads the **countries** behind the grant into `PermissionInfo.grantedCountries`
 ("my countries") — a concrete set even for an unrestricted grant (every company of the tenant),
 because an administrator of an SG-only tenant works in SG whatever a value domain was seeded for. The
 interceptor bridges both onto the framework `Context` (`grantedCompanyIds` / `grantedCountries`)

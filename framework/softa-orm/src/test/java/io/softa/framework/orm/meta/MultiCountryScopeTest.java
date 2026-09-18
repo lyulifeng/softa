@@ -3,6 +3,7 @@ package io.softa.framework.orm.meta;
 import java.lang.reflect.Field;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Set;
 
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
@@ -10,7 +11,6 @@ import org.junit.jupiter.api.Test;
 import org.mockito.Mockito;
 
 import io.softa.framework.base.config.SystemConfig;
-import io.softa.framework.base.constant.EnvConstant;
 import io.softa.framework.base.context.Context;
 import io.softa.framework.base.context.ContextHolder;
 import io.softa.framework.base.enums.Operator;
@@ -24,7 +24,8 @@ import static org.junit.jupiter.api.Assertions.*;
 
 /**
  * Covers the per-country narrowing of multi-country models: the boot-time validation that
- * resolves which field carries the partition, and the four ways the narrowing can be skipped.
+ * resolves which field carries the partition, the set it narrows to, and every way the narrowing
+ * is skipped.
  *
  * <p>Skipping is where the risk lives. Every skip is silent by design — an over-eager
  * condition would empty a required dropdown, which is worse than an unfiltered one — so the
@@ -106,48 +107,60 @@ class MultiCountryScopeTest {
     // ---- narrowing -------------------------------------------------------
 
     @Test
-    void narrowsAMultiCountryModelByTheContextCountry() {
-        Filters result = withCountry("SG",
+    void narrowsAMultiCountryModelToTheCallersCountries() {
+        // The set is the caller's own — the countries of the companies their roles reach — compiled
+        // as a literal IN, sorted so the same set always yields the same SQL.
+        Filters result = withCountries(Set.of("SG", "NZ"),
                 () -> MultiCountryScope.append("PassType", Filters.of("active", Operator.EQUAL, true)));
 
         assertTrue(Filters.containsField(result, "country"));
-        // The bound value stays a placeholder: FilterUnitParser substitutes it when building SQL,
-        // so the compiled Filters must carry the token, not the resolved 'SG'.
-        assertTrue(result.toString().contains(EnvConstant.COMPANY_COUNTRY), result.toString());
+        assertTrue(result.toString().contains("[\"country\",\"IN\",[\"NZ\",\"SG\"]]"), result.toString());
     }
 
     @Test
-    void narrowsWithTheResolvedCountryWhenNoCompanyIsSelected() {
-        // A role granted no company selects nothing, so no header goes out — and it is the one caller
-        // whose country is never in doubt, since the enricher falls back to the company it belongs to.
-        // That is a self-service employee, and without this it sees every country's value domains.
-        //
-        // The value has to be the resolved country rather than the placeholder, even though both mean
-        // the same country here: FilterUnitParser resolves SELECTED_COMP_COUNTRY to null when nothing
-        // is selected — on purpose, so a CUSTOM scope rule naming it cannot silently start matching the
-        // caller's own country — and emitting the token here would compile to country = NULL, matching
-        // nothing. Empty is worse than unnarrowed: it blanks a required dropdown.
-        Filters result = withFallbackCountry("SG",
+    void aSingleCountryStillCompilesAsAnInList() {
+        Filters result = withCountries(Set.of("SG"),
                 () -> MultiCountryScope.append("PassType", Filters.of("active", Operator.EQUAL, true)));
 
-        assertTrue(Filters.containsField(result, "country"));
-        assertFalse(result.toString().contains(EnvConstant.COMPANY_COUNTRY), result.toString());
-        assertTrue(result.toString().contains("SG"), result.toString());
+        assertTrue(result.toString().contains("[\"country\",\"IN\",[\"SG\"]]"), result.toString());
+    }
+
+    @Test
+    void fallsBackToTheCallersOwnCountryWhenTheSetIsEmpty() {
+        // A role that reaches no company has an empty set, and would otherwise see every country's
+        // value domains. That is a self-service employee, who belongs to exactly one company — the
+        // enricher puts its country on the context, and the narrowing takes it.
+        Filters result = withOwnCountryOnly("SG",
+                () -> MultiCountryScope.append("PassType", Filters.of("active", Operator.EQUAL, true)));
+
+        assertTrue(result.toString().contains("[\"country\",\"IN\",[\"SG\"]]"), result.toString());
+    }
+
+    @Test
+    void theSetWinsOverTheOwnCountryWhenBothAreKnown() {
+        // An HR employed by the SG company but granted the NZ one too works in both.
+        Context context = new Context();
+        context.setGrantedCountries(Set.of("SG", "NZ"));
+        context.setCompanyCountry("SG");
+
+        Filters result = ContextHolder.callWith(context,
+                () -> MultiCountryScope.append("PassType", Filters.of("active", Operator.EQUAL, true)));
+
+        assertTrue(result.toString().contains("[\"NZ\",\"SG\"]"), result.toString());
     }
 
     @Test
     void doesNotNarrowAReadThatNamesRowsById() {
         // The bug this guards: XToOneGroupProcessor expands a stored ManyToOne by issuing
         // searchList(relatedModel, id IN (…)). Narrowing that by country makes an employee whose pass
-        // type was recorded under a New Zealand company render blank while the header sits on a
-        // Singapore one — silently, since a missing row is not an error. Its FilterControl.bypassAll()
-        // does not cover this: that only waives active-control and soft-delete.
+        // type was recorded under a company the caller has since lost render blank — silently, since a
+        // missing row is not an error. Its FilterControl.bypassAll() does not cover this: that only
+        // waives active-control and soft-delete.
         Filters byId = Filters.of(ModelConstant.ID, Operator.IN, List.of("NZ_AEWV", "SG_EP"));
 
-        Filters result = withCountry("SG", () -> MultiCountryScope.append("PassType", byId));
+        Filters result = withCountries(Set.of("SG"), () -> MultiCountryScope.append("PassType", byId));
 
         assertSame(byId, result);
-        assertFalse(result.toString().contains(EnvConstant.COMPANY_COUNTRY), result.toString());
     }
 
     @Test
@@ -157,31 +170,32 @@ class MultiCountryScopeTest {
         Filters byIdAndDeleted = Filters.of(ModelConstant.ID, Operator.IN, List.of("NZ_AEWV"))
                 .and("active", Operator.EQUAL, true);
 
-        Filters result = withCountry("SG", () -> MultiCountryScope.append("PassType", byIdAndDeleted));
+        Filters result = withCountries(Set.of("SG"), () -> MultiCountryScope.append("PassType", byIdAndDeleted));
 
-        assertFalse(result.toString().contains(EnvConstant.COMPANY_COUNTRY), result.toString());
+        assertFalse(result.toString().contains("\"IN\",[\"SG\"]"), result.toString());
     }
 
     @Test
     void aPickerQueryWithNoIdIsStillNarrowed() {
         // The counterpart: choosing among candidates never filters by id, so the fix must not have
         // turned the narrowing off in general.
-        Filters result = withCountry("SG",
+        Filters result = withCountries(Set.of("SG"),
                 () -> MultiCountryScope.append("PassType", Filters.of("active", Operator.EQUAL, true)));
 
-        assertTrue(result.toString().contains(EnvConstant.COMPANY_COUNTRY), result.toString());
+        assertTrue(Filters.containsField(result, "country"));
     }
 
     @Test
     void leavesAPlainModelUntouched() {
         Filters original = Filters.of("active", Operator.EQUAL, true);
 
-        assertSame(original, withCountry("SG", () -> MultiCountryScope.append("Employee", original)));
+        assertSame(original, withCountries(Set.of("SG"), () -> MultiCountryScope.append("Employee", original)));
     }
 
     @Test
-    void skipsWhenTheContextCarriesNoCountry() {
-        // Anonymous (public form) and service-to-service contexts have no selected company.
+    void skipsWhenNothingIsKnown() {
+        // Anonymous (public form) and service-to-service contexts, scheduler and MQ threads, import
+        // jobs: no snapshot was consulted, so the set is null and no own company is on the context.
         // Narrowing to nothing here would empty a required dropdown on the pre-boarding form.
         Filters original = Filters.of("active", Operator.EQUAL, true);
 
@@ -190,16 +204,27 @@ class MultiCountryScopeTest {
     }
 
     @Test
+    void anEmptySetWithNoOwnCountrySkipsToo() {
+        // A role reaching no company, held by a pure user with no employee record: nothing to narrow
+        // by, and "no country" must not become "country IN ()" — that matches nothing.
+        Context context = new Context();
+        context.setGrantedCountries(Set.of());
+        Filters original = Filters.of("active", Operator.EQUAL, true);
+
+        assertSame(original, ContextHolder.callWith(context,
+                () -> MultiCountryScope.append("PassType", original)));
+    }
+
+    @Test
     void doesNotOverrideACountryTheCallerAlreadyPassed() {
         // This is what lets a create-employee or transfer form scope its dropdowns by the legal
-        // entity picked in the form, which may differ from the one the header is switched to.
-        // AND-ing instead would yield country = 'SG' AND country = 'NZ' — always empty.
+        // entity picked in the form — one country out of the caller's several — and an import resolve
+        // a row against that row's own country.
         Filters callerScoped = Filters.of("country", Operator.EQUAL, "NZ");
 
-        Filters result = withCountry("SG", () -> MultiCountryScope.append("PassType", callerScoped));
+        Filters result = withCountries(Set.of("SG", "NZ"), () -> MultiCountryScope.append("PassType", callerScoped));
 
         assertSame(callerScoped, result);
-        assertFalse(result.toString().contains(EnvConstant.COMPANY_COUNTRY), result.toString());
     }
 
     @Test
@@ -208,26 +233,26 @@ class MultiCountryScopeTest {
         // not fail here with an unrelated metadata error.
         Filters original = Filters.of("active", Operator.EQUAL, true);
 
-        assertSame(original, withCountry("SG", () -> MultiCountryScope.append("NoSuchModel", original)));
-        assertSame(original, withCountry("SG", () -> MultiCountryScope.append(null, original)));
+        assertSame(original, withCountries(Set.of("SG"), () -> MultiCountryScope.append("NoSuchModel", original)));
+        assertSame(original, withCountries(Set.of("SG"), () -> MultiCountryScope.append(null, original)));
     }
 
     // ---- fixture ---------------------------------------------------------
 
-    /** Runs {@code op} with a context carrying the given selected-company country. */
-    private static Filters withCountry(String country, java.util.function.Supplier<Filters> op) {
+    /** Runs {@code op} with a context carrying the caller's country set — the bridged grant. */
+    private static Filters withCountries(Set<String> countries, java.util.function.Supplier<Filters> op) {
         Context context = new Context();
-        context.setCompanyId(8712L);
-        context.setCompanyCountry(country);
+        context.setGrantedCountries(countries);
         return ContextHolder.callWith(context, op::get);
     }
 
     /**
-     * Runs {@code op} with a country but no selection — what the enricher leaves behind when it falls
-     * back to the caller's own company. The only state in which the two fields disagree.
+     * Runs {@code op} with an empty set and only the country of the company the caller belongs to —
+     * what the enricher leaves behind for a self-service employee whose roles reach no company.
      */
-    private static Filters withFallbackCountry(String country, java.util.function.Supplier<Filters> op) {
+    private static Filters withOwnCountryOnly(String country, java.util.function.Supplier<Filters> op) {
         Context context = new Context();
+        context.setGrantedCountries(Set.of());
         context.setCompanyCountry(country);
         return ContextHolder.callWith(context, op::get);
     }

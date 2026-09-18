@@ -278,17 +278,15 @@ public class DefaultPermissionSnapshotProvider implements PermissionSnapshotProv
         }
         Filters filters = grantedCompanyIds == null
                 ? new Filters()
-                : new Filters().in(ModelConstant.ID, new ArrayList<>(grantedCompanyIds));
-        List<Map<String, Object>> rows = modelService.searchList(ModelConstant.COMPANY_MODEL,
-                new FlexQuery(List.of(ModelConstant.COUNTRY_FIELD), filters));
-        Set<String> countries = new HashSet<>();
-        for (Map<String, Object> row : rows) {
-            Object country = row.get(ModelConstant.COUNTRY_FIELD);
-            if (country != null && !country.toString().isBlank()) {
-                countries.add(country.toString().trim());
-            }
-        }
-        return countries;
+                : new Filters().in(ModelConstant.ID, grantedCompanyIds);
+        FlexQuery query = new FlexQuery(List.of(ModelConstant.COUNTRY_FIELD), filters);
+        query.setDistinct(true);
+        return modelService.searchList(ModelConstant.COMPANY_MODEL, query).stream()
+                .map(row -> row.get(ModelConstant.COUNTRY_FIELD))
+                .filter(Objects::nonNull)
+                .map(country -> country.toString().trim())
+                .filter(country -> !country.isEmpty())
+                .collect(Collectors.toSet());
     }
 
     private PermissionInfo loadFromDb(Long tenantId, Long userId) {

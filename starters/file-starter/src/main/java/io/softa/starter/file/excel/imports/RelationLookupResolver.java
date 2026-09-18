@@ -7,6 +7,7 @@ import org.apache.commons.lang3.StringUtils;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 
+import io.softa.framework.base.enums.Operator;
 import io.softa.framework.base.exception.IllegalArgumentException;
 import io.softa.framework.base.exception.ValidationException;
 import io.softa.framework.base.utils.Assert;
@@ -15,7 +16,9 @@ import io.softa.framework.orm.domain.Filters;
 import io.softa.framework.orm.enums.FieldType;
 import io.softa.framework.orm.meta.MetaField;
 import io.softa.framework.orm.meta.ModelManager;
+import io.softa.framework.orm.constant.ModelConstant;
 import io.softa.framework.orm.service.ModelService;
+import io.softa.framework.web.filter.context.CompanyCountryResolver;
 import io.softa.starter.file.dto.ImportFieldDTO;
 
 /**
@@ -34,6 +37,17 @@ import io.softa.starter.file.dto.ImportFieldDTO;
  * into a nested value object and written inline by the ORM cascade
  * ({@code XToOneGroupProcessor#processNestedOneToOneRows}) — see {@link #resolveNestedOneToOneGroup}.
  *
+ * <p><b>Country-partitioned targets are looked up in the row's own country.</b> "Full Time" names a
+ * different Employment Type in every country that has one, so a business key on a
+ * {@code multiCountry} model is only unique within a country. The importer's own country set is the
+ * wrong domain — an HR working across Singapore and New Zealand imports both countries' employees
+ * from one file — so each row is resolved in the country of the company <i>it</i> names: the row's
+ * company reference (the importing model's field onto the company model — {@code legalEntityId} on
+ * an employee, {@code companyId} on a department) is resolved first, turned into a country, and the
+ * rows bucketed by it; each bucket queries with {@code country = X} on top of the field's own filters.
+ * A row naming no company falls into an unbucketed group and is resolved as before, within the
+ * caller's country set. See {@link #countryOfRow}.
+ *
  * <p>Rules:
  * <ul>
  *   <li>A fieldName containing a dot whose root field is a relation field is treated as a relation
@@ -48,6 +62,12 @@ public class RelationLookupResolver {
 
     @Autowired
     private ModelService<?> modelService;
+    /**
+     * Optional: an application with no company model has no row country to bucket by, and the unit
+     * tests construct this class by hand. Absent, every lookup runs unbucketed, as it always did.
+     */
+    @Autowired(required = false)
+    private CompanyCountryResolver companyCountryResolver;
 
     /**
      * Describes a group of dotted-path lookup fields sharing the same root FK field.
@@ -203,7 +223,61 @@ public class RelationLookupResolver {
             groups.add(new LookupGroup(rootField, relatedModel, lookupFields, dottedPaths, ignoreEmpty,
                     toMany, oneToOne, Filters.of(rootMetaField.getFilters()), List.copyOf(nestedLookups)));
         }
+        warnIfPartitionedLookupHasNoCompanyColumn(modelName, importFields, groups);
         return groups;
+    }
+
+    /**
+     * A template that looks a country-partitioned target up by name without carrying the row's
+     * company cannot be resolved per row: the same name may exist in every country the importer works
+     * in, and a multi-country importer then fails the row as a duplicate key. Nothing is rejected —
+     * the template works for a single-country importer — but the gap is worth a line in the log, and
+     * the same check is exposed for a template editor to show.
+     */
+    void warnIfPartitionedLookupHasNoCompanyColumn(String modelName, List<ImportFieldDTO> importFields,
+                                                   List<LookupGroup> groups) {
+        List<String> gaps = partitionedLookupsWithoutCompanyColumn(modelName, importFields, groups);
+        if (!gaps.isEmpty()) {
+            log.warn("Import template for {} looks up country-partitioned values ({}) but carries no company "
+                    + "column; rows will resolve within the importer's countries, not their own", modelName, gaps);
+        }
+    }
+
+    /** The dotted lookup paths onto {@code multiCountry} targets in a template that names no company. */
+    public List<String> partitionedLookupsWithoutCompanyColumn(String modelName, List<ImportFieldDTO> importFields,
+                                                              List<LookupGroup> groups) {
+        if (!ModelManager.existModel(modelName)) {
+            return List.of();
+        }
+        Set<String> companyFields = new HashSet<>();
+        for (MetaField field : ModelManager.getModelFields(modelName)) {
+            if (FieldType.MANY_TO_ONE.equals(field.getFieldType())
+                    && ModelConstant.COMPANY_MODEL.equals(field.getRelatedModel())) {
+                companyFields.add(field.getFieldName());
+            }
+        }
+        boolean hasCompanyColumn = importFields.stream()
+                .map(ImportFieldDTO::getFieldName)
+                .anyMatch(name -> companyFields.contains(name) || companyFields.contains(name.split("\\.")[0]));
+        if (hasCompanyColumn) {
+            return List.of();
+        }
+        List<String> gaps = new ArrayList<>();
+        for (LookupGroup group : groups) {
+            if (!group.oneToOne() && isPartitioned(group.relatedModel())) {
+                gaps.addAll(group.dottedPaths());
+            }
+            for (NestedLookup nested : group.nestedLookups()) {
+                if (isPartitioned(nested.relatedModel())) {
+                    gaps.add(nested.dottedPath());
+                }
+            }
+        }
+        return gaps;
+    }
+
+    private static boolean isPartitioned(String modelName) {
+        return modelName != null && ModelManager.existModel(modelName) && ModelManager.getModel(modelName).isMultiCountry();
     }
 
     /**
@@ -263,14 +337,101 @@ public class RelationLookupResolver {
      * @param skipException when false, throw ValidationException on lookup failure instead of marking FAILED_REASON
      */
     public void resolveRows(List<Map<String, Object>> rows, List<LookupGroup> lookupGroups, boolean skipException) {
-        for (LookupGroup group : lookupGroups) {
+        resolveRows(null, rows, lookupGroups, skipException);
+    }
+
+    /**
+     * Same, naming the importing model so that country-partitioned targets can be resolved in each
+     * row's own country (the row's company reference is a field of that model). Without the model
+     * name every lookup runs unbucketed.
+     */
+    public void resolveRows(String modelName, List<Map<String, Object>> rows, List<LookupGroup> lookupGroups,
+                            boolean skipException) {
+        // A group that resolves the row's company goes first, whatever the template's column order:
+        // every country-partitioned lookup after it needs the company id already written back.
+        List<LookupGroup> ordered = new ArrayList<>(lookupGroups);
+        ordered.sort(Comparator.comparing((LookupGroup g) -> !ModelConstant.COMPANY_MODEL.equals(g.relatedModel())));
+        for (LookupGroup group : ordered) {
             if (group.oneToOne()) {
-                resolveNestedOneToOneGroup(rows, group, skipException);
+                resolveNestedOneToOneGroup(modelName, rows, group, skipException);
             } else if (group.toMany()) {
                 resolveToManyGroup(rows, group, skipException);
             } else {
-                resolveToOneGroup(rows, group, skipException);
+                resolveToOneGroup(modelName, rows, group, skipException);
             }
+        }
+    }
+
+    /**
+     * The country a row's values belong to: that of the company the row names, or {@code null}.
+     *
+     * <p>The company reference is the importing model's field onto the company model — found by
+     * target, not by name, because the HR app calls it {@code legalEntityId} on an employee and
+     * {@code companyId} on a department. Only a value already written back as an id counts: a dotted
+     * lookup column still holding a name has not been resolved yet, which is why company groups are
+     * resolved first. Rows with several company fields take the first that carries a value.
+     */
+    String countryOfRow(String modelName, Map<String, Object> row) {
+        if (companyCountryResolver == null || !ModelManager.existModel(modelName)) {
+            return null;
+        }
+        for (MetaField field : ModelManager.getModelFields(modelName)) {
+            if (!FieldType.MANY_TO_ONE.equals(field.getFieldType())
+                    || !ModelConstant.COMPANY_MODEL.equals(field.getRelatedModel())) {
+                continue;
+            }
+            Object value = row.get(field.getFieldName());
+            Long companyId = value instanceof Number n ? n.longValue()
+                    : value instanceof String text && StringUtils.isNumeric(text.trim()) ? Long.valueOf(text.trim())
+                    : null;
+            if (companyId != null) {
+                return companyCountryResolver.resolveCountry(companyId);
+            }
+        }
+        return null;
+    }
+
+    /**
+     * {@code getIdsByBusinessKeys} per country bucket for a country-partitioned target; one call, as
+     * before, for anything else. The result is keyed by (country, business key) so the write-back can
+     * pick a row's own bucket.
+     */
+    private Bucketed lookupByCountry(String modelName, String relatedModel,
+                                     List<String> lookupFields, Filters relationFilters,
+                                     List<Map<String, Object>> rows,
+                                     java.util.function.Function<Map<String, Object>, Collection<List<Object>>> keysOf) {
+        boolean partitioned = ModelManager.existModel(relatedModel) && ModelManager.getModel(relatedModel).isMultiCountry();
+        Map<String, Set<List<Object>>> keysByCountry = new LinkedHashMap<>();
+        // Identity-keyed: rows are mutable maps whose hash changes as ids are written back.
+        Map<Map<String, Object>, String> countryByRow = new IdentityHashMap<>();
+        for (Map<String, Object> row : rows) {
+            if (row.containsKey(FileConstant.FAILED_REASON)) {
+                continue;
+            }
+            Collection<List<Object>> keys = keysOf.apply(row);
+            if (keys == null || keys.isEmpty()) {
+                continue;
+            }
+            String country = partitioned ? countryOfRow(modelName, row) : null;
+            countryByRow.put(row, country);
+            keysByCountry.computeIfAbsent(country, ignored -> new LinkedHashSet<>()).addAll(keys);
+        }
+        Map<String, Map<List<Object>, ?>> resolved = new LinkedHashMap<>();
+        for (Map.Entry<String, Set<List<Object>>> bucket : keysByCountry.entrySet()) {
+            String country = bucket.getKey();
+            Filters scope = country == null
+                    ? relationFilters
+                    : Filters.and(relationFilters, Filters.of(ModelConstant.COUNTRY_FIELD, Operator.EQUAL, country));
+            resolved.put(country, modelService.getIdsByBusinessKeys(relatedModel, lookupFields, bucket.getValue(), scope));
+        }
+        return new Bucketed(resolved, countryByRow);
+    }
+
+    /** The per-country lookup results plus, per row, which bucket it was resolved in. */
+    private record Bucketed(Map<String, Map<List<Object>, ?>> byCountry,
+                            Map<Map<String, Object>, String> countryByRow) {
+        Object idFor(Map<String, Object> row, List<Object> key) {
+            return byCountry.getOrDefault(countryByRow.get(row), Map.of()).get(key);
         }
     }
 
@@ -290,11 +451,11 @@ public class RelationLookupResolver {
      * belongs to the main row, so a create must still produce one (the owning FK is typically
      * required) and an update simply relinks the sub-row already there without touching a field.
      */
-    private void resolveNestedOneToOneGroup(List<Map<String, Object>> rows, LookupGroup group,
+    private void resolveNestedOneToOneGroup(String modelName, List<Map<String, Object>> rows, LookupGroup group,
                                             boolean skipException) {
         // Business values first, ids after: each nested lookup is one query across every row, the
         // same bargain resolveToOneGroup strikes — per-row queries would turn a sheet into N calls.
-        Map<String, Map<List<Object>, ?>> resolvedByPath = resolveNestedLookupValues(rows, group);
+        Map<String, Bucketed> resolvedByPath = resolveNestedLookupValues(modelName, rows, group);
         for (Map<String, Object> row : rows) {
             if (!row.containsKey(FileConstant.FAILED_REASON)) {
                 Map<String, Object> nested = new LinkedHashMap<>();
@@ -316,7 +477,7 @@ public class RelationLookupResolver {
                         // Blank keeps the existing value, exactly like every other nested column.
                         continue;
                     }
-                    Object resolvedId = resolvedByPath.get(nestedLookup.dottedPath()).get(List.of(raw));
+                    Object resolvedId = resolvedByPath.get(nestedLookup.dottedPath()).idFor(row, List.of(raw));
                     if (resolvedId == null) {
                         markFailure(row, buildNotFoundMessage(nestedLookup.relatedModel(),
                                 List.of(nestedLookup.lookupField()), List.of(raw)), skipException);
@@ -343,25 +504,16 @@ public class RelationLookupResolver {
      * names a different row in every country that has one; without the narrowing this lookup would be
      * wrong the day a second country seeds it.
      */
-    private Map<String, Map<List<Object>, ?>> resolveNestedLookupValues(List<Map<String, Object>> rows,
-                                                                        LookupGroup group) {
-        Map<String, Map<List<Object>, ?>> resolvedByPath = new LinkedHashMap<>();
+    private Map<String, Bucketed> resolveNestedLookupValues(String modelName, List<Map<String, Object>> rows,
+                                                            LookupGroup group) {
+        Map<String, Bucketed> resolvedByPath = new LinkedHashMap<>();
         for (NestedLookup nestedLookup : group.nestedLookups()) {
-            Set<List<Object>> distinctKeys = new LinkedHashSet<>();
-            for (Map<String, Object> row : rows) {
-                if (row.containsKey(FileConstant.FAILED_REASON)) {
-                    continue;
-                }
-                Object raw = row.get(nestedLookup.dottedPath());
-                if (raw != null && (!(raw instanceof String text) || !text.isBlank())) {
-                    distinctKeys.add(List.of(raw));
-                }
-            }
-            resolvedByPath.put(nestedLookup.dottedPath(), distinctKeys.isEmpty()
-                    ? Map.of()
-                    : modelService.getIdsByBusinessKeys(nestedLookup.relatedModel(),
-                            List.of(nestedLookup.lookupField()), distinctKeys,
-                            nestedLookup.relationFilters()));
+            resolvedByPath.put(nestedLookup.dottedPath(), lookupByCountry(modelName, nestedLookup.relatedModel(),
+                    List.of(nestedLookup.lookupField()), nestedLookup.relationFilters(), rows, row -> {
+                        Object raw = row.get(nestedLookup.dottedPath());
+                        boolean present = raw != null && (!(raw instanceof String text) || !text.isBlank());
+                        return present ? List.of(List.of(raw)) : List.of();
+                    }));
         }
         return resolvedByPath;
     }
@@ -369,7 +521,8 @@ public class RelationLookupResolver {
     /**
      * Resolve one lookup group across all rows.
      */
-    private void resolveToOneGroup(List<Map<String, Object>> rows, LookupGroup group, boolean skipException) {
+    private void resolveToOneGroup(String modelName, List<Map<String, Object>> rows, LookupGroup group,
+                                   boolean skipException) {
         Set<List<Object>> distinctKeys = new LinkedHashSet<>();
         for (Map<String, Object> row : rows) {
             if (row.containsKey(FileConstant.FAILED_REASON)) {
@@ -387,9 +540,13 @@ public class RelationLookupResolver {
             return;
         }
 
-        // Step 2: Batch query related model to get businessKey -> id mapping
-        Map<List<Object>, ?> keyToIdMap = modelService.getIdsByBusinessKeys(
-                group.relatedModel(), group.lookupFields(), distinctKeys, group.relationFilters());
+        // Step 2: Batch query related model to get businessKey -> id mapping, per row country when the
+        // target is partitioned by country (see the class comment).
+        Bucketed lookedUp = lookupByCountry(modelName, group.relatedModel(),
+                group.lookupFields(), group.relationFilters(), rows, row -> {
+                    List<Object> keys = extractKeyValues(row, group);
+                    return keys == null ? List.of() : List.of(keys);
+                });
 
         // Step 3: Write back the FK id and remove dotted-path columns
         for (Map<String, Object> row : rows) {
@@ -403,7 +560,7 @@ public class RelationLookupResolver {
                 removeDottedPaths(row, group);
                 continue;
             }
-            Object resolvedId = keyToIdMap.get(keyValues);
+            Object resolvedId = lookedUp.idFor(row, keyValues);
             if (resolvedId == null) {
                 markFailure(row, buildNotFoundMessage(group, keyValues), skipException);
             } else {
