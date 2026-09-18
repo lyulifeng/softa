@@ -244,7 +244,7 @@ public enum CustomerTier {
   switch can never reach outside the grant. The switcher offers exactly the companies the role's data
   scope on the company model holds, so the selection is always a subset and never empties a screen the
   user was allowed to open. The grant and its countries are bridged onto the Context as
-  `accessibleCompanyIds` / `accessibleCountries` ("my companies / my countries") — `null` = unknown,
+  `grantedCompanyIds` / `grantedCountries` ("my companies / my countries") — `null` = unknown,
   never "none"; the country set is concrete even for an unrestricted grant (every company of the tenant). The grant is keyed on the **field name**, not on `multiCompany`: a model
   carrying `companyId` without the flag (a pay group) is bounded by the grant while staying indifferent
   to the header — grant follows the field, selection follows the flag. The grant has **no store of its

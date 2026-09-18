@@ -14,22 +14,22 @@ import org.junit.jupiter.api.Test;
 class ContextCopyTest {
 
     @Test
-    void copyCarriesTheAccessibleCompaniesAndCountries() {
+    void copyCarriesTheGrantedCompaniesAndCountries() {
         Context original = new Context();
         original.setUserId(1L);
-        original.setAccessibleCompanyIds(Set.of(11L, 12L));
-        original.setAccessibleCountries(Set.of("SG", "NZ"));
+        original.setGrantedCompanyIds(Set.of(11L, 12L));
+        original.setGrantedCountries(Set.of("SG", "NZ"));
 
         Context copy = original.copy();
 
-        assertThat(copy.getAccessibleCompanyIds()).containsExactlyInAnyOrder(11L, 12L);
-        assertThat(copy.getAccessibleCountries()).containsExactlyInAnyOrder("SG", "NZ");
+        assertThat(copy.getGrantedCompanyIds()).containsExactlyInAnyOrder(11L, 12L);
+        assertThat(copy.getGrantedCountries()).containsExactlyInAnyOrder("SG", "NZ");
     }
 
     @Test
     void copyKeepsUnknownAsNull() {
         Context copy = new Context().copy();
-        assertThat(copy.getAccessibleCompanyIds()).isNull();
-        assertThat(copy.getAccessibleCountries()).isNull();
+        assertThat(copy.getGrantedCompanyIds()).isNull();
+        assertThat(copy.getGrantedCountries()).isNull();
     }
 }

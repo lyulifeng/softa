@@ -193,8 +193,8 @@ class PermissionInterceptorTest {
         ctx.setUserId(42L);
         ContextHolder.runWith(ctx, () -> interceptor.preHandle(r, new MockHttpServletResponse(), null));
 
-        assertThat(ctx.getAccessibleCompanyIds()).containsExactlyInAnyOrder(11L, 12L);
-        assertThat(ctx.getAccessibleCountries()).containsExactlyInAnyOrder("SG", "NZ");
+        assertThat(ctx.getGrantedCompanyIds()).containsExactlyInAnyOrder(11L, 12L);
+        assertThat(ctx.getGrantedCountries()).containsExactlyInAnyOrder("SG", "NZ");
     }
 
     @Test
@@ -214,8 +214,8 @@ class PermissionInterceptorTest {
         ctx.setUserId(42L);
         ContextHolder.runWith(ctx, () -> interceptor.preHandle(r, new MockHttpServletResponse(), null));
 
-        assertThat(ctx.getAccessibleCompanyIds()).isNull();
-        assertThat(ctx.getAccessibleCountries()).containsExactly("SG");
+        assertThat(ctx.getGrantedCompanyIds()).isNull();
+        assertThat(ctx.getGrantedCountries()).containsExactly("SG");
     }
 
     // ─── unmapped endpoint → 403 ───

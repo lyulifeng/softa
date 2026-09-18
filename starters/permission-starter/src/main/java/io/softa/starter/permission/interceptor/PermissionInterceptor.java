@@ -204,8 +204,8 @@ public class PermissionInterceptor implements HandlerInterceptor {
         // header switcher is gone. Nothing here decides access — that stays with the grant
         // applied by PermissionServiceImpl; this only lets the framework layer read what was decided.
         if (pi != null) {
-            ctx.setAccessibleCompanyIds(pi.getGrantedCompanyIds());
-            ctx.setAccessibleCountries(pi.getGrantedCountries());
+            ctx.setGrantedCompanyIds(pi.getGrantedCompanyIds());
+            ctx.setGrantedCountries(pi.getGrantedCountries());
         }
     }
 

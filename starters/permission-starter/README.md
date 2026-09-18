@@ -218,7 +218,7 @@ materialises into `PermissionInfo.grantedCompanyIds`; `appendCompanyGrant` then 
 selected. The same build reads the **countries** behind the grant into `PermissionInfo.grantedCountries`
 ("my countries") — a concrete set even for an unrestricted grant (every company of the tenant),
 because an administrator of an SG-only tenant works in SG whatever a value domain was seeded for. The
-interceptor bridges both onto the framework `Context` (`accessibleCompanyIds` / `accessibleCountries`)
+interceptor bridges both onto the framework `Context` (`grantedCompanyIds` / `grantedCountries`)
 beside the role codes, so the ORM can read them without importing this module; `null` there means
 "unknown — do not narrow", which is what public and bypass endpoints get. One row therefore bounds both the company switcher's own list and everything behind it —
 before, a separate `RoleCompany` table held the grant and the two could disagree, so narrowing the
