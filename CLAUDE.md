@@ -208,7 +208,7 @@ public enum CustomerTier {
 
 - `multiCountry` / `multiCompany` (**request-scoped narrowing and the company axis**): `multiCountry`
   marks a model whose rows are partitioned by country, and the ORM narrows every read of it to **the
-  countries the caller works in** — `Context.accessibleCountries`, the countries of the companies the
+  countries the caller works in** — `Context.grantedCountries`, the countries of the companies the
   caller's roles reach, bridged from the permission snapshot. Nothing is read from the request: a header
   switcher once selected a company and the narrowing followed it (`X-Company-Id` / `X-Company-Country`,
   `Context.companyId`, the `SELECTED_COMP_*` placeholders); all of that is gone, and `Context.companyId`
@@ -228,7 +228,7 @@ public enum CustomerTier {
   `Currency` / `CountrySubdivision` deliberately do not.
 
   **Grant, countries, affiliation — three different things, never merged.** The *grant*
-  (`PermissionInfo.grantedCompanyIds` → `Context.accessibleCompanyIds`, applied by
+  (`PermissionInfo.grantedCompanyIds` → `Context.grantedCompanyIds`, applied by
   `PermissionServiceImpl.appendCompanyGrant`) decides which companies' records a caller sees, keyed on the
   **field name** `companyId`, not on the `multiCompany` flag; there is **no per-company read narrowing**
   any more (`MultiCompanyScope` is retired — the grant is the whole answer). It is the role's data scope
@@ -236,7 +236,7 @@ public enum CustomerTier {
   `DefaultPermissionSnapshotProvider.readGrantedCompanyIds`, with no store of its own and no company
   scope type (`ScopeType.LEGAL_ENTITY` is retired, migration `V40`). Tri-state: `null` = unrestricted,
   **empty** = reaches no company, non-empty = exactly those. The *countries* (`grantedCountries` →
-  `Context.accessibleCountries`) are read in the same build and are **concrete even for an unrestricted
+  `Context.grantedCountries`) are read in the same build and are **concrete even for an unrestricted
   grant** — every company of the tenant — because "no company restriction" is not "every country"; `null`
   means unknown (no snapshot consulted) and readers treat it as "do not narrow", never "none". The
   *affiliation* (`EmpInfo.companyId` / `USER_COMP_ID`) anchors permission rules and stays out of the

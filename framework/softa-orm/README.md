@@ -453,17 +453,17 @@ Important rule:
 
 Tenant isolation is not the only read narrowing the ORM applies on its own. Reads of a model declared `@Model(multiCountry = true)` — rows replicated per country: pass types, ID types, employment types — are narrowed to **the countries the caller works in**.
 
-That set is the caller's own: the countries of the companies their roles reach, bridged from the permission snapshot onto the request `Context` as `accessibleCountries` (beside `accessibleCompanyIds`, the grant itself). Two companies in the same country share their value domains, so the set is by country, not by company. Nothing is read from the request: a header switcher used to select one company and the narrowing followed it; the switcher is gone, and with nothing to select the grant is the answer.
+That set is the caller's own: the countries of the companies their roles reach, bridged from the permission snapshot onto the request `Context` as `grantedCountries` (beside `grantedCompanyIds`, the grant itself). Two companies in the same country share their value domains, so the set is by country, not by company. Nothing is read from the request: a header switcher used to select one company and the narrowing followed it; the switcher is gone, and with nothing to select the grant is the answer.
 
 ```
-permission snapshot  ──bridge──▶  Context.accessibleCountries = {SG, NZ}
+permission snapshot  ──bridge──▶  Context.grantedCountries = {SG, NZ}
                                        └─▶ MultiCountryScope → country IN ('NZ','SG')
 
-roles reach no company (self-service)  ▶  accessibleCountries = {}  ,  EmpInfo.companyId = 4242
+roles reach no company (self-service)  ▶  grantedCountries = {}  ,  EmpInfo.companyId = 4242
                                        └─ CompanyCountryEnricher → Context.companyCountry = 'SG'
                                             └─▶ MultiCountryScope → country IN ('SG')
 
-no snapshot consulted (public, MQ, job) ▶  accessibleCountries = null , no companyCountry
+no snapshot consulted (public, MQ, job) ▶  grantedCountries = null , no companyCountry
                                        └─▶ MultiCountryScope → skipped
 ```
 
@@ -506,8 +506,8 @@ A to-many reference is never an anchor. A bank serving many countries is not par
 
 Three things, kept apart:
 
-- **The grant** — `PermissionInfo.grantedCompanyIds`, bridged as `Context.accessibleCompanyIds`: which companies' *records* the caller may see, applied by `appendCompanyGrant` to every model carrying the company anchor. Tri-state: `null` = unrestricted (an unconfigured role), **empty** = reaches no company at all (only ever an explicit configuration — a self-service role), non-empty = exactly those. It is the role's ordinary data scope on the company model (`role_data_scope` where `model = 'Company'`), resolved by `DefaultPermissionSnapshotProvider.readGrantedCompanyIds`; there is deliberately no company scope type and no store of its own.
-- **The countries** — `PermissionInfo.grantedCountries`, bridged as `Context.accessibleCountries`: the countries of those companies, read in the same snapshot build. Concrete even for an unrestricted grant (every company of the tenant), because "no company restriction" is not "every country": an SG-only tenant's administrator works in SG whatever a value domain was seeded for. `null` only when unknown — a request that never consulted the snapshot — and a reader must treat that as "do not narrow", never as "none".
+- **The grant** — `PermissionInfo.grantedCompanyIds`, bridged as `Context.grantedCompanyIds`: which companies' *records* the caller may see, applied by `appendCompanyGrant` to every model carrying the company anchor. Tri-state: `null` = unrestricted (an unconfigured role), **empty** = reaches no company at all (only ever an explicit configuration — a self-service role), non-empty = exactly those. It is the role's ordinary data scope on the company model (`role_data_scope` where `model = 'Company'`), resolved by `DefaultPermissionSnapshotProvider.readGrantedCompanyIds`; there is deliberately no company scope type and no store of its own.
+- **The countries** — `PermissionInfo.grantedCountries`, bridged as `Context.grantedCountries`: the countries of those companies, read in the same snapshot build. Concrete even for an unrestricted grant (every company of the tenant), because "no company restriction" is not "every country": an SG-only tenant's administrator works in SG whatever a value domain was seeded for. `null` only when unknown — a request that never consulted the snapshot — and a reader must treat that as "do not narrow", never as "none".
 - **The affiliation** — `EmpInfo.companyId` / `USER_COMP_ID`, "the company I belong to": anchors permission rules and must stay out of the grant (a grant derived from it makes one role behave differently per holder). On the country axis it is the fallback: a self-service employee whose roles reach no company has an empty set, and `CompanyCountryEnricher` puts their own company's country on `Context.companyCountry` so their dropdowns still narrow.
 
 ### When narrowing is skipped

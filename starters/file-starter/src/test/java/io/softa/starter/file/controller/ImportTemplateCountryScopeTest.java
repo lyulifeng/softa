@@ -25,7 +25,7 @@ class ImportTemplateCountryScopeTest {
 
     private Filters scopeFor(Set<String> countries, String ownCountry) {
         Context context = new Context();
-        context.setAccessibleCountries(countries);
+        context.setGrantedCountries(countries);
         context.setCompanyCountry(ownCountry);
         return ContextHolder.callWith(context, controller::countryScope);
     }

@@ -21,7 +21,7 @@ import io.softa.framework.orm.meta.ModelManager;
  * left, and it serves one purpose: the caller whose roles reach no company — a self-service employee —
  * has an empty country set on the context, and {@code MultiCountryScope} would otherwise show them
  * every country's value domains. They belong to exactly one company, so its country is never in doubt.
- * For everyone else the narrowing reads {@code Context.accessibleCountries}, which the permission layer
+ * For everyone else the narrowing reads {@code Context.grantedCountries}, which the permission layer
  * bridges from the grant, and this field is not consulted.
  *
  * <h3>Convention, not configuration</h3>

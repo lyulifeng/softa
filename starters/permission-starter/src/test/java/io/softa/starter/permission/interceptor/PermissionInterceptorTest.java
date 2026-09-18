@@ -136,8 +136,8 @@ class PermissionInterceptorTest {
                 () -> interceptor.preHandle(r, new MockHttpServletResponse(), null));
 
         assertThat(allowed).isTrue();
-        assertThat(ctx.getAccessibleCountries()).containsExactlyInAnyOrder("SG", "NZ");
-        assertThat(ctx.getAccessibleCompanyIds()).isNull();
+        assertThat(ctx.getGrantedCountries()).containsExactlyInAnyOrder("SG", "NZ");
+        assertThat(ctx.getGrantedCompanyIds()).isNull();
         assertThat(ctx.getRoleCodes()).isNull();
         org.mockito.Mockito.verify(endpointIndex, org.mockito.Mockito.never()).lookup(anyString(), anyString());
     }

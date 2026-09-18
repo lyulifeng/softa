@@ -18,7 +18,7 @@ import org.apache.commons.lang3.StringUtils;
 /**
  * Narrows reads of a multi-country model — one whose rows are replicated per country, see
  * {@code @Model(multiCountry = true)} — to the countries the caller works in: those of the companies
- * their roles reach ({@code Context.accessibleCountries}, bridged from the permission snapshot).
+ * their roles reach ({@code Context.grantedCountries}, bridged from the permission snapshot).
  *
  * <p>This used to narrow to the country of the company selected in a header switcher. The switcher is
  * gone; with nothing to select, the caller's own set is the answer to "which countries' values apply
@@ -118,7 +118,7 @@ public final class MultiCountryScope {
      * set always compiles to the same SQL.
      */
     public static List<String> countriesInPlay(Context context) {
-        Set<String> accessible = context.getAccessibleCountries();
+        Set<String> accessible = context.getGrantedCountries();
         if (accessible != null && !accessible.isEmpty()) {
             return new ArrayList<>(new TreeSet<>(accessible));
         }

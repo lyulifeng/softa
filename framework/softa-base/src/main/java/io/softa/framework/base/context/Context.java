@@ -34,10 +34,10 @@ public class Context implements Serializable {
      * ({@code X-Company-Id}); the switcher is gone and nothing reads the header any more, so this is
      * always {@code null} on a request. Kept for one release so that application code which clears it
      * (an isolated read that "drops the selection") still compiles; readers must treat it as absent.
-     * Which companies a request may see is {@link #accessibleCompanyIds}, the grant — a view narrower
+     * Which companies a request may see is {@link #grantedCompanyIds}, the grant — a view narrower
      * than the grant does not exist any more.
      *
-     * @deprecated always null; use {@link #accessibleCompanyIds} for "my companies"
+     * @deprecated always null; use {@link #grantedCompanyIds} for "my companies"
      */
     @Deprecated
     private Long companyId;
@@ -46,7 +46,7 @@ public class Context implements Serializable {
      * ISO 3166-1 alpha-2 country of the company the caller <b>belongs to</b> ({@code EmpInfo.companyId}),
      * resolved server-side by a ContextEnricher. Never read from the client.
      *
-     * <p>Only a fallback now. The per-country narrowing reads {@link #accessibleCountries} — the
+     * <p>Only a fallback now. The per-country narrowing reads {@link #grantedCountries} — the
      * countries of the companies the caller's roles reach — and consults this only when that set is
      * unknown or empty: a self-service employee whose roles reach no company still sees their own
      * country's value domains, because they belong to exactly one. For everyone else this is not read.

@@ -140,7 +140,7 @@ class MultiCountryScopeTest {
     void theSetWinsOverTheOwnCountryWhenBothAreKnown() {
         // An HR employed by the SG company but granted the NZ one too works in both.
         Context context = new Context();
-        context.setAccessibleCountries(Set.of("SG", "NZ"));
+        context.setGrantedCountries(Set.of("SG", "NZ"));
         context.setCompanyCountry("SG");
 
         Filters result = ContextHolder.callWith(context,
@@ -208,7 +208,7 @@ class MultiCountryScopeTest {
         // A role reaching no company, held by a pure user with no employee record: nothing to narrow
         // by, and "no country" must not become "country IN ()" — that matches nothing.
         Context context = new Context();
-        context.setAccessibleCountries(Set.of());
+        context.setGrantedCountries(Set.of());
         Filters original = Filters.of("active", Operator.EQUAL, true);
 
         assertSame(original, ContextHolder.callWith(context,
@@ -242,7 +242,7 @@ class MultiCountryScopeTest {
     /** Runs {@code op} with a context carrying the caller's country set — the bridged grant. */
     private static Filters withCountries(Set<String> countries, java.util.function.Supplier<Filters> op) {
         Context context = new Context();
-        context.setAccessibleCountries(countries);
+        context.setGrantedCountries(countries);
         return ContextHolder.callWith(context, op::get);
     }
 
@@ -252,7 +252,7 @@ class MultiCountryScopeTest {
      */
     private static Filters withOwnCountryOnly(String country, java.util.function.Supplier<Filters> op) {
         Context context = new Context();
-        context.setAccessibleCountries(Set.of());
+        context.setGrantedCountries(Set.of());
         context.setCompanyCountry(country);
         return ContextHolder.callWith(context, op::get);
     }
