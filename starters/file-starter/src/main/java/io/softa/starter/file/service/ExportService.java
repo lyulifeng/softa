@@ -6,6 +6,7 @@ import io.softa.framework.orm.domain.FlexQuery;
 import io.softa.framework.orm.dto.FileInfo;
 import io.softa.starter.file.dto.ExportTemplateDTO;
 import io.softa.starter.file.dto.SheetInfo;
+import io.softa.starter.file.vo.PivotSpec;
 
 public interface ExportService {
 
@@ -19,6 +20,12 @@ public interface ExportService {
      * @return fileInfo object with download URL
      */
     FileInfo dynamicExport(String modelName, FlexQuery flexQuery);
+
+    /**
+     * Same, with pivot columns appended from {@code pivot} — one per key of a related long table,
+     * computed by the same rule the list view renders them with.
+     */
+    FileInfo dynamicExport(String modelName, FlexQuery flexQuery, PivotSpec pivot);
 
     /**
      * Export multiple sheets of data by dynamic fields and ExportParams, without export template.

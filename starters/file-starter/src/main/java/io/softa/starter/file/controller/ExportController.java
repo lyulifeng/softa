@@ -44,7 +44,7 @@ public class ExportController {
     public ApiResponse<FileInfo> dynamicExport(@RequestParam String modelName,
                                                @RequestBody ExportParams exportParams) {
         FlexQuery flexQuery = ExportParams.convertParamsToFlexQuery(exportParams);
-        return ApiResponse.success(exportService.dynamicExport(modelName, flexQuery));
+        return ApiResponse.success(exportService.dynamicExport(modelName, flexQuery, exportParams.getPivot()));
     }
 
     /**

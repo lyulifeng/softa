@@ -17,6 +17,8 @@ import io.softa.starter.file.dto.ExportResult;
 import io.softa.starter.file.dto.SheetInfo;
 import io.softa.starter.file.entity.ExportHistory;
 import io.softa.starter.file.excel.export.ExcelSheetData;
+import io.softa.starter.file.vo.PivotSpec;
+import io.softa.starter.file.excel.export.support.PivotColumns;
 import io.softa.starter.file.excel.export.support.ExcelUploadService;
 import io.softa.starter.file.excel.export.support.ExportDataFetcher;
 
@@ -35,6 +37,8 @@ public class ExportByDynamic implements ExportStrategy {
 
     @Autowired
     private ExcelUploadService excelUploadService;
+    @Autowired
+    private PivotColumns pivotColumns;
 
     /**
      * Export data by dynamic fields and QueryParams, without export template.
@@ -64,7 +68,31 @@ public class ExportByDynamic implements ExportStrategy {
 
     @Override
     public ExportResult export(ExportContext exportContext) {
+        if (exportContext.getPivot() != null) {
+            return exportWithPivot(exportContext.getModelName(), exportContext.getFlexQuery(), exportContext.getPivot());
+        }
         return export(exportContext.getModelName(), exportContext.getFlexQuery());
+    }
+
+    /**
+     * The dynamic export plus pivot columns — see {@link PivotColumns}. The exported rows are fetched
+     * once and kept, because the pivot needs their ids to join the source rows on; the plain path
+     * discards them after tabulating.
+     */
+    ExportResult exportWithPivot(String modelName, FlexQuery flexQuery, PivotSpec pivot) {
+        List<String> headers = new ArrayList<>();
+        List<String> exportedFields = List.copyOf(flexQuery.getFields());
+        List<Map<String, Object>> rows = exportDataFetcher.fetchRows(modelName, null, flexQuery);
+        exportedFields.forEach(fieldName -> headers.add(ModelManager.getLastFieldOfCascaded(modelName, fieldName).getLabel()));
+        List<List<Object>> rowsTable = new ArrayList<>();
+        for (List<Object> row : ListUtils.convertToTableData(exportedFields, rows)) {
+            rowsTable.add(new ArrayList<>(row));
+        }
+        pivotColumns.append(modelName, pivot, rows, headers, rowsTable);
+        String modelLabel = ModelManager.getModel(modelName).getLabel();
+        ExcelSheetData sheetData = new ExcelSheetData(modelLabel, headers, rowsTable, null);
+        FileInfo fileInfo = excelUploadService.generateFileAndUpload(HISTORY_MODEL, modelLabel, sheetData);
+        return new ExportResult(fileInfo, rowsTable.size());
     }
 
     /**

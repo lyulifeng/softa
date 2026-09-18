@@ -28,6 +28,7 @@ import io.softa.starter.file.excel.export.strategy.ExportStrategyFactory;
 import io.softa.starter.file.service.ExportHistoryService;
 import io.softa.starter.file.service.ExportService;
 import io.softa.starter.file.service.ExportTemplateService;
+import io.softa.starter.file.vo.PivotSpec;
 
 @Service
 public class ExportServiceImpl implements ExportService {
@@ -67,9 +68,14 @@ public class ExportServiceImpl implements ExportService {
      * @return fileInfo object with download URL
      */
     public FileInfo dynamicExport(String modelName, FlexQuery flexQuery) {
+        return dynamicExport(modelName, flexQuery, null);
+    }
+
+    @Override
+    public FileInfo dynamicExport(String modelName, FlexQuery flexQuery, PivotSpec pivot) {
         long startNanos = System.nanoTime();
-        ExportResult exportResult = exportStrategyFactory.getStrategy(ExportContext.dynamic(modelName, flexQuery))
-                .export(ExportContext.dynamic(modelName, flexQuery));
+        ExportContext context = ExportContext.dynamic(modelName, flexQuery, pivot);
+        ExportResult exportResult = exportStrategyFactory.getStrategy(context).export(context);
         this.generateExportHistory(null, modelName, exportResult, startNanos);
         return exportResult.getFileInfo();
     }

@@ -45,6 +45,9 @@ public class ExportParams {
     @Schema(description = "Effective date, default is `Today`.")
     private LocalDate effectiveDate;
 
+    @Schema(description = "Pivot columns to append: one per key of a related long table. See PivotSpec.")
+    private PivotSpec pivot;
+
     /**
      * Convert ExportParams to FlexQuery.
      *
