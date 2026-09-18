@@ -602,9 +602,8 @@ public class ModelManager {
         }
         String modelName = metaModel.getModelName();
         Assert.isTrue(!ModelConstant.COMPANY_MODEL.equals(modelName),
-                "The model {0} IS the company; it cannot be multi-company. Narrowing it by the "
-                        + "selected company would leave the company switcher with a single choice — "
-                        + "the one already selected.",
+                "The model {0} IS the company; it cannot be multi-company. The company grant bounds "
+                        + "it by its own id, and it has no company reference of its own to anchor on.",
                 modelName);
         requireAnchorField(modelName, ModelConstant.COMPANY_FIELD, ModelConstant.COMPANY_MODEL,
                 "multi-company");

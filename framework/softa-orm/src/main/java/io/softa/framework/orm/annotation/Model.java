@@ -78,9 +78,10 @@ public @interface Model {
     /**
      * This model's rows are partitioned by country — one independent set per country,
      * so a value domain that differs between countries is stored as separate rows
-     * rather than shared ones. Queries are then narrowed to the country of the
-     * company selected in the request context, automatically and for every
-     * read path (list / page / count / reference lookup).
+     * rather than shared ones. Queries are then narrowed to the caller's countries
+     * ({@code Context.grantedCountries}: the countries of the companies their roles
+     * reach), automatically and for every read path (list / page / count / reference
+     * lookup). A request that does not know its countries is not narrowed.
      *
      * <p>Boot-enforced: the model must carry a {@code MANY_TO_ONE} field onto
      * {@code CountryRegion} (see {@link io.softa.framework.orm.meta.ModelManager}).
@@ -93,8 +94,10 @@ public @interface Model {
     boolean multiCountry() default false;
 
     /**
-     * Rows belong to one company, and reads are narrowed to the company selected
-     * in the request context — automatically, on every read path.
+     * Rows belong to one company. The framework does not narrow such a model by itself;
+     * the permission layer ANDs the role's company grant onto every read of it, using the
+     * anchor field this flag requires, so a role limited to some legal entities sees only
+     * their rows. Roles without a company grant see every company's rows.
      *
      * <p>Boot-enforced: the model must carry a {@code MANY_TO_ONE} / {@code ONE_TO_ONE} onto
      * {@code LegalEntity}. A model with no company column of its own — a per-department statistic —

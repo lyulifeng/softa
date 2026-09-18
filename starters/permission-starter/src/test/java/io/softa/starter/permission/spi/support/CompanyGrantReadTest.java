@@ -92,8 +92,8 @@ class CompanyGrantReadTest {
 
     @Test
     void resolvesTheAxisFromTheCompanyModelsOwnScope() {
-        // One configuration, two effects: the row that narrows which companies the switcher offers is
-        // the row that bounds every model belonging to a company. Asserted on the query as well as the
+        // One configuration, two effects: the row that decides which companies are "mine" is the row
+        // that bounds every model belonging to a company. Asserted on the query as well as the
         // result, so reading the wrong model or the wrong field fails here rather than in production.
         companiesMatching(Filters.of("country", Operator.EQUAL, "SG"),
                 List.of(Map.of("id", 8712L), Map.of("id", 9001L)));

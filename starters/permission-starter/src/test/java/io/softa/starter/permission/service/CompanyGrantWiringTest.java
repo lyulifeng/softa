@@ -117,11 +117,11 @@ class CompanyGrantWiringTest {
     }
 
     @Test
-    void aRestrictingRuleUnderACraftedHeaderIsBoundedToo() {
+    void aRestrictingRuleIsBoundedToo() {
         // A restricting row scope does not buy its way past the grant either. An earlier revision let
-        // it: the switcher was to offer "grant ∪ reach", so a manager with a cross-company report
-        // could select that company and see the rows their own rule hands over. The PRD settled the
-        // dropdown as the role's step-2 company selection alone, which leaves the grant unconditional
+        // it: "my companies" was to be "grant ∪ reach", so a manager with a cross-company report
+        // could see the rows their own rule hands over. The requirement settled "my companies" as
+        // the role's step-2 company selection alone, which leaves the grant unconditional
         // — and a header naming a company outside it must therefore yield nothing, not a subset.
         caller(ScopeType.SELF, Filters.of("id", io.softa.framework.base.enums.Operator.EQUAL, 42L));
 
