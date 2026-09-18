@@ -373,6 +373,11 @@ Built-in export supports three scopes:
 Front-end export is limited to `100000` records for a single request; over-limit scopes are disabled instead of truncated.
 
 ### ExportTemplate Configuration Table
+
+### Pivot columns on a dynamic export
+
+`ExportParams.pivot` (a `PivotSpec`) appends one column per key of a related long table — the FTE report's "one column per employment type". The list view renders its pivot from the same declaration, so the sheet and the screen agree by construction: the column set is the key model's whole domain (read through `searchName`, already narrowed to the caller's countries), ordered by group then label and suffixed with the group when the client asks (`Full Time (SG)`); the cell is the source row's value, else `0` when the column's group applies to the row and `—` (`emptyText`) when it does not. The exported rows' group is read through `rowGroupField` — a to-one whose target carries `keyModelGroupField` — in a second, non-display read, because the export rows themselves come back with display names that cannot be joined on. Nothing is stored in pivot shape. See `PivotColumns`.
+
 | Field | Type | Default | Description |
 | --- | --- | --- | --- |
 | `fileName` | String | `null` | Export file name |

@@ -44,7 +44,7 @@ public class ExportController {
     public ApiResponse<FileInfo> dynamicExport(@RequestParam String modelName,
                                                @RequestBody ExportParams exportParams) {
         FlexQuery flexQuery = ExportParams.convertParamsToFlexQuery(exportParams);
-        return ApiResponse.success(exportService.dynamicExport(modelName, flexQuery));
+        return ApiResponse.success(exportService.dynamicExport(modelName, flexQuery, exportParams.getPivot()));
     }
 
     /**
@@ -98,6 +98,9 @@ public class ExportController {
             sheetInfo.setModelName(sheet.getModelName());
             sheetInfo.setSheetName(sheet.getSheetName());
             sheetInfo.setFlexQuery(ExportParams.convertParamsToFlexQuery(sheet.getExportParams()));
+            // A sheet's pivot rides along: the main sheet of a workbook shows the same columns the
+            // screen does, whether or not object sheets are ticked beside it.
+            sheetInfo.setPivot(sheet.getExportParams() == null ? null : sheet.getExportParams().getPivot());
             sheetInfoList.add(sheetInfo);
         }
         // After the conversions, each of which cleared it: the queries all run later, so this is the
