@@ -81,6 +81,16 @@ public class ExportByDynamic implements ExportStrategy {
      */
     ExportResult exportWithPivot(String modelName, FlexQuery flexQuery, PivotSpec pivot) {
         List<String> headers = new ArrayList<>();
+        List<List<Object>> rowsTable = extractDataTableWithPivot(modelName, flexQuery, pivot, headers);
+        String modelLabel = ModelManager.getModel(modelName).getLabel();
+        ExcelSheetData sheetData = new ExcelSheetData(modelLabel, headers, rowsTable, null);
+        FileInfo fileInfo = excelUploadService.generateFileAndUpload(HISTORY_MODEL, modelLabel, sheetData);
+        return new ExportResult(fileInfo, rowsTable.size());
+    }
+
+    /** {@link #extractDataTableFromDB} plus the pivot's columns — the rows are kept for their ids. */
+    List<List<Object>> extractDataTableWithPivot(String modelName, FlexQuery flexQuery, PivotSpec pivot,
+                                                 List<String> headers) {
         List<String> exportedFields = List.copyOf(flexQuery.getFields());
         List<Map<String, Object>> rows = exportDataFetcher.fetchRows(modelName, null, flexQuery);
         exportedFields.forEach(fieldName -> headers.add(ModelManager.getLastFieldOfCascaded(modelName, fieldName).getLabel()));
@@ -89,10 +99,7 @@ public class ExportByDynamic implements ExportStrategy {
             rowsTable.add(new ArrayList<>(row));
         }
         pivotColumns.append(modelName, pivot, rows, headers, rowsTable);
-        String modelLabel = ModelManager.getModel(modelName).getLabel();
-        ExcelSheetData sheetData = new ExcelSheetData(modelLabel, headers, rowsTable, null);
-        FileInfo fileInfo = excelUploadService.generateFileAndUpload(HISTORY_MODEL, modelLabel, sheetData);
-        return new ExportResult(fileInfo, rowsTable.size());
+        return rowsTable;
     }
 
     /**
@@ -108,7 +115,9 @@ public class ExportByDynamic implements ExportStrategy {
         List<ExcelSheetData> sheetDataList = new ArrayList<>();
         for (SheetInfo sheetInfo : sheetInfoList) {
             List<String> headers = new ArrayList<>();
-            List<List<Object>> rowsTable = this.extractDataTableFromDB(sheetInfo.getModelName(), sheetInfo.getFlexQuery(), headers);
+            List<List<Object>> rowsTable = sheetInfo.getPivot() != null
+                    ? this.extractDataTableWithPivot(sheetInfo.getModelName(), sheetInfo.getFlexQuery(), sheetInfo.getPivot(), headers)
+                    : this.extractDataTableFromDB(sheetInfo.getModelName(), sheetInfo.getFlexQuery(), headers);
             String sheetName = StringUtils.isNotBlank(sheetInfo.getSheetName()) ? sheetInfo.getSheetName()
                     : sheetInfo.getModelName();
             sheetDataList.add(new ExcelSheetData(sheetName, headers, rowsTable, null));
