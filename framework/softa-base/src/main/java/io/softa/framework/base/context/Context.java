@@ -71,9 +71,9 @@ public class Context implements Serializable {
      * is, so the ORM can read it without depending on the permission model.
      *
      * <p>Same three states as its source: {@code null} — unrestricted, no company axis configured for
-     * this role; empty — no company at all; non-empty — exactly those. Distinct from
-     * {@link #companyId}, the one company being looked at right now: that is a selection made from this
-     * set, and it goes away when an application drops its header switcher, while this stays.
+     * this role; empty — no company at all; non-empty — exactly those. This is the whole answer to
+     * "which companies": there is no narrower per-request selection any more (see the deprecated
+     * {@link #companyId}).
      *
      * <p>Unset on requests that never consult the snapshot — public and authenticated-bypass
      * endpoints, scheduler and MQ threads — where {@code null} therefore means "unknown", which every

@@ -80,14 +80,13 @@ public class EmployeeContextEnricher implements ContextEnricher {
     /**
      * Load the caller's employee row + managed departments.
      *
-     * <p>Runs on a copy of the request context with {@code skipPermissionCheck=true} and no company
-     * selected — a scope and selection waiver only; the tenant filter still applies, so this reads a
+     * <p>Runs on a copy of the request context with {@code skipPermissionCheck=true} — a row-scope
+     * waiver only; the tenant filter still applies, so this reads a
      * single tenant's data. The waiver is applied in code rather than via {@code @SkipPermissionCheck}:
      * that annotation is Spring-AOP advice and only fires on calls that arrive through the bean proxy.
      * This method is reached by self-invocation from {@link #loadCached}, and
      * {@link #collectManagedDeptIds} is {@code private} — neither is ever advised, so the annotation
-     * was inert and these reads ran under full row-scope enforcement. Same shape as
-     * {@code MeCompanyController.withSelectionCleared}.
+     * was inert and these reads ran under full row-scope enforcement.
      *
      * <p>Why that mattered: row scope resolves SELF / DIRECT_REPORTS / DEPT_SUBTREE against
      * {@code Context.empInfo} — precisely what this method exists to build. So a non-admin
@@ -99,36 +98,21 @@ public class EmployeeContextEnricher implements ContextEnricher {
     EmpInfo buildFromDb(Long userId) {
         // Non-HR app (no Employee model) → no EmpInfo; caller treats as pure user.
         if (!ModelManager.existModel(EMPLOYEE_MODEL)) return null;
-        // Unbound context (scheduler / MQ threads): permission checks are already bypassed and there
-        // is no selection to clear, so the reads run as they are.
+        // Unbound context (scheduler / MQ threads): permission checks are already bypassed, so the
+        // reads run as they are.
         if (!ContextHolder.existContext()) return readIdentity(userId);
         // Read on a COPY rather than mutating the live context and restoring it. The Context is
         // shared by the whole request, so a restore missed on any path would leave every later query
-        // unscoped and unnarrowed — a far wider failure than the one this fixes. A copy cannot leak.
-        // Same shape as {@code MeCompanyController.withSelectionCleared}, which asks the sibling
-        // question ("which companies may I switch to") and clears the selection the same way.
+        // unscoped — a far wider failure than the one this fixes. A copy cannot leak.
         Context isolated = ContextHolder.getContext().copy();
         // Row scope resolves SELF / DIRECT_REPORTS / DEPT_SUBTREE against Context.empInfo — precisely
         // what these reads exist to produce — so leaving it on deadlocks: a non-admin matches no
         // Employee row, EmpInfo stays null, and every employee-anchored scope silently yields nothing.
         isolated.setSkipPermissionCheck(true);
-        // Identity is prior to the view. `X-Company-Id` names the company the caller is LOOKING AT;
-        // it must not decide WHO the caller is. Left in place, MultiCompanyScope appends
-        // `companyId = <selected>` to both reads, so a caller viewing a company they hold no employee
-        // row in resolves to no EmpInfo at all — and a CUSTOM rule on USER_EMP_ID then fails outright
-        // at SQL-build time.
-        //
-        // Which requests were affected was arbitrary: this method only runs on an `emp-info:` cache
-        // miss, and that key holds for a month with no company in it, so whichever request happened
-        // to rebuild it decided the answer for the next 30 days — the first request after login
-        // usually carries no company header and resolved correctly, a mid-session rebuild carried one
-        // and could resolve to null.
-        //
-        // Clearing takes MultiCompanyScope's own first branch ("no company selected -> not narrowed");
-        // it is not a new bypass. MultiCountryScope needs no equivalent: it returns early on a blank
-        // `companyCountry`, which CompanyCountryEnricher (ORDER_DERIVED) has not written yet at
-        // ORDER_IDENTITY.
-        isolated.setCompanyId(null);
+        // Identity is prior to any view of the data: these reads must not be narrowed by company or
+        // country. No company narrowing exists at the ORM layer any more, and MultiCountryScope
+        // returns early on a blank `companyCountry`, which CompanyCountryEnricher (ORDER_DERIVED) has
+        // not written yet at ORDER_IDENTITY.
         return ContextHolder.callWith(isolated, () -> readIdentity(userId));
     }
 

@@ -28,14 +28,13 @@ public final class ContextUtils {
      * (userId / name / traceId) survives into everything the action writes — the change log of a
      * tenant provisioned by an ops user records that user, not "Unknown". {@code Context.copy()}
      * deliberately does not carry {@code skipPermissionCheck}, so the elevation below is still
-     * explicit. Tenant / company pins are cleared: system scope must not inherit the caller's
-     * tenant or header company selection. On a contextless thread (MQ consumer, cron)
+     * explicit. The tenant pin is cleared: system scope must not inherit the caller's tenant.
+     * On a contextless thread (MQ consumer, cron)
      * {@code cloneContext()} returns a blank context — identical to the old behavior.
      */
     public static <T> T inSystemContext(Supplier<T> action) {
         Context ctx = ContextHolder.cloneContext();
         ctx.setTenantId(null);
-        ctx.setCompanyId(null);
         // Identity for audit is userId/name; the tenant-bound profile objects don't travel.
         ctx.setUserInfo(null);
         ctx.setEmpInfo(null);
@@ -60,11 +59,9 @@ public final class ContextUtils {
      */
     public static <T> T inTenantContext(Long tenantId, Supplier<T> action) {
         // Clone-then-pin (see inSystemContext): keeps the initiator's identity for audit while the
-        // tenant pin below overrides whatever tenant the caller was in. The caller's header company
-        // selection is meaningless inside the target tenant, so it is cleared.
+        // tenant pin below overrides whatever tenant the caller was in.
         Context ctx = ContextHolder.cloneContext();
         ctx.setTenantId(tenantId);
-        ctx.setCompanyId(null);
         ctx.setUserInfo(null);
         ctx.setEmpInfo(null);
         ctx.setCrossTenant(false);

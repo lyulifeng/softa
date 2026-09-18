@@ -101,39 +101,16 @@ class EmployeeContextEnricherTest {
     }
 
     @Test
-    void dbRead_ignoresTheSelectedCompany_andHandsItBack() {
-        AtomicBoolean companyClearedDuringRead = new AtomicBoolean(false);
-        when(modelService.searchOne(eq("Employee"), any(FlexQuery.class))).thenAnswer(inv -> {
-            companyClearedDuringRead.set(ContextHolder.getContext().getCompanyId() == null);
-            return Optional.of(Map.of("id", 7L, "departmentId", 3L));
-        });
-        when(modelService.searchList(eq("Department"), any(FlexQuery.class))).thenReturn(List.of());
-
-        Context ctx = ctx(1L);
-        // The caller is looking at a company they hold no employee row in. Before this was fixed,
-        // MultiCompanyScope narrowed the identity read to it and the caller resolved to no EmpInfo.
-        ctx.setCompanyId(99L);
-        enrichWithModels(ctx);
-
-        assertThat(companyClearedDuringRead).isTrue();     // identity resolved across companies
-        assertThat(ctx.getCompanyId()).isEqualTo(99L);     // and the view selection was handed back
-        assertThat(ctx.getEmpInfo()).isNotNull();
-        assertThat(ctx.getEmpInfo().getEmpId()).isEqualTo(7L);
-    }
-
-    @Test
-    void selectedCompanyIsRestored_evenWhenTheReadThrows() {
+    void theLiveContextIsUntouched_evenWhenTheReadThrows() {
         when(modelService.searchOne(eq("Employee"), any(FlexQuery.class)))
                 .thenThrow(new IllegalStateException("boom"));
 
         Context ctx = ctx(1L);
-        ctx.setCompanyId(99L);
         assertThatThrownBy(() -> enrichWithModels(ctx)).isInstanceOf(IllegalStateException.class);
 
-        // Structural now rather than restored: the reads run on a copy, so no path can hand the
-        // request back a context that lost its company narrowing. Kept as the regression guard for
-        // anyone who replaces the copy with mutate-and-restore.
-        assertThat(ctx.getCompanyId()).isEqualTo(99L);
+        // Structural rather than restored: the reads run on a copy, so no path can hand the request
+        // back a context that kept the waiver. Kept as the regression guard for anyone who replaces
+        // the copy with mutate-and-restore.
         assertThat(ctx.isSkipPermissionCheck()).isFalse();
     }
 

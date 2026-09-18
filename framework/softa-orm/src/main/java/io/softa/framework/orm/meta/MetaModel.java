@@ -58,10 +58,10 @@ public class MetaModel implements Serializable {
 
     private boolean multiTenant;
 
-    /** Rows are partitioned by country; reads are narrowed to the context's selected company country. */
+    /** Rows are partitioned by country; reads are narrowed to the caller's countries. */
     private boolean multiCountry;
 
-    /** Rows belong to one company; reads are narrowed to the context's selected company. */
+    /** Rows belong to one company; the permission layer bounds reads by the role's company grant. */
     private boolean multiCompany;
 
     // Default true: the sys_model column is NOT NULL DEFAULT 1; the initializer

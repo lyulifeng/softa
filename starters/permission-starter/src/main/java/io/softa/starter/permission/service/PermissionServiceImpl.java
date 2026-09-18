@@ -127,9 +127,9 @@ public class PermissionServiceImpl implements PermissionService {
         // The company grant bounds every multi-company model, on its own axis: which legal entities a
         // role may reach is a property of the role, so it does not ride the per-model rules below and
         // is not waived by an ALL rule on some model. Admins are already past — a tenant admin sees
-        // every company in its tenant. The grant is unconditional: `selected ∧ granted`, so a header
-        // switch can never reach outside it — the switcher offers exactly the companies the role's
-        // step-2 selection holds, and nothing narrower or wider is expressible from the client.
+        // every company in its tenant. The grant is unconditional and is the only company narrowing
+        // there is: nothing a client sends can reach outside the legal entities the role's step-2
+        // selection holds.
         originalFilters = appendCompanyGrant(model, originalFilters, pi);
         if (hasExplicitRules(pi, model)) {
             Filters scope = scopeCompiler.compile(rulesFor(pi, model), model);
@@ -491,22 +491,15 @@ public class PermissionServiceImpl implements PermissionService {
      * <p>An empty grant means unrestricted. That is the opt-in convention, not an oversight: the
      * alternative empties every screen for every role that predates this table.
      *
-     * <p>Composes with the header selection, but does not mirror it. {@code MultiCompanyScope} exempts
-     * a read that names rows by {@code id} — a display expansion, a by-id read, a cascade resolving a
-     * stored value — and that exemption is right THERE: blanking a referenced row's label is not the
-     * same as denying access to it, and nothing bypasses the ORM layer, so it is the only place the
-     * exemption can live.
-     *
-     * <p>It is wrong HERE, and used to be duplicated anyway. The stated reason — display expansion —
-     * never reaches this method: {@code DataPipelineProxy.processReadData} carries
+     * <p>No read that names rows by {@code id} is exempt. Display expansion — the one legitimate
+     * by-id read of rows outside the grant, so that a referenced row's label is not blanked — never
+     * reaches this method: {@code DataPipelineProxy.processReadData} carries
      * {@code @SkipPermissionCheck}, so {@code shouldBypass()} returns before the grant is consulted.
-     * What the duplicate did reach was everything else that happens to name an id. Two of those
-     * matter. A caller could add {@code ["id", "&gt;", 0]} to a {@code searchList} body and read an
-     * ungranted company whole, no header required. And {@code checkIdsAccess} — the gate between a
-     * caller and {@code deleteByIds} / {@code updateList} — verifies its targets by counting them
-     * back with a filter that names {@code id}, so the grant dropped out of the write gate too: any
-     * holder of the model's delete permission could remove a row belonging to a company they were
-     * never granted, given its id.
+     * Everything else that happens to name an id must stay bounded. A caller could otherwise add
+     * {@code ["id", "&gt;", 0]} to a {@code searchList} body and read an ungranted company whole, and
+     * {@code checkIdsAccess} — the gate between a caller and {@code deleteByIds} / {@code updateList}
+     * — verifies its targets by counting them back with a filter that names {@code id}, so any holder
+     * of the model's delete permission could remove a row of a company they were never granted.
      *
      * <p>So the grant applies to every read, id-named or not. The cost is that a by-id read of a row
      * outside the grant comes back empty instead of returning the row. That is what a grant means.
@@ -521,10 +514,9 @@ public class PermissionServiceImpl implements PermissionService {
             return filters;
         }
         // The company model itself is bounded by its own id. It is deliberately NOT multiCompany
-        // (self-scoping is rejected at boot: it would reduce the switcher to the company already
-        // selected), so without this branch the grant would never reach the one list that most needs
-        // it — the switcher would keep offering companies the role cannot reach, and picking one would
-        // AND an ungranted selection against the grant and silently empty every screen.
+        // (self-scoping is rejected at boot: it has no company reference to anchor on), so without
+        // this branch the grant would never reach the company list — every company picker and every
+        // "my companies" read would offer legal entities the role cannot reach.
         String companyField = ModelConstant.COMPANY_MODEL.equals(model)
                 ? ModelConstant.ID
                 : companyAnchorOf(model);

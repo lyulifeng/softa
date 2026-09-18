@@ -72,7 +72,7 @@ public final class MultiCountryScope {
 
     /**
      * Append the per-country condition when {@code modelName} is multi-country and the request
-     * carries a selected company country.
+     * knows its countries (or, failing that, the caller's own company country).
      *
      * @param modelName model being queried
      * @param filters   filters already assembled (permission scope included)

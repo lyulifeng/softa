@@ -213,8 +213,8 @@ public class PermissionInterceptor implements HandlerInterceptor {
 
     /**
      * The companies and countries the caller may act for, onto the Context — for the ORM's
-     * per-country narrowing and for anything that asks "which countries am I in" once the header
-     * switcher is gone. Nothing here decides access: that stays with the grant applied by
+     * per-country narrowing and for anything that asks "which countries am I in". Nothing here
+     * decides access: that stays with the grant applied by
      * {@code PermissionServiceImpl}; this only lets the framework layer read what was decided. Also
      * run on authenticated-bypass paths, where the role codes deliberately are not.
      */

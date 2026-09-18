@@ -94,8 +94,8 @@ public class CompanyCountryEnricher implements ContextEnricher {
         if (empInfo == null || empInfo.getCompanyId() == null) {
             // A pure user (an administrator who is not an employee), a non-HR app, or a
             // service-to-service call: no company to fall back to, so nothing is narrowed.
-            log.debug("No company selected and no employing company on the context; "
-                    + "multi-country models are not narrowed for this request");
+            log.debug("No employing company on the context; the country fallback is not set "
+                    + "for this request");
             return null;
         }
         return empInfo.getCompanyId();
@@ -110,7 +110,7 @@ public class CompanyCountryEnricher implements ContextEnricher {
         if (ModelManager.existModel(COMPANY_MODEL)) {
             return true;
         }
-        log.debug("No '{}' model in this application; the selected company's country is not resolved "
+        log.debug("No '{}' model in this application; no company country is resolved "
                 + "and multi-country models are not narrowed", COMPANY_MODEL);
         return false;
     }

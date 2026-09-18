@@ -117,8 +117,9 @@ class MultiCompanyAnchorTest {
 
     @Test
     void theCompanyModelItselfCannotBeMultiCompany() throws Exception {
-        // Self-scoping would reduce the company switcher to the company already selected — the
-        // company list is the one thing that must never be narrowed by the selection.
+        // The company model has no company reference to anchor on; the grant bounds it by its own id
+        // instead (PermissionServiceImpl.appendCompanyGrant), and the company list must never be
+        // narrowed by anything else.
         Object good = snapshotField().get(null);
         try {
             MetaModel selfScoped = multiCompany(ModelConstant.COMPANY_MODEL, "company");

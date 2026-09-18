@@ -106,8 +106,9 @@ class AnnotationParserTest {
 
     // ------- request-scoped narrowing attributes -------------------------
     //
-    // multiCompany / multiCountry are what MultiCompanyScope and MultiCountryScope read at runtime to
-    // decide whether a read is narrowed at all. A parser that dropped either would not fail anything —
+    // multiCountry is what MultiCountryScope reads at runtime, and multiCompany what the permission
+    // layer's company grant reads, to decide whether a read is narrowed at all. A parser that dropped
+    // either would not fail anything —
     // it would write a sys_model row saying "not scoped", and every company's rows would show up in
     // every other company's screens with nothing to indicate it. Pin both, including the defaults,
     // since "false by default" is the half that silences the mechanism. The anchor field itself is not

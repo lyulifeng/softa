@@ -123,25 +123,21 @@ class CompanyGrantTest {
     }
 
     @Test
-    void narrowsWithinTheGrantRatherThanReplacingTheSelection() {
-        // The composition that makes the header switch work for a multi-company role.
-        // ModelServiceImpl.scopedAccess has already applied the selection to these filters, so this
-        // ANDs the grant on top: selected ∧ granted. A subset, so never empty for a company the
-        // switcher was allowed to offer.
+    void narrowsWithinTheGrantRatherThanReplacingTheCallersFilter() {
+        // A caller's own company condition is kept and the grant is ANDed on top: asked ∧ granted.
         model("Department", true);
-        Filters selected = Filters.of("companyId", Operator.EQUAL, 8712L);
+        Filters asked = Filters.of("companyId", Operator.EQUAL, 8712L);
 
-        Filters result = service().appendCompanyGrant("Department", selected, grant(GRANTED));
+        Filters result = service().appendCompanyGrant("Department", asked, grant(GRANTED));
 
         assertThat(result.toString()).contains("8712", "9001");
     }
 
     @Test
     void boundsTheCompanyListItself() {
-        // The switcher's own query. LegalEntity is deliberately not multiCompany — self-scoping is
-        // rejected at boot — so it is bounded by its id instead. Without this the switcher keeps
-        // offering companies the role cannot reach, and picking one ANDs an ungranted selection against
-        // the grant: every screen goes empty, with nothing saying why.
+        // The company list itself. LegalEntity is deliberately not multiCompany — self-scoping is
+        // rejected at boot — so it is bounded by its id instead. Without this every company picker
+        // would offer legal entities the role cannot reach.
         modelManager.when(() -> ModelManager.existModel(ModelConstant.COMPANY_MODEL)).thenReturn(true);
 
         Filters result = service().appendCompanyGrant(ModelConstant.COMPANY_MODEL, new Filters(),
@@ -157,8 +153,7 @@ class CompanyGrantTest {
         // on the argument that a by-id read is a display expansion — but display expansion never
         // reaches this method (DataPipelineProxy.processReadData is @SkipPermissionCheck), so the
         // exemption only ever applied to callers who put an id in their own filters, and to the
-        // write gate's own count. MultiCompanyScope keeps the exemption, which is where it belongs:
-        // the SELECTION should not blank a referenced label, the GRANT should still say no.
+        // write gate's own count. The GRANT must still say no.
         modelManager.when(() -> ModelManager.existModel(ModelConstant.COMPANY_MODEL)).thenReturn(true);
         Filters byId = Filters.of(ModelConstant.ID, Operator.IN, java.util.List.of(9999L));
 
@@ -179,8 +174,7 @@ class CompanyGrantTest {
         //
         // The exemption is not needed for what its comment describes. Display expansion runs inside
         // DataPipelineProxy.processReadData, which is @SkipPermissionCheck: shouldBypass() is true and
-        // appendScopeAccessFilters returns before ever reaching appendCompanyGrant. MultiCompanyScope keeps
-        // its own id exemption and does need it — it sits in the ORM layer, where nothing bypasses.
+        // appendScopeAccessFilters returns before ever reaching appendCompanyGrant.
         //
         // Dropping it here makes this pass and costs one thing: a by-id read of a row outside the
         // grant returns empty rather than the row. That is what a grant means.
