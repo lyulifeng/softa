@@ -79,19 +79,19 @@ public class Context implements Serializable {
      * endpoints, scheduler and MQ threads — where {@code null} therefore means "unknown", which every
      * reader must treat as "do not narrow", never as "narrow to nothing".
      */
-    private Set<Long> accessibleCompanyIds;
+    private Set<Long> grantedCompanyIds;
 
     /**
-     * The countries of {@link #accessibleCompanyIds} — "my countries" — ISO 3166-1 alpha-2, deduplicated.
+     * The countries of {@link #grantedCompanyIds} — "my countries" — ISO 3166-1 alpha-2, deduplicated.
      * For an unrestricted grant it is the countries of every company in the tenant, so unlike the id
      * set it is never "all": an SG-only tenant's administrator works in SG, and a value domain seeded
      * for six countries must still narrow to that one. This is what replaces {@link #companyCountry}
      * as the per-country narrowing's input once nothing is selected.
      *
-     * <p>{@code null} when unknown (see {@link #accessibleCompanyIds}); empty when the caller reaches
+     * <p>{@code null} when unknown (see {@link #grantedCompanyIds}); empty when the caller reaches
      * no company, or none of them carries a country.
      */
-    private Set<String> accessibleCountries;
+    private Set<String> grantedCountries;
 
     /**
      * Whether to skip permission verification (including model permission and data range),
@@ -178,8 +178,8 @@ public class Context implements Serializable {
         newContext.setUserInfo(this.userInfo);
         newContext.setEmpInfo(this.empInfo);
         newContext.setRoleCodes(this.roleCodes);
-        newContext.setAccessibleCompanyIds(this.accessibleCompanyIds);
-        newContext.setAccessibleCountries(this.accessibleCountries);
+        newContext.setGrantedCompanyIds(this.grantedCompanyIds);
+        newContext.setGrantedCountries(this.grantedCountries);
         newContext.setSkipAutoAudit(this.skipAutoAudit);
         newContext.setCrossTenant(this.crossTenant);
         newContext.setDataMask(this.dataMask);

@@ -220,8 +220,8 @@ public class PermissionInterceptor implements HandlerInterceptor {
      */
     private static void bridgeAccessSetsToContext(Context ctx, PermissionInfo pi) {
         if (pi != null) {
-            ctx.setAccessibleCompanyIds(pi.getGrantedCompanyIds());
-            ctx.setAccessibleCountries(pi.getGrantedCountries());
+            ctx.setGrantedCompanyIds(pi.getGrantedCompanyIds());
+            ctx.setGrantedCountries(pi.getGrantedCountries());
         }
     }
 
