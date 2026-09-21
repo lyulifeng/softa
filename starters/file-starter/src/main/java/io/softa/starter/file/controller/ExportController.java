@@ -14,6 +14,7 @@ import io.softa.framework.base.utils.Assert;
 import io.softa.framework.orm.domain.FlexQuery;
 import io.softa.framework.orm.dto.FileInfo;
 import io.softa.framework.web.response.ApiResponse;
+import io.softa.starter.file.support.ImportTemplateCountryScope;
 import io.softa.starter.file.service.ExportService;
 import io.softa.starter.file.dto.SheetInfo;
 import io.softa.starter.file.vo.ExportParams;
@@ -44,6 +45,8 @@ public class ExportController {
     public ApiResponse<FileInfo> dynamicExport(@RequestParam String modelName,
                                                @RequestBody ExportParams exportParams) {
         FlexQuery flexQuery = ExportParams.convertParamsToFlexQuery(exportParams);
+        // The export of a list shows what the list shows; import templates state their own rule.
+        flexQuery.setFilters(ImportTemplateCountryScope.forModel(modelName, flexQuery.getFilters()));
         return ApiResponse.success(exportService.dynamicExport(modelName, flexQuery, exportParams.getPivot()));
     }
 
@@ -97,7 +100,9 @@ public class ExportController {
             SheetInfo sheetInfo = new SheetInfo();
             sheetInfo.setModelName(sheet.getModelName());
             sheetInfo.setSheetName(sheet.getSheetName());
-            sheetInfo.setFlexQuery(ExportParams.convertParamsToFlexQuery(sheet.getExportParams()));
+            FlexQuery sheetQuery = ExportParams.convertParamsToFlexQuery(sheet.getExportParams());
+            sheetQuery.setFilters(ImportTemplateCountryScope.forModel(sheet.getModelName(), sheetQuery.getFilters()));
+            sheetInfo.setFlexQuery(sheetQuery);
             // A sheet's pivot rides along: the main sheet of a workbook shows the same columns the
             // screen does, whether or not object sheets are ticked beside it.
             sheetInfo.setPivot(sheet.getExportParams() == null ? null : sheet.getExportParams().getPivot());
