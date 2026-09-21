@@ -8,6 +8,7 @@ import org.junit.jupiter.api.Test;
 
 import io.softa.framework.base.context.Context;
 import io.softa.framework.base.context.ContextHolder;
+import io.softa.framework.base.enums.Operator;
 import io.softa.framework.orm.domain.Filters;
 
 /**
@@ -51,5 +52,39 @@ class ImportTemplateCountryScopeTest {
         // nothing to narrow by, and showing every template beats showing none.
         assertThat(scopeFor(null, null)).isNull();
         assertThat(scopeFor(Set.of(), "")).isNull();
+    }
+
+    // ─────────────────────── the list endpoints ───────────────────────
+
+    private Filters scopedFor(Set<String> countries, Filters callers) {
+        Context context = new Context();
+        context.setGrantedCountries(countries);
+        return ContextHolder.callWith(context, () -> controller.withCountryScope(callers));
+    }
+
+    @Test
+    void theCallersOwnFiltersAreKeptAndTheScopeIsAndedOn() {
+        // The Admin list page goes through the generic search endpoints, not listByModel; a filter
+        // the user set in the toolbar must survive, and the country scope must apply on top of it.
+        Filters mine = new Filters().eq("modelName", "Employee");
+
+        assertThat(scopedFor(Set.of("SG"), mine))
+                .hasToString("[[\"modelName\",\"=\",\"Employee\"],\"AND\",[[\"country\",\"IS NOT SET\",null],\"OR\",[\"country\",\"IN\",[\"SG\"]]]]");
+    }
+
+    @Test
+    void noFiltersFromTheCallerMeansTheScopeAlone() {
+        assertThat(scopedFor(Set.of("SG"), null))
+                .hasToString("[[\"country\",\"IS NOT SET\",null],\"OR\",[\"country\",\"IN\",[\"SG\"]]]");
+        assertThat(scopedFor(Set.of("SG"), new Filters()))
+                .hasToString("[[\"country\",\"IS NOT SET\",null],\"OR\",[\"country\",\"IN\",[\"SG\"]]]");
+    }
+
+    @Test
+    void nothingToNarrowByLeavesTheCallersFiltersUntouched() {
+        Filters mine = new Filters().add("country", Operator.EQUAL, "NZ");
+
+        assertThat(scopedFor(null, mine)).isSameAs(mine);
+        assertThat(scopedFor(null, null)).isNull();
     }
 }
