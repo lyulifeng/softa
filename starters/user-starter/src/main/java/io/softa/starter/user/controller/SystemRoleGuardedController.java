@@ -56,6 +56,38 @@ public abstract class SystemRoleGuardedController<S extends EntityService<T, K>,
     @Autowired
     protected SystemRoleWriteGuard writeGuard;
 
+    /*
+     * Why the mapped methods below read their dependencies through these two accessors instead of
+     * touching the fields directly.
+     *
+     * Every concrete subclass is a @RestController, and ApiExceptionAspect advises
+     * `@within(@RestController)` — so Spring wraps each of them in a CGLIB proxy. CGLIB proxies by
+     * subclassing, and a `final` method cannot be overridden: a call to one lands on the proxy
+     * instance and runs the body *there*. Spring injects the target, never the proxy, so a field read
+     * in such a body is null. That is not hypothetical — it answered 500 on every guarded write verb
+     * with `Cannot invoke "SystemRoleWriteGuard.guardByIds(...)" because "this.writeGuard" is null`.
+     *
+     * These accessors are deliberately neither final nor private: CGLIB can override neither, and a
+     * private one reproduces the very bug it is meant to fix. Being overridable is the mechanism —
+     * calling one from a final body dispatches through the proxy to the target, which returns the
+     * injected instance. The `final` on the mapped methods keeps doing what it was for: a subclass
+     * changes WHAT a write does through the doXxx hooks, and cannot drop the guard by overriding the
+     * mapped method. What it can no longer prevent on its own is a subclass substituting these two,
+     * so GuardedControllerUnderProxyTest asserts that none of them does.
+     *
+     * A new mapped method must use these too. GuardedControllerUnderProxyTest drives every verb
+     * through a real CGLIB proxy, so one that reads a field directly fails there rather than in
+     * production.
+     */
+
+    protected SystemRoleWriteGuard guard() {
+        return writeGuard;
+    }
+
+    protected ModelService<K> models() {
+        return modelService;
+    }
+
     /** The model these endpoints write — the concrete controller names it once. */
     protected abstract String modelName();
 
@@ -63,59 +95,59 @@ public abstract class SystemRoleGuardedController<S extends EntityService<T, K>,
 
     @PostMapping("/createOne")
     public final ApiResponse<K> createOne(@RequestBody Map<String, Object> row) {
-        writeGuard.guardCreate(modelName(), List.of(row));
-        return ApiResponse.success(modelService.createOne(modelName(), row));
+        guard().guardCreate(modelName(), List.of(row));
+        return ApiResponse.success(models().createOne(modelName(), row));
     }
 
     @PostMapping("/createOneAndFetch")
     public final ApiResponse<Map<String, Object>> createOneAndFetch(@RequestBody Map<String, Object> row) {
-        writeGuard.guardCreate(modelName(), List.of(row));
-        return ApiResponse.success(modelService.createOneAndFetch(modelName(), row, ConvertType.REFERENCE));
+        guard().guardCreate(modelName(), List.of(row));
+        return ApiResponse.success(models().createOneAndFetch(modelName(), row, ConvertType.REFERENCE));
     }
 
     @PostMapping("/createList")
     public final ApiResponse<List<K>> createList(@RequestBody List<Map<String, Object>> rows) {
-        writeGuard.guardCreate(modelName(), rows);
-        return ApiResponse.success(modelService.createList(modelName(), rows));
+        guard().guardCreate(modelName(), rows);
+        return ApiResponse.success(models().createList(modelName(), rows));
     }
 
     @PostMapping("/createListAndFetch")
     public final ApiResponse<List<Map<String, Object>>> createListAndFetch(@RequestBody List<Map<String, Object>> rows) {
-        writeGuard.guardCreate(modelName(), rows);
-        return ApiResponse.success(modelService.createListAndFetch(modelName(), rows, ConvertType.REFERENCE));
+        guard().guardCreate(modelName(), rows);
+        return ApiResponse.success(models().createListAndFetch(modelName(), rows, ConvertType.REFERENCE));
     }
 
     // ─────────────────────── update ───────────────────────
 
     @PostMapping("/updateOne")
     public final ApiResponse<Boolean> updateOne(@RequestBody Map<String, Object> row) {
-        writeGuard.guardUpdate(modelName(), List.of(row));
-        return ApiResponse.success(modelService.updateOne(modelName(), row));
+        guard().guardUpdate(modelName(), List.of(row));
+        return ApiResponse.success(models().updateOne(modelName(), row));
     }
 
     @PostMapping("/updateOneAndFetch")
     public final ApiResponse<Map<String, Object>> updateOneAndFetch(@RequestBody Map<String, Object> row) {
-        writeGuard.guardUpdate(modelName(), List.of(row));
-        return ApiResponse.success(modelService.updateOneAndFetch(modelName(), row, ConvertType.REFERENCE));
+        guard().guardUpdate(modelName(), List.of(row));
+        return ApiResponse.success(models().updateOneAndFetch(modelName(), row, ConvertType.REFERENCE));
     }
 
     @PostMapping("/updateList")
     public final ApiResponse<Boolean> updateList(@RequestBody List<Map<String, Object>> rows) {
-        writeGuard.guardUpdate(modelName(), rows);
-        return ApiResponse.success(modelService.updateList(modelName(), rows));
+        guard().guardUpdate(modelName(), rows);
+        return ApiResponse.success(models().updateList(modelName(), rows));
     }
 
     @PostMapping("/updateListAndFetch")
     public final ApiResponse<List<Map<String, Object>>> updateListAndFetch(@RequestBody List<Map<String, Object>> rows) {
-        writeGuard.guardUpdate(modelName(), rows);
-        return ApiResponse.success(modelService.updateListAndFetch(modelName(), rows, ConvertType.REFERENCE));
+        guard().guardUpdate(modelName(), rows);
+        return ApiResponse.success(models().updateListAndFetch(modelName(), rows, ConvertType.REFERENCE));
     }
 
     @PostMapping("/updateByFilter")
     public final ApiResponse<Integer> updateByFilter(@RequestBody BulkUpdateParams bulkUpdateParams) {
         // Both sides: the rows the filter selects AND the role the new values would move them to.
-        writeGuard.guardUpdateByFilter(modelName(), bulkUpdateParams.getFilters(), bulkUpdateParams.getValues());
-        return ApiResponse.success(modelService.updateByFilter(
+        guard().guardUpdateByFilter(modelName(), bulkUpdateParams.getFilters(), bulkUpdateParams.getValues());
+        return ApiResponse.success(models().updateByFilter(
                 modelName(), bulkUpdateParams.getFilters(), bulkUpdateParams.getValues()));
     }
 
@@ -123,13 +155,13 @@ public abstract class SystemRoleGuardedController<S extends EntityService<T, K>,
 
     @PostMapping("/deleteById")
     public final ApiResponse<Boolean> deleteById(@RequestParam K id) {
-        writeGuard.guardByIds(modelName(), List.of(id));
+        guard().guardByIds(modelName(), List.of(id));
         return ApiResponse.success(doDeleteById(id));
     }
 
     @PostMapping("/deleteByIds")
     public final ApiResponse<Boolean> deleteByIds(@RequestParam List<K> ids) {
-        writeGuard.guardByIds(modelName(), ids);
+        guard().guardByIds(modelName(), ids);
         return ApiResponse.success(doDeleteByIds(ids));
     }
 
@@ -152,25 +184,25 @@ public abstract class SystemRoleGuardedController<S extends EntityService<T, K>,
 
     @PostMapping("/copyById")
     public final ApiResponse<K> copyById(@RequestParam K id) {
-        writeGuard.guardByIds(modelName(), List.of(id));
-        return ApiResponse.success(modelService.copyById(modelName(), id));
+        guard().guardByIds(modelName(), List.of(id));
+        return ApiResponse.success(models().copyById(modelName(), id));
     }
 
     @PostMapping("/copyByIdAndFetch")
     public final ApiResponse<Map<String, Object>> copyByIdAndFetch(@RequestParam K id) {
-        writeGuard.guardByIds(modelName(), List.of(id));
-        return ApiResponse.success(modelService.copyByIdAndFetch(modelName(), id, ConvertType.REFERENCE));
+        guard().guardByIds(modelName(), List.of(id));
+        return ApiResponse.success(models().copyByIdAndFetch(modelName(), id, ConvertType.REFERENCE));
     }
 
     @PostMapping("/copyByIds")
     public final ApiResponse<List<K>> copyByIds(@RequestParam List<K> ids) {
-        writeGuard.guardByIds(modelName(), ids);
-        return ApiResponse.success(modelService.copyByIds(modelName(), ids));
+        guard().guardByIds(modelName(), ids);
+        return ApiResponse.success(models().copyByIds(modelName(), ids));
     }
 
     @PostMapping("/copyByIdsAndFetch")
     public final ApiResponse<List<Map<String, Object>>> copyByIdsAndFetch(@RequestParam List<K> ids) {
-        writeGuard.guardByIds(modelName(), ids);
-        return ApiResponse.success(modelService.copyByIdsAndFetch(modelName(), ids, ConvertType.REFERENCE));
+        guard().guardByIds(modelName(), ids);
+        return ApiResponse.success(models().copyByIdsAndFetch(modelName(), ids, ConvertType.REFERENCE));
     }
 }
