@@ -33,6 +33,9 @@ public class SqlWrapper {
     private final StringBuilder joinClause = new StringBuilder();
     private final StringBuilder whereClause = new StringBuilder();
     private final StringBuilder groupByClause = new StringBuilder();
+    /** Logic field names behind {@link #groupByClause}; see {@link #recordGroupByLogicFields}. */
+    @Getter
+    private final Set<String> groupByLogicFields = new LinkedHashSet<>();
     private final StringBuilder orderByClause = new StringBuilder();
     private StringBuilder limitClause = new StringBuilder();
 
@@ -210,6 +213,20 @@ public class SqlWrapper {
 
     public void groupBy(List<String> columns) {
         columns.forEach(column -> groupByClause.append(column).append(","));
+    }
+
+    /**
+     * Record the logic field names the GROUP BY clause was built from, for the ORDER BY stage.
+     *
+     * <p>A grouped query may only be sorted by a field it grouped on, or by an aggregate: any other
+     * column has no single value per group, and the database rejects the statement rather than
+     * picking one (PostgreSQL 42803, MySQL under `only_full_group_by`). Orders arrive as logic field
+     * names, so the rendered clause cannot answer that question — these are the names to match.
+     *
+     * @param fields logic field names, already validated as groupable
+     */
+    public void recordGroupByLogicFields(Collection<String> fields) {
+        groupByLogicFields.addAll(fields);
     }
 
     public void orderBy(String column, String order) {
