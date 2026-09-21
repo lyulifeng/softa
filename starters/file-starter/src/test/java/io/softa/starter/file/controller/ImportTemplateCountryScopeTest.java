@@ -10,6 +10,7 @@ import io.softa.framework.base.context.Context;
 import io.softa.framework.base.context.ContextHolder;
 import io.softa.framework.base.enums.Operator;
 import io.softa.framework.orm.domain.Filters;
+import io.softa.starter.file.support.ImportTemplateCountryScope;
 
 /**
  * What the template listing narrows by: the countries the caller works in.
@@ -86,5 +87,17 @@ class ImportTemplateCountryScopeTest {
 
         assertThat(scopedFor(null, mine)).isSameAs(mine);
         assertThat(scopedFor(null, null)).isNull();
+    }
+
+    @Test
+    void theExportHookOnlyTouchesImportTemplates() {
+        // Every other model exported through the same endpoint keeps its filters exactly as sent.
+        Filters mine = new Filters().eq("active", true);
+        Context context = new Context();
+        context.setGrantedCountries(Set.of("SG"));
+
+        assertThat(ContextHolder.callWith(context, () -> ImportTemplateCountryScope.forModel("Employee", mine))).isSameAs(mine);
+        assertThat(ContextHolder.callWith(context, () -> ImportTemplateCountryScope.forModel("ImportTemplate", null)))
+                .hasToString("[[\"country\",\"IS NOT SET\",null],\"OR\",[\"country\",\"IN\",[\"SG\"]]]");
     }
 }

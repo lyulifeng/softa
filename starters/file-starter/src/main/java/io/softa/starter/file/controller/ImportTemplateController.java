@@ -10,17 +10,14 @@ import io.swagger.v3.oas.annotations.tags.Tag;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.web.bind.annotation.*;
 
-import org.apache.commons.lang3.StringUtils;
 import org.springframework.util.CollectionUtils;
 
 import io.softa.framework.base.context.ContextHolder;
-import io.softa.framework.base.enums.Operator;
 import io.softa.framework.base.utils.Assert;
 import io.softa.framework.orm.domain.Filters;
 import io.softa.framework.orm.domain.Page;
 import io.softa.framework.orm.enums.ConvertType;
 import io.softa.framework.orm.service.ModelService;
-import io.softa.framework.orm.scope.MultiCountryScope;
 import io.softa.framework.orm.domain.FlexQuery;
 import io.softa.framework.orm.dto.FileInfo;
 import io.softa.framework.web.controller.EntityController;
@@ -32,6 +29,7 @@ import io.softa.framework.web.dto.SearchNameParams;
 import io.softa.framework.web.response.ApiResponse;
 import io.softa.framework.orm.annotation.DataMask;
 import io.softa.starter.file.entity.ImportTemplate;
+import io.softa.starter.file.support.ImportTemplateCountryScope;
 import io.softa.starter.file.support.TemplateScope;
 import io.softa.starter.file.service.ImportService;
 import io.softa.starter.file.service.ImportTemplateService;
@@ -130,11 +128,7 @@ public class ImportTemplateController extends EntityController<ImportTemplateSer
 
     /** The caller's filters AND the country scope; the filters alone when there is nothing to narrow by. */
     Filters withCountryScope(Filters filters) {
-        Filters countryScope = countryScope();
-        if (countryScope == null) {
-            return filters;
-        }
-        return Filters.isEmpty(filters) ? countryScope : Filters.and(filters, countryScope);
+        return ImportTemplateCountryScope.withCountryScope(filters);
     }
 
     /**
@@ -157,30 +151,11 @@ public class ImportTemplateController extends EntityController<ImportTemplateSer
         return ApiResponse.success(templates);
     }
 
-    /**
-     * Narrows the listing to the countries the caller works in, or returns null to leave it alone.
-     *
-     * <p>Written as <b>country is null OR country in (my countries)</b>, never a bare membership test:
-     * a template with no country applies to all of them, and that is the overwhelming majority — the
-     * ones with a country are the exception (employee and legal-entity templates), and every row holds
-     * null on the release that adds the column. A bare membership test would empty the dialog for every
-     * tenant.
-     *
-     * <p>The set is the caller's own countries — those of the companies their roles reach — the same
-     * set {@code MultiCountryScope} narrows value domains by, resolved the same way (falling back to the
-     * country of the company the caller belongs to). When neither is known the filter is skipped rather
-     * than tightened: showing every template beats showing none.
-     *
-     * <p>Resolved server-side from the request context and never read off the payload.
-     */
+    /** See {@link ImportTemplateCountryScope}: the same rule every template listing states. */
     Filters countryScope() {
-        List<String> countries = MultiCountryScope.countriesInPlay(ContextHolder.getContext());
-        if (countries.isEmpty()) {
-            return null;
-        }
-        return new Filters().add(ImportTemplate::getCountry, Operator.IS_NOT_SET, null)
-                .or(new Filters().in(ImportTemplate::getCountry, countries));
+        return ImportTemplateCountryScope.countryScope();
     }
+
     /**
      * Get the fileInfo of the import template by template ID.
      * The fileInfo contains the download URL.
