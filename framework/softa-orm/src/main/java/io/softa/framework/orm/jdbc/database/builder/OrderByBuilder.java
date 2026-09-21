@@ -19,6 +19,8 @@ import io.softa.framework.orm.meta.ModelManager;
  * For DISTINCT queries:
  *      Only explicit `orders` are applied, never an implicit one — MySQL (error 3065) and
  *      PostgreSQL reject ORDER BY columns outside the DISTINCT select list.
+ * For aggregate queries:
+ *      Orders are kept only for fields the query grouped on; the rest are dropped, explicit or not.
  */
 public class OrderByBuilder extends BaseBuilder implements SqlClauseBuilder {
 
@@ -59,6 +61,9 @@ public class OrderByBuilder extends BaseBuilder implements SqlClauseBuilder {
         }
         if (orders != null) {
             for (List<String> order : orders.getOrderList()) {
+                if (!isSortable(order.get(0))) {
+                    continue;
+                }
                 // Support cascade fields (e.g. deptId.managerId.name) and dynamic cascaded
                 // field aliases declared on the model (auto-expanded by parseLogicField).
                 String aliasField = this.parseLogicField(order.get(0), false);
@@ -68,10 +73,36 @@ public class OrderByBuilder extends BaseBuilder implements SqlClauseBuilder {
             // automatically add `t.id ASC` at the end of the order condition,
             // to ensure that different page data is as non-repetitive as possible.
             // Skipped for DISTINCT: `id` is outside the select list (same 3065 failure).
-            if (page != null && page.isCursorPage() && !distinct && !orders.getFields().contains(ModelConstant.ID)) {
+            // Skipped when grouping does not carry `id`, for the reason given on isSortable.
+            if (page != null && page.isCursorPage() && !distinct
+                    && !orders.getFields().contains(ModelConstant.ID)
+                    && isSortable(ModelConstant.ID)) {
                 sqlWrapper.orderBy(SqlWrapper.MAIN_TABLE_ALIAS + "." + ModelConstant.ID, Orders.ASC);
             }
         }
+    }
+
+    /**
+     * Whether `field` may take part in ORDER BY.
+     *
+     * <p>Unrestricted for an ordinary query. An aggregate query collapses rows, so only the fields it
+     * grouped on still hold one value per returned row — sorting by any other column is something the
+     * database refuses outright, not a preference it quietly ignores.
+     *
+     * <p>Dropping the field is deliberate. The order a client sends with a grouped list is almost
+     * always the default it attaches to every list (a creation timestamp, say), not a choice about
+     * this query; the grouping is the choice. Refusing the whole query over the part the caller did
+     * not ask for turns grouping into an error with no way back, while dropping it returns the
+     * grouped rows the caller wanted, in the order the grouping itself implies.
+     *
+     * @param field logic field name taken from the orders parameter
+     * @return true when the field may appear in ORDER BY
+     */
+    private boolean isSortable(String field) {
+        if (!flexQuery.isAggregate()) {
+            return true;
+        }
+        return sqlWrapper.getGroupByLogicFields().contains(field);
     }
 
 }

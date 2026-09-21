@@ -46,8 +46,11 @@ public class AggregateBuilder extends BaseBuilder implements SqlClauseBuilder {
             // Grouping by current model fields: stored fields or dynamic cascaded fields
             // (the latter expand to `tN.column` via LEFT JOIN inside parseStoredFields).
             ModelManager.validateGroupableFields(this.mainModelName, sqlGroupByFields);
-            // Add grouping fields to the select condition and extract the numeric field set
+            // Add grouping fields to the select condition and extract the numeric field set.
+            // This also grows sqlGroupByFields: every select field has to be grouped on too.
             this.handleGroupByFields(flexQuery, sqlGroupByFields);
+            // Hand the final set to the ORDER BY stage, which may only sort within it
+            sqlWrapper.recordGroupByLogicFields(sqlGroupByFields);
             sqlWrapper.groupBy(this.parseStoredFields(sqlGroupByFields, false));
         }
     }
