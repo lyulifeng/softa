@@ -28,6 +28,7 @@ import io.softa.framework.web.dto.CountParams;
 import io.softa.framework.web.dto.CountResult;
 import io.softa.framework.web.dto.QueryParams;
 import io.softa.framework.web.dto.SearchListParams;
+import io.softa.framework.web.dto.SearchNameParams;
 import io.softa.framework.web.response.ApiResponse;
 import io.softa.framework.orm.annotation.DataMask;
 import io.softa.starter.file.entity.ImportTemplate;
@@ -85,6 +86,21 @@ public class ImportTemplateController extends EntityController<ImportTemplateSer
         FlexQuery flexQuery = SearchListParams.convertParamsToFlexQuery(searchListParams);
         flexQuery.setFilters(withCountryScope(flexQuery.getFilters()));
         return ApiResponse.success(modelService.searchList(MODEL, flexQuery));
+    }
+
+    /**
+     * Typed shadow of the generic {@code /ImportTemplate/searchName} — the reference picker behind a
+     * "Template" filter or field (an import history row names its template). Same narrowing as the
+     * list, so the picker offers only what the list shows.
+     */
+    @Operation(summary = "searchName", description = "Import templates by display name, narrowed to the caller's "
+            + "countries plus the templates that apply to every country.")
+    @PostMapping("/searchName")
+    @DataMask
+    public ApiResponse<List<Map<String, Object>>> searchName(@RequestBody(required = false) SearchNameParams searchNameParams) {
+        FlexQuery flexQuery = SearchNameParams.convertParamsToFlexQuery(searchNameParams);
+        flexQuery.setFilters(withCountryScope(flexQuery.getFilters()));
+        return ApiResponse.success(modelService.searchName(MODEL, flexQuery));
     }
 
     /** Typed shadow of the generic {@code /ImportTemplate/count} — the total a narrowed page reports. */
