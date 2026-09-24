@@ -29,6 +29,7 @@ import io.softa.framework.base.message.SmsRequestMessage;
 import io.softa.framework.base.message.MessageScope;
 import io.softa.framework.orm.service.CacheService;
 import io.softa.framework.orm.service.TenantInfoService;
+import io.softa.starter.user.constant.LoginMessages;
 import io.softa.starter.user.dto.AuthenticationResult;
 import io.softa.starter.user.dto.JoinContacts;
 import io.softa.starter.user.dto.JoinVerification;
@@ -216,14 +217,13 @@ public class LoginServiceImpl implements LoginService {
 
     @Override
     public void sendEmailCode(String email) {
-        requireIdentifierLinked(email, "This email is not linked to any account. Please contact your administrator.");
+        requireIdentifierLinked(email, LoginMessages.EMAIL_NOT_LINKED);
         this.deliverEmailCode(email);
     }
 
     @Override
     public void sendMobileCode(String mobile) {
-        requireIdentifierLinked(mobile,
-                "This mobile number is not linked to any account. Please contact your administrator.");
+        requireIdentifierLinked(mobile, LoginMessages.MOBILE_NOT_LINKED);
         this.deliverMobileCode(mobile);
     }
 
