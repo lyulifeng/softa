@@ -4,6 +4,7 @@ import java.util.List;
 import java.util.Map;
 
 import org.apache.commons.lang3.StringUtils;
+import org.springframework.util.CollectionUtils;
 import org.springframework.beans.factory.NoSuchBeanDefinitionException;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
@@ -44,10 +45,31 @@ public class ImportRowPipeline {
      * 5. Custom handler
      * 6. Failure collection (when skipException=true) or fail-fast (when skipException=false)
      * 7. Persistence
+     * 8. Custom handler, again, for whatever needed the rows to exist
      */
     public void importData(ImportTemplateDTO importTemplateDTO, ImportDataDTO importDataDTO) {
         processRows(importTemplateDTO, importDataDTO, ImportMode.IMPORT);
         importPersistenceService.persist(importTemplateDTO, importDataDTO);
+        runAfterPersistence(importTemplateDTO.getCustomHandler(), importDataDTO);
+    }
+
+    /**
+     * The custom handler's second pass, after the rows exist.
+     *
+     * <p>Step 5 runs before persistence, so anything keyed on the new id had nowhere to go. A
+     * handler could not defer it either — the only transaction in an import is the one inside the
+     * persistence call, which begins after step 5 has returned, so a synchronisation registered
+     * there is registered against nothing and silently skipped.
+     *
+     * <p>Only the rows still standing are handed over: {@code importDataDTO.getRows()} has had the
+     * failures removed by then, so a handler is never asked to finish a row that was not written.
+     */
+    private void runAfterPersistence(String handlerName, ImportDataDTO importDataDTO) {
+        if (StringUtils.isBlank(handlerName) || CollectionUtils.isEmpty(importDataDTO.getRows())) {
+            return;
+        }
+        CustomImportHandler handler = SpringContextUtils.getBean(handlerName, CustomImportHandler.class);
+        handler.afterImportData(importDataDTO.getRows(), importDataDTO.getEnv());
     }
 
     /**
