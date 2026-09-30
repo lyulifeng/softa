@@ -1,0 +1,13 @@
+{
+  "ModelDefaultScope": [
+    { "id": "ImportTemplate", "scopeType": "ALL", "description": "Import templates are shared by the tenant; no row belongs to anyone" },
+    { "id": "ExportTemplate", "scopeType": "ALL", "description": "Export templates are shared by the tenant; no row belongs to anyone" },
+    { "id": "SensitiveFieldSet", "scopeType": "ALL", "description": "Field-set definitions the role wizard reads to offer them" },
+    { "id": "MailTemplate", "scopeType": "ALL", "description": "Mail templates hold placeholder copy, no recipient and no credential" },
+    { "id": "SmsTemplate", "scopeType": "ALL", "description": "SMS templates hold placeholder copy, no recipient and no credential" },
+    { "id": "MailSendServerConfig", "scopeType": "ALL", "description": "SMTP settings; the password is masked on read" },
+    { "id": "MailReceiveServerConfig", "scopeType": "ALL", "description": "IMAP settings; the password is masked on read" },
+    { "id": "ImportHistory", "scopeType": "CREATED_BY_SELF", "description": "Each run belongs to whoever started it" },
+    { "id": "ExportHistory", "scopeType": "CREATED_BY_SELF", "description": "Each run belongs to whoever started it" }
+  ]
+}

@@ -21,6 +21,7 @@ import io.softa.starter.permission.spi.support.DbPermissionEndpointSource;
 import io.softa.starter.permission.spi.support.DbSensitiveFieldSetSource;
 import io.softa.starter.permission.spi.support.DefaultPermissionSnapshotProvider;
 import io.softa.starter.permission.index.EndpointIndex;
+import io.softa.starter.permission.scope.ModelDefaultScopeRegistry;
 import io.softa.starter.permission.scope.ScopeApplicabilityResolver;
 import io.softa.starter.permission.scope.SubtreeFilterRewriter;
 import io.softa.starter.permission.scope.ScopeRuleCompiler;
@@ -75,9 +76,14 @@ public class PermissionStarterAutoConfiguration {
             ObjectProvider<EndpointIndex> endpointIndex,
             // Same lazy treatment, same reason: the rewriter reads ModelManager, which AppStartup
             // loads after this bean is built.
-            ObjectProvider<SubtreeFilterRewriter> subtreeRewriter) {
+            ObjectProvider<SubtreeFilterRewriter> subtreeRewriter,
+            // Same lazy treatment again: the registry reads its rows through ModelService, which is
+            // not usable while this bean is built. Absent it, no model declares a fallback scope —
+            // the behaviour that predates the mechanism.
+            ObjectProvider<ModelDefaultScopeRegistry> defaultScopes) {
         return new PermissionServiceImpl(snapshotProvider, scopeCompiler, sfsCache, modelService, applicability,
-                endpointIndex::getIfAvailable, subtreeRewriter::getIfAvailable);
+                endpointIndex::getIfAvailable, subtreeRewriter::getIfAvailable,
+                defaultScopes::getIfAvailable);
     }
 
     /**
