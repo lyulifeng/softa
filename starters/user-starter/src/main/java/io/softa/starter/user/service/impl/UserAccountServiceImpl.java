@@ -987,6 +987,24 @@ public class UserAccountServiceImpl extends EntityServiceImpl<UserAccount, Long>
     }
 
     @Override
+    public boolean canSetMyFirstPassword() {
+        Long userId = ContextHolder.getContext().getUserId();
+        if (userId == null) {
+            return false;
+        }
+        // The precondition setMyFirstPassword enforces, asked ahead of time so a screen can offer
+        // the right form. Deliberately NOT mustSetMyPassword: that one is about being forced, and
+        // it exempts consultants — who are exactly the people with no password and no other way to
+        // get one. The lenient identity lookup, because "no credentials row" is a false here rather
+        // than an error: nothing is being done, only answered.
+        return this.getById(userId)
+                .map(UserAccount::getProfileId)
+                .flatMap(identityService::findByProfile)
+                .map(identity -> StringUtils.isBlank(identity.getPassword()))
+                .orElse(false);
+    }
+
+    @Override
     @Transactional
     public void setMyFirstPassword(String newPassword) {
         Assert.notBlank(newPassword, "New password cannot be empty.");

@@ -235,6 +235,23 @@ public interface UserAccountService extends EntityService<UserAccount, Long> {
     boolean mustSetMyPassword();
 
     /**
+     * Whether {@link #setMyFirstPassword} would be accepted for the logged-in person — that is,
+     * whether they have no password yet.
+     *
+     * <p>A different question from {@link #mustSetMyPassword}, and the difference is the whole
+     * reason this exists. That one asks whether somebody is FORCED to set a password before going
+     * any further, and it deliberately answers no for a consultant: code login is their intended
+     * way in and nobody asked them to create a credential. A screen that OFFERS to set one has to
+     * ask this instead — keyed on the forcing rule, it showed the exempt consultant the
+     * change-password form, which demands a current password they have never had, leaving the one
+     * person the exemption was written for with no way to ever get a password.
+     *
+     * <p>False for a person with no credentials row at all: the call would refuse them, and
+     * offering a form that cannot succeed is the failure this is here to prevent.
+     */
+    boolean canSetMyFirstPassword();
+
+    /**
      * Force reset user password (admin operation)
      *
      * @param userId User ID
