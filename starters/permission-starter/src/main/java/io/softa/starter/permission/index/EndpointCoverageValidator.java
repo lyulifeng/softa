@@ -40,7 +40,16 @@ import io.softa.starter.permission.interceptor.PermissionInterceptorProperties;
  * <p><b>Log-only, never fail-fast</b> (mirrors the origin validator's decision):
  * in a multi-app world the same seed ships endpoints for modules that may or may
  * not be on a given app's classpath, so taking the app down at boot is the wrong
- * trade-off. Ops sees the full list in the log; CI gates on a clean run.
+ * trade-off. Ops sees the full list in the log.
+ *
+ * <p><b>WARN, not ERROR.</b> An uncovered endpoint is unreachable, not open: the
+ * interceptor refuses a request whose URI the index does not hold, so "nothing
+ * grants it" reads as "nobody can call it". Most of the list is that way on
+ * purpose — the generic model controller serves every verb for every model, and
+ * only what a page declares is ever registered, so each model with no page of its
+ * own contributes a screenful. Reporting a by-design dead route at the level
+ * reserved for things that are broken buries the one entry that is: a handler
+ * somebody wrote and then could not reach. Level matched to what the finding is.
  *
  * <p>Skips itself when {@code handlerMappings} is empty (starter consumed outside
  * a web context).
@@ -75,10 +84,12 @@ public class EndpointCoverageValidator {
             log.info("EndpointCoverageValidator — OK ({} handler mapping(s) checked)", handlers.size());
             return;
         }
-        log.error("EndpointCoverageValidator — {} endpoint(s) not covered by any permission:", uncovered.size());
-        uncovered.forEach(e -> log.error(
+        log.warn("EndpointCoverageValidator — {} endpoint(s) not covered by any permission "
+                + "(unreachable, not open — the interceptor refuses what the index does not hold):",
+                uncovered.size());
+        uncovered.forEach(e -> log.warn(
                 "  - {} — add to permission.endpoints or public/authenticated-bypass yml", e));
-        log.error("EndpointCoverageValidator — startup continues; investigate and fix the seed / classpath above");
+        log.warn("EndpointCoverageValidator — startup continues; a route listed above can be reached by nobody, so fix the seed / classpath only where that is not the intent");
     }
 
     /** Merge the handler map from EVERY {@code RequestMappingHandlerMapping} bean
