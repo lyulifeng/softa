@@ -162,7 +162,9 @@ public class EndpointCoverageValidator {
         return uri.equals("/error")
                 || uri.startsWith("/actuator/")
                 || uri.startsWith("/swagger-ui/")
-                || uri.startsWith("/v3/api-docs/")
+                // springdoc serves the group paths under /v3/api-docs/, and the root document at
+                // /v3/api-docs plus /v3/api-docs.yaml — the prefix alone misses the latter two.
+                || uri.startsWith("/v3/api-docs")
                 || uri.equals("/favicon.ico");
     }
 }

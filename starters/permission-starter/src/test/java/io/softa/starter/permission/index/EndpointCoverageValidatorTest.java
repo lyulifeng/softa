@@ -134,7 +134,10 @@ class EndpointCoverageValidatorTest {
         Set<String> uncovered = validator().findUncoveredEndpoints(handlers(
                 info("/actuator/health", RequestMethod.GET),
                 info("/error", RequestMethod.GET),
-                info("/swagger-ui/index.html", RequestMethod.GET)));
+                info("/swagger-ui/index.html", RequestMethod.GET),
+                // springdoc's root document and its yaml twin sit beside the /v3/api-docs/ groups
+                info("/v3/api-docs", RequestMethod.GET),
+                info("/v3/api-docs.yaml", RequestMethod.GET)));
         assertThat(uncovered).isEmpty();
     }
 
