@@ -67,6 +67,8 @@ class RelationExpansionFieldMaskTest {
                 });
         when(permissionService.appendScopeAccessFilters(anyString(), any(Filters.class)))
                 .thenAnswer(i -> i.getArgument(1));
+        when(permissionService.rewriteScopeFilters(anyString(), any(Filters.class)))
+                .thenAnswer(i -> i.getArgument(1));
         when(jdbcService.selectByFilter(anyString(), any(FlexQuery.class))).thenReturn(rowsFromDb);
         return service;
     }
@@ -127,6 +129,22 @@ class RelationExpansionFieldMaskTest {
                 .as("a read method under a blanket bypass also waives the field mask for every model "
                         + "the read pipeline re-reads from inside it")
                 .isEmpty();
+    }
+
+    /**
+     * What the row range waiver must NOT take with it.
+     *
+     * <p>{@code appendScopeAccessFilters} rewrites a subtree condition into the id-path condition it
+     * means BEFORE any of its own early returns, deliberately — an admin and a system-level read ask
+     * the same question as anyone else. Skipping the whole scope step to skip the range would drop
+     * that rewrite too, and an unrewritten subtree condition does not widen or narrow a result: it
+     * compiles to a pattern match against an id and matches by coincidence.
+     */
+    @Test
+    void ignoringRowScope_stillAppliesTheScopeIndependentRewrite() {
+        wire(new ArrayList<>()).searchListIgnoringRowScope(MODEL, queryAskingForAmount());
+
+        verify(permissionService).rewriteScopeFilters(eq(MODEL), any(Filters.class));
     }
 
     @Test

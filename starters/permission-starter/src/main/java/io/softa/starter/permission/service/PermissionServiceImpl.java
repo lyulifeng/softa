@@ -147,7 +147,7 @@ public class PermissionServiceImpl implements PermissionService {
         // idPath condition or it compiles to a LIKE against an id and matches by coincidence. An
         // admin, and anything running under @SkipPermissionCheck, asks the same question and needs
         // the same answer — placing it after the bypass would leave exactly them with the broken one.
-        originalFilters = rewriteSubtrees(model, originalFilters);
+        originalFilters = rewriteScopeFilters(model, originalFilters);
         if (shouldBypass()) return originalFilters;
         PermissionInfo pi = currentPi();
         if (PermissionInfo.hasFullDataAccess(pi)) return originalFilters;
@@ -167,6 +167,18 @@ public class PermissionServiceImpl implements PermissionService {
     }
 
     /** No-op when the rewriter is absent (older constructors, unit tests) or nothing matches. */
+    /**
+     * {@inheritDoc}
+     *
+     * <p>Kept as its own entry point so a read that crosses the caller's row range can still get the
+     * rewrite: {@link #appendScopeAccessFilters} calls this first, and a relation expansion calls it
+     * instead.
+     */
+    @Override
+    public Filters rewriteScopeFilters(String model, Filters originalFilters) {
+        return rewriteSubtrees(model, originalFilters);
+    }
+
     private Filters rewriteSubtrees(String model, Filters filters) {
         SubtreeFilterRewriter rewriter = subtreeRewriterSupplier.get();
         return rewriter == null ? filters : rewriter.rewrite(model, filters);

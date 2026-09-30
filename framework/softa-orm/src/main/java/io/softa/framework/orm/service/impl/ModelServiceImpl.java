@@ -479,8 +479,25 @@ public class ModelServiceImpl<K extends Serializable> implements ModelService<K>
      * within it went with the header switcher.
      */
     private Filters scopedAccess(String modelName, Filters filters) {
-        return permissionService.appendScopeAccessFilters(modelName,
-                MultiCountryScope.append(modelName, filters));
+        return scopedAccess(modelName, filters, true);
+    }
+
+    /**
+     * Same, with the caller's row range made optional.
+     *
+     * <p>What {@code applyRowScope == false} drops is exactly the row range: the role's per-model
+     * rules and the company grant. It does NOT drop the country narrowing, nor the subtree rewrite
+     * that {@code appendScopeAccessFilters} performs before any of its own early returns — those two
+     * apply to every caller, an admin and a relation expansion included. A subtree condition left
+     * unrewritten does not widen or narrow a result, it compiles to a pattern match against an id and
+     * matches by coincidence; and an expansion reading a country-partitioned model wants the same
+     * countries a direct read would.
+     */
+    private Filters scopedAccess(String modelName, Filters filters, boolean applyRowScope) {
+        Filters narrowed = MultiCountryScope.append(modelName, filters);
+        return applyRowScope
+                ? permissionService.appendScopeAccessFilters(modelName, narrowed)
+                : permissionService.rewriteScopeFilters(modelName, narrowed);
     }
 
     /**
@@ -1344,10 +1361,8 @@ public class ModelServiceImpl<K extends Serializable> implements ModelService<K>
         permissionService.checkModelFieldsAccess(modelName, flexQuery.getFields(), AccessType.READ);
         // Apply the versioning read scope (timeline clamp)
         Filters filters = this.scopedRead(modelName, flexQuery);
-        if (applyRowScope) {
-            // Append the access scopes (permission data range + per-country narrowing)
-            filters = this.scopedAccess(modelName, filters);
-        }
+        // Append the access scopes (permission data range + per-country narrowing)
+        filters = this.scopedAccess(modelName, filters, applyRowScope);
         flexQuery.setFilters(filters);
         List<Map<String, Object>> rows = jdbcService.selectByFilter(modelName, flexQuery);
         if (rows.size() > BaseConstant.MAX_BATCH_SIZE) {
