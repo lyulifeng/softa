@@ -105,6 +105,12 @@ public class EndpointCoverageValidator {
     Set<String> findUncoveredEndpoints(Map<RequestMappingInfo, HandlerMethod> handlers) {
         List<String> publicPatterns = bypassProperties.getPublicUriPatterns();
         List<String> bypassPatterns = bypassProperties.getAuthenticatedBypassPatterns();
+        // Platform-only endpoints are declared, just in a third list. Leaving it out reported every
+        // one of them as uncovered, which is the opposite of what the list says: they ARE gated, by
+        // a rule the index does not hold. The noise is the damage — this check exists so a genuinely
+        // ungated endpoint stands out, and a boot that logs dozens of ERRORs nobody can act on
+        // teaches the reader to scroll past the one that matters.
+        List<String> platformOnlyPatterns = bypassProperties.getPlatformOnlyPatterns();
         Set<String> uncovered = new HashSet<>();
 
         for (Map.Entry<RequestMappingInfo, HandlerMethod> entry : handlers.entrySet()) {
@@ -125,7 +131,9 @@ public class EndpointCoverageValidator {
                             .collect(java.util.stream.Collectors.toSet());
 
             for (String uri : patterns) {
-                if (isInBypass(uri, publicPatterns) || isInBypass(uri, bypassPatterns)) continue;
+                if (isInBypass(uri, publicPatterns)
+                        || isInBypass(uri, bypassPatterns)
+                        || isInBypass(uri, platformOnlyPatterns)) continue;
                 if (isFrameworkInfraPath(uri)) continue;
                 for (HttpMethod method : methods) {
                     Set<String> perms = endpointIndex.lookup(uri, method.name());

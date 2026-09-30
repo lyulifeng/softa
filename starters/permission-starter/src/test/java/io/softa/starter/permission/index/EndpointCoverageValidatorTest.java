@@ -113,6 +113,21 @@ class EndpointCoverageValidatorTest {
         assertThat(uncovered).isEmpty();
     }
 
+    /**
+     * A platform-only endpoint is gated — by a rule the index does not hold, in a third list beside
+     * the other two. Reporting it as uncovered says the opposite of what the list says, and the noise
+     * is the damage: this check exists so a genuinely ungated endpoint stands out, and a boot that
+     * logs dozens of unactionable ERRORs teaches the reader to scroll past the one that matters.
+     */
+    @Test
+    void platformOnlyPattern_skipsEndpoint() {
+        props.setPlatformOnlyPatterns(List.of("/provisioning/**"));
+        when(endpointIndex.lookup(anyString(), anyString())).thenReturn(Set.of());
+        Set<String> uncovered = validator().findUncoveredEndpoints(
+                handlers(info("/provisioning/createTenant", RequestMethod.POST)));
+        assertThat(uncovered).isEmpty();
+    }
+
     @Test
     void frameworkInfraPath_skipped() {
         when(endpointIndex.lookup(anyString(), anyString())).thenReturn(Set.of());
