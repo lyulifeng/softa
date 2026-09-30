@@ -21,6 +21,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -145,6 +146,53 @@ class RelationExpansionFieldMaskTest {
         wire(new ArrayList<>()).searchListIgnoringRowScope(MODEL, queryAskingForAmount());
 
         verify(permissionService).rewriteScopeFilters(eq(MODEL), any(Filters.class));
+    }
+
+    /**
+     * The old entry point, pinned end to end.
+     *
+     * <p>The interesting failure is not the new path misbehaving, it is the new path quietly changing
+     * the old one. Adding a variant meant factoring the body both share, and a step dropped in that
+     * factoring costs every ordinary read — silently, because the variant's own tests still pass. So
+     * this asserts the whole sequence in order rather than any single step: the guards, the timeline
+     * clamp, the row range, the response mask.
+     */
+    @Test
+    void plainSearchList_runsTheWholeSequenceInOrder() {
+        ModelServiceImpl<Long> svc = wire(new ArrayList<>());
+
+        svc.searchList(MODEL, queryAskingForAmount());
+
+        var order = inOrder(permissionService, jdbcService);
+        order.verify(permissionService).filterReadableFields(eq(MODEL), any(), eq(AccessType.READ));
+        order.verify(permissionService).checkModelFieldsAccess(eq(MODEL), any(), eq(AccessType.READ));
+        order.verify(permissionService).appendScopeAccessFilters(eq(MODEL), any(Filters.class));
+        order.verify(jdbcService).selectByFilter(eq(MODEL), any(FlexQuery.class));
+        order.verify(permissionService).maskResponseValue(eq(MODEL), any(), eq(AccessType.READ));
+        order.verifyNoMoreInteractions();
+    }
+
+    /**
+     * The delta between the two entry points is exactly one step, and this is what says so.
+     *
+     * <p>Written after a first attempt skipped the whole scope step to skip the row range, and took
+     * the country narrowing and the subtree rewrite with it — both of which apply to every caller.
+     * Each of those had a passing test of its own; nothing compared the two paths.
+     */
+    @Test
+    void ignoringRowScope_differsFromPlainByTheRowRangeAlone() {
+        ModelServiceImpl<Long> svc = wire(new ArrayList<>());
+
+        svc.searchListIgnoringRowScope(MODEL, queryAskingForAmount());
+
+        var order = inOrder(permissionService, jdbcService);
+        order.verify(permissionService).filterReadableFields(eq(MODEL), any(), eq(AccessType.READ));
+        order.verify(permissionService).checkModelFieldsAccess(eq(MODEL), any(), eq(AccessType.READ));
+        // The one substitution: the rewrite alone, where the plain path takes the rewrite AND the range.
+        order.verify(permissionService).rewriteScopeFilters(eq(MODEL), any(Filters.class));
+        order.verify(jdbcService).selectByFilter(eq(MODEL), any(FlexQuery.class));
+        order.verify(permissionService).maskResponseValue(eq(MODEL), any(), eq(AccessType.READ));
+        order.verifyNoMoreInteractions();
     }
 
     @Test
