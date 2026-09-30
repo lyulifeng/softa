@@ -264,7 +264,7 @@ public class ManyToManyProcessor extends BaseProcessor {
         FlexQuery previousFlexQuery = new FlexQuery(fields).where(new Filters().in(metaField.getJoinLeft(), ids));
         // Patch diffing must see soft-deleted / inactive join rows too.
         previousFlexQuery.setFilterControl(FilterControl.bypassAll());
-        List<Map<String, Object>> previousMToMRows = ReflectTool.searchList(metaField.getJoinModel(), previousFlexQuery);
+        List<Map<String, Object>> previousMToMRows = ReflectTool.searchListIgnoringRowScope(metaField.getJoinModel(), previousFlexQuery);
         previousMToMRows.forEach(row -> {
             Serializable id = (Serializable) row.get(ModelConstant.ID);
             Serializable leftId = (Serializable) row.get(metaField.getJoinLeft());
@@ -327,7 +327,7 @@ public class ManyToManyProcessor extends BaseProcessor {
         joinModelFlexQuery.setFilterControl(FilterControl.bypassAll());
         // Count is automatically added during the groupBy operation
         joinModelFlexQuery.setGroupBy(metaField.getJoinLeft());
-        List<Map<String, Object>> countRows = ReflectTool.searchList(metaField.getJoinModel(), joinModelFlexQuery);
+        List<Map<String, Object>> countRows = ReflectTool.searchListIgnoringRowScope(metaField.getJoinModel(), joinModelFlexQuery);
         // COUNT(*) comes back from MySQL JDBC as Long. The previous
         // `(Integer)` cast threw ClassCastException — see the matching fix
         // in OneToManyProcessor.expandRowsWithRelatedCount for the
@@ -430,7 +430,7 @@ public class ManyToManyProcessor extends BaseProcessor {
                 joinModelFlexQuery.setAggregate(false);
             }
         }
-        return ReflectTool.searchList(metaField.getJoinModel(), joinModelFlexQuery);
+        return ReflectTool.searchListIgnoringRowScope(metaField.getJoinModel(), joinModelFlexQuery);
     }
 
     /**
@@ -460,7 +460,7 @@ public class ManyToManyProcessor extends BaseProcessor {
         }
         rightFlexQuery.setConvertType(flexQuery.getConvertType());
         rightFlexQuery.setFilterControl(FilterControl.bypassAll());
-        return ReflectTool.searchList(rightModel, rightFlexQuery);
+        return ReflectTool.searchListIgnoringRowScope(rightModel, rightFlexQuery);
     }
 
     /**
