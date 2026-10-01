@@ -190,10 +190,9 @@ public class ConsultantServiceImpl extends EntityServiceImpl<ConsultantProfile, 
         Assert.notNull(form, "A consultant profile is required");
         String email = form.getEmail() == null ? null : form.getEmail().trim();
         String mobile = form.getMobile() == null ? null : form.getMobile().trim();
-        // One channel is the requirement, not both. A person who joined by mobile alone has no email
-        // to send back, and demanding one locked their profile out of this form for good: the field
-        // is read-only for somebody who already exists, so the operator could neither supply it nor
-        // do without it, and extending a grant or disabling them became impossible.
+        // One channel is the requirement, not both. A person who joined by mobile alone has no email,
+        // and demanding one would make every save of their profile fail until somebody invented one
+        // — extending a grant or disabling them included.
         Assert.isTrue((email != null && !email.isEmpty()) || (mobile != null && !mobile.isEmpty()),
                 "A consultant needs an email or a mobile.");
 
@@ -235,7 +234,8 @@ public class ConsultantServiceImpl extends EntityServiceImpl<ConsultantProfile, 
                             email != null && !email.isBlank() ? email : mobile)
                     : existing;
         }
-        applyBasicInformation(profileId, form.getUsername(), email, mobile, personIsNew);
+        applyBasicInformation(profileId, form.getUsername(), email, mobile,
+                personIsNew || form.getProfileId() != null);
 
         // The consultant record itself: created on first save, and its Enabled/Disabled switch is
         // whatever the form says. Defaulting to enabled on create — a consultant is made in order
@@ -267,64 +267,90 @@ public class ConsultantServiceImpl extends EntityServiceImpl<ConsultantProfile, 
      * Write back what the form says about the PERSON — the half of this screen that is not about the
      * consultancy at all.
      *
-     * <p><b>Only for a person this save just created.</b> The form describes a consultancy; it does
-     * not get to say who somebody already is. Writing these onto a person who already existed was an
-     * account takeover with no exploit in it: the lookup matches on EITHER channel, so submitting a
-     * victim's mobile together with the attacker's email found the victim and moved their login
-     * address, after which a code login arrives as them. No id needed, no password needed, and the
-     * one check — that the new address belongs to nobody else — passes by construction, because the
-     * attacker owns the address they are moving it to. The permission that reaches this endpoint is
-     * grantable to platform roles that are not the super administrator.
+     * <p><b>Written when the person is either just created or named by id; never when the save merely
+     * FOUND them.</b> The three cases are not alike:
      *
-     * <p>It is also the misoperation: the mobile is required by the form, so making an existing
-     * employee a consultant rewrote the number they sign in with everywhere, silently.
+     * <ul>
+     *   <li><b>Just created</b> — the values are seeded rather than changed. Nothing is taken from
+     *       anyone, and without them the consultant's name comes back as their email address, which
+     *       is the identifier {@code createPersonForJoin} names them with.</li>
+     *   <li><b>Named by id</b> — the edit form, used only by platform administrators. The operator
+     *       opened this person's profile and is changing it on purpose, and the screen warns before
+     *       saving that a login identifier is the person's across every company they belong to: it is
+     *       one {@code UserIdentity}, resolved before any company is chosen.</li>
+     *   <li><b>Found by lookup</b> — the create form, typing an address that already belongs to
+     *       someone. Writing here was an account takeover with no exploit in it: the lookup matches on
+     *       EITHER channel, so a victim's mobile submitted together with an attacker's email found the
+     *       victim and moved their login address, after which a code login arrived as them. No id, no
+     *       password, and the one check — that the new address belongs to nobody else — passes by
+     *       construction, because the attacker owns it. It was also the misoperation: making an
+     *       existing employee a consultant rewrote the number they sign in with everywhere, silently.
+     *       Nobody in this case meant to change the person, so it writes nothing.</li>
+     * </ul>
      *
-     * <p>Changing a login identifier is a credential operation. It belongs on the person's own
-     * account-security screen, behind proof that they hold the old one — not on an administrator's
-     * form for describing somebody else. The screen shows these read-only for a person who already
-     * exists, and this is what makes that more than a hint.
+     * <p>A blank field means "not supplied", never "clear it" — the form requires all three anyway.
      *
-     * <p>For a newly created person the values are seeded rather than changed: nothing is being taken
-     * from anyone, and without them the consultant's name comes back as their email address, which is
-     * the identifier {@code createPersonForJoin} names them with. A blank field means "not supplied",
-     * never "clear it" — the form requires all three anyway.
+     * @param writesThePerson true for a person just created or named by id; false for one the save
+     *                        found through the email / mobile lookup
      */
     private void applyBasicInformation(Long profileId, String username, String email, String mobile,
-                                       boolean personIsNew) {
-        String name = username == null ? null : username.trim();
-        if (personIsNew && name != null && !name.isEmpty()) {
-            profileService.getById(profileId).ifPresent(person -> {
-                if (!name.equals(person.getFullName())) {
-                    person.setFullName(name);
-                    profileService.updateOne(person);
-                    // The cached UserInfo carries the name, and nothing evicts it on a bare update —
-                    // saveMyProfile does this by hand for the same reason. Keyed per MEMBERSHIP, so
-                    // every one of them has to go: miss one and that tenant serves the old name until
-                    // the entry expires a month later, to somebody just told the change was saved.
-                    accountService.listMembershipsOf(profileId)
-                            .forEach(account -> profileService.evictUserInfo(account.getId()));
-                }
-            });
+                                       boolean writesThePerson) {
+        boolean changed = false;
+        if (writesThePerson) {
+            changed = renamePerson(profileId, username);
+            changed |= moveLoginIdentifiers(profileId, email, mobile);
         }
-        // Outside the rename branch, and outside the name check entirely: a membership minted before
-        // it carried these details has them empty for good, and nothing about the person "changes" to
-        // trigger a refresh. Hanging this off an edit would leave exactly the rows that need it
-        // untouched, on a screen whose whole job is to let the customer identify them. Idempotent —
-        // it compares per membership and writes only where something differs.
+        // AFTER the identifiers, not before: each consultant membership carries the login email as
+        // the username and work email a customer's roster shows, so refreshing first would stamp the
+        // address that was just replaced into every company. Also outside the change check entirely:
+        // a membership minted before it carried these details has them empty for good, and nothing
+        // about the person "changes" to trigger a refresh. Idempotent — it compares per membership
+        // and writes only where something differs.
         refreshConsultantDisplay(profileId);
 
-        // Canonical spelling, never what was typed. LoginIdentifiers is the one rule for a stored,
-        // looked-up or hashed identifier, and everything that LOOKS a person up applies it — so a
-        // mobile written here as "+65 9123-4567" is a row the login query, which asks for
-        // "+6591234567", cannot find. The person then simply cannot sign in by mobile, and no
-        // migration rewrites such a row: the class says so itself. The comparison is against the
-        // canonical form too, or an unchanged number would be rewritten on every save.
-        if (!personIsNew) {
-            return;
+        if (changed) {
+            // The cached UserInfo carries the name and the identifiers, and nothing evicts it on a
+            // bare update — saveMyProfile does this by hand for the same reason. Keyed per
+            // MEMBERSHIP, so every one of them has to go: miss one and that company serves the old
+            // value until the entry expires a month later, to somebody just told the change was
+            // saved. Once, after both writes, rather than once per write.
+            accountService.listMembershipsOf(profileId)
+                    .forEach(account -> profileService.evictUserInfo(account.getId()));
         }
+    }
+
+    /** @return true when the name was actually changed */
+    private boolean renamePerson(Long profileId, String username) {
+        String name = username == null ? null : username.trim();
+        if (name == null || name.isEmpty()) {
+            return false;
+        }
+        return profileService.getById(profileId)
+                .filter(person -> !name.equals(person.getFullName()))
+                .map(person -> {
+                    person.setFullName(name);
+                    profileService.updateOne(person);
+                    return true;
+                })
+                .orElse(false);
+    }
+
+    /**
+     * Point the person's single {@code UserIdentity} at the form's email / mobile.
+     *
+     * <p>Canonical spelling, never what was typed. LoginIdentifiers is the one rule for a stored,
+     * looked-up or hashed identifier, and everything that LOOKS a person up applies it — so a mobile
+     * written here as "+65 9123-4567" is a row the login query, which asks for "+6591234567", cannot
+     * find. The person then simply cannot sign in by mobile, and no migration rewrites such a row:
+     * the class says so itself. The comparison is against the canonical form too, or an unchanged
+     * number would be rewritten on every save.
+     *
+     * @return true when either identifier was actually changed
+     */
+    private boolean moveLoginIdentifiers(Long profileId, String email, String mobile) {
         String canonicalEmail = LoginIdentifiers.normalize(email);
         String canonicalMobile = LoginIdentifiers.normalize(mobile);
-        identityService.findByProfile(profileId).ifPresent(identity -> {
+        return identityService.findByProfile(profileId).map(identity -> {
             boolean changed = false;
             if (canonicalEmail != null && !canonicalEmail.equals(identity.getLoginEmail())) {
                 requireClaimable(canonicalEmail, profileId);
@@ -339,7 +365,8 @@ public class ConsultantServiceImpl extends EntityServiceImpl<ConsultantProfile, 
             if (changed) {
                 identityService.updateOne(identity);
             }
-        });
+            return changed;
+        }).orElse(false);
     }
 
     private void requireClaimable(String identifier, Long profileId) {
