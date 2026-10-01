@@ -707,8 +707,38 @@ public class LoginServiceImpl implements LoginService {
         if (StringUtils.isNotBlank(identity.getPassword())) {
             return false;   // asked first: the common answer, and it costs no read
         }
-        return !holdsOnlyConsultantMemberships(identity.getProfileId(),
-                accountService.listMembershipsOf(identity.getProfileId()));
+        Long profileId = identity.getProfileId();
+        return !holdsOnlyConsultantMemberships(profileId, heldMemberships(profileId));
+    }
+
+    /**
+     * The memberships this person actually HOLDS — an invitation nobody has accepted is not one.
+     *
+     * <p>Only the forcing rule narrows this far, and it has to. A row HR has created but the person
+     * has never accepted carries {@code consultant = null}, because nothing has decided yet which
+     * hat it is; {@code Boolean.TRUE.equals(null)} is false, so a single outstanding invitation
+     * anywhere defeated the consultant exemption and walled a consultant behind Set Password — the
+     * invitation did not even have to be for an employee seat, since an invitation to consult
+     * elsewhere looks exactly the same here. An invitation that is never accepted never expires
+     * either, so the exemption was not postponed, it was gone.
+     *
+     * <p>The statuses are the picker's ({@link #COUNTED_STATUSES}), and that is the point: this
+     * class already decided there what counts as a membership somebody holds, and the two rules
+     * disagreeing is how one of them ended up wrong.
+     *
+     * <p>Not applied to {@link #noCompanyRefusal}, which deliberately asks the wider set: it runs
+     * on the path that is already refusing, and the unaccepted invitation is exactly what it needs
+     * to see in order to say "open the link we sent you" rather than something the person cannot
+     * act on.
+     */
+    private List<UserAccount> heldMemberships(Long profileId) {
+        return accountService.listMembershipsOf(profileId).stream()
+                // Null-checked first: COUNTED_STATUSES is a Set.of, whose contains(null) THROWS
+                // rather than answering false. A row with no status is not one anybody holds, so it
+                // drops out here either way — but it must not take the login down on its way.
+                .filter(account -> account.getStatus() != null
+                        && COUNTED_STATUSES.contains(account.getStatus()))
+                .toList();
     }
 
     /**

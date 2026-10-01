@@ -9,6 +9,7 @@ import org.springframework.test.util.ReflectionTestUtils;
 import io.softa.framework.base.context.Context;
 import io.softa.framework.base.context.ContextHolder;
 import io.softa.starter.user.entity.UserAccount;
+import io.softa.starter.user.enums.AccountStatus;
 import io.softa.starter.user.entity.UserIdentity;
 import io.softa.starter.user.service.UserAccountService;
 import io.softa.starter.user.service.UserIdentityService;
@@ -71,13 +72,29 @@ class MustSetMyPasswordTest {
         return ContextHolder.callWith(context, accountService::canSetMyFirstPassword);
     }
 
-    /** One membership of the given kind, for the exemption's "every membership" question. */
+    /**
+     * One membership of the given kind, for the exemption's "every membership" question.
+     *
+     * <p>ACTIVE, and the status is explicit now rather than left null: the rule reads it, because a
+     * membership nobody has accepted is not one the person holds. A fixture with no status said
+     * nothing about which of those it was.
+     */
     private static UserAccount membership(boolean consultant) {
+        return membership(consultant, AccountStatus.ACTIVE);
+    }
+
+    private static UserAccount membership(Boolean consultant, AccountStatus status) {
         UserAccount account = new UserAccount();
         account.setId(USER);
         account.setProfileId(PROFILE);
         account.setConsultant(consultant);
+        account.setStatus(status);
         return account;
+    }
+
+    /** What HR has created and nobody has accepted: no hat decided yet, so no consultant flag. */
+    private static UserAccount unacceptedInvitation() {
+        return membership(null, AccountStatus.INVITED);
     }
 
     private static UserAccount account(Long profileId) {
@@ -195,5 +212,59 @@ class MustSetMyPasswordTest {
     @Test
     void noSession_cannotSetOne() {
         assertThat(canSetAsUser(null)).isFalse();
+    }
+
+    /**
+     * An invitation nobody has accepted must not cost a consultant their exemption.
+     *
+     * <p>Such a row carries {@code consultant = null} — nothing has decided which hat it is yet —
+     * and {@code Boolean.TRUE.equals(null)} is false, so a single outstanding invitation anywhere
+     * put a consultant behind the forced Set Password wall. It did not even have to be an
+     * invitation to employment: an invitation to consult somewhere else looks identical here. And
+     * because an unaccepted invitation never expires, the exemption was not postponed but gone.
+     *
+     * <p>This class already knew the distinction — the tenant picker counts ACTIVE / FROZEN /
+     * LOCKED and says in so many words that an INVITED row is "a membership HR has created, not one
+     * the person holds yet". Two rules, two definitions, and this is the one that was wrong.
+     */
+    @Test
+    void anUnacceptedInvitation_doesNotCostAConsultantTheExemption() {
+        doReturn(Optional.of(account(PROFILE))).when(accountService).getById(USER);
+        when(identityService.findByProfile(PROFILE)).thenReturn(Optional.of(identity(null)));
+        when(consultantService.isConsultant(PROFILE)).thenReturn(true);
+        when(memberships.listMembershipsOf(PROFILE))
+                .thenReturn(List.of(unacceptedInvitation(), membership(true)));
+
+        assertThat(asUser(USER)).isFalse();
+    }
+
+    /**
+     * The line the narrowing must not cross. An ACCEPTED employment still forces the step: that
+     * person is an employee somewhere, and without a password they cannot come back at all.
+     */
+    @Test
+    void anAcceptedEmployment_stillForcesTheStep() {
+        doReturn(Optional.of(account(PROFILE))).when(accountService).getById(USER);
+        when(identityService.findByProfile(PROFILE)).thenReturn(Optional.of(identity(null)));
+        when(consultantService.isConsultant(PROFILE)).thenReturn(true);
+        when(memberships.listMembershipsOf(PROFILE))
+                .thenReturn(List.of(membership(true), membership(false, AccountStatus.ACTIVE)));
+
+        assertThat(asUser(USER)).isTrue();
+    }
+
+    /**
+     * A row with no status drops out rather than taking the login down: COUNTED_STATUSES is a
+     * {@code Set.of}, and its {@code contains(null)} throws instead of answering false.
+     */
+    @Test
+    void aMembershipWithNoStatus_doesNotBreakTheRule() {
+        doReturn(Optional.of(account(PROFILE))).when(accountService).getById(USER);
+        when(identityService.findByProfile(PROFILE)).thenReturn(Optional.of(identity(null)));
+        when(consultantService.isConsultant(PROFILE)).thenReturn(true);
+        when(memberships.listMembershipsOf(PROFILE))
+                .thenReturn(List.of(membership(false, null), membership(true)));
+
+        assertThat(asUser(USER)).isFalse();
     }
 }
