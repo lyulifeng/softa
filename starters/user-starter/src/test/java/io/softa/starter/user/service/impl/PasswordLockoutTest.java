@@ -175,15 +175,17 @@ class PasswordLockoutTest {
         givenWrongPasswordIsFailureNumber(identity(null), 7);
 
         assertThatThrownBy(() -> loginService.authenticateByPassword(EMAIL, "wrong"))
-                .hasMessage("Incorrect account or password. 3 attempt(s) remaining before password login is locked.");
+                .hasMessage("Incorrect account or password. 3 attempts left before password login locks for 30 minutes.");
     }
 
     @Test
     void theNinthFailure_warnsOfTheLastAttempt() {
         givenWrongPasswordIsFailureNumber(identity(null), 9);
 
+        // Also the singular: one attempt, not "1 attempts". The count is the whole point of this
+        // sentence, so reading it wrong is the one thing it must not do.
         assertThatThrownBy(() -> loginService.authenticateByPassword(EMAIL, "wrong"))
-                .hasMessage("Incorrect account or password. 1 attempt(s) remaining before password login is locked.");
+                .hasMessage("Incorrect account or password. 1 attempt left before password login locks for 30 minutes.");
     }
 
     @Test
@@ -224,7 +226,7 @@ class PasswordLockoutTest {
 
         assertThatThrownBy(() -> loginService.authenticateByPassword(NOBODY, "wrong"))
                 .isInstanceOf(BusinessException.class)
-                .hasMessage("Incorrect account or password. 3 attempt(s) remaining before password login is locked.");
+                .hasMessage("Incorrect account or password. 3 attempts left before password login locks for 30 minutes.");
 
         verify(identityService).recordUnknownIdentifierFailure(NOBODY);
         verify(identityService, never()).recordPasswordFailure(any());
