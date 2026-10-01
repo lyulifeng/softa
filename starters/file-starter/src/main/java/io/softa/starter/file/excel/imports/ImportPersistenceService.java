@@ -9,7 +9,9 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 import org.springframework.util.CollectionUtils;
 
+import io.softa.framework.base.exception.BusinessException;
 import io.softa.framework.orm.constant.FileConstant;
+import io.softa.framework.orm.domain.CreateOrUpdateResult;
 import io.softa.framework.orm.service.ModelService;
 import io.softa.starter.file.dto.ImportDataDTO;
 import io.softa.starter.file.dto.ImportTemplateDTO;
@@ -48,7 +50,37 @@ public class ImportPersistenceService {
         } else if (ImportRule.ONLY_CREATE.equals(importRule)) {
             modelService.createList(importTemplateDTO.getModelName(), rows);
         } else if (ImportRule.ONLY_UPDATE.equals(importRule)) {
-            modelService.createOrUpdate(importTemplateDTO.getModelName(), rows, importTemplateDTO.getUniqueConstraints());
+            updateOnly(importTemplateDTO, rows);
+        }
+    }
+
+    /**
+     * Update the rows that match stored data, and refuse the rows that do not.
+     *
+     * <p>This rule used to run the same call as CREATE_OR_UPDATE, so a row matching nothing was
+     * quietly inserted — a file of corrections with one mistyped key produced a new record instead
+     * of an error, and the mistake surfaced later as a duplicate nobody could account for. "Only
+     * update" has to mean that a row with nowhere to land is a failed row.
+     *
+     * <p>Asked before writing rather than sorted out afterwards: the write is one transaction, and
+     * by the time it returns the inserts it should not have made are committed.
+     *
+     * <p>Thrown rather than collected here: a throw is what the surrounding row-by-row fallback
+     * already turns into a failed row with a reason, so one rule does not need a second way of
+     * reporting the same thing. The message is written here and names only the key, which is the
+     * one thing the reader can act on.
+     */
+    private void updateOnly(ImportTemplateDTO importTemplateDTO, List<Map<String, Object>> rows) {
+        List<String> uniqueConstraints = importTemplateDTO.getUniqueConstraints();
+        CreateOrUpdateResult split = modelService.splitByExistence(
+                importTemplateDTO.getModelName(), rows, uniqueConstraints);
+        if (!split.created().isEmpty()) {
+            throw new BusinessException(
+                    "This row matches no existing record on {0}, and the import template only updates.",
+                    String.join(", ", uniqueConstraints));
+        }
+        if (!split.updated().isEmpty()) {
+            modelService.updateList(importTemplateDTO.getModelName(), split.updated());
         }
     }
 
