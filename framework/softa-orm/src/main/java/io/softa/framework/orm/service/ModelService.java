@@ -64,8 +64,9 @@ public interface ModelService<K extends Serializable> {
      *
      * @param modelName the name of the model
      * @param rows the list of data rows to create or update
+     * @return which rows were inserted and which were written onto a stored row
      */
-    void createOrUpdate(String modelName, List<Map<String, Object>> rows);
+    CreateOrUpdateResult createOrUpdate(String modelName, List<Map<String, Object>> rows);
 
     /**
      * Creates or updates rows by unique constraint fields.
@@ -73,8 +74,10 @@ public interface ModelService<K extends Serializable> {
      * @param modelName the name of the model
      * @param rows      the list of data rows to create or update
      * @param uniqueConstraints the list of unique constraint fields
+     * @return which rows were inserted and which were written onto a stored row
      */
-    void createOrUpdate(String modelName, List<Map<String, Object>> rows, List<String> uniqueConstraints);
+    CreateOrUpdateResult createOrUpdate(String modelName, List<Map<String, Object>> rows,
+                                        List<String> uniqueConstraints);
 
     /**
      * Which of these rows match stored data by their unique constraint fields, and which do not —

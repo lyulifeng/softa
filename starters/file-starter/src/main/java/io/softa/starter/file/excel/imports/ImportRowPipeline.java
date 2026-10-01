@@ -12,6 +12,7 @@ import org.springframework.stereotype.Component;
 import io.softa.framework.base.exception.IllegalArgumentException;
 import io.softa.framework.base.utils.SpringContextUtils;
 import io.softa.framework.base.utils.StringTools;
+import io.softa.framework.orm.domain.CreateOrUpdateResult;
 import io.softa.starter.file.dto.ImportDataDTO;
 import io.softa.starter.file.dto.ImportTemplateDTO;
 import io.softa.starter.file.enums.ImportMode;
@@ -49,8 +50,8 @@ public class ImportRowPipeline {
      */
     public void importData(ImportTemplateDTO importTemplateDTO, ImportDataDTO importDataDTO) {
         processRows(importTemplateDTO, importDataDTO, ImportMode.IMPORT);
-        importPersistenceService.persist(importTemplateDTO, importDataDTO);
-        runAfterPersistence(importTemplateDTO.getCustomHandler(), importDataDTO);
+        CreateOrUpdateResult written = importPersistenceService.persist(importTemplateDTO, importDataDTO);
+        runAfterPersistence(importTemplateDTO.getCustomHandler(), written, importDataDTO.getEnv());
     }
 
     /**
@@ -61,15 +62,18 @@ public class ImportRowPipeline {
      * persistence call, which begins after step 5 has returned, so a synchronisation registered
      * there is registered against nothing and silently skipped.
      *
-     * <p>Only the rows still standing are handed over: {@code importDataDTO.getRows()} has had the
-     * failures removed by then, so a handler is never asked to finish a row that was not written.
+     * <p>Only the rows that were written are handed over, and the two sides are kept apart: the
+     * write is the last place that knows which row was inserted and which was matched, and a
+     * handler whose work belongs to one of them cannot tell afterwards. A failed row appears in
+     * neither list, so a handler is never asked to finish a row that was not written.
      */
-    private void runAfterPersistence(String handlerName, ImportDataDTO importDataDTO) {
-        if (StringUtils.isBlank(handlerName) || CollectionUtils.isEmpty(importDataDTO.getRows())) {
+    private void runAfterPersistence(String handlerName, CreateOrUpdateResult written, Map<String, Object> env) {
+        if (StringUtils.isBlank(handlerName)
+                || (CollectionUtils.isEmpty(written.created()) && CollectionUtils.isEmpty(written.updated()))) {
             return;
         }
         CustomImportHandler handler = SpringContextUtils.getBean(handlerName, CustomImportHandler.class);
-        handler.afterImportData(importDataDTO.getRows(), importDataDTO.getEnv());
+        handler.afterImportData(written.created(), written.updated(), env);
     }
 
     /**

@@ -212,8 +212,8 @@ public class ModelServiceImpl<K extends Serializable> implements ModelService<K>
      */
     @Override
     @Transactional(rollbackFor = Exception.class)
-    public void createOrUpdate(String modelName, List<Map<String, Object>> rows) {
-        this.createOrUpdate(modelName, rows, List.of(ModelConstant.ID));
+    public CreateOrUpdateResult createOrUpdate(String modelName, List<Map<String, Object>> rows) {
+        return this.createOrUpdate(modelName, rows, List.of(ModelConstant.ID));
     }
 
     /**
@@ -280,7 +280,8 @@ public class ModelServiceImpl<K extends Serializable> implements ModelService<K>
      */
     @Override
     @Transactional(rollbackFor = Exception.class)
-    public void createOrUpdate(String modelName, List<Map<String, Object>> rows, List<String> uniqueConstraints) {
+    public CreateOrUpdateResult createOrUpdate(String modelName, List<Map<String, Object>> rows,
+                                               List<String> uniqueConstraints) {
         CreateOrUpdateResult split = this.splitByExistence(modelName, rows, uniqueConstraints);
         if (!split.updated().isEmpty()) {
             this.updateList(modelName, split.updated());
@@ -288,6 +289,7 @@ public class ModelServiceImpl<K extends Serializable> implements ModelService<K>
         if (!split.created().isEmpty()) {
             this.createList(modelName, split.created());
         }
+        return split;
     }
 
     /**

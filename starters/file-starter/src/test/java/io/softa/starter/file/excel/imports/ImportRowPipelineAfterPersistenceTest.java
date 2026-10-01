@@ -20,15 +20,16 @@ import static org.assertj.core.api.Assertions.assertThat;
  * written against the older assumption lost that work without saying so.
  *
  * <p>These exercise the ordering contract directly rather than through the pipeline's Spring
- * wiring: what matters is that the after-pass sees the ids, sees only the surviving rows, and does
- * not run at all when the import wrote nothing.
+ * wiring: what matters is that the after-pass sees the ids, sees only the surviving rows, is told
+ * which side each row was, and does not run at all when the import wrote nothing.
  */
 class ImportRowPipelineAfterPersistenceTest {
 
     /** A handler that records what each pass was shown. */
     private static final class RecordingHandler implements CustomImportHandler {
         private final List<List<Map<String, Object>>> before = new ArrayList<>();
-        private final List<List<Map<String, Object>>> after = new ArrayList<>();
+        private final List<List<Map<String, Object>>> created = new ArrayList<>();
+        private final List<List<Map<String, Object>>> updated = new ArrayList<>();
 
         @Override
         public void handleImportData(List<Map<String, Object>> rows, Map<String, Object> env,
@@ -37,8 +38,11 @@ class ImportRowPipelineAfterPersistenceTest {
         }
 
         @Override
-        public void afterImportData(List<Map<String, Object>> rows, Map<String, Object> env) {
-            after.add(snapshot(rows));
+        public void afterImportData(List<Map<String, Object>> createdRows,
+                                    List<Map<String, Object>> updatedRows,
+                                    Map<String, Object> env) {
+            created.add(snapshot(createdRows));
+            updated.add(snapshot(updatedRows));
         }
 
         /**
@@ -68,12 +72,29 @@ class ImportRowPipelineAfterPersistenceTest {
         // What persistence does to these same maps: the ORM fills the generated id in place.
         rows.get(0).put("id", 11L);
         rows.get(1).put("id", 12L);
-        handler.afterImportData(rows, Map.of());
+        handler.afterImportData(rows, List.of(), Map.of());
 
         assertThat(handler.before).hasSize(1);
         assertThat(handler.before.get(0).get(0)).doesNotContainKey("id");
-        assertThat(handler.after).hasSize(1);
-        assertThat(handler.after.get(0)).extracting(r -> r.get("id")).containsExactly(11L, 12L);
+        assertThat(handler.created).hasSize(1);
+        assertThat(handler.created.get(0)).extracting(r -> r.get("id")).containsExactly(11L, 12L);
+    }
+
+    @Test
+    void anInsertedRowAndAMatchedOneArriveOnDifferentSides() {
+        // The id tells them apart in neither direction: a matched row has the stored id written onto
+        // the very map that was passed in, so after the write both sides look identical. Which side a
+        // row was is knowable only where the decision was made, which is why it is carried here.
+        RecordingHandler handler = new RecordingHandler();
+        Map<String, Object> inserted = row("A");
+        inserted.put("id", 11L);
+        Map<String, Object> matched = row("B");
+        matched.put("id", 7L);
+
+        handler.afterImportData(List.of(inserted), List.of(matched), Map.of());
+
+        assertThat(handler.created.get(0)).extracting(r -> r.get("code")).containsExactly("A");
+        assertThat(handler.updated.get(0)).extracting(r -> r.get("code")).containsExactly("B");
     }
 
     @Test
@@ -82,21 +103,21 @@ class ImportRowPipelineAfterPersistenceTest {
         // by its existence.
         CustomImportHandler plain = (rows, env, validateOnly) -> { };
 
-        plain.afterImportData(new ArrayList<>(List.of(row("A"))), Map.of());
+        plain.afterImportData(new ArrayList<>(List.of(row("A"))), List.of(), Map.of());
     }
 
     @Test
     void theAfterPassIsNotGivenRowsThatFailed() {
-        // The pipeline removes failed rows before persisting, so by the time the after-pass runs the
-        // list holds only what was written — a handler is never asked to finish a row that is not
-        // there, and never has to work out which is which.
+        // The pipeline removes failed rows before persisting, and a failed row is added to neither
+        // side, so a handler is never asked to finish a row that was not written.
         RecordingHandler handler = new RecordingHandler();
         List<Map<String, Object>> surviving = new ArrayList<>(List.of(row("A")));
         surviving.get(0).put("id", 11L);
 
-        handler.afterImportData(surviving, Map.of());
+        handler.afterImportData(surviving, List.of(), Map.of());
 
-        assertThat(handler.after.get(0)).hasSize(1);
-        assertThat(handler.after.get(0).get(0)).containsEntry("code", "A");
+        assertThat(handler.created.get(0)).hasSize(1);
+        assertThat(handler.created.get(0).get(0)).containsEntry("code", "A");
+        assertThat(handler.updated.get(0)).isEmpty();
     }
 }

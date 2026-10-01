@@ -48,10 +48,21 @@ public interface CustomImportHandler {
      * threw. A failure here does not undo the import: the rows are committed, so an implementation
      * should be idempotent and forgiving rather than assume it can roll anything back.
      *
-     * @param rows the rows as they were persisted, ids filled in
-     * @param env  environment variables, the same map {@link #handleImportData} was given
+     * <p>The two sides are handed over separately because a persisted row cannot be asked which it
+     * was. Both carry an {@code id} by the time this runs — the matched row has the stored id put
+     * back onto the very map that was passed in — and nothing else distinguishes them. A snapshot
+     * taken in {@link #handleImportData} does not help either: neither side has an id yet there.
+     * Passed as two arguments rather than announced through {@code env}, for the reason the flag
+     * above is an argument — an implementation should not have to know a reserved key's name or
+     * decide what an absent value means.
+     *
+     * @param created rows that matched nothing stored and were inserted
+     * @param updated rows that matched a stored row and were written onto it
+     * @param env     environment variables, the same map {@link #handleImportData} was given
      */
-    default void afterImportData(List<Map<String, Object>> rows, Map<String, Object> env) {
+    default void afterImportData(List<Map<String, Object>> created,
+                                 List<Map<String, Object>> updated,
+                                 Map<String, Object> env) {
         // Most handlers have nothing to do after the write.
     }
 
