@@ -43,9 +43,12 @@ import static org.mockito.Mockito.when;
  * attacker's email finds the victim and moves their login address, and a code login then arrives as
  * them.
  *
- * <p>So the line is not "does it save" but "whose row is this". A person this save CREATED is seeded
- * from the form; a person who already existed is left alone, name included. Tests on both sides of
- * that line, because each half looks correct on its own.
+ * <p>So the line is not "does it save" but "how did this save reach the person". A person this save
+ * CREATED is seeded from the form; a person the edit form OPENED by id is changed on purpose, by a
+ * platform administrator, on a screen that warns what a login identifier change does; a person the
+ * create form merely FOUND through the email / mobile lookup is left alone, name included — that is
+ * the path the takeover took, and nobody on it meant to change the person. Tests on every side of
+ * that line, because each case looks correct on its own.
  */
 class ConsultantBasicInfoSaveTest {
 
@@ -188,9 +191,8 @@ class ConsultantBasicInfoSaveTest {
 
     @Test
     void aMobileOnlyConsultantCanBeSaved() {
-        // The person who has no email at all. Requiring one made their profile unsaveable: this
-        // screen will not write an email onto somebody who already exists, so the field is read-only
-        // and blank, and extending their grant or disabling them became impossible.
+        // The person who has no email at all. Requiring one made every save of their profile fail —
+        // extending their grant or disabling them included — until somebody invented an address.
         service.save(form("Old Name", null, "+6591234567"));
 
         verify(service).replaceAuthorizations(eq(PROFILE), any());
@@ -203,23 +205,93 @@ class ConsultantBasicInfoSaveTest {
     }
 
     @Test
-    void anExistingPersonIsNotRenamedByThisScreen() {
+    void theEditFormRenamesThePersonItOpened() {
+        // Named by id: the platform administrator opened this profile and is changing it on purpose.
+        // The name is global — every company this person belongs to displays it — which is what the
+        // screen says before saving, not a reason to refuse.
         service.save(form("Ada Lovelace", "old@zingkey.com", null));
 
-        // The name is global — it is what every company this person belongs to displays. A form about
-        // a consultancy does not get to change who somebody is.
-        verify(profileService, never()).updateOne(any(UserProfile.class));
+        ArgumentCaptor<UserProfile> named = ArgumentCaptor.forClass(UserProfile.class);
+        verify(profileService).updateOne(named.capture());
+        assertThat(named.getValue().getFullName()).isEqualTo("Ada Lovelace");
     }
 
+    @Test
+    void theEditFormMovesTheLoginAddressOfThePersonItOpened() {
+        service.save(form("Old Name", "Ada@Zingkey.com", " +65 9123-4567 "));
 
+        ArgumentCaptor<UserIdentity> credential = ArgumentCaptor.forClass(UserIdentity.class);
+        verify(identityService).updateOne(credential.capture());
+        // Canonical spelling: the login query asks for the normalised form, so a value stored as
+        // typed is one that query can never find.
+        assertThat(credential.getValue().getLoginEmail()).isEqualTo("ada@zingkey.com");
+        assertThat(credential.getValue().getLoginMobile()).isEqualTo("+6591234567");
+    }
 
     @Test
-    void anExistingPersonsLoginAddressIsNotMoved() {
-        // This used to be asserted the other way round, which is how the takeover was pinned as
-        // intended behaviour: submit somebody else's address and their credential followed.
-        service.save(form("Old Name", "ada@zingkey.com", null));
+    void anAddressSomebodyElseSignsInWithIsRefused() {
+        // Login identifiers are unique across the platform — login resolves a person by one of them.
+        when(identityService.isIdentifierClaimable("taken@zingkey.com", PROFILE)).thenReturn(false);
+
+        assertThatThrownBy(() -> service.save(form("Old Name", "taken@zingkey.com", null)))
+                .hasMessageContaining("already belongs to someone else");
+        verify(identityService, never()).updateOne(any(UserIdentity.class));
+    }
+
+    @Test
+    void aSaveThatChangesNothingWritesNothing() {
+        service.save(form("Old Name", "old@zingkey.com", null));
+
+        verify(profileService, never()).updateOne(any(UserProfile.class));
+        verify(identityService, never()).updateOne(any(UserIdentity.class));
+        verify(profileService, never()).evictUserInfo(anyLong());
+    }
+
+    /**
+     * Each customer's roster shows the consultant by their login email, stamped onto the membership.
+     * Refreshing that BEFORE moving the identifier stamped the address just replaced into every
+     * company — the change saved, and every customer still saw the old one.
+     */
+    @Test
+    void everyRosterShowsTheNewAddressNotTheOldOne() {
+        UserAccount consultantSeat = new UserAccount();
+        consultantSeat.setId(100L);
+        consultantSeat.setTenantId(500L);
+        consultantSeat.setConsultant(Boolean.TRUE);
+        consultantSeat.setUsername("old@zingkey.com");
+        when(accountService.listMembershipsOf(PROFILE)).thenReturn(List.of(consultantSeat));
+        when(accountService.searchList(any(Filters.class))).thenReturn(List.of());
+
+        service.save(form("Old Name", "new@zingkey.com", null));
+
+        assertThat(consultantSeat.getUsername()).isEqualTo("new@zingkey.com");
+        // Once, after both writes — not once for the name and again for the identifiers.
+        verify(profileService).evictUserInfo(100L);
+    }
+
+    /**
+     * Making an existing employee a consultant, from the CREATE form. The lookup finds them by the
+     * email typed, and nobody here meant to change them — writing the form's mobile would silently
+     * replace the number they sign in with at the company that employs them.
+     */
+    @Test
+    void aPersonTheCreateFormMerelyFoundIsNotWritten() {
+        UserIdentity employee = new UserIdentity();
+        employee.setId(12L);
+        employee.setProfileId(PROFILE);
+        employee.setLoginEmail("employee@zingkey.com");
+        employee.setLoginMobile("+6580000000");
+        when(identityService.findByLoginIdentifier("employee@zingkey.com"))
+                .thenReturn(Optional.of(employee));
+        doReturn(Optional.empty()).when(service).searchOne(any(Filters.class));
+        doReturn(1L).when(service).createOne(any(ConsultantProfile.class));
+
+        ConsultantProfileDTO f = form("Someone Else", "employee@zingkey.com", "+6591234567");
+        f.setProfileId(null);
+        service.save(f);
 
         verify(identityService, never()).updateOne(any(UserIdentity.class));
+        verify(profileService, never()).updateOne(any(UserProfile.class));
     }
 
     /**
