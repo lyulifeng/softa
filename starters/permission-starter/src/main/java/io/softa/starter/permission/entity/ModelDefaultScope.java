@@ -1,4 +1,4 @@
-package io.softa.starter.permission.scope;
+package io.softa.starter.permission.entity;
 
 import java.io.Serial;
 
