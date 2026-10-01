@@ -111,7 +111,7 @@ class ConsultantBasicInfoSaveTest {
         f.setEmail(email);
         f.setMobile(mobile);
         f.setActive(Boolean.TRUE);
-        f.setAuthorizations(List.of());
+        f.setAuthorizations(new ConsultantProfileDTO.AuthorizationPatch());
         return f;
     }
 
@@ -172,7 +172,7 @@ class ConsultantBasicInfoSaveTest {
         assertThatThrownBy(() -> service.save(f))
                 .hasMessage("This email is already used by another consultant profile.");
         // Nothing was written on the way to the refusal — above all not the grant table.
-        verify(service, never()).replaceAuthorizations(anyLong(), any());
+        verify(service, never()).applyAuthorizations(anyLong(), any());
     }
 
     @Test
@@ -197,7 +197,7 @@ class ConsultantBasicInfoSaveTest {
         // extending their grant or disabling them included — until somebody invented an address.
         service.save(form("Old Name", null, "+6591234567"));
 
-        verify(service).replaceAuthorizations(eq(PROFILE), any());
+        verify(service).applyAuthorizations(eq(PROFILE), any());
     }
 
     @Test

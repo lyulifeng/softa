@@ -54,7 +54,7 @@ class ConsultantSaveTest {
         // No consultant record yet, and no grant work — this test is about which person is chosen.
         doReturn(Optional.empty()).when(consultantService).searchOne(any(Filters.class));
         doReturn(1L).when(consultantService).createOne(any(ConsultantProfile.class));
-        doNothing().when(consultantService).replaceAuthorizations(any(), any());
+        doNothing().when(consultantService).applyAuthorizations(any(), any());
     }
 
     private static ConsultantProfileDTO form(String email, String mobile) {
@@ -112,20 +112,25 @@ class ConsultantSaveTest {
     }
 
     @Test
-    void theGrantTableIsAppliedAsAWholeSet() {
+    void theGrantTableIsHandedOverAsChanges() {
         when(identityService.findByLoginIdentifier(anyString())).thenReturn(Optional.empty());
         when(profileService.createPersonForJoin(anyString())).thenReturn(99L);
         ConsultantProfileDTO f = form("fresh@acme.com", "+8613800138001");
         ConsultantProfileDTO.AuthorizationRow row = new ConsultantProfileDTO.AuthorizationRow();
         row.setTenantId(100L);
         row.setEndDate(LocalDate.of(2026, 9, 30));
-        f.setAuthorizations(List.of(row));
+        ConsultantProfileDTO.AuthorizationPatch patch = new ConsultantProfileDTO.AuthorizationPatch();
+        patch.setCreate(List.of(row));
+        f.setAuthorizations(patch);
 
         consultantService.save(f);
 
-        // Handed over as one set, so "what the screen showed" and "what was stored" cannot drift.
-        verify(consultantService).replaceAuthorizations(org.mockito.ArgumentMatchers.eq(99L),
-                org.mockito.ArgumentMatchers.argThat(list -> list.size() == 1
-                        && list.get(0).getTenantId().equals(100L)));
+        // Handed over as what the operator did, not as a table to make the stored rows match. The
+        // difference is what stops a second operator's untouched rows overwriting the first's.
+        verify(consultantService).applyAuthorizations(org.mockito.ArgumentMatchers.eq(99L),
+                org.mockito.ArgumentMatchers.argThat(changes -> changes.created().size() == 1
+                        && changes.created().get(0).getTenantId().equals(100L)
+                        && changes.updated().isEmpty()
+                        && changes.revokedIds().isEmpty()));
     }
 }

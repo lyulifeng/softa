@@ -123,19 +123,65 @@ public interface ConsultantService extends EntityService<ConsultantProfile, Long
     Map<Long, String> consultantActors(Collection<Long> accountIds);
 
     /**
-     * Replace a consultant's grants with exactly this set, minting an account for each company that
-     * does not have one yet.
+     * Apply what changed in a consultant's grants, minting an account for each company newly
+     * authorized.
      *
-     * <p>Whole-set rather than add/remove calls: the form saves a table, and applying it as a
-     * difference here keeps "what the screen showed" and "what was stored" from drifting apart.
-     * Removed grants are deleted; the accounts they minted stay, because the tenant's audit log
+     * <p><b>Changes, not a replacement set.</b> This used to take the table the screen was showing
+     * and make the stored rows match it, which meant every save asserted the whole truth — about
+     * rows the operator had edited and equally about rows they had never looked at. Two operators
+     * with the form open therefore overwrote one another while editing nothing in common: the
+     * second to save carried the first's rows at the values their page had loaded, and put them
+     * back. Taking the changes instead means an untouched row is absent from the payload, and an
+     * operator who changed nothing writes nothing.
+     *
+     * <p>It also closes the gap the other way round. A row that one operator removed is gone by the
+     * time the other saves, so naming it is refused rather than silently recreated — the ids being
+     * named is what makes that answerable at all.
+     *
+     * <p>What it does not do is decide between two operators who moved the SAME grant's date. Both
+     * named it, both meant to change it, and the later save wins; that is the behaviour of every
+     * other child table here, and giving this one a version column would make it the only one.
+     *
+     * <p>Revoked grants are deleted; the accounts they minted stay, because the tenant's audit log
      * points at them (a deleted account would blank the record of what the consultant did).
      *
-     * @throws io.softa.framework.base.exception.BusinessException if a company already holds a
-     *         non-consultant membership for this person — one person is not both staff and
-     *         consultant in the same company, and the requirement blocks it rather than defining it
+     * @throws io.softa.framework.base.exception.BusinessException if a named grant is not this
+     *         consultant's — it was revoked by somebody else while this form was open — or if a
+     *         company already holds a non-consultant membership for this person, since one person
+     *         is not both staff and consultant in the same company
      */
-    void replaceAuthorizations(Long profileId, List<ConsultantAuthorization> authorizations);
+    void applyAuthorizations(Long profileId, AuthorizationChanges changes);
+
+    /**
+     * The three things that can happen to the Authorized Tenants table in one save.
+     *
+     * <p>Entities rather than the form's own rows, so this interface stays independent of the
+     * screen that happens to drive it today.
+     *
+     * @param created grants to add, carrying company and end date; no id, as the row is new
+     * @param updated grants whose end date moved, each identified by id — the date is authoritative,
+     *                and an empty one means the grant was made open-ended
+     * @param revokedIds grants to remove
+     */
+    record AuthorizationChanges(List<ConsultantAuthorization> created,
+                                List<ConsultantAuthorization> updated,
+                                List<Long> revokedIds) {
+
+        /** Null-tolerant: a payload that mentions only one of the three leaves the others out. */
+        public AuthorizationChanges {
+            created = created == null ? List.of() : List.copyOf(created);
+            updated = updated == null ? List.of() : List.copyOf(updated);
+            revokedIds = revokedIds == null ? List.of() : List.copyOf(revokedIds);
+        }
+
+        public static AuthorizationChanges none() {
+            return new AuthorizationChanges(List.of(), List.of(), List.of());
+        }
+
+        public boolean isEmpty() {
+            return created.isEmpty() && updated.isEmpty() && revokedIds.isEmpty();
+        }
+    }
 
     /** This consultant's grants, live or not, for the platform's own screens. */
     List<ConsultantAuthorization> authorizationsOf(Long profileId);
