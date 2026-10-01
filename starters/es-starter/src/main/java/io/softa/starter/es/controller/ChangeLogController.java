@@ -10,9 +10,7 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.web.bind.annotation.*;
 
 import io.softa.framework.base.context.ContextHolder;
-import io.softa.framework.base.enums.SystemRole;
 import io.softa.framework.base.utils.Assert;
-import io.softa.framework.orm.annotation.RequireRole;
 import io.softa.framework.orm.changelog.message.dto.ChangeLog;
 import io.softa.framework.orm.domain.FlexQuery;
 import io.softa.framework.orm.domain.Orders;
@@ -133,7 +131,16 @@ public class ChangeLogController {
     }
 
     /**
-     * Search the change log page by the model name and query parameters.
+     * Search the change log page of one model by the query parameters: the model's audit log, as
+     * the caller is entitled to see it.
+     *
+     * <p>Not gated by a role. This used to require the system administrator role, which no
+     * principal holds any more: the endpoint sits on an authenticated-bypass path, and that path
+     * deliberately bridges no role codes, so the annotation refused everyone and the endpoint was
+     * dead. What bounds the read instead is the caller's own reach, applied in the service: the
+     * current tenant, and the rows of the model the caller may read — an administrator sees the
+     * tenant's whole log for the model, a scoped user only the rows inside their row scope, and a
+     * caller with no grant on the model nothing at all.
      *
      * @param modelName model name
      * @param queryParams query parameters
@@ -144,7 +151,6 @@ public class ChangeLogController {
             If not provided, using the backend default values.""")
     @PostMapping(value = "/searchPageByModel")
     @Parameter(name = "modelName", description = "Model name")
-    @RequireRole(SystemRole.SYSTEM_ROLE_ADMIN)
     public ApiResponse<Page<ChangeLog>> searchPageByModel(@RequestParam String modelName,
                                                           @RequestBody(required = false) QueryParams queryParams) {
         if (queryParams == null) {
@@ -153,21 +159,5 @@ public class ChangeLogController {
         FlexQuery flexQuery = QueryParams.convertParamsToFlexQuery(queryParams);
         Page<ChangeLog> page = Page.of(queryParams.getPageNumber(), queryParams.getPageSize());
         return ApiResponse.success(changeLogService.searchPageByModel(modelName, flexQuery, page));
-    }
-
-    /**
-     * Search the change log page by the query parameters.
-     *
-     * @param queryParams query parameters
-     * @return a page of change log list
-     */
-    @Operation(description = """
-            Return paginated data based on the specified filters, sorting conditions, page number, page size.
-            If not provided, using the backend default values.""")
-    @PostMapping(value = "/searchPage")
-    @RequireRole(SystemRole.SYSTEM_ROLE_ADMIN)
-    public ApiResponse<Page<ChangeLog>> searchPage(@RequestBody QueryParams queryParams) {
-        Page<ChangeLog> page = Page.of(queryParams.getPageNumber(), queryParams.getPageSize());
-        return ApiResponse.success(changeLogService.searchPage(queryParams.getFilters(), queryParams.getOrders(), page));
     }
 }

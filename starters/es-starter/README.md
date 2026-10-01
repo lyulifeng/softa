@@ -46,10 +46,12 @@ business mutation ──▶ change-log event ──▶ Pulsar topic ──▶ Ch
 | `GET /ChangeLog/getChangeLog` | Change history for one row (`modelName` + `id`, paged) |
 | `GET /ChangeLog/getSliceChangeLog` | History for a timeline-model slice |
 | `POST /ChangeLog/searchPageByModel` | Filtered search within a model (`QueryParams` body) |
-| `POST /ChangeLog/searchPage` | Cross-model search (`QueryParams` body) |
 
-Admin-scoped endpoints require the system admin role; results are permission-
-checked per user and field references are resolved for display.
+Every read is confined to the caller's tenant. The row reads check the row
+against the caller's access; the model search is bounded by the rows of the
+model the caller may read, resolved from the permission layer's row scope
+(an administrator sees the tenant's whole log for the model, a caller with
+no grant on the model nothing). Field references are resolved for display.
 
 `ESService<T>` / `ESServiceImpl<T>` provide `searchPage(Filters, Orders, Page)`
 with criteria mapping (EQUAL, NOT_EQUAL, GREATER_THAN, CONTAINS, IN, BETWEEN,

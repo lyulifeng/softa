@@ -7,6 +7,7 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Lazy;
 import org.springframework.stereotype.Service;
 
+import io.softa.framework.base.context.ContextHolder;
 import io.softa.framework.base.enums.Operator;
 import io.softa.framework.base.utils.Assert;
 import io.softa.framework.orm.changelog.message.dto.ChangeLog;
@@ -59,7 +60,7 @@ public class ChangeLogServiceImpl extends ESServiceImpl<ChangeLog> implements Ch
     public Page<ChangeLog> searchPage(Filters filters, Orders orders, Page<ChangeLog> page) {
         Page<ChangeLogDocument> docPage = new Page<>(
                 page.getPageNumber(), page.getPageSize(), page.isCursorPage(), page.isCount());
-        super.searchPage(ChangeLogDocument.class, filters, orders, docPage);
+        super.searchPage(ChangeLogDocument.class, withinTenant(filters), orders, docPage);
         page.setTotalCount(docPage.getTotalCount());
         page.setRows(docPage.getRows().stream().map(ChangeLogDocument::toChangeLog).toList());
         return page;
@@ -111,8 +112,16 @@ public class ChangeLogServiceImpl extends ESServiceImpl<ChangeLog> implements Ch
      * @return a page of list
      */
     public Page<ChangeLog> searchPageByModel(String model, FlexQuery flexQuery, Page<ChangeLog> page) {
-        // TODO: Check if current user has access to the model, and append filters of the permission conditions
         Filters filters = Filters.and(flexQuery.getFilters(), new Filters().eq(ChangeLog::getModel, model));
+        List<Serializable> readableRows = readableRowIds(model);
+        if (readableRows != null) {
+            if (readableRows.isEmpty()) {
+                page.setRows(List.of());
+                page.setTotalCount(0);
+                return page;
+            }
+            filters = filters.in(ChangeLog::getRowId, readableRows.stream().map(String::valueOf).toList());
+        }
         Orders orders = flexQuery.getOrders();
         this.searchPage(filters, orders, page);
         ConvertType convertType = flexQuery.getConvertType();
@@ -143,6 +152,47 @@ public class ChangeLogServiceImpl extends ESServiceImpl<ChangeLog> implements Ch
             filters.in(ChangeLog::getAccessType, Arrays.asList(UPDATE, DELETE));
         }
         return this.searchPage(filters, orders, page);
+    }
+
+    /**
+     * Confine a log read to the caller's tenant.
+     *
+     * <p>The log is one index for every tenant, and the Elasticsearch read has none of the ORM's
+     * automatic tenant condition: nothing is added to the query but what is written here. Each
+     * record carries the tenant it was written under, so the condition is the record's own tenant
+     * against the caller's. A context without a tenant — a single-tenant deployment — adds nothing.
+     */
+    private Filters withinTenant(Filters filters) {
+        Long tenantId = ContextHolder.getContext().getTenantId();
+        if (tenantId == null) {
+            return filters;
+        }
+        return Filters.and(filters, new Filters().eq(ChangeLog::getTenantId, tenantId));
+    }
+
+    /**
+     * The rows of {@code model} the caller may read, or {@code null} when the caller may read them
+     * all.
+     *
+     * <p>A model-level log read has no row to check the way {@link #getChangeLog} does, so the
+     * caller's reach is asked of the permission layer as a row scope and resolved against the
+     * model's current rows. The three answers it gives:
+     * <ul>
+     *   <li>no scope condition — an administrator, or a role with an ALL rule: {@code null}, the
+     *       whole tenant's log for the model;</li>
+     *   <li>a condition — the rows it currently matches, and only their log entries; an entry on a
+     *       row since deleted is unreachable this way, which is the price of resolving the scope
+     *       against live rows rather than against the log;</li>
+     *   <li>a condition nothing matches — including the match-nothing scope a caller with no grant
+     *       on the model is given: an empty list, so the caller sees no entry at all.</li>
+     * </ul>
+     */
+    private List<Serializable> readableRowIds(String model) {
+        Filters scope = permissionService.appendScopeAccessFilters(model, new Filters());
+        if (Filters.isEmpty(scope)) {
+            return null;
+        }
+        return modelService.getIds(model, scope);
     }
 
     /**
