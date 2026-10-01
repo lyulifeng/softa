@@ -116,25 +116,30 @@ public abstract class ESServiceImpl<T> implements ESService<T> {
      * @param filters Filters object
      * @return ES query criteria
      */
-    private Criteria convertFilters(Filters filters) {
-        Criteria criteria = new Criteria();
+    /**
+     * Translate a filter tree into a Criteria, keeping every group a group.
+     *
+     * <p>Each tree node becomes an AND or OR root and each child, leaf or group alike, hangs off it
+     * as a sub-criteria — rendered as {@code bool.must} or {@code bool.should} respectively. The
+     * chaining calls are not usable for this: {@code and(Criteria)} drops the child in as a chain
+     * link, so a child that is itself a group arrives as a link with no field and the query is
+     * refused ("criteria must have a field"); {@code or(Criteria)} keeps only the child's field,
+     * so an OR whose first operand is a group loses that operand without a word.
+     */
+    Criteria convertFilters(Filters filters) {
         if (Filters.isEmpty(filters)) {
-            return criteria;
+            return new Criteria();
         }
-        if (FilterType.TREE.equals(filters.getType())) {
-            if (LogicOperator.AND.equals(filters.getLogicOperator())) {
-                for (Filters child : filters.getChildren()) {
-                    criteria = criteria.and(convertFilters(child));
-                }
-            } else if (LogicOperator.OR.equals(filters.getLogicOperator())) {
-                for (Filters child : filters.getChildren()) {
-                    criteria = criteria.or(convertFilters(child));
-                }
+        if (FilterType.LEAF.equals(filters.getType())) {
+            return convertFilterUnit(filters.getFilterUnit());
+        }
+        Criteria group = LogicOperator.OR.equals(filters.getLogicOperator()) ? Criteria.or() : Criteria.and();
+        for (Filters child : filters.getChildren()) {
+            if (!Filters.isEmpty(child)) {
+                group.subCriteria(convertFilters(child));
             }
-        } else if (FilterType.LEAF.equals(filters.getType())) {
-            criteria = convertFilterUnit(filters.getFilterUnit());
         }
-        return criteria;
+        return group;
     }
 
     /**
