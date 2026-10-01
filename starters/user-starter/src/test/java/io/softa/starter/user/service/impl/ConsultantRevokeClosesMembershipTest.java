@@ -16,6 +16,7 @@ import io.softa.starter.user.entity.UserAccount;
 import io.softa.starter.user.entity.UserIdentity;
 import io.softa.starter.user.entity.UserProfile;
 import io.softa.starter.user.enums.AccountStatus;
+import io.softa.starter.user.service.ConsultantService;
 import io.softa.starter.user.service.UserAccountService;
 import io.softa.starter.user.service.UserIdentityService;
 import io.softa.starter.user.service.UserProfileService;
@@ -51,6 +52,8 @@ import static org.mockito.Mockito.when;
 class ConsultantRevokeClosesMembershipTest {
 
     private static final Long PROFILE = 7L;
+    /** The grant the fixture already holds — what an empty table used to mean revoking. */
+    private static final Long STANDING_GRANT = 11L;
     private static final Long TENANT = 3L;
 
     private ConsultantServiceImpl service;
@@ -80,7 +83,7 @@ class ConsultantRevokeClosesMembershipTest {
 
         // One grant on file, for TENANT, which the caller is about to drop.
         ConsultantAuthorization standing = new ConsultantAuthorization();
-        standing.setId(11L);
+        standing.setId(STANDING_GRANT);
         standing.setProfileId(PROFILE);
         standing.setTenantId(TENANT);
         when(authorizationService.searchList(any(Filters.class))).thenReturn(List.of(standing));
@@ -105,7 +108,7 @@ class ConsultantRevokeClosesMembershipTest {
 
         ConsultantAuthorization wanted = new ConsultantAuthorization();
         wanted.setTenantId(TENANT);
-        service.replaceAuthorizations(PROFILE, List.of(wanted));
+        service.applyAuthorizations(PROFILE, granting(wanted));
 
         ArgumentCaptor<UserAccount> minted = ArgumentCaptor.forClass(UserAccount.class);
         verify(accountService).createOne(minted.capture());
@@ -131,7 +134,7 @@ class ConsultantRevokeClosesMembershipTest {
 
         ConsultantAuthorization wanted = new ConsultantAuthorization();
         wanted.setTenantId(TENANT);
-        service.replaceAuthorizations(PROFILE, List.of(wanted));
+        service.applyAuthorizations(PROFILE, granting(wanted));
 
         ArgumentCaptor<ConsultantAuthorization> written =
                 ArgumentCaptor.forClass(ConsultantAuthorization.class);
@@ -165,7 +168,7 @@ class ConsultantRevokeClosesMembershipTest {
 
         ConsultantAuthorization wanted = new ConsultantAuthorization();
         wanted.setTenantId(TENANT);
-        service.replaceAuthorizations(PROFILE, List.of(wanted));
+        service.applyAuthorizations(PROFILE, granting(wanted));
 
         ArgumentCaptor<UserAccount> minted = ArgumentCaptor.forClass(UserAccount.class);
         verify(accountService).createOne(minted.capture());
@@ -179,7 +182,7 @@ class ConsultantRevokeClosesMembershipTest {
         when(accountService.findMembershipInTenant(TENANT, PROFILE))
                 .thenReturn(Optional.of(membership(AccountStatus.ACTIVE)));
 
-        service.replaceAuthorizations(PROFILE, List.of());
+        service.applyAuthorizations(PROFILE, revoking(STANDING_GRANT));
 
         verify(authorizationService).deleteById(11L);
         ArgumentCaptor<UserAccount> closed = ArgumentCaptor.forClass(UserAccount.class);
@@ -197,7 +200,7 @@ class ConsultantRevokeClosesMembershipTest {
         employment.setConsultant(Boolean.FALSE);
         when(accountService.findMembershipInTenant(TENANT, PROFILE)).thenReturn(Optional.of(employment));
 
-        service.replaceAuthorizations(PROFILE, List.of());
+        service.applyAuthorizations(PROFILE, revoking(STANDING_GRANT));
 
         verify(authorizationService).deleteById(11L);
         verify(accountService, never()).updateOne(any(UserAccount.class));
@@ -212,7 +215,7 @@ class ConsultantRevokeClosesMembershipTest {
         when(accountService.findMembershipInTenant(TENANT, PROFILE))
                 .thenReturn(Optional.of(membership(AccountStatus.FROZEN)));
 
-        service.replaceAuthorizations(PROFILE, List.of());
+        service.applyAuthorizations(PROFILE, revoking(STANDING_GRANT));
 
         verify(authorizationService).deleteById(11L);
         // The grant goes; the customer's state is not the platform's to clear.
@@ -227,7 +230,7 @@ class ConsultantRevokeClosesMembershipTest {
 
         ConsultantAuthorization wanted = new ConsultantAuthorization();
         wanted.setTenantId(TENANT);
-        service.replaceAuthorizations(PROFILE, List.of(wanted));
+        service.applyAuthorizations(PROFILE, granting(wanted));
 
         ArgumentCaptor<UserAccount> revived = ArgumentCaptor.forClass(UserAccount.class);
         verify(accountService).updateOne(revived.capture());
@@ -249,9 +252,19 @@ class ConsultantRevokeClosesMembershipTest {
 
         ConsultantAuthorization wanted = new ConsultantAuthorization();
         wanted.setTenantId(TENANT);
-        service.replaceAuthorizations(PROFILE, List.of(wanted));
+        service.applyAuthorizations(PROFILE, granting(wanted));
 
         verify(accountService, never()).updateOne(any(UserAccount.class));
+    }
+
+    /** A save that adds grants and touches nothing else. */
+    private static ConsultantService.AuthorizationChanges granting(ConsultantAuthorization... rows) {
+        return new ConsultantService.AuthorizationChanges(List.of(rows), List.of(), List.of());
+    }
+
+    /** A save that removes grants and touches nothing else. */
+    private static ConsultantService.AuthorizationChanges revoking(Long... ids) {
+        return new ConsultantService.AuthorizationChanges(List.of(), List.of(), List.of(ids));
     }
 
     private static UserAccount membership(AccountStatus status) {

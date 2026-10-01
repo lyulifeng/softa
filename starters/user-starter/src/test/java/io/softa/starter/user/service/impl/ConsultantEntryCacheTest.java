@@ -143,7 +143,7 @@ class ConsultantEntryCacheTest {
     void rewritingTheGrantsForgetsEveryMembershipsAnswer() {
         ConsultantServiceImpl service = consultantServiceWith(cacheService);
 
-        service.replaceAuthorizations(PROFILE, List.of());
+        service.applyAuthorizations(PROFILE, ConsultantService.AuthorizationChanges.none());
 
         verify(cacheService).clear(ConsultantAccessCheckerImpl.cacheKey(ACCOUNT));
     }

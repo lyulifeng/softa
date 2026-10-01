@@ -10,6 +10,7 @@ import io.softa.framework.base.constant.BaseConstant;
 import io.softa.framework.base.exception.BusinessException;
 import io.softa.framework.orm.domain.Filters;
 import io.softa.framework.orm.service.TenantInfoService;
+import io.softa.starter.user.service.ConsultantService;
 import io.softa.starter.user.entity.ConsultantAuthorization;
 
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -53,7 +54,7 @@ class ConsultantGrantTargetTest {
     void theCompanyCannotBeThePlatformTier() {
         when(tenantInfoService.getTenantName(BaseConstant.PLATFORM_TENANT_ID)).thenReturn("Platform");
 
-        assertThatThrownBy(() -> service.replaceAuthorizations(7L, List.of(grant(BaseConstant.PLATFORM_TENANT_ID))))
+        assertThatThrownBy(() -> service.applyAuthorizations(7L, granting(grant(BaseConstant.PLATFORM_TENANT_ID))))
                 .isInstanceOf(BusinessException.class)
                 .hasMessageContaining("not a company");
 
@@ -71,16 +72,21 @@ class ConsultantGrantTargetTest {
 
         // Reaches the reconciliation rather than being turned away at the door. It fails later, on
         // the minting this test does not wire up — what is pinned is that validation let it past.
-        assertThatThrownBy(() -> service.replaceAuthorizations(7L, List.of(grant(10L))))
+        assertThatThrownBy(() -> service.applyAuthorizations(7L, granting(grant(10L))))
                 .isNotInstanceOf(BusinessException.class);
     }
 
     @Test
     void aGrantWithNoCompanyIsRefused() {
-        assertThatThrownBy(() -> service.replaceAuthorizations(7L, List.of(grant(null))))
+        assertThatThrownBy(() -> service.applyAuthorizations(7L, granting(grant(null))))
                 .isInstanceOf(BusinessException.class)
                 .hasMessageContaining("needs a company");
         verifyNoInteractions(authorizationService);
+    }
+
+    /** A save that adds grants and touches nothing else. */
+    private static ConsultantService.AuthorizationChanges granting(ConsultantAuthorization... rows) {
+        return new ConsultantService.AuthorizationChanges(List.of(rows), List.of(), List.of());
     }
 
     private static ConsultantAuthorization grant(Long tenantId) {

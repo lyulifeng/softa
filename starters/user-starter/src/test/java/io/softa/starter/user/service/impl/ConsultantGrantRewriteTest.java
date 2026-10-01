@@ -14,6 +14,7 @@ import io.softa.framework.orm.service.CacheService;
 import io.softa.starter.user.entity.ConsultantAuthorization;
 import io.softa.starter.user.entity.ConsultantProfile;
 import io.softa.starter.user.entity.UserAccount;
+import io.softa.starter.user.service.ConsultantService;
 import io.softa.starter.user.service.UserAccountService;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -61,6 +62,14 @@ class ConsultantGrantRewriteTest {
         when(accountService.listMembershipsOf(PROFILE)).thenReturn(List.of());
     }
 
+    /** The id the stored grant in these fixtures carries. */
+    private static final Long STORED = 50L;
+
+    /** A save that moves the end date on grants that already exist. */
+    private static ConsultantService.AuthorizationChanges redating(ConsultantAuthorization... rows) {
+        return new ConsultantService.AuthorizationChanges(List.of(), List.of(rows), List.of());
+    }
+
     private static ConsultantAuthorization grant(Long id, LocalDate start, LocalDate end) {
         ConsultantAuthorization grant = new ConsultantAuthorization();
         grant.setId(id);
@@ -78,11 +87,11 @@ class ConsultantGrantRewriteTest {
     @Test
     void aStoredGrantWithNoDatesIsRepairedRatherThanThrownOn() {
         when(authorizationService.searchList(any(Filters.class)))
-                .thenReturn(List.of(grant(50L, null, null)));
+                .thenReturn(List.of(grant(STORED, null, null)));
 
         LocalDate start = LocalDate.of(2026, 1, 1);
         LocalDate end = LocalDate.of(2026, 12, 31);
-        assertThatCode(() -> service.replaceAuthorizations(PROFILE, List.of(grant(null, start, end))))
+        assertThatCode(() -> service.applyAuthorizations(PROFILE, redating(grant(STORED, start, end))))
                 .doesNotThrowAnyException();
 
         verify(authorizationService).updateOne(any(ConsultantAuthorization.class));
@@ -95,9 +104,9 @@ class ConsultantGrantRewriteTest {
         LocalDate start = LocalDate.of(2026, 1, 1);
         LocalDate end = LocalDate.of(2026, 12, 31);
         when(authorizationService.searchList(any(Filters.class)))
-                .thenReturn(List.of(grant(50L, start, end)));
+                .thenReturn(List.of(grant(STORED, start, end)));
 
-        service.replaceAuthorizations(PROFILE, List.of(grant(null, start, end)));
+        service.applyAuthorizations(PROFILE, redating(grant(STORED, start, end)));
 
         verify(authorizationService, never()).updateOne(any(ConsultantAuthorization.class));
         verify(authorizationService, never()).createOne(any(ConsultantAuthorization.class));
@@ -109,14 +118,17 @@ class ConsultantGrantRewriteTest {
         // (profileId, tenantId) either way, and until it is filled the form reads the grant as one
         // that minted nothing — the badge meant for genuinely broken rows.
         LocalDate end = LocalDate.of(2026, 12, 31);
-        ConsultantAuthorization unlinked = grant(50L, null, end);
+        ConsultantAuthorization unlinked = grant(STORED, null, end);
         unlinked.setAccountId(null);
         when(authorizationService.searchList(any(Filters.class))).thenReturn(List.of(unlinked));
         UserAccount minted = new UserAccount();
         minted.setId(500L);
         when(accountService.findMembershipInTenant(TENANT, PROFILE)).thenReturn(Optional.of(minted));
 
-        service.replaceAuthorizations(PROFILE, List.of(grant(null, null, end)));
+        // Nothing submitted about this row at all: the repair is no longer carried by the row
+        // being resubmitted, which it was while the form sent the whole table every time. A legacy
+        // grant nobody edits would otherwise never be reached again.
+        service.applyAuthorizations(PROFILE, ConsultantService.AuthorizationChanges.none());
 
         ArgumentCaptor<ConsultantAuthorization> linked =
                 ArgumentCaptor.forClass(ConsultantAuthorization.class);
@@ -128,10 +140,10 @@ class ConsultantGrantRewriteTest {
     void aChangedEndDateIsWrittenBack() {
         LocalDate start = LocalDate.of(2026, 1, 1);
         when(authorizationService.searchList(any(Filters.class)))
-                .thenReturn(List.of(grant(50L, start, LocalDate.of(2026, 6, 30))));
+                .thenReturn(List.of(grant(STORED, start, LocalDate.of(2026, 6, 30))));
 
-        service.replaceAuthorizations(PROFILE,
-                List.of(grant(null, start, LocalDate.of(2026, 12, 31))));
+        service.applyAuthorizations(PROFILE,
+                redating(grant(STORED, start, LocalDate.of(2026, 12, 31))));
 
         verify(authorizationService).updateOne(any(ConsultantAuthorization.class));
     }

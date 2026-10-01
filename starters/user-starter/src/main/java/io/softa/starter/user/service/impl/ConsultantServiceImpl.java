@@ -11,6 +11,7 @@ import java.util.Optional;
 import java.util.Set;
 import java.util.function.Function;
 import java.util.stream.Collectors;
+import java.util.stream.Stream;
 
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
@@ -242,15 +243,50 @@ public class ConsultantServiceImpl extends EntityServiceImpl<ConsultantProfile, 
             this.updateOne(profile);
         }
 
-        List<ConsultantAuthorization> grants = (form.getAuthorizations() == null ? List.<ConsultantProfileDTO.AuthorizationRow>of()
-                : form.getAuthorizations()).stream().map(row -> {
-                    ConsultantAuthorization grant = new ConsultantAuthorization();
-                    grant.setTenantId(row.getTenantId());
-                    grant.setEndDate(row.getEndDate());
-                    return grant;
-                }).toList();
-        replaceAuthorizations(profileId, grants);
+        applyAuthorizations(profileId, changesFrom(form.getAuthorizations(), personIsNew));
         return profileId;
+    }
+
+    /**
+     * The form's authorization patch as the service's own changes.
+     *
+     * <p>A person being created has no grants yet, so naming one to re-date or revoke is a payload
+     * that cannot be about anything. Refused by name rather than left to the ownership check, whose
+     * message would say the id belongs to another consultant — true, and useless.
+     */
+    private ConsultantService.AuthorizationChanges changesFrom(
+            ConsultantProfileDTO.AuthorizationPatch patch, boolean personIsNew) {
+        if (patch == null) {
+            return ConsultantService.AuthorizationChanges.none();
+        }
+        if (personIsNew) {
+            Assert.isTrue(patch.getUpdate() == null || patch.getUpdate().isEmpty(),
+                    "A consultant being created has no authorization to change.");
+            Assert.isTrue(patch.getDelete() == null || patch.getDelete().isEmpty(),
+                    "A consultant being created has no authorization to revoke.");
+        }
+        return new ConsultantService.AuthorizationChanges(
+                rowsToGrants(patch.getCreate(), false),
+                rowsToGrants(patch.getUpdate(), true),
+                patch.getDelete());
+    }
+
+    /** Form rows as grant entities; {@code identified} rows must name the row they change. */
+    private List<ConsultantAuthorization> rowsToGrants(List<ConsultantProfileDTO.AuthorizationRow> rows,
+                                                       boolean identified) {
+        if (rows == null) {
+            return List.of();
+        }
+        return rows.stream().map(row -> {
+            ConsultantAuthorization grant = new ConsultantAuthorization();
+            if (identified) {
+                Assert.notNull(row.getId(), "An authorization being changed must name which one.");
+                grant.setId(row.getId());
+            }
+            grant.setTenantId(row.getTenantId());
+            grant.setEndDate(row.getEndDate());
+            return grant;
+        }).toList();
     }
 
     /**
@@ -519,51 +555,71 @@ public class ConsultantServiceImpl extends EntityServiceImpl<ConsultantProfile, 
     @CrossTenant
     @Override
     @Transactional
-    public void replaceAuthorizations(Long profileId, List<ConsultantAuthorization> wanted) {
+    public void applyAuthorizations(Long profileId, ConsultantService.AuthorizationChanges changes) {
         Assert.notNull(profileId, "profileId is required");
-        List<ConsultantAuthorization> desired = wanted == null ? List.of() : wanted;
-        desired.forEach(this::validate);
+        ConsultantService.AuthorizationChanges patch =
+                changes == null ? ConsultantService.AuthorizationChanges.none() : changes;
+
+        // Validated before anything is read or written: a grant naming the platform tier, or no
+        // company at all, is refused at the door rather than after a membership has been minted
+        // for a row that is not going to exist.
+        patch.created().forEach(this::validate);
+
+        Map<Long, ConsultantAuthorization> held = authorizationsOf(profileId).stream()
+                .collect(Collectors.toMap(ConsultantAuthorization::getId, Function.identity()));
+
+        // Named rows must be this consultant's, and must still exist. Both failures mean the same
+        // thing in practice — somebody else revoked the grant while this form was open — and it is
+        // the only concurrent edit that can be detected at all, because a row that is gone leaves
+        // nothing behind to compare against.
+        Stream.concat(patch.updated().stream().map(ConsultantAuthorization::getId),
+                        patch.revokedIds().stream())
+                .filter(id -> !held.containsKey(id))
+                .findFirst()
+                .ifPresent(id -> {
+                    throw new BusinessException(
+                            "That authorization no longer exists — somebody else changed this "
+                                    + "consultant while you had the page open. Refresh and try again.");
+                });
 
         // One row per company: two grants for the same pair would make "is this live today?"
-        // answerable two ways. Caught here as a message rather than at the unique index, which
-        // would surface as a constraint violation naming a column.
-        Set<Long> seen = new HashSet<>();
-        desired.forEach(a -> {
-            if (!seen.add(a.getTenantId())) {
+        // answerable two ways. Checked against what will be left standing, not against the payload
+        // alone, so adding a company that is already authorized is refused here as a sentence
+        // rather than at the unique index as a constraint naming a column.
+        Set<Long> revoked = new HashSet<>(patch.revokedIds());
+        Set<Long> companies = held.values().stream()
+                .filter(grant -> !revoked.contains(grant.getId()))
+                .map(ConsultantAuthorization::getTenantId)
+                .collect(Collectors.toCollection(HashSet::new));
+        patch.created().forEach(grant -> {
+            if (!companies.add(grant.getTenantId())) {
                 throw new BusinessException("That company is authorized twice — one grant per company.");
             }
         });
 
-        Map<Long, ConsultantAuthorization> existing = authorizationsOf(profileId).stream()
-                .collect(Collectors.toMap(ConsultantAuthorization::getTenantId, Function.identity()));
+        for (ConsultantAuthorization fresh : patch.created()) {
+            fresh.setProfileId(profileId);
+            // Minted FIRST, so the grant can be written already pointing at it. The other order
+            // needs a second write to fill the link in, and a failure between the two leaves a
+            // grant that names no membership — the state the form calls "Missing".
+            fresh.setAccountId(mintMembership(profileId, fresh.getTenantId()));
+            authorizationService.createOne(fresh);
+        }
 
-        for (ConsultantAuthorization want : desired) {
-            ConsultantAuthorization have = existing.remove(want.getTenantId());
-            if (have == null) {
-                want.setProfileId(profileId);
-                // Minted FIRST, so the grant can be written already pointing at it. The other order
-                // needs a second write to fill the link in, and a failure between the two leaves a
-                // grant that names no membership — the state the form calls "Missing".
-                want.setAccountId(mintMembership(profileId, want.getTenantId()));
-                authorizationService.createOne(want);
-            } else if (!Objects.equals(have.getEndDate(), want.getEndDate())
-                    || have.getAccountId() == null) {
-                // Objects.equals, not a.equals(b): an open-ended grant carries no end date at all,
-                // so both sides are legitimately null and reaching through one would answer an edit
-                // with a NullPointerException.
-                have.setEndDate(want.getEndDate());
-                if (have.getAccountId() == null) {
-                    // A grant written before this link existed. Filled on the next save rather than
-                    // by a migration: the membership is findable from the pair either way, and a
-                    // grant that names no account reads on the form as one that minted nothing.
-                    have.setAccountId(accountService.findMembershipInTenant(
-                            have.getTenantId(), profileId).map(UserAccount::getId).orElse(null));
-                }
-                authorizationService.updateOne(have);
+        for (ConsultantAuthorization moved : patch.updated()) {
+            ConsultantAuthorization stored = held.get(moved.getId());
+            // Objects.equals, not a.equals(b): an open-ended grant carries no end date at all, so
+            // both sides are legitimately null and reaching through one would answer an edit with a
+            // NullPointerException. An update that turns out to change nothing is simply not
+            // written — a form may send a row back untouched, and a no-op write would still stamp
+            // the audit log with an edit nobody made.
+            if (!Objects.equals(stored.getEndDate(), moved.getEndDate())) {
+                stored.setEndDate(moved.getEndDate());
+                authorizationService.updateOne(stored);
             }
         }
 
-        // Whatever the form no longer lists is revoked: the grant row goes and the membership is
+        // Whatever the operator removed is revoked: the grant row goes and the membership is
         // CLOSED, not deleted.
         //
         // Closed rather than deleted because the account is the actor this tenant's audit log points
@@ -575,13 +631,40 @@ public class ConsultantServiceImpl extends EntityServiceImpl<ConsultantProfile, 
         // It is also the only version that survives being re-authorized: (tenantId, profileId) is
         // unique, so a deleted-then-re-granted consultant would need a NEW account, and the tenant's
         // history of that person would split in two with no way to join them back up.
-        existing.values().forEach(gone -> {
+        for (Long revokedId : patch.revokedIds()) {
+            ConsultantAuthorization gone = held.get(revokedId);
             authorizationService.deleteById(gone.getId());
             closeMembership(profileId, gone);
             log.info("Consultant {} authorization for tenant {} revoked; membership closed.",
                     profileId, gone.getTenantId());
-        });
+        }
+
+        backfillAccountLinks(profileId, held.values(), revoked);
         forgetEntryAnswers(profileId);
+    }
+
+    /**
+     * Fill in the membership link on grants written before the grant row carried one.
+     *
+     * <p>Repaired on save rather than by a migration: the membership is findable from the pair
+     * either way, and a grant that names no account reads on the form as one that minted nothing.
+     *
+     * <p>Run over every grant the consultant holds, not only the ones this save touched. The repair
+     * used to ride along with the update of each row, which worked while the form resubmitted the
+     * whole table on every save — now that it sends only what changed, a legacy row nobody edits
+     * would never be reached.
+     */
+    private void backfillAccountLinks(Long profileId, Collection<ConsultantAuthorization> held,
+                                      Set<Long> revoked) {
+        held.stream()
+                .filter(grant -> !revoked.contains(grant.getId()))
+                .filter(grant -> grant.getAccountId() == null)
+                .forEach(grant -> accountService.findMembershipInTenant(grant.getTenantId(), profileId)
+                        .map(UserAccount::getId)
+                        .ifPresent(accountId -> {
+                            grant.setAccountId(accountId);
+                            authorizationService.updateOne(grant);
+                        }));
     }
 
     /**
