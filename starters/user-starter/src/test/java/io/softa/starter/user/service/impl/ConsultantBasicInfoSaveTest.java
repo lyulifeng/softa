@@ -164,8 +164,10 @@ class ConsultantBasicInfoSaveTest {
         ConsultantProfileDTO f = form("Jane", "jane@zingkey.com", null);
         f.setProfileId(null);
 
+        // Refused by the channel that collided — the email is the only identifier the form carries,
+        // and the sentence names it so the operator knows which box to change.
         assertThatThrownBy(() -> service.save(f))
-                .hasMessageContaining("already a consultant");
+                .hasMessage("This email is already used by another consultant profile.");
         // Nothing was written on the way to the refusal — above all not the grant table.
         verify(service, never()).replaceAuthorizations(anyLong(), any());
     }

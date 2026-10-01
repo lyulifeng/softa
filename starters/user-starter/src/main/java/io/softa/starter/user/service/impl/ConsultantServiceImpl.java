@@ -208,17 +208,27 @@ public class ConsultantServiceImpl extends EntityServiceImpl<ConsultantProfile, 
             profileId = form.getProfileId();
             personIsNew = false;
         } else {
-            Long existing = findPerson(email, mobile).orElse(null);
+            Long byEmail = personHolding(email);
+            Long byMobile = personHolding(mobile);
             // Already a consultant, reached from the CREATE form — refuse instead of editing them.
             // The form shows only the grants just typed, while the save applies the table as a whole
             // SET: going on would delete every grant this person already holds and close the
             // memberships behind them, with nothing on screen ever having named them. A person who
             // is merely an employee is fine to go on with — that is the one-person-two-hats case the
             // lookup exists for.
-            if (existing != null) {
-                Assert.notTrue(findProfile(existing).isPresent(),
-                        "That person is already a consultant — open their profile to change it.");
+            //
+            // Refused per channel, and the message names the channel. The operator typed two
+            // identifiers and one of them belongs to a consultant; a sentence about "that person"
+            // leaves them to guess which box to change, and the one guess they can act on is which
+            // field it was. Email is asked first because it is looked up first below — a form that
+            // collides on both gets the answer the person lookup would have picked.
+            if (byEmail != null && findProfile(byEmail).isPresent()) {
+                throw new BusinessException("This email is already used by another consultant profile.");
             }
+            if (byMobile != null && findProfile(byMobile).isPresent()) {
+                throw new BusinessException("This mobile is already used by another consultant profile.");
+            }
+            Long existing = byEmail != null ? byEmail : byMobile;
             personIsNew = existing == null;
             profileId = personIsNew
                     ? profileService.createPersonForJoin(
@@ -341,24 +351,25 @@ public class ConsultantServiceImpl extends EntityServiceImpl<ConsultantProfile, 
     }
 
     /**
-     * The person behind this email / mobile, when one already holds either.
+     * The person who holds this login identifier, or {@code null} when nobody does.
      *
      * <p>Reusing an existing person is not a convenience, it is the only correct answer: login
      * identifiers are globally unique, so a second profile carrying this address cannot be created,
      * and the person who holds it IS the consultant being described. It is also what lets someone be
      * an employee at one company and a consultant for another — one person, two kinds of membership,
-     * one picker. Matching on either channel, because the operator may type whichever they know.
+     * one picker. The caller asks per channel, because the operator may type whichever they know and
+     * a refusal has to say which one it was about.
      *
-     * <p>It no longer creates: whether a person was FOUND or MADE decides whether this screen may
-     * write their credentials, so the caller has to be able to tell the two apart.
+     * <p>It never creates: whether a person was FOUND or MADE decides whether this screen may write
+     * their credentials, so the caller has to be able to tell the two apart.
      */
-    private Optional<Long> findPerson(String email, String mobile) {
-        Optional<Long> byEmail = identityService.findByLoginIdentifier(email)
-                .map(UserIdentity::getProfileId);
-        if (byEmail.isPresent()) {
-            return byEmail;
+    private Long personHolding(String identifier) {
+        if (identifier == null || identifier.isBlank()) {
+            return null;
         }
-        return identityService.findByLoginIdentifier(mobile).map(UserIdentity::getProfileId);
+        return identityService.findByLoginIdentifier(identifier)
+                .map(UserIdentity::getProfileId)
+                .orElse(null);
     }
 
     /**

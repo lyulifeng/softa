@@ -489,6 +489,26 @@ public interface ModelService<K extends Serializable> {
     List<Map<String, Object>> searchList(String modelName, FlexQuery flexQuery);
 
     /**
+     * {@link #searchList} without the caller's row range — the field guards still apply.
+     *
+     * <p><b>Framework machinery only.</b> It exists for the read pipeline: expanding a relation has to
+     * cross the caller's row range or a referenced row's label blanks out and an owned child whose
+     * model has no scope rule fails closed, taking its parent's sub-rows with it. Business code has no
+     * such need and must call {@link #searchList} — a row the caller may not see is not one this
+     * method is for.
+     *
+     * <p>A named method rather than a context flag, deliberately. A flag's reach is transitive and
+     * invisible: the read pipeline once ran wholesale under one, which silently covered every model
+     * the relation processors re-read from inside it and waived the field mask along with the row
+     * range. Every waiver is one call here, and {@code grep} lists them all.
+     *
+     * @param modelName the name of the model
+     * @param flexQuery a {@link FlexQuery} object defining fields, filters, sorting, etc.
+     * @return a list of maps representing the matching rows, row range not applied
+     */
+    List<Map<String, Object>> searchListIgnoringRowScope(String modelName, FlexQuery flexQuery);
+
+    /**
      * Performs a non-paginated query based on FlexQuery.
      * <p>If the result set exceeds {@code MAX_BATCH_SIZE}, an error is logged but no exception is thrown.</p>
      *

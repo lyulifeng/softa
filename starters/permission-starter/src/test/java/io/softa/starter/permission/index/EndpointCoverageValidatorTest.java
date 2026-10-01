@@ -113,13 +113,31 @@ class EndpointCoverageValidatorTest {
         assertThat(uncovered).isEmpty();
     }
 
+    /**
+     * A platform-only endpoint is gated — by a rule the index does not hold, in a third list beside
+     * the other two. Reporting it as uncovered says the opposite of what the list says, and the noise
+     * is the damage: this check exists so a genuinely ungated endpoint stands out, and a boot that
+     * logs dozens of unactionable ERRORs teaches the reader to scroll past the one that matters.
+     */
+    @Test
+    void platformOnlyPattern_skipsEndpoint() {
+        props.setPlatformOnlyPatterns(List.of("/provisioning/**"));
+        when(endpointIndex.lookup(anyString(), anyString())).thenReturn(Set.of());
+        Set<String> uncovered = validator().findUncoveredEndpoints(
+                handlers(info("/provisioning/createTenant", RequestMethod.POST)));
+        assertThat(uncovered).isEmpty();
+    }
+
     @Test
     void frameworkInfraPath_skipped() {
         when(endpointIndex.lookup(anyString(), anyString())).thenReturn(Set.of());
         Set<String> uncovered = validator().findUncoveredEndpoints(handlers(
                 info("/actuator/health", RequestMethod.GET),
                 info("/error", RequestMethod.GET),
-                info("/swagger-ui/index.html", RequestMethod.GET)));
+                info("/swagger-ui/index.html", RequestMethod.GET),
+                // springdoc's root document and its yaml twin sit beside the /v3/api-docs/ groups
+                info("/v3/api-docs", RequestMethod.GET),
+                info("/v3/api-docs.yaml", RequestMethod.GET)));
         assertThat(uncovered).isEmpty();
     }
 

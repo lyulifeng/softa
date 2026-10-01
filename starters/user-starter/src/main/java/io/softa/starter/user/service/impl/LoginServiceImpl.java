@@ -340,8 +340,15 @@ public class LoginServiceImpl implements LoginService {
             return lockedMessage();
         }
         if (failures >= WARN_FROM_FAILURE) {
-            return "Incorrect account or password. " + (UserIdentityService.FAILURES_BEFORE_LOCK - failures)
-                    + " attempt(s) remaining before password login is locked.";
+            // Name the wait, not just the fact of a lock. Told only that a lock is coming, the
+            // person has nothing to decide with; told it lasts half an hour, they can wait or
+            // switch to a verification code — which is the one route that still works while
+            // locked, and what the lock message itself goes on to say. Nowhere but here knows the
+            // duration: a caller wanting to add it to this sentence would have to hardcode the
+            // number and would then be wrong the day it changes.
+            long left = UserIdentityService.FAILURES_BEFORE_LOCK - failures;
+            return "Incorrect account or password. " + left + (left == 1 ? " attempt" : " attempts")
+                    + " left before password login locks for " + LOCK_MINUTES + " minutes.";
         }
         return "Incorrect account or password.";
     }

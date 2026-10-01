@@ -65,6 +65,13 @@ class MustSetMyPasswordTest {
         return ContextHolder.callWith(context, accountService::mustSetMyPassword);
     }
 
+    /** The other question: could this person set a first password if a screen offered to? */
+    private boolean canSetAsUser(Long userId) {
+        Context context = new Context();
+        context.setUserId(userId);
+        return ContextHolder.callWith(context, accountService::canSetMyFirstPassword);
+    }
+
     /**
      * One membership of the given kind, for the exemption's "every membership" question.
      *
@@ -163,6 +170,48 @@ class MustSetMyPasswordTest {
                 .thenReturn(List.of(membership(true), membership(false)));
 
         assertThat(asUser(USER)).isTrue();
+    }
+
+    /**
+     * The pair that the personal-settings screen turns on, and the case that sent it wrong.
+     *
+     * <p>A consultant is excused from being forced and still has no password. Read off the forcing
+     * rule, the screen concluded "has one" and offered the change form, which asks for a current
+     * password they have never had — so the one person the exemption was written for could never
+     * get a password at all. Two questions, two answers, and here they differ.
+     */
+    @Test
+    void aConsultantIsNotForced_butCanStillSetOne() {
+        doReturn(Optional.of(account(PROFILE))).when(accountService).getById(USER);
+        when(identityService.findByProfile(PROFILE)).thenReturn(Optional.of(identity(null)));
+        when(consultantService.isConsultant(PROFILE)).thenReturn(true);
+        when(memberships.listMembershipsOf(PROFILE)).thenReturn(List.of(membership(true)));
+
+        assertThat(asUser(USER)).isFalse();
+        assertThat(canSetAsUser(USER)).isTrue();
+    }
+
+    @Test
+    void somebodyWhoHasAPassword_cannotSetAFirstOne() {
+        doReturn(Optional.of(account(PROFILE))).when(accountService).getById(USER);
+        when(identityService.findByProfile(PROFILE)).thenReturn(Optional.of(identity("hash")));
+
+        assertThat(canSetAsUser(USER)).isFalse();
+    }
+
+    @Test
+    void noCredentialsRowAtAll_cannotSetOneEither() {
+        // setMyFirstPassword refuses this through requireIdentity, so offering the form would put
+        // somebody in front of a call that throws. Same answer as the forcing rule gives.
+        doReturn(Optional.of(account(PROFILE))).when(accountService).getById(USER);
+        when(identityService.findByProfile(PROFILE)).thenReturn(Optional.empty());
+
+        assertThat(canSetAsUser(USER)).isFalse();
+    }
+
+    @Test
+    void noSession_cannotSetOne() {
+        assertThat(canSetAsUser(null)).isFalse();
     }
 
     /**

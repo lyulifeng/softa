@@ -989,6 +989,12 @@ public class UserAccountController extends EntityController<UserAccountService, 
         return ApiResponse.success(service.mustSetMyPassword());
     }
 
+    @Operation(summary = "Whether the logged-in person could still set a first password")
+    @GetMapping("/canSetMyFirstPassword")
+    public ApiResponse<Boolean> canSetMyFirstPassword() {
+        return ApiResponse.success(service.canSetMyFirstPassword());
+    }
+
     @Operation(summary = "setMyFirstPassword")
     @PostMapping("/setMyFirstPassword")
     public ApiResponse<Void> setMyFirstPassword(@RequestBody @Valid SetFirstPasswordDTO dto) {

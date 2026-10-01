@@ -92,6 +92,29 @@ public interface PermissionService {
     Filters appendScopeAccessFilters(String model, Filters originalFilters);
 
     /**
+     * The part of {@link #appendScopeAccessFilters} that is a REWRITE of what the caller asked for
+     * rather than a restriction added on top — today, turning a subtree condition into the id-path
+     * condition it means.
+     *
+     * <p>Always applies, to every caller: an admin, a system-level read and a relation expansion ask
+     * the same question as anyone else and need the same answer. A {@code CHILD OF} left unrewritten
+     * does not widen or narrow the result, it compiles to a pattern match against an id and matches
+     * by coincidence.
+     *
+     * <p>{@link #appendScopeAccessFilters} runs this first and then adds the caller's row range on
+     * top. A read that legitimately crosses that range — see
+     * {@link ModelService#searchListIgnoringRowScope} — calls this one instead, so it keeps the
+     * rewrite and drops only the range.
+     *
+     * @param model the model being queried
+     * @param originalFilters the filters as assembled so far
+     * @return the filters with scope-independent rewrites applied
+     */
+    default Filters rewriteScopeFilters(String model, Filters originalFilters) {
+        return originalFilters;
+    }
+
+    /**
      * Silently drop blocked-for-{@code accessType} fields from the caller's
      * requested field set. Used inside read entry points
      * ({@code searchList}/{@code searchPage}/etc.) before the SELECT clause

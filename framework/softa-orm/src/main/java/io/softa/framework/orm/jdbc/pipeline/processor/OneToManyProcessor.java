@@ -259,7 +259,7 @@ public class OneToManyProcessor extends BaseProcessor {
         // Patch diffing must see soft-deleted / inactive children too, otherwise
         // the computed createRows / deleteIds would be wrong.
         previousFlexQuery.setFilterControl(FilterControl.bypassAll());
-        List<Map<String, Object>> previousOToMRows = ReflectTool.searchList(metaField.getRelatedModel(), previousFlexQuery);
+        List<Map<String, Object>> previousOToMRows = ReflectTool.searchListIgnoringRowScope(metaField.getRelatedModel(), previousFlexQuery);
         return previousOToMRows.stream().collect(Collectors.groupingBy(
                 row -> (Serializable) row.get(metaField.getRelatedField()),
                 Collectors.mapping(row -> (Serializable) row.get(ModelConstant.ID), Collectors.toSet())
@@ -341,7 +341,7 @@ public class OneToManyProcessor extends BaseProcessor {
         relatedFlexQuery.setFilterControl(FilterControl.bypassAll());
         // Count is automatically added during the groupBy operation
         relatedFlexQuery.setGroupBy(metaField.getRelatedField());
-        List<Map<String, Object>> countRows = ReflectTool.searchList(metaField.getRelatedModel(), relatedFlexQuery);
+        List<Map<String, Object>> countRows = ReflectTool.searchListIgnoringRowScope(metaField.getRelatedModel(), relatedFlexQuery);
         // COUNT(*) comes back from MySQL JDBC as Long. The previous
         // `(Integer)` cast threw ClassCastException on rows whose count
         // exceeded int width or whose JDBC driver typed BIGINT explicitly.
@@ -412,7 +412,7 @@ public class OneToManyProcessor extends BaseProcessor {
         // When get the related model rows of OneToMany field, the `relatedField` field of the related model is only
         // needed to get the ID for GroupBy, which might be a ManyToOne field defined in the related model.
         relatedFlexQuery.setKeepIdField(metaField.getRelatedField());
-        return ReflectTool.searchList(metaField.getRelatedModel(), relatedFlexQuery);
+        return ReflectTool.searchListIgnoringRowScope(metaField.getRelatedModel(), relatedFlexQuery);
     }
 
     /**
