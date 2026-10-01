@@ -20,6 +20,8 @@ import io.softa.starter.user.service.UserAccountService;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyBoolean;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doReturn;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
@@ -94,7 +96,7 @@ class ConsultantGrantRewriteTest {
         assertThatCode(() -> service.applyAuthorizations(PROFILE, redating(grant(STORED, start, end))))
                 .doesNotThrowAnyException();
 
-        verify(authorizationService).updateOne(any(ConsultantAuthorization.class));
+        verify(authorizationService).updateOne(any(ConsultantAuthorization.class), eq(false));
     }
 
     @Test
@@ -109,6 +111,7 @@ class ConsultantGrantRewriteTest {
         service.applyAuthorizations(PROFILE, redating(grant(STORED, start, end)));
 
         verify(authorizationService, never()).updateOne(any(ConsultantAuthorization.class));
+        verify(authorizationService, never()).updateOne(any(ConsultantAuthorization.class), anyBoolean());
         verify(authorizationService, never()).createOne(any(ConsultantAuthorization.class));
     }
 
@@ -145,6 +148,6 @@ class ConsultantGrantRewriteTest {
         service.applyAuthorizations(PROFILE,
                 redating(grant(STORED, start, LocalDate.of(2026, 12, 31))));
 
-        verify(authorizationService).updateOne(any(ConsultantAuthorization.class));
+        verify(authorizationService).updateOne(any(ConsultantAuthorization.class), eq(false));
     }
 }

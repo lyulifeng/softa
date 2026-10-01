@@ -22,6 +22,8 @@ import io.softa.starter.user.service.UserProfileService;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyBoolean;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doReturn;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
@@ -90,6 +92,7 @@ class ConsultantGrantConcurrencyTest {
         service.applyAuthorizations(PROFILE, ConsultantService.AuthorizationChanges.none());
 
         verify(authorizationService, never()).updateOne(any(ConsultantAuthorization.class));
+        verify(authorizationService, never()).updateOne(any(ConsultantAuthorization.class), anyBoolean());
         verify(authorizationService, never()).createOne(any(ConsultantAuthorization.class));
         verify(authorizationService, never()).deleteById(any());
     }
@@ -102,9 +105,27 @@ class ConsultantGrantConcurrencyTest {
 
         ArgumentCaptor<ConsultantAuthorization> written =
                 ArgumentCaptor.forClass(ConsultantAuthorization.class);
-        verify(authorizationService).updateOne(written.capture());
+        verify(authorizationService).updateOne(written.capture(), eq(false));
         assertThat(written.getValue().getId()).isEqualTo(ACME_GRANT);
         assertThat(written.getValue().getEndDate()).isEqualTo(OCTOBER);
+    }
+
+    @Test
+    void makingAGrantOpenEndedWritesTheNullRatherThanSkippingIt() {
+        // "No end" is the one edit whose new value is null, and the plain updateOne skips nulls —
+        // so this saved without complaint and left September in place. The write has to carry the
+        // null, which is what ignoreNull=false is for.
+        service.applyAuthorizations(PROFILE, redating(ACME_GRANT, null));
+
+        ArgumentCaptor<ConsultantAuthorization> written =
+                ArgumentCaptor.forClass(ConsultantAuthorization.class);
+        verify(authorizationService).updateOne(written.capture(), eq(false));
+        assertThat(written.getValue().getId()).isEqualTo(ACME_GRANT);
+        assertThat(written.getValue().getEndDate()).isNull();
+        // The rest of the row goes back as it was read, so writing nulls clears nothing else.
+        assertThat(written.getValue().getTenantId()).isEqualTo(ACME);
+        assertThat(written.getValue().getAccountId()).isEqualTo(500L);
+        verify(authorizationService, never()).updateOne(any(ConsultantAuthorization.class));
     }
 
     @Test
@@ -116,7 +137,7 @@ class ConsultantGrantConcurrencyTest {
 
         ArgumentCaptor<ConsultantAuthorization> written =
                 ArgumentCaptor.forClass(ConsultantAuthorization.class);
-        verify(authorizationService, org.mockito.Mockito.times(2)).updateOne(written.capture());
+        verify(authorizationService, org.mockito.Mockito.times(2)).updateOne(written.capture(), eq(false));
         assertThat(written.getAllValues()).extracting(ConsultantAuthorization::getId)
                 .containsExactly(ACME_GRANT, GLOBEX_GRANT);
     }
@@ -131,6 +152,7 @@ class ConsultantGrantConcurrencyTest {
                 .hasMessageContaining("Refresh and try again");
 
         verify(authorizationService, never()).updateOne(any(ConsultantAuthorization.class));
+        verify(authorizationService, never()).updateOne(any(ConsultantAuthorization.class), anyBoolean());
     }
 
     @Test

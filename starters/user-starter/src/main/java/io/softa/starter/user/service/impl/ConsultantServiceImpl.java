@@ -615,7 +615,12 @@ public class ConsultantServiceImpl extends EntityServiceImpl<ConsultantProfile, 
             // the audit log with an edit nobody made.
             if (!Objects.equals(stored.getEndDate(), moved.getEndDate())) {
                 stored.setEndDate(moved.getEndDate());
-                authorizationService.updateOne(stored);
+                // Nulls written, not skipped. The plain updateOne drops null fields, and a null end
+                // date is the one value this edit exists to set — "No end" turns a dated grant into
+                // an open-ended one. Skipped, it saved without error and left the old date in place.
+                // Safe to write the whole row: it is the stored row just read, so every other column
+                // goes back exactly as it was.
+                authorizationService.updateOne(stored, false);
             }
         }
 
