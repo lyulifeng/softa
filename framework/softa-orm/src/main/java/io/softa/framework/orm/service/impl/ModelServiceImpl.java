@@ -479,8 +479,25 @@ public class ModelServiceImpl<K extends Serializable> implements ModelService<K>
      * within it went with the header switcher.
      */
     private Filters scopedAccess(String modelName, Filters filters) {
-        return permissionService.appendScopeAccessFilters(modelName,
-                MultiCountryScope.append(modelName, filters));
+        return scopedAccess(modelName, filters, true);
+    }
+
+    /**
+     * Same, with the caller's row range made optional.
+     *
+     * <p>What {@code applyRowScope == false} drops is exactly the row range: the role's per-model
+     * rules and the company grant. It does NOT drop the country narrowing, nor the subtree rewrite
+     * that {@code appendScopeAccessFilters} performs before any of its own early returns — those two
+     * apply to every caller, an admin and a relation expansion included. A subtree condition left
+     * unrewritten does not widen or narrow a result, it compiles to a pattern match against an id and
+     * matches by coincidence; and an expansion reading a country-partitioned model wants the same
+     * countries a direct read would.
+     */
+    private Filters scopedAccess(String modelName, Filters filters, boolean applyRowScope) {
+        Filters narrowed = MultiCountryScope.append(modelName, filters);
+        return applyRowScope
+                ? permissionService.appendScopeAccessFilters(modelName, narrowed)
+                : permissionService.rewriteScopeFilters(modelName, narrowed);
     }
 
     /**
@@ -640,7 +657,10 @@ public class ModelServiceImpl<K extends Serializable> implements ModelService<K>
         // If the `displayName` config consists of an Option field or a ManyToOne/OneToOne field,
         // get the option label or cascaded displayName value as its field value.
         flexQuery.setConvertType(ConvertType.DISPLAY);
-        List<Map<String, Object>> rows = this.searchList(modelName, flexQuery);
+        // Ignores the row range on purpose: a referenced row's label must not blank out because the row
+        // sits outside the caller's range. Only the display fields are read, and the field guards still
+        // apply to them — a display field the caller may not read comes back empty, not resolved.
+        List<Map<String, Object>> rows = this.searchListIgnoringRowScope(modelName, flexQuery);
         Map<K, String> displayNames = new HashMap<>();
         for (Map<String, Object> row : rows) {
             // Filter out field values for null or empty strings
@@ -1303,9 +1323,35 @@ public class ModelServiceImpl<K extends Serializable> implements ModelService<K>
      */
     @Override
     public List<Map<String, Object>> searchList(String modelName, FlexQuery flexQuery) {
-        // Silently drop blocked-for-read fields from the request (Layer C PRE).
-        // Runs BEFORE checkModelFieldsAccess so users see the fields they DO
-        // have access to, rather than 403-ing on any single blocked field.
+        return searchList(modelName, flexQuery, true);
+    }
+
+    /**
+     * {@inheritDoc}
+     *
+     * <p>Everything {@link #searchList} does except appending the caller's row range.
+     */
+    @Override
+    public List<Map<String, Object>> searchListIgnoringRowScope(String modelName, FlexQuery flexQuery) {
+        return searchList(modelName, flexQuery, false);
+    }
+
+    /**
+     * The one read body, with the row range as the only thing either caller varies.
+     *
+     * <p>{@code applyRowScope == false} skips {@link #scopedAccess} and NOTHING else. The field guards
+     * run either way, which is the difference that matters: crossing a caller's row range to resolve a
+     * label or reach an owned child says nothing about which of that row's fields they may read, and
+     * the two used to be waived together — reaching a field through a parent was how a caller got it
+     * unmasked.
+     *
+     * <p>The timeline clamp ({@link #scopedRead}) also runs either way. It is not an access control:
+     * it picks which slice of a versioned row is current, and an expansion wants the same slice as a
+     * direct read.
+     */
+    private List<Map<String, Object>> searchList(String modelName, FlexQuery flexQuery, boolean applyRowScope) {
+        // Silently drop blocked-for-read fields from the request, BEFORE checkModelFieldsAccess, so
+        // callers see the fields they DO have access to rather than 403-ing on any single blocked one.
         Collection<String> filteredFields = permissionService.filterReadableFields(
                 modelName, flexQuery.getFields(), AccessType.READ);
         if (filteredFields != flexQuery.getFields()) {
@@ -1316,15 +1362,14 @@ public class ModelServiceImpl<K extends Serializable> implements ModelService<K>
         // Apply the versioning read scope (timeline clamp)
         Filters filters = this.scopedRead(modelName, flexQuery);
         // Append the access scopes (permission data range + per-country narrowing)
-        filters = this.scopedAccess(modelName, filters);
+        filters = this.scopedAccess(modelName, filters, applyRowScope);
         flexQuery.setFilters(filters);
         List<Map<String, Object>> rows = jdbcService.selectByFilter(modelName, flexQuery);
         if (rows.size() > BaseConstant.MAX_BATCH_SIZE) {
             log.error("Model {} `searchList` exceeds the limit of {}, please switch to `searchPage`: {}",
                     modelName, BaseConstant.MAX_BATCH_SIZE, flexQuery);
         }
-        // Mask blocked-field values on the response (Layer C POST).
-        // Recurses into cascade child rows under their own model's rules.
+        // Mask blocked-field values on the response.
         permissionService.maskResponseValue(modelName, rows, AccessType.READ);
         return rows;
     }
@@ -1341,7 +1386,9 @@ public class ModelServiceImpl<K extends Serializable> implements ModelService<K>
     public List<Map<String, Object>> searchName(String modelName, FlexQuery flexQuery) {
         List<String> displayFields = ModelManager.getModelDisplayName(modelName);
         flexQuery.select(displayFields);
-        List<Map<String, Object>> rows = searchList(modelName, flexQuery);
+        // Same reason as getDisplayNames: this resolves labels, and a label outside the caller's row
+        // range is still the label of a row they were legitimately shown a reference to.
+        List<Map<String, Object>> rows = searchListIgnoringRowScope(modelName, flexQuery);
         for (Map<String, Object> row : rows) {
             // Filter out field values for null or empty strings
             List<Object> displayValues = displayFields.stream().map(row::get)

@@ -40,7 +40,16 @@ import io.softa.starter.permission.interceptor.PermissionInterceptorProperties;
  * <p><b>Log-only, never fail-fast</b> (mirrors the origin validator's decision):
  * in a multi-app world the same seed ships endpoints for modules that may or may
  * not be on a given app's classpath, so taking the app down at boot is the wrong
- * trade-off. Ops sees the full list in the log; CI gates on a clean run.
+ * trade-off. Ops sees the full list in the log.
+ *
+ * <p><b>WARN, not ERROR.</b> An uncovered endpoint is unreachable, not open: the
+ * interceptor refuses a request whose URI the index does not hold, so "nothing
+ * grants it" reads as "nobody can call it". Most of the list is that way on
+ * purpose — the generic model controller serves every verb for every model, and
+ * only what a page declares is ever registered, so each model with no page of its
+ * own contributes a screenful. Reporting a by-design dead route at the level
+ * reserved for things that are broken buries the one entry that is: a handler
+ * somebody wrote and then could not reach. Level matched to what the finding is.
  *
  * <p>Skips itself when {@code handlerMappings} is empty (starter consumed outside
  * a web context).
@@ -75,10 +84,12 @@ public class EndpointCoverageValidator {
             log.info("EndpointCoverageValidator — OK ({} handler mapping(s) checked)", handlers.size());
             return;
         }
-        log.error("EndpointCoverageValidator — {} endpoint(s) not covered by any permission:", uncovered.size());
-        uncovered.forEach(e -> log.error(
+        log.warn("EndpointCoverageValidator — {} endpoint(s) not covered by any permission "
+                + "(unreachable, not open — the interceptor refuses what the index does not hold):",
+                uncovered.size());
+        uncovered.forEach(e -> log.warn(
                 "  - {} — add to permission.endpoints or public/authenticated-bypass yml", e));
-        log.error("EndpointCoverageValidator — startup continues; investigate and fix the seed / classpath above");
+        log.warn("EndpointCoverageValidator — startup continues; a route listed above can be reached by nobody, so fix the seed / classpath only where that is not the intent");
     }
 
     /** Merge the handler map from EVERY {@code RequestMappingHandlerMapping} bean
@@ -105,6 +116,12 @@ public class EndpointCoverageValidator {
     Set<String> findUncoveredEndpoints(Map<RequestMappingInfo, HandlerMethod> handlers) {
         List<String> publicPatterns = bypassProperties.getPublicUriPatterns();
         List<String> bypassPatterns = bypassProperties.getAuthenticatedBypassPatterns();
+        // Platform-only endpoints are declared, just in a third list. Leaving it out reported every
+        // one of them as uncovered, which is the opposite of what the list says: they ARE gated, by
+        // a rule the index does not hold. The noise is the damage — this check exists so a genuinely
+        // ungated endpoint stands out, and a boot that logs dozens of ERRORs nobody can act on
+        // teaches the reader to scroll past the one that matters.
+        List<String> platformOnlyPatterns = bypassProperties.getPlatformOnlyPatterns();
         Set<String> uncovered = new HashSet<>();
 
         for (Map.Entry<RequestMappingInfo, HandlerMethod> entry : handlers.entrySet()) {
@@ -125,7 +142,9 @@ public class EndpointCoverageValidator {
                             .collect(java.util.stream.Collectors.toSet());
 
             for (String uri : patterns) {
-                if (isInBypass(uri, publicPatterns) || isInBypass(uri, bypassPatterns)) continue;
+                if (isInBypass(uri, publicPatterns)
+                        || isInBypass(uri, bypassPatterns)
+                        || isInBypass(uri, platformOnlyPatterns)) continue;
                 if (isFrameworkInfraPath(uri)) continue;
                 for (HttpMethod method : methods) {
                     Set<String> perms = endpointIndex.lookup(uri, method.name());
@@ -154,7 +173,9 @@ public class EndpointCoverageValidator {
         return uri.equals("/error")
                 || uri.startsWith("/actuator/")
                 || uri.startsWith("/swagger-ui/")
-                || uri.startsWith("/v3/api-docs/")
+                // springdoc serves the group paths under /v3/api-docs/, and the root document at
+                // /v3/api-docs plus /v3/api-docs.yaml — the prefix alone misses the latter two.
+                || uri.startsWith("/v3/api-docs")
                 || uri.equals("/favicon.ico");
     }
 }

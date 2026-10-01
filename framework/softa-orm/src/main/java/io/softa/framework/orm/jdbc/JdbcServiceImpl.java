@@ -131,7 +131,6 @@ public class JdbcServiceImpl<K extends Serializable> implements JdbcService<K> {
      * @param convertType the type of data conversion applied to the result
      * @return a list of maps representing the retrieved rows
      */
-    @SkipPermissionCheck
     public List<Map<String, Object>> selectByIds(String modelName, List<K> ids, List<String> fields, ConvertType convertType) {
         String primaryKey = ModelManager.getModelPrimaryKey(modelName);
         if (CollectionUtils.isEmpty(fields)) {
@@ -172,7 +171,6 @@ public class JdbcServiceImpl<K extends Serializable> implements JdbcService<K> {
      * @param flexQuery a {@link FlexQuery} defining filters, fields, sorting, etc.
      * @return a list of maps representing the filtered rows
      */
-    @SkipPermissionCheck
     public List<Map<String, Object>> selectByFilter(String modelName, FlexQuery flexQuery) {
         SqlParams sqlParams;
         if (flexQuery.getTopN() != null && flexQuery.getTopN() > 0) {
@@ -202,7 +200,6 @@ public class JdbcServiceImpl<K extends Serializable> implements JdbcService<K> {
      * @param flexQuery a {@link FlexQuery} defining filters, sorting, etc.
      * @return a list of IDs of type {@code EK}
      */
-    @SkipPermissionCheck
     public <EK extends Serializable> List<EK> getIds(String modelName, String fieldName, FlexQuery flexQuery) {
         flexQuery.setFields(Sets.newHashSet(fieldName));
         SqlParams sqlParams = SqlBuilderFactory.buildSelectSql(modelName, flexQuery);
@@ -235,7 +232,6 @@ public class JdbcServiceImpl<K extends Serializable> implements JdbcService<K> {
      * @param page the {@link Page} containing pagination parameters
      * @return a {@link Page} of maps representing the queried rows
      */
-    @SkipPermissionCheck
     public Page<Map<String, Object>> selectByPage(String modelName, FlexQuery flexQuery, Page<Map<String, Object>> page) {
         if (page.isCount()) {
             long totalCount = this.count(modelName, flexQuery);
@@ -424,7 +420,6 @@ public class JdbcServiceImpl<K extends Serializable> implements JdbcService<K> {
      * @return the total count of matching rows
      */
     @Override
-    @SkipPermissionCheck
     public long count(String modelName, FlexQuery flexQuery) {
         SqlParams sqlParams = SqlBuilderFactory.buildCountSql(modelName, flexQuery);
         Long count = (Long) jdbcProxy.queryForObject(modelName, sqlParams, Long.class);
