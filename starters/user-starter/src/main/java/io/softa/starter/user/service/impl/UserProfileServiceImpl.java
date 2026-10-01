@@ -88,11 +88,37 @@ public class UserProfileServiceImpl extends EntityServiceImpl<UserProfile, Long>
      * <p>Note this is also the fetch step of {@link #saveMyProfile}, which carries its own waiver —
      * the flag does not survive this method's return, so the write path cannot borrow this one.
      */
+    /**
+     * The id of the PERSON behind this session, resolved through their membership.
+     *
+     * <p>{@code Context} carries the account id — which membership is being used right now — and a
+     * person may hold several. The profile is one row for the person, keyed by its own id, which is
+     * what {@code UserAccount.profileId} points at.
+     *
+     * <p>Both reads below used to filter on {@code UserProfile.userId} instead. That column is a
+     * leftover from the 1:1 era and says so on the field: "kept only so the data migration can map
+     * the old pairing". It can only name ONE of a person's memberships, so signing in through any
+     * other one made their own profile invisible — the dialog answered "Current user profile not
+     * found" while the row sat in the table. A consultant meets this every time, because they are
+     * created by the platform and then granted into a customer's tenant, so the membership they use
+     * is never the one the back-pointer happens to name. The eviction below already reasons this way
+     * and says why; the fetch did not.
+     */
+    private Long requireCurrentProfileId() {
+        Long userId = ContextHolder.getContext().getUserId();
+        return accountService.getById(userId)
+                .map(UserAccount::getProfileId)
+                // Refused here rather than filtered on: an id this method could not resolve must
+                // never reach the query as a null, because what a null does to an equality filter
+                // is the ORM's business and "matches everything" would hand back somebody else's
+                // profile. Same message either way — from the caller's side the profile is missing.
+                .orElseThrow(() -> new IllegalArgumentException("Current user profile not found."));
+    }
+
     @SkipPermissionCheck
     @Override
     public UserProfile getCurrentUserProfile() {
-        Long userId = ContextHolder.getContext().getUserId();
-        Filters profileFilters = new Filters().eq(UserProfile::getUserId, userId);
+        Filters profileFilters = new Filters().eq(UserProfile::getId, requireCurrentProfileId());
         Optional<UserProfile> profileOpt = this.searchOne(profileFilters);
         return profileOpt.orElseThrow(() -> new IllegalArgumentException("Current user profile not found."));
     }
@@ -108,8 +134,7 @@ public class UserProfileServiceImpl extends EntityServiceImpl<UserProfile, Long>
     @SkipPermissionCheck
     @Override
     public Map<String, Object> getCurrentUserProfileMap() {
-        Long userId = ContextHolder.getContext().getUserId();
-        Filters profileFilters = new Filters().eq(UserProfile::getUserId, userId);
+        Filters profileFilters = new Filters().eq(UserProfile::getId, requireCurrentProfileId());
         FlexQuery flexQuery = new FlexQuery(profileFilters);
         flexQuery.setConvertType(ConvertType.REFERENCE);
         Optional<Map<String, Object>> profileOpt = this.modelService.searchOne(this.modelName, flexQuery);
