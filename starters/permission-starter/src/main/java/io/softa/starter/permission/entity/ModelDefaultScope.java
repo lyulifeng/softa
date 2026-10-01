@@ -11,7 +11,7 @@ import io.softa.framework.orm.entity.AuditableModel;
 import io.softa.framework.orm.enums.IdStrategy;
 
 /**
- * The row scope a model falls back to when the caller holds no rule for it.
+ * The row scope every caller gets on a model, on top of whatever their role configures.
  *
  * <p>Without an entry, a model with no scope anchor that nothing the caller was granted points at
  * resolves to no rows. That is the right answer for business data somebody forgot to grant, and the
@@ -27,6 +27,12 @@ import io.softa.framework.orm.enums.IdStrategy;
  *
  * <p>Code-as-id: {@link #id} IS the model name, so a row reads as "ImportTemplate → ALL" and the
  * seed needs no surrogate key to stay stable across environments.
+ *
+ * <p><b>It is a floor, not a fallback.</b> A role's own rules for the model are OR-ed with it, so
+ * a declaration only ever adds rows: a role reaching some import histories still sees the ones its
+ * holder ran. On a model declaring {@code ALL} the union is always everything, so no rule
+ * configured on that model can narrow it — declare {@code ALL} only where row-level restriction
+ * has nothing to restrict.
  *
  * <p><b>{@code ALL} is not a statement that the table is harmless.</b> It says row scope is not
  * this table's defence — access is decided by the menu / endpoint grant instead — and it settles

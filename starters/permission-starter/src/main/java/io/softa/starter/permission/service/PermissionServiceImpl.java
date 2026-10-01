@@ -179,7 +179,7 @@ public class PermissionServiceImpl implements PermissionService {
         // selection holds.
         originalFilters = appendCompanyGrant(model, originalFilters, pi);
         if (hasExplicitRules(pi, model)) {
-            Filters scope = scopeCompiler.compile(rulesFor(pi, model), model);
+            Filters scope = scopeCompiler.compile(withDeclaredScope(rulesFor(pi, model), model), model);
             if (scope == null) return originalFilters; // ALL rule → no restriction
             return combineAnd(originalFilters, scope);
         }
@@ -254,8 +254,8 @@ public class PermissionServiceImpl implements PermissionService {
     }
 
     /**
-     * The scope this model falls back on when the caller holds no rule of its own, or {@code null}
-     * when it declares none.
+     * The scope this model declares for every caller — added to whatever rules the caller's role
+     * holds, and standing alone when it holds none — or {@code null} when it declares none.
      *
      * <p>Read from {@link ModelDefaultScopeRegistry} — platform-level reference data, not a column
      * on the model's metadata. The scanner owns {@code SysModel} and diffs it back to the
@@ -269,6 +269,29 @@ public class PermissionServiceImpl implements PermissionService {
 
     private static final Set<ScopeType> UNIVERSAL_SCOPE_TYPES =
             EnumSet.of(ScopeType.ALL, ScopeType.CUSTOM, ScopeType.CREATED_BY_SELF);
+
+    /**
+     * The role's own rules for {@code model}, plus the scope the model declares — OR-ed together by
+     * the compiler like any two rules a role holds.
+     *
+     * <p>A declaration is a floor under every role, not a fallback for the roles that configured
+     * nothing: someone whose role reaches some import histories still sees the ones they ran
+     * themselves. The consequence is deliberate and worth stating — on a model declaring
+     * {@code ALL}, the union is always {@code ALL}, so a rule configured on that model can widen
+     * nothing and narrow nothing. Such a model has no row-level restriction to configure.
+     *
+     * <p>Skipped on a model with a scope anchor of its own, for the reason the no-grant path skips
+     * it: declaring both means one of them is wrong, and the anchor is the safer reading.
+     */
+    private List<ScopeRule> withDeclaredScope(List<ScopeRule> rules, String model) {
+        ScopeType declared = declaredScope(model);
+        if (declared == null || hasForwardAnchor(model)) {
+            return rules;
+        }
+        List<ScopeRule> merged = new ArrayList<>(rules);
+        merged.add(ruleOf(declared));
+        return merged;
+    }
 
     /** A declared fallback as the compiler wants it — the same shape a configured rule arrives in. */
     private static ScopeRule ruleOf(ScopeType type) {

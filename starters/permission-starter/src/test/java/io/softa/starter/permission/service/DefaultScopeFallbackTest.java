@@ -46,8 +46,8 @@ import static org.mockito.Mockito.when;
  *
  * <p>The declaration is read through the same compiler a configured rule goes through, so the two
  * cannot drift: what an administrator gets by picking {@code CREATED_BY_SELF} in the wizard is what
- * a model gets by declaring it. The cases below pin the branch's edges — it must not fire on a model
- * that has an anchor of its own, and it must never overrule a rule somebody actually wrote.
+ * a model gets by declaring it. The cases below pin the edges — it must not fire on a model that has
+ * an anchor of its own, and with a role's own rules it is a floor: OR-ed in, never replaced by them.
  */
 class DefaultScopeFallbackTest {
 
@@ -139,25 +139,49 @@ class DefaultScopeFallbackTest {
     }
 
     @Test
-    void anAdministratorsOwnRuleWinsOverTheDeclaration() {
-        // The branch lives in the no-grant fallback, so a role that was deliberately narrowed keeps
-        // its narrowing. A declared default is what to do in the ABSENCE of a decision, never a
-        // ceiling on one.
-        declare("ImportHistory", ScopeType.ALL, UNIVERSAL_ONLY);
-        PermissionInfo pi = new PermissionInfo();
-        pi.setModelScopeMap(Map.of("ImportHistory", List.of(rule(ScopeType.CREATED_BY_SELF))));
-        PermissionSnapshotProvider provider = mock(PermissionSnapshotProvider.class);
-        when(provider.get(anyLong(), anyLong())).thenReturn(pi);
+    void aRolesOwnRuleIsWidenedByTheDeclaration() {
+        // A declaration is a floor under every role, not a fallback for the ones that configured
+        // nothing: the role's rule and the declared scope reach the compiler together, OR-ed.
+        declare("ImportHistory", ScopeType.CREATED_BY_SELF, UNIVERSAL_ONLY);
+        roleHolds("ImportHistory", ScopeType.CUSTOM);
         when(compiler.compile(anyList(), eq("ImportHistory"))).thenReturn(OWN_ROWS);
-        service = new PermissionServiceImpl(provider, compiler, null, mock(ModelService.class),
-                applicability, () -> null, () -> null, () -> defaultScopes);
 
         assertThat(scopeOf("ImportHistory")).isNotEqualTo(new Filters());
-        // Compiled from the role's rule; the model's own declaration never reached the compiler.
         ArgumentCaptor<List<ScopeRule>> rules = ArgumentCaptor.forClass(List.class);
         verify(compiler).compile(rules.capture(), eq("ImportHistory"));
-        assertThat(rules.getValue()).singleElement()
-                .extracting(ScopeRule::getScopeType).isEqualTo(ScopeType.CREATED_BY_SELF);
+        assertThat(rules.getValue()).extracting(ScopeRule::getScopeType)
+                .containsExactly(ScopeType.CUSTOM, ScopeType.CREATED_BY_SELF);
+    }
+
+    @Test
+    void onAModelDeclaringAllARoleRuleCannotNarrowIt() {
+        // The stated consequence of the union: ALL OR anything is ALL. A rule configured on such a
+        // model narrows nothing — which is why ALL is reserved for tables with nothing to restrict.
+        declare("ImportTemplate", ScopeType.ALL, UNIVERSAL_ONLY);
+        roleHolds("ImportTemplate", ScopeType.CREATED_BY_SELF);
+        when(compiler.compile(anyList(), eq("ImportTemplate"))).thenReturn(null);
+
+        assertThat(scopeOf("ImportTemplate")).isEqualTo(new Filters());
+        ArgumentCaptor<List<ScopeRule>> rules = ArgumentCaptor.forClass(List.class);
+        verify(compiler).compile(rules.capture(), eq("ImportTemplate"));
+        assertThat(rules.getValue()).extracting(ScopeRule::getScopeType)
+                .contains(ScopeType.ALL);
+    }
+
+    @Test
+    void anAnchoredModelKeepsTheRolesRulesUnwidened() {
+        // The anchor wins here too: a declaration on a model that can be scoped on its own is a
+        // mislabel, and it must not widen what an administrator narrowed.
+        declare("EmpDocument", ScopeType.ALL,
+                Set.of(ScopeType.ALL, ScopeType.CUSTOM, ScopeType.CREATED_BY_SELF, ScopeType.DEPT_SUBTREE));
+        roleHolds("EmpDocument", ScopeType.DEPT_SUBTREE);
+        when(compiler.compile(anyList(), eq("EmpDocument"))).thenReturn(OWN_ROWS);
+
+        scopeOf("EmpDocument");
+        ArgumentCaptor<List<ScopeRule>> rules = ArgumentCaptor.forClass(List.class);
+        verify(compiler).compile(rules.capture(), eq("EmpDocument"));
+        assertThat(rules.getValue()).extracting(ScopeRule::getScopeType)
+                .containsExactly(ScopeType.DEPT_SUBTREE);
     }
 
     @Test
@@ -178,6 +202,16 @@ class DefaultScopeFallbackTest {
         when(applicability.applicableFor(model)).thenReturn(applicable);
         when(defaultScopes.scopeFor(model)).thenReturn(defaultScope);
         modelManager.when(() -> ModelManager.existModel(model)).thenReturn(true);
+    }
+
+    /** Give the caller's role one rule on {@code model}, rebuilding the service around it. */
+    private void roleHolds(String model, ScopeType type) {
+        PermissionInfo pi = new PermissionInfo();
+        pi.setModelScopeMap(Map.of(model, List.of(rule(type))));
+        PermissionSnapshotProvider provider = mock(PermissionSnapshotProvider.class);
+        when(provider.get(anyLong(), anyLong())).thenReturn(pi);
+        service = new PermissionServiceImpl(provider, compiler, null, mock(ModelService.class),
+                applicability, () -> null, () -> null, () -> defaultScopes);
     }
 
     private static ScopeRule rule(ScopeType type) {

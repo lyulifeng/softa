@@ -12,7 +12,7 @@ import io.softa.starter.permission.entity.ModelDefaultScope;
 import io.softa.starter.permission.spi.ScopeType;
 
 /**
- * Which models declare a fallback row scope, and what it is.
+ * Which models declare a default row scope, and what it is.
  *
  * <p>One lazily-built map over {@link ModelDefaultScope}. Lazy rather than eager because the rows
  * arrive with the seed, which on a fresh database lands after this bean is wired; and only a
@@ -21,7 +21,7 @@ import io.softa.starter.permission.spi.ScopeType;
  *
  * <p>A row naming no known {@link ScopeType} is dropped with a warning rather than failing the
  * request. The boot validator reports those, which is where a typo should surface; a request is the
- * wrong place to discover one, and treating it as "no fallback" leaves the model on the
+ * wrong place to discover one, and treating it as "no declaration" leaves the model on the
  * fail-closed path — the safe reading of a value nobody can make sense of.
  */
 @Slf4j

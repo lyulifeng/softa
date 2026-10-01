@@ -42,7 +42,7 @@ public class ModelDefaultScopeReader {
 
     /**
      * All rows as raw maps. Empty when the model is not present yet (a fresh database before the
-     * seed lands) or {@code ModelService} is not available — both mean "no fallback is declared",
+     * seed lands) or {@code ModelService} is not available — both mean "nothing is declared",
      * which leaves every model on the path it took before this mechanism existed.
      */
     @SkipPermissionCheck
