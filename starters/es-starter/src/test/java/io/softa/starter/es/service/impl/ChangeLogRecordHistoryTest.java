@@ -180,6 +180,19 @@ class ChangeLogRecordHistoryTest {
     }
 
     @Test
+    void theQueryStaysInsideTheCallersTenant() {
+        // One index for every tenant, and this query does not pass through searchPage.
+        io.softa.framework.base.context.Context context = new io.softa.framework.base.context.Context();
+        context.setTenantId(7L);
+        String query = io.softa.framework.base.context.ContextHolder.callWith(context, () ->
+                service.historyQuery(List.of(
+                        new ChangeLogServiceImpl.HistoryPart("Employee", List.of("100"), null, null)),
+                        true).toString());
+
+        assertThat(query).contains("\"tenantId\":{\"value\":\"7\"}");
+    }
+
+    @Test
     void aReaderUnderNoRowScopeKeepsEveryLogADeletedRowsIncluded() {
         when(permissionService.appendScopeAccessFilters(eq("Employee"), any(Filters.class))).thenReturn(new Filters());
         List<ChangeLog> logs = List.of(log("100"), log("999"));

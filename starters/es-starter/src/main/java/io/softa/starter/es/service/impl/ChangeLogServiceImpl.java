@@ -16,6 +16,7 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Lazy;
 import org.springframework.stereotype.Service;
 
+import io.softa.framework.base.context.ContextHolder;
 import io.softa.framework.base.enums.Operator;
 import io.softa.framework.base.exception.PermissionException;
 import io.softa.framework.base.utils.Assert;
@@ -227,6 +228,13 @@ public class ChangeLogServiceImpl extends ESServiceImpl<ChangeLog> implements Ch
         if (!includeCreation) {
             root.filter(f -> f.terms(t -> t.field("accessType").terms(v -> v.value(
                     List.of(FieldValue.of(UPDATE.name()), FieldValue.of(DELETE.name()))))));
+        }
+        // The log is one index for every tenant and this query bypasses searchPage, so the caller's
+        // tenant is stated here. Every id in the parts was already read inside that tenant and ids
+        // are unique across tenants, so this is the second line, not the first.
+        Long tenantId = ContextHolder.getContext().getTenantId();
+        if (tenantId != null) {
+            root.filter(f -> f.term(t -> t.field("tenantId").value(String.valueOf(tenantId))));
         }
         return Query.of(q -> q.bool(root.build()));
     }
