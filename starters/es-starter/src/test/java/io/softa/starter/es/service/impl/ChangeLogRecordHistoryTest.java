@@ -1,0 +1,209 @@
+package io.softa.starter.es.service.impl;
+
+import java.io.Serializable;
+import java.util.Collection;
+import java.util.List;
+import java.util.Map;
+import java.util.Optional;
+import java.util.Set;
+
+import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
+import org.mockito.MockedStatic;
+import org.springframework.test.util.ReflectionTestUtils;
+
+import io.softa.framework.base.exception.PermissionException;
+import io.softa.framework.orm.changelog.message.dto.ChangeLog;
+import io.softa.framework.orm.domain.Filters;
+import io.softa.framework.orm.enums.AccessType;
+import io.softa.framework.orm.enums.FieldType;
+import io.softa.framework.orm.meta.MetaField;
+import io.softa.framework.orm.meta.MetaModel;
+import io.softa.framework.orm.meta.ModelManager;
+import io.softa.framework.orm.service.ModelService;
+import io.softa.framework.orm.service.PermissionService;
+
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.doThrow;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.mockStatic;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.when;
+
+/**
+ * One record's history, across the models it is kept in.
+ *
+ * <p>An employee's personal details, bank account and family members are each logged against
+ * their own rows, so the employee row's history alone is most of the record missing — and a
+ * deleted family member had no id left to ask about at all. One query now gathers the record's
+ * rows: a one-to-one by the row it points at, a one-to-many by the reference each log carries and
+ * by the rows that exist now.
+ */
+class ChangeLogRecordHistoryTest {
+
+    private static final Long EMPLOYEE = 100L;
+
+    private ChangeLogServiceImpl service;
+    private PermissionService permissionService;
+    @SuppressWarnings("rawtypes")
+    private ModelService modelService;
+    private MockedStatic<ModelManager> models;
+
+    private static MetaField relation(String name, FieldType type, String relatedModel, String relatedField) {
+        // Setters are package-private: metadata is loaded, never built by hand outside the package.
+        MetaField field = new MetaField();
+        ReflectionTestUtils.setField(field, "fieldName", name);
+        ReflectionTestUtils.setField(field, "fieldType", type);
+        ReflectionTestUtils.setField(field, "relatedModel", relatedModel);
+        ReflectionTestUtils.setField(field, "relatedField", relatedField);
+        return field;
+    }
+
+    @BeforeEach
+    @SuppressWarnings("unchecked")
+    void setUp() {
+        service = new ChangeLogServiceImpl();
+        permissionService = mock(PermissionService.class);
+        modelService = mock(ModelService.class);
+        ReflectionTestUtils.setField(service, "permissionService", permissionService);
+        ReflectionTestUtils.setField(service, "modelService", modelService);
+        when(permissionService.getUserBlockedModelFields(any(), eq(AccessType.READ))).thenReturn(Set.of());
+
+        MetaModel employee = mock(MetaModel.class);
+        when(employee.isTimeline()).thenReturn(false);
+        MetaField profile = relation("employeeProfileId", FieldType.ONE_TO_ONE, "EmployeeProfile", null);
+        MetaField members = relation("empFamilyMembers", FieldType.ONE_TO_MANY, "EmpFamilyMember", "employeeId");
+        MetaField salary = relation("empSalaryProfileItems", FieldType.ONE_TO_MANY, "EmpSalaryProfileItem", "employeeId");
+        MetaField entity = relation("legalEntityId", FieldType.MANY_TO_ONE, "Company", null);
+
+        models = mockStatic(ModelManager.class);
+        models.when(() -> ModelManager.getModel("Employee")).thenReturn(employee);
+        models.when(() -> ModelManager.getModelFieldOrNull("Employee", "employeeProfileId")).thenReturn(profile);
+        models.when(() -> ModelManager.getModelField("Employee", "employeeProfileId")).thenReturn(profile);
+        models.when(() -> ModelManager.getModelFieldOrNull("Employee", "empFamilyMembers")).thenReturn(members);
+        models.when(() -> ModelManager.getModelFieldOrNull("Employee", "empSalaryProfileItems")).thenReturn(salary);
+        models.when(() -> ModelManager.getModelFieldOrNull("Employee", "legalEntityId")).thenReturn(entity);
+        // Row ids arrive from the index as strings and are typed by the model's id field.
+        models.when(() -> ModelManager.getModelField("Employee", "id"))
+                .thenReturn(relation("id", FieldType.LONG, null, null));
+        models.when(() -> ModelManager.getModelStoredFields("EmpSalaryProfileItem"))
+                .thenReturn(List.of("id", "employeeId", "amount", "note"));
+
+        when(modelService.getIds(eq("EmpFamilyMember"), any(Filters.class))).thenReturn(List.of(301L, 302L));
+        when(modelService.getById(eq("Employee"), eq(EMPLOYEE), any(Collection.class)))
+                .thenReturn(Optional.of(Map.of("employeeProfileId", Map.of("id", 200L, "displayName", "Ada"))));
+    }
+
+    @AfterEach
+    void tearDown() {
+        models.close();
+    }
+
+    @Test
+    void gathersTheRecordAndTheRowsItsRelationsHold() {
+        List<ChangeLogServiceImpl.HistoryPart> parts =
+                service.historyParts("Employee", EMPLOYEE, List.of("employeeProfileId", "empFamilyMembers"));
+
+        assertThat(parts).containsExactly(
+                new ChangeLogServiceImpl.HistoryPart("Employee", List.of("100"), null, null),
+                new ChangeLogServiceImpl.HistoryPart("EmpFamilyMember", List.of("301", "302"), "employeeId=100", null),
+                new ChangeLogServiceImpl.HistoryPart("EmployeeProfile", List.of("200"), null, null));
+    }
+
+    @Test
+    void findsAOneToManyRowByReferenceSoADeletedOneIsNotLost() {
+        // The ids are the rows that exist now; the reference is what still names a deleted row's
+        // logs, and both are asked: the reference alone would miss logs written before references.
+        ChangeLogServiceImpl.HistoryPart members =
+                service.historyParts("Employee", EMPLOYEE, List.of("empFamilyMembers")).get(1);
+
+        assertThat(members.ref()).isEqualTo("employeeId=100");
+        assertThat(members.rowIds()).containsExactly("301", "302");
+    }
+
+    @Test
+    void refusesAFieldThatIsNotAOneToOneOrOneToMany() {
+        // A many-to-one points at a record with a history of its own — the company is not the
+        // employee's — so it is refused rather than quietly folded in.
+        assertThatThrownBy(() -> service.historyParts("Employee", EMPLOYEE, List.of("legalEntityId")))
+                .hasMessageContaining("not a one-to-one or one-to-many");
+    }
+
+    @Test
+    void leavesOutARelationWhoseModelTheReaderCannotRead() {
+        // As the form leaves out the table: refusing the whole history over one relation would
+        // hide everything the reader is entitled to.
+        doThrow(new PermissionException("no read")).when(permissionService)
+                .checkModelAccess("EmpFamilyMember", AccessType.READ);
+
+        List<ChangeLogServiceImpl.HistoryPart> parts =
+                service.historyParts("Employee", EMPLOYEE, List.of("empFamilyMembers"));
+
+        assertThat(parts).extracting(ChangeLogServiceImpl.HistoryPart::model).containsExactly("Employee");
+        verify(modelService, never()).getIds(eq("EmpFamilyMember"), any(Filters.class));
+    }
+
+    @Test
+    void namesTheFieldsAReaderMaySeeWhereTheirSetsHideSome() {
+        // What the query needs to leave out an update that touched only hidden fields — from the
+        // count, not just the page.
+        when(permissionService.getUserBlockedModelFields("EmpSalaryProfileItem", AccessType.READ))
+                .thenReturn(Set.of("amount"));
+        when(modelService.getIds(eq("EmpSalaryProfileItem"), any(Filters.class))).thenReturn(List.of());
+
+        ChangeLogServiceImpl.HistoryPart salary =
+                service.historyParts("Employee", EMPLOYEE, List.of("empSalaryProfileItems")).get(1);
+
+        assertThat(salary.visibleFields()).containsExactly("id", "employeeId", "note");
+    }
+
+    @Test
+    void theQueryAsksEachPartByItsModelAndItsRows() {
+        String query = service.historyQuery(List.of(
+                new ChangeLogServiceImpl.HistoryPart("Employee", List.of("100"), null, null),
+                new ChangeLogServiceImpl.HistoryPart("EmpFamilyMember", List.of("301"), "employeeId=100", null),
+                new ChangeLogServiceImpl.HistoryPart("EmpSalaryProfileItem", List.of(), "employeeId=100",
+                        List.of("note"))),
+                false).toString();
+
+        assertThat(query).contains("\"model\":{\"value\":\"Employee\"}");
+        assertThat(query).contains("\"refs\":{\"value\":\"employeeId=100\"}");
+        // The hidden-only update is excluded by what it wrote, so it is out of the count too.
+        assertThat(query).contains("\"must_not\"").contains("changedFields");
+        // Creation left out on request.
+        assertThat(query).contains("\"UPDATE\"").contains("\"DELETE\"");
+    }
+
+    @Test
+    void aReaderUnderNoRowScopeKeepsEveryLogADeletedRowsIncluded() {
+        when(permissionService.appendScopeAccessFilters(eq("Employee"), any(Filters.class))).thenReturn(new Filters());
+        List<ChangeLog> logs = List.of(log("100"), log("999"));
+
+        assertThat(service.onReadableRows("Employee", logs)).isSameAs(logs);
+        verify(modelService, never()).getIds(eq("Employee"), any(Filters.class));
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void aScopedReaderKeepsOnlyTheRowsInsideTheirScope() {
+        when(permissionService.appendScopeAccessFilters(eq("Employee"), any(Filters.class)))
+                .thenReturn(Filters.of("departmentId", io.softa.framework.base.enums.Operator.EQUAL, 1L));
+        when(modelService.getIds(eq("Employee"), any(Filters.class))).thenReturn(List.<Serializable>of(100L));
+
+        List<ChangeLog> visible = service.onReadableRows("Employee", List.of(log("100"), log("999")));
+
+        assertThat(visible).extracting(ChangeLog::getRowId).containsExactly("100");
+    }
+
+    private static ChangeLog log(String rowId) {
+        ChangeLog log = new ChangeLog();
+        log.setModel("Employee");
+        log.setRowId(rowId);
+        return log;
+    }
+}

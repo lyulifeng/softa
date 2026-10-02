@@ -2,8 +2,12 @@ package io.softa.framework.orm.changelog;
 
 import java.io.Serializable;
 import java.time.LocalDateTime;
+import java.util.ArrayList;
+import java.util.Collection;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.stream.Collectors;
 import jakarta.validation.constraints.NotNull;
 import lombok.extern.slf4j.Slf4j;
@@ -19,6 +23,8 @@ import io.softa.framework.orm.changelog.event.TransactionEvent;
 import io.softa.framework.orm.changelog.message.dto.ChangeLog;
 import io.softa.framework.orm.constant.ModelConstant;
 import io.softa.framework.orm.enums.AccessType;
+import io.softa.framework.orm.enums.FieldType;
+import io.softa.framework.orm.meta.MetaField;
 import io.softa.framework.orm.meta.ModelManager;
 
 /**
@@ -72,6 +78,7 @@ public class ChangeLogPublisherImpl implements ChangeLogPublisher {
             ChangeLog changeLog = generateChangeLog(model, AccessType.CREATE, pKey, createdTime);
             // For creation log, dataAfterChange contains the full created row
             changeLog.setDataAfterChange(row);
+            changeLog.setRefs(refsOf(model, row, null));
             return changeLog;
         }).collect(Collectors.toList());
         this.publish(changeLogs);
@@ -103,6 +110,8 @@ public class ChangeLogPublisherImpl implements ChangeLogPublisher {
             // dataAfterChange contains only the changed fields (excluding PK and audit
             // fields)
             changeLog.setDataAfterChange(row);
+            changeLog.setRefs(refsOf(model, originalRowsMap.get(pKey), row));
+            changeLog.setChangedFields(new ArrayList<>(row.keySet()));
             return changeLog;
         }).collect(Collectors.toList());
         this.publish(changeLogs);
@@ -123,6 +132,7 @@ public class ChangeLogPublisherImpl implements ChangeLogPublisher {
             ChangeLog changeLog = generateChangeLog(model, AccessType.DELETE, pKey, deleteTime);
             // For deletion log, dataBeforeChange contains the full deleted row
             changeLog.setDataBeforeChange(row);
+            changeLog.setRefs(refsOf(model, row, null));
             return changeLog;
         }).collect(Collectors.toList());
         this.publish(changeLogs);
@@ -137,6 +147,38 @@ public class ChangeLogPublisherImpl implements ChangeLogPublisher {
      * @param updatedTime the time the change occurred
      * @return Populated ChangeLog object
      */
+    /**
+     * {@code field=id} for every many-to-one value in the rows, for {@link ChangeLog#getRefs()}.
+     *
+     * <p>Only many-to-one: that is the side of a parent–child link the child row holds, and the
+     * child row is the one whose history has to be found from its parent. Null when the model has
+     * none, so a log that points at nothing carries no empty list.
+     */
+    static List<String> refsOf(String model, Map<String, Object> first, Map<String, Object> second) {
+        Set<String> refs = new LinkedHashSet<>();
+        for (MetaField field : ModelManager.getModelFields(model)) {
+            if (!FieldType.MANY_TO_ONE.equals(field.getFieldType())) {
+                continue;
+            }
+            addRef(refs, field.getFieldName(), first);
+            addRef(refs, field.getFieldName(), second);
+        }
+        return refs.isEmpty() ? null : new ArrayList<>(refs);
+    }
+
+    private static void addRef(Set<String> refs, String fieldName, Map<String, Object> row) {
+        if (row == null) {
+            return;
+        }
+        Object value = row.get(fieldName);
+        if (value instanceof Map<?, ?> reference) {
+            value = reference.get(ModelConstant.ID);
+        }
+        if (value != null && !(value instanceof Collection<?>) && !String.valueOf(value).isEmpty()) {
+            refs.add(fieldName + "=" + value);
+        }
+    }
+
     private ChangeLog generateChangeLog(String model, AccessType accessType, Serializable id,
             @NotNull LocalDateTime updatedTime) {
         Context context = ContextHolder.getContext();

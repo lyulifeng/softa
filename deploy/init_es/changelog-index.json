@@ -19,6 +19,8 @@
       "accessType":  { "type": "keyword" },
       "dataBeforeChange": { "type": "keyword", "index": false, "doc_values": false },
       "dataAfterChange":  { "type": "keyword", "index": false, "doc_values": false },
+      "refs":          { "type": "keyword" },
+      "changedFields": { "type": "keyword" },
       "tenantId":    { "type": "keyword" },
       "changedById": { "type": "keyword" },
       "changedBy":   { "type": "keyword" },
