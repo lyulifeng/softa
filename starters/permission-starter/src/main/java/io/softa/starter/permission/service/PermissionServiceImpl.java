@@ -22,6 +22,7 @@ import io.softa.starter.permission.spi.ScopeType;
 import io.softa.starter.permission.sensitive.SensitiveFieldSetCache;
 import io.softa.starter.permission.index.EndpointIndex;
 import io.softa.starter.permission.scope.SubtreeFilterRewriter;
+import io.softa.starter.permission.scope.ModelDefaultScopeRegistry;
 import io.softa.starter.permission.scope.ScopeApplicabilityResolver;
 import io.softa.starter.permission.scope.ScopeRuleCompiler;
 import io.softa.starter.permission.spi.PermissionSnapshotProvider;
@@ -103,6 +104,12 @@ public class PermissionServiceImpl implements PermissionService {
      *  older constructors, and every unit test) simply means no rewrite. */
     private final Supplier<SubtreeFilterRewriter> subtreeRewriterSupplier;
 
+    /** Which models declare a fallback row scope. Supplied lazily for the same reason as the two
+     *  above — the registry reads through ModelService, which is not resolvable while this bean is
+     *  built. A null supplier (the older constructors, and every unit test) means no model declares
+     *  one, i.e. exactly the behaviour that predates the mechanism. */
+    private final Supplier<ModelDefaultScopeRegistry> defaultScopeSupplier;
+
     public PermissionServiceImpl(PermissionSnapshotProvider snapshotProvider,
             ScopeRuleCompiler scopeCompiler,
             SensitiveFieldSetCache sfsCache,
@@ -128,6 +135,18 @@ public class PermissionServiceImpl implements PermissionService {
             ScopeApplicabilityResolver applicability,
             Supplier<EndpointIndex> endpointIndexSupplier,
             Supplier<SubtreeFilterRewriter> subtreeRewriterSupplier) {
+        this(snapshotProvider, scopeCompiler, sfsCache, modelService, applicability,
+                endpointIndexSupplier, subtreeRewriterSupplier, () -> null);
+    }
+
+    public PermissionServiceImpl(PermissionSnapshotProvider snapshotProvider,
+            ScopeRuleCompiler scopeCompiler,
+            SensitiveFieldSetCache sfsCache,
+            ModelService<?> modelService,
+            ScopeApplicabilityResolver applicability,
+            Supplier<EndpointIndex> endpointIndexSupplier,
+            Supplier<SubtreeFilterRewriter> subtreeRewriterSupplier,
+            Supplier<ModelDefaultScopeRegistry> defaultScopeSupplier) {
         this.snapshotProvider = snapshotProvider;
         this.scopeCompiler = scopeCompiler;
         this.sfsCache = sfsCache;
@@ -136,6 +155,7 @@ public class PermissionServiceImpl implements PermissionService {
         this.endpointIndexSupplier = endpointIndexSupplier == null ? () -> null : endpointIndexSupplier;
         this.subtreeRewriterSupplier =
                 subtreeRewriterSupplier == null ? () -> null : subtreeRewriterSupplier;
+        this.defaultScopeSupplier = defaultScopeSupplier == null ? () -> null : defaultScopeSupplier;
     }
 
     // ─────────────────────── row-scope ───────────────────────
@@ -159,7 +179,7 @@ public class PermissionServiceImpl implements PermissionService {
         // selection holds.
         originalFilters = appendCompanyGrant(model, originalFilters, pi);
         if (hasExplicitRules(pi, model)) {
-            Filters scope = scopeCompiler.compile(rulesFor(pi, model), model);
+            Filters scope = scopeCompiler.compile(withDeclaredScope(rulesFor(pi, model), model), model);
             if (scope == null) return originalFilters; // ALL rule → no restriction
             return combineAnd(originalFilters, scope);
         }
@@ -229,6 +249,13 @@ public class PermissionServiceImpl implements PermissionService {
         if (hasForwardAnchor(model)) {
             return combineAnd(originalFilters, ScopeRuleCompiler.matchNone());
         }
+        ScopeType declared = declaredScope(model);
+        if (declared != null) {
+            Filters scope = scopeCompiler.compile(List.of(ruleOf(declared)), model);
+            // ALL compiles to no filter at all, which is not the same answer as "no declaration" —
+            // hence the null check on the TYPE above rather than on the compiled filter here.
+            return scope == null ? originalFilters : combineAnd(originalFilters, scope);
+        }
         if (isCountryValueDomain(model)) {
             return originalFilters;
         }
@@ -236,6 +263,53 @@ public class PermissionServiceImpl implements PermissionService {
         return ref == null
                 ? combineAnd(originalFilters, ScopeRuleCompiler.matchNone())
                 : originalFilters;
+    }
+
+    /**
+     * The scope this model declares for every caller — added to whatever rules the caller's role
+     * holds, and standing alone when it holds none — or {@code null} when it declares none.
+     *
+     * <p>Read from {@link ModelDefaultScopeRegistry} — platform-level reference data, not a column
+     * on the model's metadata. The scanner owns {@code SysModel} and diffs it back to the
+     * annotations on every boot, so a value set there by hand would not survive; this lives in its
+     * own table for that reason, and can therefore be changed without a release.
+     */
+    private ScopeType declaredScope(String model) {
+        ModelDefaultScopeRegistry registry = defaultScopeSupplier.get();
+        return registry == null ? null : registry.scopeFor(model);
+    }
+
+    private static final Set<ScopeType> UNIVERSAL_SCOPE_TYPES =
+            EnumSet.of(ScopeType.ALL, ScopeType.CUSTOM, ScopeType.CREATED_BY_SELF);
+
+    /**
+     * The role's own rules for {@code model}, plus the scope the model declares — OR-ed together by
+     * the compiler like any two rules a role holds.
+     *
+     * <p>A declaration is a floor under every role, not a fallback for the roles that configured
+     * nothing: someone whose role reaches some import histories still sees the ones they ran
+     * themselves. The consequence is deliberate and worth stating — on a model declaring
+     * {@code ALL}, the union is always {@code ALL}, so a rule configured on that model can widen
+     * nothing and narrow nothing. Such a model has no row-level restriction to configure.
+     *
+     * <p>Skipped on a model with a scope anchor of its own, for the reason the no-grant path skips
+     * it: declaring both means one of them is wrong, and the anchor is the safer reading.
+     */
+    private List<ScopeRule> withDeclaredScope(List<ScopeRule> rules, String model) {
+        ScopeType declared = declaredScope(model);
+        if (declared == null || hasForwardAnchor(model)) {
+            return rules;
+        }
+        List<ScopeRule> merged = new ArrayList<>(rules);
+        merged.add(ruleOf(declared));
+        return merged;
+    }
+
+    /** A declared fallback as the compiler wants it — the same shape a configured rule arrives in. */
+    private static ScopeRule ruleOf(ScopeType type) {
+        ScopeRule rule = new ScopeRule();
+        rule.setScopeType(type);
+        return rule;
     }
 
     /**
@@ -609,8 +683,6 @@ public class PermissionServiceImpl implements PermissionService {
      * through a parent it can see.
      */
 
-    private static final Set<ScopeType> UNIVERSAL_SCOPE_TYPES =
-            EnumSet.of(ScopeType.ALL, ScopeType.CUSTOM, ScopeType.CREATED_BY_SELF);
 
     /**
      * A country value domain — a table whose rows are one country's allowed values for some field — is
