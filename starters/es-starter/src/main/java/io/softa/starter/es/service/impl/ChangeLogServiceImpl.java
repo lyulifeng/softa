@@ -61,8 +61,56 @@ public class ChangeLogServiceImpl extends ESServiceImpl<ChangeLog> implements Ch
                 page.getPageNumber(), page.getPageSize(), page.isCursorPage(), page.isCount());
         super.searchPage(ChangeLogDocument.class, filters, orders, docPage);
         page.setTotalCount(docPage.getTotalCount());
-        page.setRows(docPage.getRows().stream().map(ChangeLogDocument::toChangeLog).toList());
+        page.setRows(withoutBlockedFields(
+                docPage.getRows().stream().map(ChangeLogDocument::toChangeLog).toList()));
         return page;
+    }
+
+    /**
+     * The logs with every field the reader's sensitive field sets do not grant taken out.
+     *
+     * <p>A model read masks those fields; the change log carried them through untouched, so anyone
+     * who could read a row could read the before and after of its salary or account number here,
+     * edit by edit. Applied at this one point because every read of the log passes through it —
+     * by row, by slice, by model and the raw search alike.
+     *
+     * <p>Removed rather than nulled. A null reads as "the value was cleared", which is a statement
+     * about the data that is not true; a field the reader may not see is simply not in their
+     * history. An update that touched nothing else is dropped whole — an entry saying "something
+     * changed here on this day" is itself what a field set exists to keep from them.
+     *
+     * <p>A dropped entry still counts in the page's total, which comes from the index: the total is
+     * an upper bound for a reader whose sets hide something, exact for everyone else.
+     *
+     * <p>Readers with full data access, and calls made with permission checks bypassed, are blocked
+     * from nothing and get the logs as stored.
+     */
+    List<ChangeLog> withoutBlockedFields(List<ChangeLog> logs) {
+        Map<String, Set<String>> blockedByModel = new HashMap<>();
+        List<ChangeLog> visible = new ArrayList<>(logs.size());
+        for (ChangeLog log : logs) {
+            Set<String> blocked = blockedByModel.computeIfAbsent(log.getModel(),
+                    model -> permissionService.getUserBlockedModelFields(model, READ));
+            if (!blocked.isEmpty()) {
+                log.setDataBeforeChange(without(log.getDataBeforeChange(), blocked));
+                log.setDataAfterChange(without(log.getDataAfterChange(), blocked));
+                if (UPDATE.equals(log.getAccessType())
+                        && (log.getDataAfterChange() == null || log.getDataAfterChange().isEmpty())) {
+                    continue;
+                }
+            }
+            visible.add(log);
+        }
+        return visible;
+    }
+
+    private static Map<String, Object> without(Map<String, Object> data, Set<String> blocked) {
+        if (data == null) {
+            return null;
+        }
+        Map<String, Object> kept = new HashMap<>(data);
+        kept.keySet().removeAll(blocked);
+        return kept;
     }
 
     /**
@@ -170,7 +218,7 @@ public class ChangeLogServiceImpl extends ESServiceImpl<ChangeLog> implements Ch
             }
         });
         // Enhance the field values in before and after data, only retain the fields existing in the metadata.
-        // TODO: Exclude fields that are not accessible
+        // Fields the reader may not see are already gone: searchPage removes them from every log.
         fields.retainAll(ModelManager.getModelStoredFields(modelName));
         FlexQuery flexQuery = new FlexQuery(fields);
         flexQuery.setConvertType(convertType);
