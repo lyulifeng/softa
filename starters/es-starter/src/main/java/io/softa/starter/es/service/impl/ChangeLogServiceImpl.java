@@ -417,7 +417,7 @@ public class ChangeLogServiceImpl extends ESServiceImpl<ChangeLog> implements Ch
      * @param convertType convert type
      * @return a page of change log list
      */
-    private Page<ChangeLog> processChangeLogData(String modelName, Page<ChangeLog> page, ConvertType convertType) {
+    Page<ChangeLog> processChangeLogData(String modelName, Page<ChangeLog> page, ConvertType convertType) {
         // Grouped by each log's own model: a record's history spans the models it is kept across,
         // and a field of one is meaningless to the metadata of another.
         Map<String, List<ChangeLog>> byModel = new LinkedHashMap<>();
@@ -448,7 +448,18 @@ public class ChangeLogServiceImpl extends ESServiceImpl<ChangeLog> implements Ch
         fields.retainAll(ModelManager.getModelStoredFields(modelName));
         FlexQuery flexQuery = new FlexQuery(fields);
         flexQuery.setConvertType(convertType);
+        // The read pipeline is built for rows that carry every field asked for; a log carries only
+        // what it wrote, and the fields are the union across the page. Some processors write their
+        // field whether the row had it or not — masking puts a masked null into every row — and on
+        // a log that is a change it never made: one edit to a date of birth came back listing three
+        // masked contact fields as changed from nothing to nothing, borrowed from another log on the
+        // same page. Each map keeps only the keys it had.
+        List<Set<String>> ownKeys = changeLogDataList.stream()
+                .map(data -> (Set<String>) new HashSet<>(data.keySet())).toList();
         dataPipelineProxy.processReadData(modelName, flexQuery, changeLogDataList);
+        for (int i = 0; i < changeLogDataList.size(); i++) {
+            changeLogDataList.get(i).keySet().retainAll(ownKeys.get(i));
+        }
     }
 
 }
