@@ -4,6 +4,7 @@ import java.util.ArrayList;
 import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
+import java.util.stream.Collectors;
 
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
@@ -69,8 +70,10 @@ public class ImportPersistenceService {
      *
      * <p>Thrown rather than collected here: a throw is what the surrounding row-by-row fallback
      * already turns into a failed row with a reason, so one rule does not need a second way of
-     * reporting the same thing. The message is written here and names only the key, which is the
-     * one thing the reader can act on.
+     * reporting the same thing. The message is written here and names the key VALUES that matched
+     * nothing — the one thing the reader can act on. With skipException off a single such row fails
+     * the whole file and there is no failed-rows file to point at it, so naming only the key field
+     * left someone searching a sheet of hundreds of rows for the one that was mistyped.
      */
     private CreateOrUpdateResult updateOnly(ImportTemplateDTO importTemplateDTO, List<Map<String, Object>> rows) {
         List<String> uniqueConstraints = importTemplateDTO.getUniqueConstraints();
@@ -78,13 +81,33 @@ public class ImportPersistenceService {
                 importTemplateDTO.getModelName(), rows, uniqueConstraints);
         if (!split.created().isEmpty()) {
             throw new BusinessException(
-                    "This row matches no existing record on {0}, and the import template only updates.",
-                    String.join(", ", uniqueConstraints));
+                    "No existing record matches {0}, and the import template only updates.",
+                    describeKeys(split.created(), uniqueConstraints));
         }
         if (!split.updated().isEmpty()) {
             modelService.updateList(importTemplateDTO.getModelName(), split.updated());
         }
         return split;
+    }
+
+    /** The most key values named in one message; past that the reader needs the list, not the toast. */
+    private static final int MAX_KEYS_NAMED = 5;
+
+    /**
+     * {@code code = E1009; code = E1010 (and 3 more)} — the unmatched rows by their key values.
+     *
+     * <p>In the row-by-row fallback each batch is one row, so each failed row names its own key.
+     */
+    static String describeKeys(List<Map<String, Object>> rows, List<String> uniqueConstraints) {
+        List<String> named = rows.stream()
+                .limit(MAX_KEYS_NAMED)
+                .map(row -> uniqueConstraints.stream()
+                        .map(key -> key + " = " + row.get(key))
+                        .collect(Collectors.joining(", ")))
+                .toList();
+        int more = rows.size() - named.size();
+        String text = String.join("; ", named);
+        return more > 0 ? text + " (and " + more + " more)" : text;
     }
 
     private CreateOrUpdateResult persistRowByRow(ImportTemplateDTO importTemplateDTO, ImportDataDTO importDataDTO) {

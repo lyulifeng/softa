@@ -75,7 +75,10 @@ class ImportPersistenceOnlyUpdateTest {
         ImportDataDTO dto = data(List.of(unmatched), List.of(row("NOPE")));
 
         assertThatThrownBy(() -> serviceWith(modelService).persist(template(ImportRule.ONLY_UPDATE, false), dto))
-                .isInstanceOf(BusinessException.class);
+                .isInstanceOf(BusinessException.class)
+                // The value, not just the field: with skipException off the whole file fails and there
+                // is no failed-rows file, so this message is the only pointer to the mistyped row.
+                .hasMessageContaining("code = NOPE");
 
         verify(modelService, never()).createList(any(), anyList());
         verify(modelService, never()).createOrUpdate(any(), anyList(), anyList());
@@ -119,7 +122,18 @@ class ImportPersistenceOnlyUpdateTest {
         assertThat(dto.getFailedRows()).hasSize(1);
         assertThat(dto.getFailedRows().getFirst()).containsEntry("code", "NOPE");
         assertThat(dto.getFailedRows().getFirst().get(FileConstant.FAILED_REASON))
-                .asString().contains("only updates");
+                .asString().contains("only updates").contains("code = NOPE");
         assertThat(dto.getRows()).containsExactly(good);
+    }
+
+    @Test
+    void aLongListOfUnmatchedKeysIsCutShort() {
+        List<Map<String, Object>> rows = new ArrayList<>();
+        for (int i = 1; i <= 8; i++) {
+            rows.add(row("E" + i));
+        }
+
+        assertThat(ImportPersistenceService.describeKeys(rows, KEYS))
+                .isEqualTo("code = E1; code = E2; code = E3; code = E4; code = E5 (and 3 more)");
     }
 }
