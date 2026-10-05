@@ -96,7 +96,9 @@ class ForgotPasswordScopeTest {
 
     private void nothingIssued() {
         verify(service, never()).createOne(any(UserInvitation.class));
-        verify(eventPublisher, never()).publishEvent(any());
+        // any(Object.class), not any(): publishEvent is overloaded and a bare any() binds to the
+        // ApplicationEvent form, which nothing here ever calls — the check would pass on its own.
+        verify(eventPublisher, never()).publishEvent(any(Object.class));
     }
 
     private UserInvitation issuedInvitation() {

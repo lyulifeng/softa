@@ -9,8 +9,10 @@ import org.springframework.test.util.ReflectionTestUtils;
 
 import io.softa.framework.base.exception.BusinessException;
 import io.softa.framework.base.message.MailRequestMessage;
+import io.softa.framework.base.message.SmsRequestMessage;
 import io.softa.starter.user.entity.UserIdentity;
 import io.softa.starter.user.service.ConsultantService;
+import io.softa.starter.user.util.LoginIdentifiers;
 import io.softa.starter.user.service.UserIdentityService;
 import io.softa.starter.user.service.UserInvitationService;
 
@@ -60,8 +62,15 @@ class UnknownIdentifierIsIndistinguishableTest {
         when(identityService.findByLoginIdentifier(anyString())).thenReturn(Optional.empty());
     }
 
+    /**
+     * Stubbed on the TYPED spelling, not on {@code anyString()}, because that spelling is the thing
+     * most easily lost here: {@code normalize} strips a mobile's separators and would miss a row
+     * seeded with the separators the person still writes. Bound loosely, swapping the lookup to
+     * {@code normalize} leaves the whole suite green — see
+     * {@link #aLegacySpelledNumberIsStillFound}.
+     */
     private void somebodyHolds(String identifier) {
-        when(identityService.findByLoginIdentifier(anyString()))
+        when(identityService.findByLoginIdentifier(LoginIdentifiers.typedForm(identifier)))
                 .thenReturn(Optional.of(new UserIdentity()));
     }
 
@@ -161,5 +170,18 @@ class UnknownIdentifierIsIndistinguishableTest {
 
         assertThatThrownBy(() -> loginService.sendJoinCode("tok", "email"))
                 .isInstanceOf(BusinessException.class);
+    }
+
+    @Test
+    void aLegacySpelledNumberIsStillFound() {
+        // The lookup takes the typed form so a row seeded with separators is found; normalize would
+        // collapse them and miss it, and the person would be told nothing while their number works
+        // everywhere else. Separators here on purpose — with none, the two spellings coincide and
+        // the case proves nothing.
+        somebodyHolds("+86 138-0013-8000");
+
+        loginService.sendMobileCode("+86 138-0013-8000");
+
+        verify(eventPublisher).publishEvent(any(SmsRequestMessage.class));
     }
 }

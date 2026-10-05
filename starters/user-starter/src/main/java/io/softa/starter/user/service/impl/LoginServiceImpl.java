@@ -267,10 +267,9 @@ public class LoginServiceImpl implements LoginService {
      * <p>Three things have to stay identical for that to hold, and each is easy to lose:
      *
      * <ul>
-     *   <li><b>The send budget.</b> {@link #generateNumericCode} runs on both paths — see
-     *       {@link #burnSendBudget}. Skipping it for an unknown address would make the limiter
-     *       itself the oracle: the eleventh ask of one address is refused when it exists and
-     *       accepted when it does not.</li>
+     *   <li><b>The send budget.</b> {@link #generateNumericCode} runs on both paths. Skipping it
+     *       for an unknown address would make the limiter itself the oracle: the eleventh ask of
+     *       one address is refused when it exists and accepted when it does not.</li>
      *   <li><b>The elapsed time.</b> Both paths do the same work — the same lookup, the same
      *       {@code beforeSend} and {@code store} — so neither comes back visibly sooner. Delivery
      *       is the only extra step on the linked path, and it hands off to an async publish rather
@@ -316,24 +315,14 @@ public class LoginServiceImpl implements LoginService {
     private void withoutSayingWhy(Runnable attempt) {
         try {
             attempt.run();
+        } catch (BusinessException e) {
+            // The expected one: over the limit, or a contact more than one account holds. Routine.
+            log.debug("Verification code request refused; answered uniformly anyway: {}", e.getMessage());
         } catch (RuntimeException e) {
-            log.warn("Verification code request did not complete; answered uniformly anyway.", e);
-        }
-    }
-
-    /**
-     * Spend an unknown address's send allowance exactly as a real send would, and swallow the
-     * refusal when it runs out.
-     *
-     * <p>The refusal must not surface: an unknown address that starts answering "too many requests"
-     * while a linked one still answers "sent" — or the reverse — is the same oracle one step along.
-     */
-    private void burnSendBudget(String identifier) {
-        try {
-            this.generateNumericCode(LoginIdentifiers.normalize(identifier));
-        } catch (RuntimeException ignored) {
-            // Over the limit, or the cache is unavailable. Either way the caller hears nothing:
-            // this path exists to cost the same, not to report.
+            // Everything else is a fault, and it has to stay loud SOMEWHERE. Not in the response:
+            // publishing happens only on the linked path, so a broker failure surfacing here would
+            // say "this address exists" as plainly as the message this method exists to withhold.
+            log.error("Verification code request failed; answered uniformly anyway.", e);
         }
     }
 
