@@ -11,6 +11,7 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 import org.springframework.util.CollectionUtils;
 
+import io.softa.framework.base.config.SystemConfig;
 import io.softa.framework.base.exception.VersionException;
 import io.softa.framework.base.utils.Cast;
 import io.softa.framework.orm.annotation.RPCCheckpoint;
@@ -301,9 +302,19 @@ public class JdbcServiceImpl<K extends Serializable> implements JdbcService<K> {
         DataUpdatePipeline pipeline = new DataUpdatePipeline(modelName, toUpdateFields);
         // TODO: Process according to the `enableChangeLog` config, referring the TODO in ChangeLogPublisher.class
         //  if enableChangeLog = false, there is no need to get original data, compare differences and collect changeLogs.
-        Map<Serializable, Map<String, Object>> originalRowsMap = this.getOriginalRowMap(modelName, rows, pipeline.getDifferFields());
+        Set<String> logContext = this.changeLogContextFields(modelName, pipeline.getDifferFields());
+        Set<String> readFields = new HashSet<>(pipeline.getDifferFields());
+        if (!readFields.isEmpty()) {
+            readFields.addAll(logContext);
+        }
+        Map<Serializable, Map<String, Object>> originalRowsMap = this.getOriginalRowMap(modelName, rows, readFields);
+        // The pipeline sees exactly the originals it always did: the log's context columns ride along
+        // in the same query for the change log only, and must not reach the merge and constraint
+        // checks the update runs on what it read.
+        Map<Serializable, Map<String, Object>> pipelineOriginals = logContext.isEmpty()
+                ? originalRowsMap : withoutKeys(originalRowsMap, logContext, pipeline.getDifferFields());
         // Get the list of changed data, keeping only the fields and row data that have changed.
-        List<Map<String, Object>> differRows = pipeline.processUpdateData(rows, originalRowsMap, updatedTime);
+        List<Map<String, Object>> differRows = pipeline.processUpdateData(rows, pipelineOriginals, updatedTime);
         int count = differRows.stream().mapToInt(row -> updateOne(modelName, row)).sum();
         // After updating the main table, update the sub-table to avoid the sub-table cascade field being the old value.
         boolean changed = pipeline.processXToManyData(rows);
@@ -328,6 +339,48 @@ public class JdbcServiceImpl<K extends Serializable> implements JdbcService<K> {
      * @param differFields Fields that have changed
      * @return Map of original data
      */
+    /**
+     * Columns an update log carries besides what the update wrote: the row's many-to-one references
+     * and its display-name fields.
+     *
+     * <p>An update log otherwise holds only the columns written, so it can say neither which record
+     * the row belongs to nor what the row is called. Both matter once the log is read from the
+     * parent's side — a family member's renamed relationship has to be found under its employee,
+     * and listed as that family member rather than as "a row". Read in the same query as the
+     * originals, so the change log costs no extra round trip; nothing when change logs are off.
+     */
+    Set<String> changeLogContextFields(String modelName, Set<String> differFields) {
+        if (!SystemConfig.env.isEnableChangeLog() || differFields.isEmpty()) {
+            return Set.of();
+        }
+        Set<String> context = new HashSet<>();
+        Set<String> stored = new HashSet<>(ModelManager.getModelStoredFields(modelName));
+        for (MetaField field : ModelManager.getModelFields(modelName)) {
+            if (FieldType.MANY_TO_ONE.equals(field.getFieldType()) && stored.contains(field.getFieldName())) {
+                context.add(field.getFieldName());
+            }
+        }
+        List<String> displayName = ModelManager.getModel(modelName).getDisplayName();
+        if (displayName != null) {
+            displayName.stream().filter(stored::contains).forEach(context::add);
+        }
+        context.removeAll(differFields);
+        context.remove(ModelConstant.ID);
+        return context;
+    }
+
+    /** The originals with the change log's context columns taken back out. */
+    static Map<Serializable, Map<String, Object>> withoutKeys(
+            Map<Serializable, Map<String, Object>> rows, Set<String> keys, Set<String> keep) {
+        Map<Serializable, Map<String, Object>> stripped = new HashMap<>(rows.size());
+        rows.forEach((pKey, row) -> {
+            Map<String, Object> copy = new HashMap<>(row);
+            keys.stream().filter(key -> !keep.contains(key)).forEach(copy::remove);
+            stripped.put(pKey, copy);
+        });
+        return stripped;
+    }
+
     private Map<Serializable, Map<String, Object>> getOriginalRowMap(String modelName, List<Map<String, Object>> rows, Set<String> differFields) {
         // TODO: Extract to the upper layer, perform permission check in this method, and query the database one less time.
         // The pk values identify the PHYSICAL rows, so the originals are fetched by the
