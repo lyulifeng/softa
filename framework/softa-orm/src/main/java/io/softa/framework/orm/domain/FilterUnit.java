@@ -7,6 +7,7 @@ import java.util.stream.Collectors;
 import lombok.Data;
 import lombok.NoArgsConstructor;
 import org.apache.commons.lang3.StringUtils;
+import tools.jackson.core.io.JsonStringEncoder;
 
 import io.softa.framework.base.enums.Operator;
 import io.softa.framework.base.exception.IllegalArgumentException;
@@ -181,10 +182,13 @@ public class FilterUnit implements Serializable {
         }
     }
 
+    /**
+     * JSON form of the unit, such as ["name","=","Tony"], which Filters serialization and storage rely on.
+     */
     @Override
     public String toString() {
-        Object val = formatValue(this.value);
-        return String.format("[\"%s\",\"%s\",%s]", this.field, this.operator.getName(), val);
+        Object val = this.value instanceof String strValue ? toJsonString(strValue) : formatValue(this.value);
+        return String.format("[%s,%s,%s]", toJsonString(this.field), toJsonString(this.operator.getName()), val);
     }
 
     public String toSemanticString() {
@@ -201,6 +205,18 @@ public class FilterUnit implements Serializable {
         else {
             return JsonUtils.objectToString(value);
         }
+    }
+
+    /**
+     * Quote the text as a JSON string, escaping double quotes, backslashes and control characters.
+     * A null text is quoted as "null", so the validation messages that print this unit can still be built.
+     * @param text text to quote, may be null
+     * @return quoted JSON string
+     */
+    private static String toJsonString(String text) {
+        StringBuilder jsonString = new StringBuilder().append('"');
+        JsonStringEncoder.getInstance().quoteAsString(String.valueOf(text), jsonString);
+        return jsonString.append('"').toString();
     }
 
     @Override

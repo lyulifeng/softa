@@ -169,6 +169,28 @@ class FiltersTest {
     }
 
     /**
+     * Quotes, backslashes and control characters in a string value are escaped, and the JSON form reads back to an equal filter
+     */
+    @Test
+    void escapeStringValue() {
+        Filters filters = new Filters().eq("title", "say \"hi\"\\ok\n");
+        String expected = "[\"title\",\"=\",\"say \\\"hi\\\"\\\\ok\\n\"]";
+        Assertions.assertEquals(expected, filters.toString());
+        Assertions.assertEquals(filters, Filters.of(filters.toString()));
+    }
+
+    /**
+     * Escaped and non-ASCII strings read in and write back unchanged
+     */
+    @Test
+    void writeBackEscapedAndNonAsciiStrings() {
+        String source = "[[\"title\",\"=\",\"a\\\"b\\\\c\"],\"OR\",[\"name\",\"=\",\"张三\"]]";
+        Filters filters = Filters.of(source);
+        assert filters != null;
+        Assertions.assertEquals(source, filters.toString());
+    }
+
+    /**
      * Filters construction method operation verification
      */
     @Test
