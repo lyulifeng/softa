@@ -16,6 +16,7 @@ import io.softa.starter.user.service.UserInvitationService;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatCode;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.assertj.core.api.Assertions.catchThrowable;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
@@ -144,5 +145,21 @@ class UnknownIdentifierIsIndistinguishableTest {
         ArgumentCaptor<MailRequestMessage> sent = ArgumentCaptor.forClass(MailRequestMessage.class);
         verify(eventPublisher).publishEvent(sent.capture());
         assertThat(sent.getValue().to()).containsExactly("newcomer@acme.com");
+    }
+
+    @Test
+    void joinStaysLoudWhenItCannotSendAtAll() {
+        // The swallow lives at the public entry points, not in the delivery, and this is why: an
+        // invitee who trips the send limit has no enumeration to offer — the caller IS the
+        // invitation — so answering "sent" and delivering nothing recreates the dead end this whole
+        // change exists to remove. Nothing else in the suite would notice: /join's happy path keeps
+        // working, and the failure is silent by construction.
+        doThrow(new BusinessException("Too many requests")).when(codeGuard).beforeSend(anyString());
+        UserInvitationService invitations = mock(UserInvitationService.class);
+        when(invitations.resolveJoinChannel("tok", "email")).thenReturn("newcomer@acme.com");
+        ReflectionTestUtils.setField(loginService, "invitationService", invitations);
+
+        assertThatThrownBy(() -> loginService.sendJoinCode("tok", "email"))
+                .isInstanceOf(BusinessException.class);
     }
 }

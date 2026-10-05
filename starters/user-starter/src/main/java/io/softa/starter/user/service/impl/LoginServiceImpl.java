@@ -224,37 +224,26 @@ public class LoginServiceImpl implements LoginService {
         return code;
     }
 
-    /**
-     * A code for this identifier, or null when the send allowance is spent.
-     *
-     * <p>Null rather than an exception so the caller returns the same way it would have on success.
-     * {@code /join} keeps the loud form: there the caller IS the invitation, no enumeration is on
-     * offer, and a joiner who cannot be sent a code should be told so.
-     */
-    private String generateNumericCodeQuietly(String identifier) {
-        try {
-            return this.generateNumericCode(identifier);
-        } catch (RuntimeException ignored) {
-            return null;
-        }
-    }
-
     public void verifyCode(String identifier, String inputCode) {
         codeGuard.verify(identifier, inputCode);
     }
 
     @Override
     public void sendEmailCode(String email) {
-        if (identifierLinked(email)) {
-            this.deliverEmailCode(email);
-        }
+        withoutSayingWhy(() -> {
+            if (identifierLinked(email)) {
+                this.deliverEmailCode(email);
+            }
+        });
     }
 
     @Override
     public void sendMobileCode(String mobile) {
-        if (identifierLinked(mobile)) {
-            this.deliverMobileCode(mobile);
-        }
+        withoutSayingWhy(() -> {
+            if (identifierLinked(mobile)) {
+                this.deliverMobileCode(mobile);
+            }
+        });
     }
 
     /**
@@ -297,30 +286,38 @@ public class LoginServiceImpl implements LoginService {
         boolean linked = identityService
                 .findByLoginIdentifier(LoginIdentifiers.typedForm(identifier)).isPresent();
         if (!linked) {
-            // Same Redis work the linked path is about to do, so the two cost the same and take the
-            // same time. The swallow below is why this cannot just call generateNumericCode.
-            spendSendBudgetQuietly(identifier);
+            // The same Redis work the linked path is about to do, so the two cost the same and
+            // take the same time. Loud here; the entry point is what keeps it from being heard.
+            this.generateNumericCode(LoginIdentifiers.normalize(identifier));
         }
         return linked;
     }
 
     /**
-     * Spend the send allowance and keep quiet about running out.
+     * Swallow whatever went wrong, so that WHY it went wrong is not an answer either.
      *
-     * <p>Both paths spend it, and NEITHER reports it, because reporting it on one of them is the
-     * oracle again one layer down: ask one address eleven times and it starts failing when it
-     * exists while an unknown one keeps answering "sent".
+     * <p>Wrapped at the entry point rather than inside the delivery, and that placement is the whole
+     * point: {@code /join} calls the delivery directly and must stay loud. An invitee who cannot be
+     * sent a code has no enumeration to offer — the caller IS the invitation — and telling them
+     * nothing recreates exactly the dead end this change exists to remove.
+     *
+     * <p>The guard's own "too many requests" is the case that matters. It can only be reported on
+     * one of the two paths if it is reported at all, and reporting it there is the oracle one layer
+     * down: ask one address eleven times and it starts failing when it exists while an unknown one
+     * keeps answering "sent".
      *
      * <p>That is a real loss — a legitimate person hammering the button no longer learns they are
      * over the limit. It costs them a wait; the alternative costs an employer its staff list. The
      * cooldown the screen already shows is what tells them to wait, and it does not depend on this.
+     *
+     * <p>Logged at WARN, never returned: an outage has to stay diagnosable without becoming
+     * readable from outside.
      */
-    private void spendSendBudgetQuietly(String identifier) {
+    private void withoutSayingWhy(Runnable attempt) {
         try {
-            this.generateNumericCode(LoginIdentifiers.normalize(identifier));
-        } catch (RuntimeException ignored) {
-            // Over the limit, or the cache is unavailable. Either way the caller hears nothing:
-            // this exists to cost the same, not to report.
+            attempt.run();
+        } catch (RuntimeException e) {
+            log.warn("Verification code request did not complete; answered uniformly anyway.", e);
         }
     }
 
@@ -354,12 +351,7 @@ public class LoginServiceImpl implements LoginService {
         // the verify step normalises its identifier the same way, so the two meet on one key
         // however the person spelt the address on either screen.
         email = LoginIdentifiers.normalize(email);
-        String code = this.generateNumericCodeQuietly(email);
-        if (code == null) {
-            // Over the limit. Returning as though nothing happened is deliberate: see
-            // spendSendBudgetQuietly — an error here and silence on the unlinked path is the oracle.
-            return;
-        }
+        String code = this.generateNumericCode(email);
         // PLATFORM tier: a login / join code is requested BEFORE any session, so there is no tenant
         // context to render a tenant-specific template from — the platform row is the code's copy.
         // Absent message-starter this is a graceful no-op, same as every other request message.
@@ -371,10 +363,7 @@ public class LoginServiceImpl implements LoginService {
     /** The mobile twin of {@link #deliverEmailCode}; see there for why it is separate. */
     private void deliverMobileCode(String mobile) {
         mobile = LoginIdentifiers.normalize(mobile);
-        String code = this.generateNumericCodeQuietly(mobile);
-        if (code == null) {
-            return;
-        }
+        String code = this.generateNumericCode(mobile);
         eventPublisher.publishEvent(new SmsRequestMessage(
                 List.of(mobile), TEMPLATE_CODE,
                 Map.of("code", code, "expiryMinutes", CODE_EXPIRY_MINUTES)));
