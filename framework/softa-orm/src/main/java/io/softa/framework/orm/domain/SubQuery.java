@@ -68,6 +68,13 @@ public class SubQuery implements Serializable {
      * <p>Opt-in rather than inferred from the related model being a timeline: a child list that wants
      * the current state of each related entity is just as legitimate, and existing readers rely on
      * that being the default.
+     *
+     * <p>One limit, shared with every across-timeline read: on the child rows, a to-one field onto
+     * ANOTHER timeline model is returned as a display reference only, and a nested sub query for it
+     * is not expanded. That is deliberate. Its display name comes from a join aligned with each
+     * child slice's dates, so a version from last year shows the name that applied last year;
+     * expanding by id would fetch today's version for every slice and show history with today's
+     * names. A to-one onto a model that is not a timeline expands as usual.
      */
     @Schema(description = "OneToMany onto a timeline model: return all slices instead of the one in effect today.")
     private Boolean acrossTimeline;
