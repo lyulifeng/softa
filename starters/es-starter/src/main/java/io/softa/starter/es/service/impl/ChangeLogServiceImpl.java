@@ -120,9 +120,10 @@ public class ChangeLogServiceImpl extends ESServiceImpl<ChangeLog> implements Ch
      * relations hold.
      *
      * <p>A one-to-many part asks both by reference and by the rows that exist now. The reference
-     * is what finds a deleted row; the ids are what find a living row's logs from before logs
-     * carried a reference. Between them the only history out of reach is that of a row deleted
-     * before references were written.
+     * is what finds a deleted row, whose deletion log carries the whole row. The ids find the rest:
+     * an update carries only what it changed, so it names its parent only when it moved the row,
+     * and logs written before references carry none. Between them the only history out of reach is
+     * that of a row deleted before references were written.
      */
     List<HistoryPart> historyParts(String modelName, Serializable id, List<String> relations) {
         MetaModel metaModel = ModelManager.getModel(modelName);
@@ -145,9 +146,8 @@ public class ChangeLogServiceImpl extends ESServiceImpl<ChangeLog> implements Ch
             if (FieldType.ONE_TO_ONE.equals(field.getFieldType())) {
                 oneToOne.add(relation);
             } else {
-                List<String> current = modelService.getIds(field.getRelatedModel(),
-                                Filters.of(field.getRelatedField(), Operator.EQUAL, id))
-                        .stream().map(String::valueOf).toList();
+                List<String> current = this.logRowIds(field.getRelatedModel(),
+                        Filters.of(field.getRelatedField(), Operator.EQUAL, id));
                 parts.add(new HistoryPart(field.getRelatedModel(), current,
                         field.getRelatedField() + "=" + rowId, visibleFieldsOf(field.getRelatedModel())));
             }
@@ -161,12 +161,34 @@ public class ChangeLogServiceImpl extends ESServiceImpl<ChangeLog> implements Ch
                 }
                 if (value != null) {
                     String related = ModelManager.getModelField(modelName, relation).getRelatedModel();
-                    parts.add(new HistoryPart(related, List.of(String.valueOf(value)), null,
-                            visibleFieldsOf(related)));
+                    parts.add(new HistoryPart(related,
+                            this.logRowIds(related, Filters.of(ModelConstant.ID, Operator.EQUAL, value)),
+                            null, visibleFieldsOf(related)));
                 }
             }
         }
         return parts;
+    }
+
+    /**
+     * The row ids the log keys these rows' entries by.
+     *
+     * <p>The business id, except on a timeline model: there one business id is several slices,
+     * one per effective period, each written — and logged — as a row of its own under its slice
+     * id. Asking a salary profile's history by its business id finds none of it. Every slice is
+     * asked for, past and future, since each is part of the history.
+     */
+    private List<String> logRowIds(String model, Filters filters) {
+        if (!ModelManager.getModel(model).isTimeline()) {
+            return modelService.getIds(model, filters).stream().map(String::valueOf).toList();
+        }
+        FlexQuery slices = new FlexQuery(Set.of(ModelConstant.SLICE_ID), filters).acrossTimelineData();
+        return modelService.searchList(model, slices).stream()
+                .map(row -> row.get(ModelConstant.SLICE_ID))
+                .filter(Objects::nonNull)
+                .map(String::valueOf)
+                .distinct()
+                .toList();
     }
 
     /** Model-level read access; a relation the reader cannot read is left out of their history. */

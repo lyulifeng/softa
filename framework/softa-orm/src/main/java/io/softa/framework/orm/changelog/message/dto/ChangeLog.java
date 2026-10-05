@@ -31,8 +31,10 @@ public class ChangeLog {
      * <p>Indexed so a row's history can be found by its parent, which the payload cannot answer:
      * the payload is stored as an unindexed string. That matters most once the row is gone — a
      * deleted family member has no id left to ask about, but its log still says
-     * {@code employeeId=100}. Taken from the whole row the log saw, before and after, so a row
-     * moved from one parent to another is found under both.
+     * {@code employeeId=100}. Taken from what the log saw: a creation and a deletion carry the
+     * whole row, so they always name the parent; an update carries only what it changed, so it
+     * names a parent only when it moved the row — under both the old one and the new — and an
+     * update to a row that stayed put is found by the row's own id instead.
      */
     private List<String> refs;
 

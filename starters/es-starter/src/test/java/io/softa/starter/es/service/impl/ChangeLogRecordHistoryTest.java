@@ -94,7 +94,17 @@ class ChangeLogRecordHistoryTest {
         models.when(() -> ModelManager.getModelStoredFields("EmpSalaryProfileItem"))
                 .thenReturn(List.of("id", "employeeId", "amount", "note"));
 
+        // Related models are plain unless a test says otherwise; a salary profile is a timeline.
+        MetaModel plain = mock(MetaModel.class);
+        when(plain.isTimeline()).thenReturn(false);
+        MetaModel timeline = mock(MetaModel.class);
+        when(timeline.isTimeline()).thenReturn(true);
+        models.when(() -> ModelManager.getModel("EmpFamilyMember")).thenReturn(plain);
+        models.when(() -> ModelManager.getModel("EmployeeProfile")).thenReturn(plain);
+        models.when(() -> ModelManager.getModel("EmpSalaryProfileItem")).thenReturn(timeline);
+
         when(modelService.getIds(eq("EmpFamilyMember"), any(Filters.class))).thenReturn(List.of(301L, 302L));
+        when(modelService.getIds(eq("EmployeeProfile"), any(Filters.class))).thenReturn(List.of(200L));
         when(modelService.getById(eq("Employee"), eq(EMPLOYEE), any(Collection.class)))
                 .thenReturn(Optional.of(Map.of("employeeProfileId", Map.of("id", 200L, "displayName", "Ada"))));
     }
@@ -127,6 +137,21 @@ class ChangeLogRecordHistoryTest {
     }
 
     @Test
+    void asksATimelineChildByEverySliceNotByItsBusinessId() {
+        // A salary profile row is one business id cut into slices by effective date, and each
+        // slice is logged under its own id. Asked by the business id, its history came back empty —
+        // two salary edits made and logged, and nothing in the employee's list.
+        when(modelService.searchList(eq("EmpSalaryProfileItem"), any(io.softa.framework.orm.domain.FlexQuery.class)))
+                .thenReturn(List.of(Map.of("sliceId", 880773695407136797L), Map.of("sliceId", 879762779966280462L)));
+
+        ChangeLogServiceImpl.HistoryPart salary =
+                service.historyParts("Employee", EMPLOYEE, List.of("empSalaryProfileItems")).get(1);
+
+        assertThat(salary.rowIds()).containsExactly("880773695407136797", "879762779966280462");
+        verify(modelService, never()).getIds(eq("EmpSalaryProfileItem"), any(Filters.class));
+    }
+
+    @Test
     void refusesAFieldThatIsNotAOneToOneOrOneToMany() {
         // A many-to-one points at a record with a history of its own — the company is not the
         // employee's — so it is refused rather than quietly folded in.
@@ -154,7 +179,8 @@ class ChangeLogRecordHistoryTest {
         // count, not just the page.
         when(permissionService.getUserBlockedModelFields("EmpSalaryProfileItem", AccessType.READ))
                 .thenReturn(Set.of("amount"));
-        when(modelService.getIds(eq("EmpSalaryProfileItem"), any(Filters.class))).thenReturn(List.of());
+        when(modelService.searchList(eq("EmpSalaryProfileItem"), any(io.softa.framework.orm.domain.FlexQuery.class)))
+                .thenReturn(List.of());
 
         ChangeLogServiceImpl.HistoryPart salary =
                 service.historyParts("Employee", EMPLOYEE, List.of("empSalaryProfileItems")).get(1);
