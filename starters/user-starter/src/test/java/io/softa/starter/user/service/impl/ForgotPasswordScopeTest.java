@@ -4,6 +4,7 @@ import java.util.List;
 import java.util.Optional;
 
 import org.junit.jupiter.api.Test;
+import org.mockito.InOrder;
 import org.mockito.ArgumentCaptor;
 import org.springframework.context.ApplicationEventPublisher;
 
@@ -14,12 +15,16 @@ import io.softa.starter.user.entity.UserIdentity;
 import io.softa.starter.user.entity.UserInvitation;
 import io.softa.starter.user.enums.AccountStatus;
 import io.softa.starter.user.service.UserAccountService;
+import io.softa.framework.base.exception.BusinessException;
 import io.softa.starter.user.service.UserIdentityService;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.doReturn;
+import static org.mockito.Mockito.inOrder;
+import static org.mockito.Mockito.doThrow;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.spy;
@@ -53,9 +58,10 @@ class ForgotPasswordScopeTest {
     private final UserAccountService accountService = mock(UserAccountService.class);
     private final UserIdentityService identityService = mock(UserIdentityService.class);
     private final ApplicationEventPublisher eventPublisher = mock(ApplicationEventPublisher.class);
+    private final VerificationCodeGuard codeGuard = mock(VerificationCodeGuard.class);
     private final UserInvitationServiceImpl service = spy(new UserInvitationServiceImpl(
             accountService, identityService, eventPublisher, null, mock(JoinProofGuard.class),
-            "https://app.example.test"));
+            codeGuard, "https://app.example.test"));
 
     ForgotPasswordScopeTest() {
         // The inherited ORM surface: this test is about whether a token is issued, not how it is stored.
@@ -253,5 +259,48 @@ class ForgotPasswordScopeTest {
         // Recorded and mailed in canonical form — acceptToken compares it against the login email.
         assertThat(issuedInvitation().getEmail()).isEqualTo(PERSONAL_EMAIL);
         assertThat(sentMail().to()).containsExactly(PERSONAL_EMAIL);
+    }
+
+    // ─────────────────── the send limit ───────────────────
+
+    @Test
+    void aResetSpendsTheSameSendBudgetAsALoginCode() {
+        // This endpoint had no limit at all: it mails a real person a real reset link as fast as it
+        // is asked to. Deliberately the SAME counter the codes use — ten sends a day to one address
+        // is the budget for reaching that person, however the reaching is dressed — so the argument
+        // has to be the normalized form the code paths key on, or the two count separately and the
+        // sharing is only in the comment.
+        ada(PERSONAL_EMAIL, "hashed");
+
+        service.forgotPassword("  Ada@Personal.com ");
+
+        verify(codeGuard).beforeSend(PERSONAL_EMAIL);
+    }
+
+    @Test
+    void theLimitIsSpentBeforeAnythingIsLookedUp() {
+        // Ordering is the whole guarantee. Asked after the lookup, the refusal would arrive only for
+        // addresses that got far enough to be refused — which is to say it would answer the question
+        // the uniform response exists to refuse.
+        when(identityService.findByLoginIdentifier(anyString())).thenReturn(Optional.empty());
+
+        service.forgotPassword("nobody@example.test");
+
+        InOrder order = inOrder(codeGuard, identityService);
+        order.verify(codeGuard).beforeSend(anyString());
+        order.verify(identityService).findByLoginIdentifier(anyString());
+    }
+
+    @Test
+    void runningOutStopsTheResetBeforeItIssuesAnything() {
+        doThrow(new BusinessException("Too many requests")).when(codeGuard).beforeSend(anyString());
+        ada(PERSONAL_EMAIL, "hashed");
+
+        assertThatThrownBy(() -> service.forgotPassword(PERSONAL_EMAIL))
+                .isInstanceOf(BusinessException.class);
+
+        // Refusing is only half of it: the refusal must come before the token and the mail, or the
+        // limit bounds the error message rather than the sending.
+        nothingIssued();
     }
 }

@@ -51,7 +51,7 @@ class ConfirmJoinAuthorizationTest {
     /** The proof is JoinProofTest's subject; here it is waved through so the profileId tie is what decides. */
     private final UserInvitationServiceImpl service = spy(new UserInvitationServiceImpl(
             accountService, identityService, eventPublisher, null, mock(JoinProofGuard.class),
-            "http://localhost:3000"));
+            mock(VerificationCodeGuard.class), "http://localhost:3000"));
 
     private UserInvitation givenPendingInvitationTo(String email, String mobile) {
         UserInvitation invitation = new UserInvitation();
