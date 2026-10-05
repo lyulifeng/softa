@@ -3,6 +3,7 @@ package io.softa.starter.file.excel.imports;
 import java.util.List;
 import java.util.Map;
 
+import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.lang3.StringUtils;
 import org.springframework.util.CollectionUtils;
 import org.springframework.beans.factory.NoSuchBeanDefinitionException;
@@ -19,6 +20,7 @@ import io.softa.starter.file.enums.ImportMode;
 import io.softa.starter.file.enums.ImportRule;
 import io.softa.starter.file.excel.imports.handler.BaseImportHandler;
 
+@Slf4j
 @Component
 public class ImportRowPipeline {
 
@@ -66,14 +68,26 @@ public class ImportRowPipeline {
      * write is the last place that knows which row was inserted and which was matched, and a
      * handler whose work belongs to one of them cannot tell afterwards. A failed row appears in
      * neither list, so a handler is never asked to finish a row that was not written.
+     *
+     * <p>Package-private for the test that pins what a failure here does to the import's outcome.
      */
-    private void runAfterPersistence(String handlerName, CreateOrUpdateResult written, Map<String, Object> env) {
+    void runAfterPersistence(String handlerName, CreateOrUpdateResult written, Map<String, Object> env) {
         if (StringUtils.isBlank(handlerName)
                 || (CollectionUtils.isEmpty(written.created()) && CollectionUtils.isEmpty(written.updated()))) {
             return;
         }
-        CustomImportHandler handler = SpringContextUtils.getBean(handlerName, CustomImportHandler.class);
-        handler.afterImportData(written.created(), written.updated(), env);
+        try {
+            CustomImportHandler handler = SpringContextUtils.getBean(handlerName, CustomImportHandler.class);
+            handler.afterImportData(written.created(), written.updated(), env);
+        } catch (RuntimeException e) {
+            // The rows are committed by now, so the import has succeeded whatever happens here.
+            // Let this escape and the history records FAILURE, the statistics and the failed-rows file
+            // are skipped, and the person retries an import that already landed — duplicating what
+            // was inserted and re-applying what was updated. The contract says a failure here does
+            // not undo the import; this is what keeps the outcome saying so too.
+            log.warn("Import after-pass of handler {} failed; the {} inserted and {} updated rows stay "
+                    + "committed.", handlerName, written.created().size(), written.updated().size(), e);
+        }
     }
 
     /**

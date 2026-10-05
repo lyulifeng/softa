@@ -6,8 +6,14 @@ import java.util.List;
 import java.util.Map;
 
 import org.junit.jupiter.api.Test;
+import org.mockito.MockedStatic;
+
+import io.softa.framework.base.utils.SpringContextUtils;
+import io.softa.framework.orm.domain.CreateOrUpdateResult;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatCode;
+import static org.mockito.Mockito.mockStatic;
 
 /**
  * The second pass a custom handler gets, after the rows exist.
@@ -119,5 +125,35 @@ class ImportRowPipelineAfterPersistenceTest {
         assertThat(handler.created.get(0)).hasSize(1);
         assertThat(handler.created.get(0).get(0)).containsEntry("code", "A");
         assertThat(handler.updated.get(0)).isEmpty();
+    }
+
+    @Test
+    void aFailingAfterPassDoesNotTurnACommittedImportIntoAFailedOne() {
+        // The rows are committed before this runs. Escaping, the exception marked the history FAILURE,
+        // skipped the statistics and the failed-rows file, and invited a retry of an import that had
+        // already landed — inserting the new rows twice.
+        CustomImportHandler throwing = new CustomImportHandler() {
+            @Override
+            public void handleImportData(List<Map<String, Object>> rows, Map<String, Object> env,
+                                         boolean validateOnly) {
+            }
+
+            @Override
+            public void afterImportData(List<Map<String, Object>> createdRows,
+                                        List<Map<String, Object>> updatedRows,
+                                        Map<String, Object> env) {
+                throw new IllegalStateException("boom");
+            }
+        };
+        Map<String, Object> inserted = row("A");
+        inserted.put("id", 11L);
+
+        try (MockedStatic<SpringContextUtils> spring = mockStatic(SpringContextUtils.class)) {
+            spring.when(() -> SpringContextUtils.getBean("throwing", CustomImportHandler.class)).thenReturn(throwing);
+
+            assertThatCode(() -> new ImportRowPipeline().runAfterPersistence(
+                    "throwing", new CreateOrUpdateResult(List.of(inserted), List.of()), Map.of()))
+                    .doesNotThrowAnyException();
+        }
     }
 }
