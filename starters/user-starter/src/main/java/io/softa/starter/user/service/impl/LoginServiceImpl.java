@@ -224,26 +224,37 @@ public class LoginServiceImpl implements LoginService {
         return code;
     }
 
+    /**
+     * A code for this identifier, or null when the send allowance is spent.
+     *
+     * <p>Null rather than an exception so the caller returns the same way it would have on success.
+     * {@code /join} keeps the loud form: there the caller IS the invitation, no enumeration is on
+     * offer, and a joiner who cannot be sent a code should be told so.
+     */
+    private String generateNumericCodeQuietly(String identifier) {
+        try {
+            return this.generateNumericCode(identifier);
+        } catch (RuntimeException ignored) {
+            return null;
+        }
+    }
+
     public void verifyCode(String identifier, String inputCode) {
         codeGuard.verify(identifier, inputCode);
     }
 
     @Override
     public void sendEmailCode(String email) {
-        ResponseFloor.hold(() -> {
-            if (identifierLinked(email)) {
-                this.deliverEmailCode(email);
-            }
-        });
+        if (identifierLinked(email)) {
+            this.deliverEmailCode(email);
+        }
     }
 
     @Override
     public void sendMobileCode(String mobile) {
-        ResponseFloor.hold(() -> {
-            if (identifierLinked(mobile)) {
-                this.deliverMobileCode(mobile);
-            }
-        });
+        if (identifierLinked(mobile)) {
+            this.deliverMobileCode(mobile);
+        }
     }
 
     /**
@@ -271,8 +282,10 @@ public class LoginServiceImpl implements LoginService {
      *       {@link #burnSendBudget}. Skipping it for an unknown address would make the limiter
      *       itself the oracle: the eleventh ask of one address is refused when it exists and
      *       accepted when it does not.</li>
-     *   <li><b>The elapsed time.</b> The linked path generates, stores and publishes; this one
-     *       returns straight away. {@link ResponseFloor} holds both to one floor.</li>
+     *   <li><b>The elapsed time.</b> Both paths do the same work — the same lookup, the same
+     *       {@code beforeSend} and {@code store} — so neither comes back visibly sooner. Delivery
+     *       is the only extra step on the linked path, and it hands off to an async publish rather
+     *       than waiting on a mail or SMS gateway. Change that and the clock becomes a channel.</li>
      *   <li><b>The status.</b> Neither path throws. A {@code BusinessException} on one of them
      *       would restore the oracle however the message were worded.</li>
      * </ul>
@@ -284,9 +297,31 @@ public class LoginServiceImpl implements LoginService {
         boolean linked = identityService
                 .findByLoginIdentifier(LoginIdentifiers.typedForm(identifier)).isPresent();
         if (!linked) {
-            burnSendBudget(identifier);
+            // Same Redis work the linked path is about to do, so the two cost the same and take the
+            // same time. The swallow below is why this cannot just call generateNumericCode.
+            spendSendBudgetQuietly(identifier);
         }
         return linked;
+    }
+
+    /**
+     * Spend the send allowance and keep quiet about running out.
+     *
+     * <p>Both paths spend it, and NEITHER reports it, because reporting it on one of them is the
+     * oracle again one layer down: ask one address eleven times and it starts failing when it
+     * exists while an unknown one keeps answering "sent".
+     *
+     * <p>That is a real loss — a legitimate person hammering the button no longer learns they are
+     * over the limit. It costs them a wait; the alternative costs an employer its staff list. The
+     * cooldown the screen already shows is what tells them to wait, and it does not depend on this.
+     */
+    private void spendSendBudgetQuietly(String identifier) {
+        try {
+            this.generateNumericCode(LoginIdentifiers.normalize(identifier));
+        } catch (RuntimeException ignored) {
+            // Over the limit, or the cache is unavailable. Either way the caller hears nothing:
+            // this exists to cost the same, not to report.
+        }
     }
 
     /**
@@ -319,7 +354,12 @@ public class LoginServiceImpl implements LoginService {
         // the verify step normalises its identifier the same way, so the two meet on one key
         // however the person spelt the address on either screen.
         email = LoginIdentifiers.normalize(email);
-        String code = this.generateNumericCode(email);
+        String code = this.generateNumericCodeQuietly(email);
+        if (code == null) {
+            // Over the limit. Returning as though nothing happened is deliberate: see
+            // spendSendBudgetQuietly — an error here and silence on the unlinked path is the oracle.
+            return;
+        }
         // PLATFORM tier: a login / join code is requested BEFORE any session, so there is no tenant
         // context to render a tenant-specific template from — the platform row is the code's copy.
         // Absent message-starter this is a graceful no-op, same as every other request message.
@@ -331,7 +371,10 @@ public class LoginServiceImpl implements LoginService {
     /** The mobile twin of {@link #deliverEmailCode}; see there for why it is separate. */
     private void deliverMobileCode(String mobile) {
         mobile = LoginIdentifiers.normalize(mobile);
-        String code = this.generateNumericCode(mobile);
+        String code = this.generateNumericCodeQuietly(mobile);
+        if (code == null) {
+            return;
+        }
         eventPublisher.publishEvent(new SmsRequestMessage(
                 List.of(mobile), TEMPLATE_CODE,
                 Map.of("code", code, "expiryMinutes", CODE_EXPIRY_MINUTES)));

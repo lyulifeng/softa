@@ -16,6 +16,7 @@ import io.softa.starter.user.service.UserInvitationService;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatCode;
+import static org.assertj.core.api.Assertions.catchThrowable;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.doThrow;
@@ -111,43 +112,19 @@ class UnknownIdentifierIsIndistinguishableTest {
     }
 
     @Test
-    void aBudgetRefusalForAnUnknownAddressIsSwallowed() {
-        // The guard's own "too many requests" must not surface either: an unknown address that
-        // starts failing while a linked one still succeeds says the same thing the response won't.
-        nobodyHolds("nobody@nowhere.test");
+    void runningOutOfSendsLooksTheSameWhetherOrNotTheAddressExists() {
+        // The limiter was the oracle one layer down: the linked path let the guard's refusal out
+        // while the unlinked path swallowed it, so asking one address eleven times told you which
+        // it was. Asserting only that the unknown side is quiet would have passed throughout.
         doThrow(new BusinessException("Too many requests")).when(codeGuard).beforeSend(anyString());
 
-        assertThatCode(() -> loginService.sendEmailCode("nobody@nowhere.test"))
-                .doesNotThrowAnyException();
-    }
-
-    // ───────────────────────── the clock ─────────────────────────
-
-    @Test
-    void anUnknownAddressTakesNoLessTimeToAnswer() {
-        // The linked path generates, stores and publishes; this one looks up and stops. Without a
-        // floor a stopwatch answers what the response refuses to.
-        nobodyHolds("nobody@nowhere.test");
-
-        long startedAt = System.nanoTime();
-        loginService.sendEmailCode("nobody@nowhere.test");
-        long elapsedMillis = (System.nanoTime() - startedAt) / 1_000_000L;
-
-        assertThat(elapsedMillis)
-                .as("an unlinked lookup returns in microseconds; the floor is what hides that")
-                .isGreaterThanOrEqualTo(ResponseFloor.MILLIS);
-    }
-
-    @Test
-    void aKnownAddressIsHeldToTheSameFloor() {
-        // Both sides, or the floor only proves the mock is fast.
         somebodyHolds("alice@acme.com");
+        Throwable linked = catchThrowable(() -> loginService.sendEmailCode("alice@acme.com"));
+        nobodyHolds("nobody@nowhere.test");
+        Throwable unlinked = catchThrowable(() -> loginService.sendEmailCode("nobody@nowhere.test"));
 
-        long startedAt = System.nanoTime();
-        loginService.sendEmailCode("alice@acme.com");
-        long elapsedMillis = (System.nanoTime() - startedAt) / 1_000_000L;
-
-        assertThat(elapsedMillis).isGreaterThanOrEqualTo(ResponseFloor.MILLIS);
+        assertThat(linked).as("linked threw %s; unlinked threw %s", linked, unlinked).isNull();
+        assertThat(unlinked).isNull();
     }
 
     // ───────────────────────── /join is not this ─────────────────────────
