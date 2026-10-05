@@ -94,6 +94,16 @@ public class ChangeLogServiceImpl extends ESServiceImpl<ChangeLog> implements Ch
      */
     record HistoryPart(String model, List<String> rowIds, String ref, List<String> visibleFields) {}
 
+    /**
+     * Beyond this many current rows a one-to-many is asked by reference alone.
+     *
+     * <p>The current rows' ids are there for logs written before logs carried references. A
+     * relation that grows without bound — a ledger of balance events — would turn that into a
+     * clause of thousands of ids on every read, for history that predates references; past this
+     * size the reference stands alone, and such a relation's pre-reference history is not listed.
+     */
+    static final int CURRENT_ROWS_ASKED_BY_ID = 200;
+
     @Override
     public Page<ChangeLog> getRecordChangeLog(String modelName, Serializable id, List<String> relations,
                                               Page<ChangeLog> page, String order, boolean includeCreation) {
@@ -119,11 +129,13 @@ public class ChangeLogServiceImpl extends ESServiceImpl<ChangeLog> implements Ch
      * Which logs make up a record's history: the record's own, and those of the rows its named
      * relations hold.
      *
-     * <p>A one-to-many part asks both by reference and by the rows that exist now. The reference
-     * is what finds a deleted row, whose deletion log carries the whole row. The ids find the rest:
-     * an update carries only what it changed, so it names its parent only when it moved the row,
-     * and logs written before references carry none. Between them the only history out of reach is
-     * that of a row deleted before references were written.
+     * <p>A one-to-many part asks both by reference and by the rows that exist now. Every log
+     * written since references were introduced carries one — a creation and a deletion from the
+     * whole row, an update from the row's references read alongside what it wrote — so the
+     * reference finds a deleted row and every edit since. The ids are for logs written before
+     * then. Between them the only history out of reach is that of a row deleted before references
+     * were written, and, on a relation past {@link #CURRENT_ROWS_ASKED_BY_ID} rows, anything before
+     * references at all.
      */
     List<HistoryPart> historyParts(String modelName, Serializable id, List<String> relations) {
         MetaModel metaModel = ModelManager.getModel(modelName);
@@ -147,8 +159,9 @@ public class ChangeLogServiceImpl extends ESServiceImpl<ChangeLog> implements Ch
                 oneToOne.add(relation);
             } else {
                 List<String> current = this.logRowIds(field.getRelatedModel(),
-                        Filters.of(field.getRelatedField(), Operator.EQUAL, id));
-                parts.add(new HistoryPart(field.getRelatedModel(), current,
+                        Filters.of(field.getRelatedField(), Operator.EQUAL, id), CURRENT_ROWS_ASKED_BY_ID + 1);
+                parts.add(new HistoryPart(field.getRelatedModel(),
+                        current.size() > CURRENT_ROWS_ASKED_BY_ID ? List.of() : current,
                         field.getRelatedField() + "=" + rowId, visibleFieldsOf(field.getRelatedModel())));
             }
         }
@@ -162,7 +175,7 @@ public class ChangeLogServiceImpl extends ESServiceImpl<ChangeLog> implements Ch
                 if (value != null) {
                     String related = ModelManager.getModelField(modelName, relation).getRelatedModel();
                     parts.add(new HistoryPart(related,
-                            this.logRowIds(related, Filters.of(ModelConstant.ID, Operator.EQUAL, value)),
+                            this.logRowIds(related, Filters.of(ModelConstant.ID, Operator.EQUAL, value), 0),
                             null, visibleFieldsOf(related)));
                 }
             }
@@ -178,11 +191,16 @@ public class ChangeLogServiceImpl extends ESServiceImpl<ChangeLog> implements Ch
      * id. Asking a salary profile's history by its business id finds none of it. Every slice is
      * asked for, past and future, since each is part of the history.
      */
-    private List<String> logRowIds(String model, Filters filters) {
+    private List<String> logRowIds(String model, Filters filters, int limit) {
         if (!ModelManager.getModel(model).isTimeline()) {
-            return modelService.getIds(model, filters).stream().map(String::valueOf).toList();
+            List<Serializable> ids = limit > 0 ? modelService.getIds(model, filters, limit)
+                    : modelService.getIds(model, filters);
+            return ids.stream().map(String::valueOf).toList();
         }
         FlexQuery slices = new FlexQuery(Set.of(ModelConstant.SLICE_ID), filters).acrossTimelineData();
+        if (limit > 0) {
+            slices.setLimitSize(limit);
+        }
         return modelService.searchList(model, slices).stream()
                 .map(row -> row.get(ModelConstant.SLICE_ID))
                 .filter(Objects::nonNull)

@@ -103,7 +103,8 @@ class ChangeLogRecordHistoryTest {
         models.when(() -> ModelManager.getModel("EmployeeProfile")).thenReturn(plain);
         models.when(() -> ModelManager.getModel("EmpSalaryProfileItem")).thenReturn(timeline);
 
-        when(modelService.getIds(eq("EmpFamilyMember"), any(Filters.class))).thenReturn(List.of(301L, 302L));
+        when(modelService.getIds(eq("EmpFamilyMember"), any(Filters.class), org.mockito.ArgumentMatchers.anyInt()))
+                .thenReturn(List.of(301L, 302L));
         when(modelService.getIds(eq("EmployeeProfile"), any(Filters.class))).thenReturn(List.of(200L));
         when(modelService.getById(eq("Employee"), eq(EMPLOYEE), any(Collection.class)))
                 .thenReturn(Optional.of(Map.of("employeeProfileId", Map.of("id", 200L, "displayName", "Ada"))));
@@ -152,6 +153,23 @@ class ChangeLogRecordHistoryTest {
     }
 
     @Test
+    @SuppressWarnings("unchecked")
+    void asksAnUnboundedRelationByReferenceAlone() {
+        // A ledger of balance events grows without end; past the limit its current ids are not
+        // spelled out on every read, and the reference — which every recent log carries — stands alone.
+        List<Serializable> many = new java.util.ArrayList<>();
+        for (long i = 0; i <= ChangeLogServiceImpl.CURRENT_ROWS_ASKED_BY_ID; i++) many.add(1000L + i);
+        when(modelService.getIds(eq("EmpFamilyMember"), any(Filters.class), org.mockito.ArgumentMatchers.anyInt()))
+                .thenReturn(many);
+
+        ChangeLogServiceImpl.HistoryPart members =
+                service.historyParts("Employee", EMPLOYEE, List.of("empFamilyMembers")).get(1);
+
+        assertThat(members.rowIds()).isEmpty();
+        assertThat(members.ref()).isEqualTo("employeeId=100");
+    }
+
+    @Test
     void refusesAFieldThatIsNotAOneToOneOrOneToMany() {
         // A many-to-one points at a record with a history of its own — the company is not the
         // employee's — so it is refused rather than quietly folded in.
@@ -170,7 +188,7 @@ class ChangeLogRecordHistoryTest {
                 service.historyParts("Employee", EMPLOYEE, List.of("empFamilyMembers"));
 
         assertThat(parts).extracting(ChangeLogServiceImpl.HistoryPart::model).containsExactly("Employee");
-        verify(modelService, never()).getIds(eq("EmpFamilyMember"), any(Filters.class));
+        verify(modelService, never()).getIds(eq("EmpFamilyMember"), any(Filters.class), org.mockito.ArgumentMatchers.anyInt());
     }
 
     @Test
