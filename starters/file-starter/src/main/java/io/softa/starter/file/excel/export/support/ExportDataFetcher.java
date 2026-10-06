@@ -25,8 +25,12 @@ public class ExportDataFetcher {
     @Autowired
     private ModelService<?> modelService;
 
+    @Autowired(required = false)
+    private List<ExportRowProcessor> rowProcessors = List.of();
+
     /**
-     * Query export rows page by page and apply the custom export handler if configured.
+     * Query export rows page by page, apply the model's {@link ExportRowProcessor}s, then the custom export
+     * handler if configured.
      *
      * <p>Read as an {@link AccessType#EXPORT}: the rows an export reaches are those of the roles that
      * may export the model, which need not be every row the caller may look at on screen.
@@ -41,6 +45,11 @@ public class ExportDataFetcher {
                 exportedRows.addAll(page.getRows());
             }
         } while (page.toNext());
+        for (ExportRowProcessor processor : rowProcessors) {
+            if (processor.supports(modelName)) {
+                processor.process(modelName, exportedRows);
+            }
+        }
         executeCustomHandler(handlerName, exportedRows);
         return exportedRows;
     }
