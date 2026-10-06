@@ -883,11 +883,14 @@ public class PermissionServiceImpl implements PermissionService {
                                      Set<String> fields,
                                      AccessType accessType) {
         if (AccessType.CREATE.equals(accessType) || AccessType.UPDATE.equals(accessType)) {
+            // The rows first: an id the action cannot reach at all is refused for that, not for
+            // whichever sensitive field the payload happens to carry.
+            checkIdsAccess(model, ids, accessType);
             checkSensitiveWrite(model, ids, fields, accessType);
         } else {
             checkModelFieldsAccess(model, fields, accessType);
+            checkIdsAccess(model, ids, accessType);
         }
-        checkIdsAccess(model, ids, accessType);
     }
 
     private void checkSensitiveWrite(String model, Collection<? extends Serializable> ids, Set<String> fields,

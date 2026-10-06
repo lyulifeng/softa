@@ -226,7 +226,8 @@ class GrantPairFieldMaskTest {
     @DisplayName("writing IPA on the Employment Pass holder is refused with the user's sentence")
     void writingAFieldOutsideTheGrantingEditorsRowsIsRefused() {
         holdTheExampleRoles();
-        when(modelService.count(eq("Employee"), any(Filters.class))).thenReturn(0L);
+        // R1 may edit employee 2 (the row check passes); R2, the one granting IPA, does not reach it.
+        when(modelService.count(eq("Employee"), any(Filters.class))).thenReturn(1L, 0L);
 
         assertThatThrownBy(() -> as(() -> {
             service.checkIdsFieldsAccess("Employee", List.of(2L), Set.of("ipaBasic"), AccessType.UPDATE);
@@ -247,9 +248,9 @@ class GrantPairFieldMaskTest {
         });
 
         ArgumentCaptor<Filters> counted = ArgumentCaptor.forClass(Filters.class);
-        verify(modelService, Mockito.atLeastOnce()).count(eq("Employee"), counted.capture());
-        // The first count is the field's: R2 only — the condition is what tells it apart from R1.
-        assertThat(counted.getAllValues().getFirst().toString()).contains("residenceStatus");
+        verify(modelService, Mockito.times(2)).count(eq("Employee"), counted.capture());
+        // The second count is the field's: R2 only — the condition is what tells it apart from R1.
+        assertThat(counted.getAllValues().get(1).toString()).contains("residenceStatus");
     }
 
     @Test
