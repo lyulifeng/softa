@@ -312,6 +312,12 @@ public class ChangeLogServiceImpl extends ESServiceImpl<ChangeLog> implements Ch
      * history. An update that touched nothing else is dropped whole — an entry saying "something
      * changed here on this day" is itself what a field set exists to keep from them.
      *
+     * <p>A deletion keeps only the fact that a row went. Its other fields are not hidden by the
+     * reader's sets, but they describe a row the reader can no longer see anywhere else: a deleted
+     * salary slice's effective dates say a pay period was withdrawn and when, which the salary
+     * table — showing only the rows that remain — never told them. A creation keeps its visible
+     * fields, since the row it describes is one the reader can still find.
+     *
      * <p>A dropped entry still counts in the page's total, which comes from the index: the total is
      * an upper bound for a reader whose sets hide something, exact for everyone else.
      *
@@ -330,6 +336,9 @@ public class ChangeLogServiceImpl extends ESServiceImpl<ChangeLog> implements Ch
                 if (UPDATE.equals(log.getAccessType())
                         && (log.getDataAfterChange() == null || log.getDataAfterChange().isEmpty())) {
                     continue;
+                }
+                if (DELETE.equals(log.getAccessType())) {
+                    log.setDataBeforeChange(new HashMap<>());
                 }
             }
             visible.add(log);

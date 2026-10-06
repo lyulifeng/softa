@@ -79,6 +79,27 @@ class ChangeLogSensitiveFieldsTest {
     }
 
     @Test
+    void aDeletionKeepsOnlyTheFactThatTheRowWent() {
+        // The salary slice is gone from the table; its effective dates would tell this reader a pay
+        // period was withdrawn and when — more than the table, showing only what remains, ever did.
+        ChangeLog deleted = log("SalaryItem", AccessType.DELETE,
+                Map.of("amount", 5000, "effectiveStartDate", "2026-10-01", "note", "raise"), null);
+
+        List<ChangeLog> visible = service.withoutBlockedFields(List.of(deleted));
+
+        assertThat(visible).hasSize(1);
+        assertThat(visible.getFirst().getDataBeforeChange()).isEmpty();
+    }
+
+    @Test
+    void aDeletionIsShownInFullToAReaderWhoseSetsHideNothing() {
+        ChangeLog deleted = log("Person", AccessType.DELETE, Map.of("name", "A"), null);
+
+        assertThat(service.withoutBlockedFields(List.of(deleted)).getFirst().getDataBeforeChange())
+                .containsEntry("name", "A");
+    }
+
+    @Test
     void aModelWithNothingBlockedComesBackAsStored() {
         // Full data access and bypassed checks both answer "nothing blocked"; the logs are untouched.
         ChangeLog log = log("Person", AccessType.UPDATE,
