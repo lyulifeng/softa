@@ -4,7 +4,10 @@ import io.softa.framework.base.context.Context;
 import io.softa.framework.base.context.ContextHolder;
 import io.softa.framework.base.exception.PermissionException;
 import io.softa.framework.orm.domain.CreateAccess;
+import io.softa.framework.orm.domain.AggFunctions;
 import io.softa.framework.orm.domain.FilterUnit;
+import io.softa.framework.orm.domain.FlexQuery;
+import io.softa.framework.orm.domain.Orders;
 import io.softa.framework.orm.domain.Filters;
 import io.softa.framework.orm.domain.Page;
 import io.softa.framework.orm.domain.RecordAccess;
@@ -19,6 +22,7 @@ import org.apache.commons.lang3.StringUtils;
 import io.softa.framework.orm.meta.MetaModel;
 import io.softa.framework.orm.meta.ModelManager;
 import io.softa.framework.orm.service.AccessScope;
+import io.softa.framework.orm.service.ImportScope;
 import io.softa.framework.orm.service.ModelService;
 import io.softa.framework.orm.service.PermissionService;
 import io.softa.starter.permission.spi.PermissionInfo;
@@ -772,6 +776,54 @@ public class PermissionServiceImpl implements PermissionService {
         }
     }
 
+    /**
+     * {@inheritDoc}
+     *
+     * <p>"Can't see on every row" is the field plan's blocked plus conditional: masked values sorted
+     * among visible ones would place each hidden figure between its neighbours. The sort is dropped
+     * rather than refused, as a list a user merely clicked a header on should still load; a grouping
+     * or aggregate is refused, since dropping it would change what the result means.
+     */
+    @Override
+    public void guardQuery(String model, FlexQuery flexQuery) {
+        if (flexQuery == null || shouldBypass()) return;
+        PermissionInfo pi = currentPi();
+        if (PermissionInfo.hasFullDataAccess(pi)) return;
+        FieldPlan plan = fieldPlan(pi, model, readAccess(AccessType.READ));
+        if (plan.isEmpty()) return;
+        Set<String> masked = new java.util.HashSet<>(plan.blocked());
+        masked.addAll(plan.conditional());
+        Orders orders = flexQuery.getOrders();
+        if (orders != null && orders.getFields().stream().anyMatch(masked::contains)) {
+            Orders kept = new Orders();
+            for (List<String> unit : orders.getOrderList()) {
+                if (unit.isEmpty() || masked.contains(unit.getFirst())) continue;
+                if (unit.size() > 1 && Orders.DESC.equalsIgnoreCase(unit.get(1))) {
+                    kept.addDesc(unit.getFirst());
+                } else {
+                    kept.addAsc(unit.getFirst());
+                }
+            }
+            flexQuery.setOrders(kept.isEmpty() ? null : kept);
+        }
+        List<String> grouped = new ArrayList<>();
+        if (flexQuery.getGroupBy() != null) grouped.addAll(flexQuery.getGroupBy());
+        if (flexQuery.getSplitBy() != null) grouped.addAll(flexQuery.getSplitBy());
+        if (!AggFunctions.isEmpty(flexQuery.getAggFunctions())) {
+            flexQuery.getAggFunctions().getFunctionList().forEach(f -> grouped.add(f.getField()));
+        }
+        for (String field : grouped) {
+            if (field != null && masked.contains(field)) {
+                throw new PermissionException("Records can't be grouped or summarised by "
+                        + fieldLabel(model, field) + ": it is hidden on some of them.");
+            }
+        }
+    }
+
+    private static String fieldLabel(String model, String field) {
+        return ModelManager.existField(model, field) ? ModelManager.getModelField(model, field).getLabel() : field;
+    }
+
     // ─────────────────────── record-level access ───────────────────────
 
     /**
@@ -927,10 +979,14 @@ public class PermissionServiceImpl implements PermissionService {
         });
     }
 
-    /** Named after the field's set and the model, the way a user sees them: "Salary", "employee". */
+    /**
+     * Named the way a user sees them: the set's short label ("IPA") and the model ("employee") —
+     * "You don't have permission to edit IPA fields for this employee." A file import reads "update",
+     * since the uploader is not editing anything.
+     */
     private PermissionException sensitiveWriteDenied(String model, String field) {
         String set = sfsCache.setIdsContaining(model, field).stream()
-                .map(sfsCache::nameOf)
+                .map(sfsCache::labelOf)
                 .filter(StringUtils::isNotBlank)
                 .sorted()
                 .findFirst()
@@ -938,7 +994,8 @@ public class PermissionServiceImpl implements PermissionService {
         String label = ModelManager.existModel(model) && StringUtils.isNotBlank(ModelManager.getModel(model).getLabel())
                 ? ModelManager.getModel(model).getLabel().toLowerCase()
                 : model;
-        return new PermissionException("You don't have permission to edit " + set + " fields for this " + label + ".");
+        String verb = ImportScope.isActive() ? "update" : "edit";
+        return new PermissionException("You don't have permission to " + verb + " " + set + " fields for this " + label + ".");
     }
 
     @Override
@@ -952,8 +1009,7 @@ public class PermissionServiceImpl implements PermissionService {
         if (blocked.isEmpty()) return;
         for (String f : payload.keySet()) {
             if (blocked.contains(f)) {
-                throw new PermissionException(
-                        "No write permission for field " + model + "." + f);
+                throw sensitiveWriteDenied(model, f);
             }
         }
     }

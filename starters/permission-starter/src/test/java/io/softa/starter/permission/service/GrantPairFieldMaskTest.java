@@ -100,6 +100,7 @@ class GrantPairFieldMaskTest {
         });
         when(sets.setIdsContaining(eq("Employee"), anyString())).thenReturn(Set.of("ipa-details"));
         when(sets.nameOf("ipa-details")).thenReturn("IPA Details");
+        when(sets.labelOf("ipa-details")).thenReturn("IPA");
         when(sets.setIdsOwnedBy("Employee")).thenReturn(Set.of("ipa-details"));
 
         models = Mockito.mockStatic(ModelManager.class);
@@ -233,7 +234,7 @@ class GrantPairFieldMaskTest {
             service.checkIdsFieldsAccess("Employee", List.of(2L), Set.of("ipaBasic"), AccessType.UPDATE);
             return null;
         })).isInstanceOf(PermissionException.class)
-                .hasMessage("You don't have permission to edit IPA Details fields for this employee.");
+                .hasMessage("You don't have permission to edit IPA fields for this employee.");
     }
 
     @Test
@@ -372,5 +373,62 @@ class GrantPairFieldMaskTest {
 
         pi.setRoleGrants(List.of(role(2, Set.of(VIEW, CREATE), ScopeType.MANAGED_DEPARTMENTS, NOT_EP, true)));
         assertThat(as(() -> service.getCreateAccess("Employee")).hiddenSets()).isEmpty();
+    }
+
+    @Test
+    @DisplayName("an import row is refused in the uploader's words")
+    void anImportRowSaysUpdate() {
+        holdTheExampleRoles();
+        when(modelService.count(eq("Employee"), any(Filters.class))).thenReturn(1L, 0L);
+
+        assertThatThrownBy(() -> as(() -> {
+            io.softa.framework.orm.service.ImportScope.run(() -> service.checkIdsFieldsAccess(
+                    "Employee", List.of(2L), Set.of("ipaBasic"), AccessType.UPDATE));
+            return null;
+        })).isInstanceOf(PermissionException.class)
+                .hasMessage("You don't have permission to update IPA fields for this employee.");
+    }
+
+    @Test
+    @DisplayName("a sort on IPA is dropped when IPA is hidden on some rows; other sorts stay")
+    void aSortOnAPartlyHiddenFieldIsDropped() {
+        holdTheExampleRoles();
+        io.softa.framework.orm.domain.FlexQuery query = new io.softa.framework.orm.domain.FlexQuery();
+        query.setOrders(io.softa.framework.orm.domain.Orders.ofDesc("ipaBasic").addAsc("name"));
+
+        as(() -> {
+            service.guardQuery("Employee", query);
+            return null;
+        });
+
+        assertThat(query.getOrders().getFields()).containsExactly("name");
+    }
+
+    @Test
+    @DisplayName("grouping by IPA is refused when IPA is hidden on some rows")
+    void groupingByAPartlyHiddenFieldIsRefused() {
+        holdTheExampleRoles();
+        io.softa.framework.orm.domain.FlexQuery query = new io.softa.framework.orm.domain.FlexQuery();
+        query.setGroupBy(List.of("ipaBasic"));
+
+        assertThatThrownBy(() -> as(() -> {
+            service.guardQuery("Employee", query);
+            return null;
+        })).isInstanceOf(PermissionException.class);
+    }
+
+    @Test
+    @DisplayName("a user who sees IPA on every row keeps the sort")
+    void aUniformlyVisibleFieldKeepsItsSort() {
+        pi.setRoleGrants(List.of(role(4, Set.of(VIEW), ScopeType.ALL, null, true)));
+        io.softa.framework.orm.domain.FlexQuery query = new io.softa.framework.orm.domain.FlexQuery();
+        query.setOrders(io.softa.framework.orm.domain.Orders.ofDesc("ipaBasic"));
+
+        as(() -> {
+            service.guardQuery("Employee", query);
+            return null;
+        });
+
+        assertThat(query.getOrders().getFields()).containsExactly("ipaBasic");
     }
 }

@@ -192,6 +192,17 @@ public interface PermissionService {
     }
 
     /**
+     * Keep a query from learning, through its ordering or grouping, what its masking hides: a sort on
+     * a sensitive field the caller cannot see on every row is dropped, and grouping or aggregating by
+     * one is refused. Called on the query before it runs; may modify it.
+     *
+     * <p>Default no-op.
+     */
+    default void guardQuery(String model, io.softa.framework.orm.domain.FlexQuery flexQuery) {
+        // no-op default
+    }
+
+    /**
      * Reject writes touching blocked-for-write fields in the payload map.
      * Called by every write entry point in {@code ModelServiceImpl}
      * ({@code createOne}/{@code createList}/{@code updateOne}/

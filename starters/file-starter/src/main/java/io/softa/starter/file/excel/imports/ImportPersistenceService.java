@@ -10,6 +10,7 @@ import org.springframework.stereotype.Component;
 import org.springframework.util.CollectionUtils;
 
 import io.softa.framework.orm.constant.FileConstant;
+import io.softa.framework.orm.service.ImportScope;
 import io.softa.framework.orm.service.ModelService;
 import io.softa.starter.file.dto.ImportDataDTO;
 import io.softa.starter.file.dto.ImportTemplateDTO;
@@ -42,6 +43,11 @@ public class ImportPersistenceService {
     }
 
     private void persistByRule(ImportTemplateDTO importTemplateDTO, List<Map<String, Object>> rows) {
+        // Marked as an import's writes, so a refusal speaks to the uploader ("update", not "edit").
+        ImportScope.run(() -> writeByRule(importTemplateDTO, rows));
+    }
+
+    private void writeByRule(ImportTemplateDTO importTemplateDTO, List<Map<String, Object>> rows) {
         ImportRule importRule = importTemplateDTO.getImportRule();
         if (ImportRule.CREATE_OR_UPDATE.equals(importRule)) {
             modelService.createOrUpdate(importTemplateDTO.getModelName(), rows, importTemplateDTO.getUniqueConstraints());
