@@ -1,5 +1,6 @@
 package io.softa.starter.es.document;
 
+import java.util.List;
 import java.util.Map;
 import lombok.Data;
 import tools.jackson.core.type.TypeReference;
@@ -26,6 +27,10 @@ public class ChangeLogDocument {
     private AccessType accessType;
     private String dataBeforeChange;
     private String dataAfterChange;
+    /** Indexed keywords; see {@link ChangeLog#getRefs()}. Absent on logs written before it existed. */
+    private List<String> refs;
+    /** Indexed keywords; see {@link ChangeLog#getChangedFields()}. Absent likewise. */
+    private List<String> changedFields;
     private Long tenantId;
     private Long changedById;
     private String changedBy;
@@ -40,6 +45,8 @@ public class ChangeLogDocument {
         doc.accessType = source.getAccessType();
         doc.dataBeforeChange = JsonUtils.objectToString(source.getDataBeforeChange());
         doc.dataAfterChange = JsonUtils.objectToString(source.getDataAfterChange());
+        doc.refs = source.getRefs();
+        doc.changedFields = source.getChangedFields();
         doc.tenantId = source.getTenantId();
         doc.changedById = source.getChangedById();
         doc.changedBy = source.getChangedBy();
@@ -56,6 +63,8 @@ public class ChangeLogDocument {
         cl.setAccessType(doc.accessType);
         cl.setDataBeforeChange(JsonUtils.stringToObject(doc.dataBeforeChange, MAP_TYPE));
         cl.setDataAfterChange(JsonUtils.stringToObject(doc.dataAfterChange, MAP_TYPE));
+        cl.setRefs(doc.refs);
+        cl.setChangedFields(doc.changedFields);
         cl.setTenantId(doc.tenantId);
         cl.setChangedById(doc.changedById);
         cl.setChangedBy(doc.changedBy);

@@ -1,0 +1,10 @@
+{
+  "properties": {
+    "refs": {
+      "type": "keyword"
+    },
+    "changedFields": {
+      "type": "keyword"
+    }
+  }
+}
