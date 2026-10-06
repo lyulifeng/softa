@@ -47,7 +47,7 @@ public record WizardSaveDTO(
         @Schema(description = "Step 1 — role_navigation rows: [{navigationId, permissionIds}]. Menu access + button permissions only (scope/SFS moved out). Replaces existing.")
         JsonNode roleNavigations,
 
-        @Schema(description = "Step 2a — role_data_scope rows: [{model, dataScopes}], one per queryable model. Replaces existing. Scope rules are OR-combined.")
+        @Schema(description = "Step 2a — role_data_scope rows: [{model, dataScopes, scopeCondition?}], one per queryable model. Replaces existing. Scope rules are OR-combined; scopeCondition (Filters JSON) is AND-ed onto them.")
         JsonNode roleDataScopes,
 
         @Schema(description = "Step 2b — role_sensitive_field_set grants: [\"<setId>\", ...], role-wide flat list (each SFS carries its own model). Replaces existing.")

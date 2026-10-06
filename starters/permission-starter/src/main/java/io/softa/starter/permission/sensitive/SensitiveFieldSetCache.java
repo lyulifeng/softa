@@ -212,6 +212,21 @@ public class SensitiveFieldSetCache {
         return ids == null ? Set.of() : ids;
     }
 
+    /** The setIds bound to {@code modelName} whose field codes include {@code fieldCode} — for naming,
+     *  in a refusal, the set a field belongs to. */
+    public Set<String> setIdsContaining(String modelName, String fieldCode) {
+        if (modelName == null || fieldCode == null) return Set.of();
+        Map<String, String> models = setIdToModel.get();
+        Map<String, Set<String>> codesBySet = setIdToFieldCodes.get();
+        Set<String> out = new HashSet<>();
+        for (Map.Entry<String, Set<String>> e : codesBySet.entrySet()) {
+            if (modelName.equals(models.get(e.getKey())) && e.getValue() != null && e.getValue().contains(fieldCode)) {
+                out.add(e.getKey());
+            }
+        }
+        return out;
+    }
+
     /** Translate granted {@code setIds} to the union of their field codes,
      *  filtered to only those sets bound to {@code modelName}. Sets bound
      *  to a different model are silently ignored — admin grants are stored

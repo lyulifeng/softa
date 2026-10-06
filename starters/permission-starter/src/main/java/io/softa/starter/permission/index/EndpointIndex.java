@@ -174,12 +174,21 @@ public class EndpointIndex {
     private Map<String, Set<String>> exactIndex = Map.of();
     private List<PatternEntry> patternEntries = List.of();
 
+    /** {@code "<Model> <action>"} → the permission ids declaring that standard action on that model. For
+     *  the actions whose endpoints are shared across models and so cannot be told apart by URL. */
+    private Map<String, Set<String>> actionIndex = Map.of();
+
     @PostConstruct
     void init() {
         Map<String, Set<String>> exact = new HashMap<>();
         List<PatternEntry> patterns = new ArrayList<>();
+        Map<String, Set<String>> actions = new HashMap<>();
 
         for (PermissionEndpointDef def : endpointSource.getPermissionEndpoints()) {
+            if (def.model() != null && !def.model().isEmpty() && def.permissionId() != null) {
+                actions.computeIfAbsent(def.model() + " " + lastSegment(def.permissionId()), k -> new HashSet<>())
+                        .add(def.permissionId());
+            }
             List<String> endpoints = explicitOrDerive(def);
             for (String ep : endpoints) {
                 if (ep.contains("{")) {
@@ -198,6 +207,9 @@ public class EndpointIndex {
         }
         this.exactIndex = Collections.unmodifiableMap(frozenExact);
         this.patternEntries = List.copyOf(patterns);
+        Map<String, Set<String>> frozenActions = new HashMap<>(actions.size());
+        actions.forEach((key, ids) -> frozenActions.put(key, Set.copyOf(ids)));
+        this.actionIndex = Collections.unmodifiableMap(frozenActions);
         log.info("EndpointIndex built: {} exact + {} pattern entries",
                 exact.size(), patterns.size());
     }
@@ -226,6 +238,19 @@ public class EndpointIndex {
             }
         }
         return matched == null ? Set.of() : matched;
+    }
+
+    /**
+     * The permission ids that declare the standard {@code action} on {@code model} — for an action whose
+     * endpoints every model shares (export, import), where {@link #lookup} by URL answers with every
+     * model's permission at once.
+     *
+     * @param model  the model, as the permission's navigation names it
+     * @param action the action segment of the permission id, e.g. {@code "export"}
+     * @return the permission ids, empty when none declares it
+     */
+    public Set<String> actionPermissions(String model, String action) {
+        return actionIndex.getOrDefault(model + " " + action, Set.of());
     }
 
     /**

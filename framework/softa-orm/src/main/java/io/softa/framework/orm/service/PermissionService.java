@@ -2,6 +2,7 @@ package io.softa.framework.orm.service;
 
 import java.io.Serializable;
 import java.util.Collection;
+import java.util.List;
 import java.util.Map;
 import java.util.Set;
 
@@ -171,6 +172,21 @@ public interface PermissionService {
      */
     default <T> T maskResponseValue(String model, T value, AccessType accessType) {
         return value;
+    }
+
+    /**
+     * Mask sensitive fields on rows of {@code model} that were not read through this service's read
+     * path — the before / after values of a change log entry, say — exactly as a read would have
+     * masked them. Each row is judged by its {@code id}: a row without one shows only what the caller
+     * may see on every row.
+     *
+     * <p>Default no-op.
+     *
+     * @param model the model the rows belong to
+     * @param rows  the rows, masked in place
+     */
+    default void maskRows(String model, List<Map<String, Object>> rows) {
+        // no-op default
     }
 
     /**
