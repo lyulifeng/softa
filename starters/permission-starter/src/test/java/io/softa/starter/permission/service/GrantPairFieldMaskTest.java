@@ -61,6 +61,7 @@ class GrantPairFieldMaskTest {
 
     private static final String VIEW = "permission.employee.view";
     private static final String UPDATE = "permission.employee.update";
+    private static final String CREATE = "permission.employee.create";
     private static final Set<String> IPA = Set.of("ipaPosition", "ipaBasic");
     private static final String NOT_EP =
             "[[\"employeeProfileId.residenceStatus\",\"!=\",\"SG_EmploymentPass\"]]";
@@ -80,6 +81,7 @@ class GrantPairFieldMaskTest {
         when(index.lookup(anyString(), anyString())).thenReturn(Set.of());
         when(index.lookup("/Employee/searchPage", "POST")).thenReturn(Set.of(VIEW));
         when(index.lookup("/Employee/updateOne", "POST")).thenReturn(Set.of(UPDATE));
+        when(index.lookup("/Employee/createOne", "POST")).thenReturn(Set.of(CREATE));
 
         ScopeApplicabilityResolver applicability = mock(ScopeApplicabilityResolver.class);
         when(applicability.applicableFor("Employee"))
@@ -98,6 +100,7 @@ class GrantPairFieldMaskTest {
         });
         when(sets.setIdsContaining(eq("Employee"), anyString())).thenReturn(Set.of("ipa-details"));
         when(sets.nameOf("ipa-details")).thenReturn("IPA Details");
+        when(sets.setIdsOwnedBy("Employee")).thenReturn(Set.of("ipa-details"));
 
         models = Mockito.mockStatic(ModelManager.class);
         MetaModel meta = mock(MetaModel.class);
@@ -298,5 +301,75 @@ class GrantPairFieldMaskTest {
 
         assertThat(rows.get(0).get("ipaBasic")).isEqualTo(1800);
         assertThat(rows.get(1).get("ipaBasic")).isNull();
+    }
+
+    /** R1's department holds both employees; R2's non-EP part of it only employee 1. */
+    private void departmentHoldsBothAndNonEpHoldsOne() {
+        when(modelService.getIds(eq("Employee"), any(Filters.class))).thenAnswer(inv -> {
+            Filters f = inv.getArgument(1);
+            return f.toString().contains("residenceStatus") ? List.of(1L) : List.of(1L, 2L);
+        });
+    }
+
+    private void unionOf(String... permissions) {
+        pi.setPermissions(Set.of(permissions));
+    }
+
+    @Test
+    @DisplayName("record access: the Work Permit holder's IPA is editable, the Employment Pass holder's hidden")
+    void recordAccessFollowsTheRolesReachingEachRecord() {
+        holdTheExampleRoles();
+        unionOf(VIEW, UPDATE);
+        departmentHoldsBothAndNonEpHoldsOne();
+
+        List<io.softa.framework.orm.domain.RecordAccess> access =
+                as(() -> service.getRecordAccess("Employee", List.of(1L, 2L)));
+
+        assertThat(access.get(0).hiddenSets()).isEmpty();
+        assertThat(access.get(0).readonlySets()).isEmpty();
+        assertThat(access.get(0).actions()).contains(AccessType.UPDATE);
+        assertThat(access.get(1).hiddenSets()).containsExactly("ipa-details");
+        assertThat(access.get(1).actions()).contains(AccessType.UPDATE);
+    }
+
+    @Test
+    @DisplayName("record access: a set granted only by a role that views is read-only")
+    void aSetGrantedOnlyByAViewingRoleIsReadOnly() {
+        pi.setRoleGrants(List.of(
+                role(1, Set.of(VIEW, UPDATE), ScopeType.MANAGED_DEPARTMENTS, null, false),
+                role(4, Set.of(VIEW), ScopeType.ALL, null, true)));
+        unionOf(VIEW, UPDATE);
+        departmentHoldsBothAndNonEpHoldsOne();
+
+        List<io.softa.framework.orm.domain.RecordAccess> access =
+                as(() -> service.getRecordAccess("Employee", List.of(1L)));
+
+        assertThat(access.getFirst().hiddenSets()).isEmpty();
+        assertThat(access.getFirst().readonlySets()).containsExactly("ipa-details");
+    }
+
+    @Test
+    @DisplayName("record access: without the update action anywhere, nothing is editable and no Edit is offered")
+    void withoutTheUpdateActionEverythingVisibleIsReadOnly() {
+        pi.setRoleGrants(List.of(role(4, Set.of(VIEW), ScopeType.ALL, null, true)));
+        unionOf(VIEW);
+
+        List<io.softa.framework.orm.domain.RecordAccess> access =
+                as(() -> service.getRecordAccess("Employee", List.of(1L)));
+
+        assertThat(access.getFirst().readonlySets()).containsExactly("ipa-details");
+        assertThat(access.getFirst().actions()).doesNotContain(AccessType.UPDATE);
+    }
+
+    @Test
+    @DisplayName("create access: the set shows on the create form only if a creating role grants it")
+    void theCreateFormShowsWhatACreatingRoleGrants() {
+        pi.setRoleGrants(List.of(
+                role(1, Set.of(VIEW, CREATE), ScopeType.MANAGED_DEPARTMENTS, null, false),
+                role(4, Set.of(VIEW), ScopeType.ALL, null, true)));
+        assertThat(as(() -> service.getCreateAccess("Employee")).hiddenSets()).containsExactly("ipa-details");
+
+        pi.setRoleGrants(List.of(role(2, Set.of(VIEW, CREATE), ScopeType.MANAGED_DEPARTMENTS, NOT_EP, true)));
+        assertThat(as(() -> service.getCreateAccess("Employee")).hiddenSets()).isEmpty();
     }
 }

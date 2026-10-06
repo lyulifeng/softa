@@ -89,7 +89,9 @@ public class EndpointIndex {
             "POST searchPage", "POST searchList", "POST searchName",
             "POST searchSimpleAgg", "POST searchPivot", "POST count",
             "POST getOne", "POST getById", "POST getByIds", "POST searchOne",
-            "GET getUnmaskedField", "GET getUnmaskedFields");
+            "GET getUnmaskedField", "GET getUnmaskedFields",
+            // What a detail form asks before rendering: which sections and buttons this record allows.
+            "POST getRecordAccess");
 
     /** Minimum endpoint set a Picker widget needs to render:
      *  {@code searchName} lists the candidates for the dropdown,
@@ -105,9 +107,10 @@ public class EndpointIndex {
             Map.entry("view",   VIEW_ENDPOINTS),
             // getDefaultValues backs the new-record form, so it rides on the create perm.
             // Timeline addVersion(AndFetch) inserts a new slice row, so it rides on the create perm.
+            // getCreateAccess tells the same form which sensitive sections it may show.
             Map.entry("create", List.of("POST createOne", "POST createOneAndFetch",
                                         "POST createList", "POST createListAndFetch",
-                                        "GET getDefaultValues",
+                                        "GET getDefaultValues", "GET getCreateAccess",
                                         "POST addVersion", "POST addVersionAndFetch")),
             // onChange/{fieldName} is framework-generated per model; field-level change
             // handlers run while editing a record, so they fall under the update perm.

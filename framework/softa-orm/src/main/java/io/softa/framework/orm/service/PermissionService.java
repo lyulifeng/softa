@@ -6,7 +6,9 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 
+import io.softa.framework.orm.domain.CreateAccess;
 import io.softa.framework.orm.domain.Filters;
+import io.softa.framework.orm.domain.RecordAccess;
 import io.softa.framework.orm.enums.AccessType;
 
 /**
@@ -239,5 +241,34 @@ public interface PermissionService {
      * @return true when the caller may perform it, or when no permission covers it
      */
     boolean hasModelActionGrant(String model, AccessType accessType);
+
+    /**
+     * What the caller may do with each of these existing records: which sensitive sets are hidden or
+     * read-only on it, and which of {@code UPDATE} / {@code DELETE} it may perform.
+     *
+     * <p>Default: nothing hidden, nothing read-only, and every action the caller holds on the model.
+     *
+     * @param model the model
+     * @param ids   the records
+     * @return one entry per id, in the order given
+     */
+    default List<RecordAccess> getRecordAccess(String model, Collection<? extends Serializable> ids) {
+        Set<AccessType> actions = java.util.EnumSet.noneOf(AccessType.class);
+        for (AccessType action : List.of(AccessType.UPDATE, AccessType.DELETE)) {
+            if (hasModelActionGrant(model, action)) {
+                actions.add(action);
+            }
+        }
+        return ids.stream().map(id -> new RecordAccess(id, Set.of(), Set.of(), actions)).toList();
+    }
+
+    /**
+     * Which sensitive sets a form creating a record of {@code model} must not show.
+     *
+     * <p>Default: none.
+     */
+    default CreateAccess getCreateAccess(String model) {
+        return new CreateAccess(Set.of());
+    }
 
 }

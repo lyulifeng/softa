@@ -3,9 +3,11 @@ package io.softa.starter.permission.service;
 import io.softa.framework.base.context.Context;
 import io.softa.framework.base.context.ContextHolder;
 import io.softa.framework.base.exception.PermissionException;
+import io.softa.framework.orm.domain.CreateAccess;
 import io.softa.framework.orm.domain.FilterUnit;
 import io.softa.framework.orm.domain.Filters;
 import io.softa.framework.orm.domain.Page;
+import io.softa.framework.orm.domain.RecordAccess;
 import io.softa.framework.base.enums.Operator;
 import io.softa.framework.orm.constant.ModelConstant;
 import io.softa.framework.orm.enums.AccessType;
@@ -768,6 +770,87 @@ public class PermissionServiceImpl implements PermissionService {
         boolean isEmpty() {
             return blocked.isEmpty() && conditional.isEmpty();
         }
+    }
+
+    // ─────────────────────── record-level access ───────────────────────
+
+    /**
+     * {@inheritDoc}
+     *
+     * <p>Judged by the same grant pairs the reads and writes are. A sensitive set is <b>hidden</b> on a
+     * record no reading role that reaches it grants; <b>read-only</b> where some reading role grants it
+     * but no editing role that reaches the record does. An action is available where the caller holds it
+     * at all and a role holding it reaches the record. One query per role involved, whatever the number
+     * of records.
+     */
+    @Override
+    public List<RecordAccess> getRecordAccess(String model, Collection<? extends Serializable> ids) {
+        List<Serializable> idList = ids == null ? List.of() : ids.stream().distinct().collect(Collectors.toList());
+        Set<AccessType> held = EnumSet.noneOf(AccessType.class);
+        for (AccessType action : List.of(AccessType.UPDATE, AccessType.DELETE)) {
+            if (hasModelActionGrant(model, action)) held.add(action);
+        }
+        if (idList.isEmpty()) return List.of();
+        if (shouldBypass() || PermissionInfo.hasFullDataAccess(currentPi())) {
+            return idList.stream().map(id -> new RecordAccess(id, Set.of(), Set.of(), held)).toList();
+        }
+        PermissionInfo pi = currentPi();
+        Set<String> owned = sfsCache == null ? Set.of() : sfsCache.setIdsOwnedBy(model);
+        List<Grant> readers = holders(pi, model, AccessType.READ);
+        List<Grant> editors = holders(pi, model, AccessType.UPDATE);
+        List<Grant> deleters = holders(pi, model, AccessType.DELETE);
+        Map<Grant, Set<Object>> reach = new java.util.HashMap<>();
+        for (List<Grant> group : List.of(readers, editors, deleters)) {
+            for (Grant g : group) {
+                reach.computeIfAbsent(g, k -> rowsReached(model, List.of(k), idList));
+            }
+        }
+        List<RecordAccess> out = new ArrayList<>(idList.size());
+        for (Serializable id : idList) {
+            Object key = normalizeId(id);
+            List<Grant> reading = readers.stream().filter(g -> reach.get(g).contains(key)).toList();
+            if (reading.isEmpty()) {
+                // Not a record the caller can see at all: nothing of it shows and nothing can be done.
+                out.add(new RecordAccess(id, owned, Set.of(), Set.of()));
+                continue;
+            }
+            List<Grant> editing = held.contains(AccessType.UPDATE)
+                    ? editors.stream().filter(g -> reach.get(g).contains(key)).toList()
+                    : List.of();
+            Set<String> hidden = new java.util.TreeSet<>();
+            Set<String> readonly = new java.util.TreeSet<>();
+            for (String set : owned) {
+                if (reading.stream().noneMatch(g -> grantsSet(g, model, set))) {
+                    hidden.add(set);
+                } else if (editing.stream().noneMatch(g -> grantsSet(g, model, set))) {
+                    readonly.add(set);
+                }
+            }
+            Set<AccessType> actions = EnumSet.noneOf(AccessType.class);
+            if (!editing.isEmpty()) actions.add(AccessType.UPDATE);
+            if (held.contains(AccessType.DELETE) && deleters.stream().anyMatch(g -> reach.get(g).contains(key))) {
+                actions.add(AccessType.DELETE);
+            }
+            out.add(new RecordAccess(id, hidden, readonly, actions));
+        }
+        return out;
+    }
+
+    /** {@inheritDoc} — a set is shown on a create form when some role that may create the model grants it. */
+    @Override
+    public CreateAccess getCreateAccess(String model) {
+        if (shouldBypass() || sfsCache == null) return new CreateAccess(Set.of());
+        PermissionInfo pi = currentPi();
+        if (PermissionInfo.hasFullDataAccess(pi)) return new CreateAccess(Set.of());
+        Set<String> hidden = new java.util.TreeSet<>(sfsCache.setIdsOwnedBy(model));
+        for (Grant g : holders(pi, model, AccessType.CREATE)) {
+            hidden.removeAll(g.sensitiveSets().getOrDefault(model, Set.of()));
+        }
+        return new CreateAccess(hidden);
+    }
+
+    private static boolean grantsSet(Grant g, String model, String set) {
+        return g.sensitiveSets().getOrDefault(model, Set.of()).contains(set);
     }
 
     // ─────────────────────── write guard ───────────────────────
