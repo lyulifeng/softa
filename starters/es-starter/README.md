@@ -35,7 +35,22 @@ business mutation ──▶ change-log event ──▶ Pulsar topic ──▶ Ch
   `mq.topics.change-log.topic` is configured (`@ConditionalOnProperty`). It
   converts each event to a `ChangeLogDocument` and bulk-indexes it.
 - `ChangeLogDocument` — the stored shape (map payloads flattened to JSON strings
-  for deterministic serialization).
+  for deterministic serialization). The payloads are not indexed, so two
+  keyword fields carry what queries need from them:
+
+  | Field | Holds | Example |
+  |---|---|---|
+  | `refs` | one `field=id` entry per many-to-one field of the row | `["employeeId=1001", "salaryProfileItemId=2002"]` |
+  | `changedFields` | the fields an UPDATE wrote (empty for CREATE / DELETE) | `["amount", "currency"]` |
+
+  `refs` is what finds the rows of a one-to-many relation that were deleted
+  since; `changedFields` is what drops an UPDATE that only wrote fields the
+  reader may not see. For an UPDATE to carry `refs`, the write path reads the
+  row's many-to-one keys and its `displayName` fields in the same SELECT that
+  fetches the values being replaced, and logs them in `dataBeforeChange`. The
+  values are stored raw (ids, option codes); references and options are turned
+  into display text when the log is read, so a renamed reference shows its
+  current name.
 
 ## Query API
 
@@ -45,11 +60,23 @@ business mutation ──▶ change-log event ──▶ Pulsar topic ──▶ Ch
 |---|---|
 | `GET /ChangeLog/getChangeLog` | Change history for one row (`modelName` + `id`, paged) |
 | `GET /ChangeLog/getSliceChangeLog` | History for a timeline-model slice |
+| `GET /ChangeLog/getRecordChangeLog` | One record's history together with the rows of the one-to-one / one-to-many fields named in `relations` (comma separated), as one page |
 | `POST /ChangeLog/searchPageByModel` | Filtered search within a model (`QueryParams` body) |
 | `POST /ChangeLog/searchPage` | Cross-model search (`QueryParams` body) |
 
 Admin-scoped endpoints require the system admin role; results are permission-
 checked per user and field references are resolved for display.
+
+`getRecordChangeLog` matches a one-to-one relation by the current row's id, and
+a one-to-many relation by the current rows' ids (`sliceId` for a timeline model)
+OR a `refs` entry pointing back at the record, so deleted rows stay in the
+history; past 200 current rows it matches by `refs` alone. A relation whose
+model the reader cannot read is left out.
+
+Fields the reader may not see are taken out of every result: they are removed
+from the payloads, an UPDATE that wrote nothing else is not returned, and a
+DELETE keeps only the fact that a row was deleted. `searchPageByModel` also
+returns only the logs of rows the reader can currently read.
 
 `ESService<T>` / `ESServiceImpl<T>` provide `searchPage(Filters, Orders, Page)`
 with criteria mapping (EQUAL, NOT_EQUAL, GREATER_THAN, CONTAINS, IN, BETWEEN,

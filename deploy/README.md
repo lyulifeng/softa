@@ -55,6 +55,8 @@ The stack bootstraps the change-log index automatically: a one-shot `setup` serv
 
 Or you can specify the `spring.elasticsearch.uris` property to connect to your own Elasticsearch cluster — then apply `deploy/init_es/changelog-index.json` yourself before the first change log is written (otherwise ES auto-creates the index with dynamic mapping and eventually hits the total-fields limit).
 
+An index created before `refs` / `changedFields` existed needs them added before an application that writes them is deployed — the `setup` service does this on every run; on your own cluster apply `deploy/init_es/changelog-index-additions.json` with `PUT <index>/_mapping`. A `dynamic: false` index does not add them by itself, and documents written before the mapping is in place are not searchable by them.
+
 # 4. Start Pulsar by Docker Compose (Optional)
 ```bash
 docker compose -f deploy/pulsar/docker-compose.yml up -d
