@@ -67,12 +67,16 @@ public class StringProcessor extends BaseProcessor {
                         metaField.getModelName(), metaField.getFieldName());
             }
         } else if (AccessType.CREATE.equals(accessType)) {
-            checkRequired(value);
+            // Blank, not only null: a required name sent as "" is as missing as one not sent, and
+            // checking for null alone let it through — a company saved with no name at all, while
+            // the form refused the same input. MultiString, Filters and Orders already ask the
+            // blank question; this is the type nearly every required field is.
+            checkNotBlank(value);
             row.computeIfAbsent(fieldName, k -> metaField.getDefaultValueObject());
             return;
         } else if (isContain) {
-            // If the field is set to null, check if it is a required field.
-            checkRequired(value);
+            // The patch names the field and sends it blank: clearing a required field.
+            checkNotBlank(value);
         }
         row.put(fieldName, value);
     }
