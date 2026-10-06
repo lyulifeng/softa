@@ -8,9 +8,9 @@ import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.lang3.StringUtils;
 import org.springframework.util.CollectionUtils;
 
-import io.softa.framework.base.constant.StringConstant;
 import io.softa.framework.base.enums.Operator;
 import io.softa.framework.base.utils.Cast;
+import io.softa.framework.base.utils.StringTools;
 import io.softa.framework.orm.constant.ModelConstant;
 import io.softa.framework.orm.domain.FilterControl;
 import io.softa.framework.orm.domain.Filters;
@@ -213,8 +213,7 @@ public class XToOneGroupProcessor extends BaseProcessor {
             });
             if (!relatedRow.isEmpty()) {
                 // Compute the displayName of related timeline model, and assign it to the ManyToOne/OneToOne field.
-                List<Object> displayValues = displayFields.stream().map(relatedRow::get).filter(n -> n != null && n != "").collect(Collectors.toList());
-                String displayName = StringUtils.join(displayValues, StringConstant.DISPLAY_NAME_SEPARATOR);
+                String displayName = StringTools.joinDisplayName(displayFields.stream().map(relatedRow::get).toList());
                 Serializable relatedId = (Serializable) row.get(xToOneFieldName);
                 Object value = ConvertType.REFERENCE.equals(flexQuery.getConvertType()) ?
                         ModelReference.of(relatedId, displayName) : displayName;

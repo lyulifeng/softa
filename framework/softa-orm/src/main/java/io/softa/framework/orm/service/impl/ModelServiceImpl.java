@@ -17,7 +17,7 @@ import org.springframework.transaction.annotation.Transactional;
 import org.springframework.util.CollectionUtils;
 
 import io.softa.framework.base.constant.BaseConstant;
-import io.softa.framework.base.constant.StringConstant;
+import io.softa.framework.base.utils.StringTools;
 import io.softa.framework.base.context.ContextHolder;
 import io.softa.framework.base.enums.Operator;
 import io.softa.framework.base.exception.IllegalArgumentException;
@@ -663,11 +663,7 @@ public class ModelServiceImpl<K extends Serializable> implements ModelService<K>
         List<Map<String, Object>> rows = this.searchListIgnoringRowScope(modelName, flexQuery);
         Map<K, String> displayNames = new HashMap<>();
         for (Map<String, Object> row : rows) {
-            // Filter out field values for null or empty strings
-            List<Object> displayValues = displayFields.stream()
-                    .map(row::get).filter(v -> v != null && v != "")
-                    .toList();
-            String name = StringUtils.join(displayValues, StringConstant.DISPLAY_NAME_SEPARATOR);
+            String name = StringTools.joinDisplayName(displayFields.stream().map(row::get).toList());
             displayNames.put(Cast.of(row.get(ModelConstant.ID)), name);
         }
         return displayNames;
@@ -1390,10 +1386,7 @@ public class ModelServiceImpl<K extends Serializable> implements ModelService<K>
         // range is still the label of a row they were legitimately shown a reference to.
         List<Map<String, Object>> rows = searchListIgnoringRowScope(modelName, flexQuery);
         for (Map<String, Object> row : rows) {
-            // Filter out field values for null or empty strings
-            List<Object> displayValues = displayFields.stream().map(row::get)
-                    .filter(v -> v != null && v != "").collect(Collectors.toList());
-            String name = StringUtils.join(displayValues, StringConstant.DISPLAY_NAME_SEPARATOR);
+            String name = StringTools.joinDisplayName(displayFields.stream().map(row::get).toList());
             row.put(ModelConstant.DISPLAY_NAME, name);
         }
         return rows;

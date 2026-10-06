@@ -20,6 +20,38 @@ public class StringTools {
     }
 
     /**
+     * Join the values of a model's displayName fields into the one label a reference shows.
+     *
+     * <p>Null and empty values are skipped, so a row missing one of its display fields still reads
+     * cleanly. A value already present is skipped too: a model named by {@code {"name", "code"}}
+     * exists so that two rows sharing a name can be told apart, and for a row whose code was filled
+     * in with its name the pair carries no information twice — "Branch / Branch" says nothing that
+     * "Branch" does not. Comparison ignores surrounding whitespace; the text kept is the first
+     * occurrence as written.
+     *
+     * @param values the display field values, in displayName order
+     * @return the label, or an empty string when no value is present
+     */
+    public static String joinDisplayName(Collection<?> values) {
+        if (values == null || values.isEmpty()) {
+            return StringUtils.EMPTY;
+        }
+        Set<String> seen = new HashSet<>();
+        List<String> parts = new ArrayList<>(values.size());
+        for (Object value : values) {
+            if (value == null) {
+                continue;
+            }
+            String text = String.valueOf(value);
+            if (text.isEmpty() || !seen.add(text.strip())) {
+                continue;
+            }
+            parts.add(text);
+        }
+        return String.join(StringConstant.DISPLAY_NAME_SEPARATOR, parts);
+    }
+
+    /**
      * Convert List<String> object to comma-separated string
      *
      * @param stringList List<String>
