@@ -847,7 +847,13 @@ public class PermissionServiceImpl implements PermissionService {
             return idList.stream().map(id -> new RecordAccess(id, Set.of(), Set.of(), held)).toList();
         }
         PermissionInfo pi = currentPi();
-        Set<String> owned = sfsCache == null ? Set.of() : sfsCache.setIdsOwnedBy(model);
+        // The model's own sets, and those of its owned children shown on its form (attachedTo) — a
+        // child row is reached through the record that owns it, so it follows that record's answer.
+        Set<String> owned = new java.util.TreeSet<>();
+        if (sfsCache != null) {
+            owned.addAll(sfsCache.setIdsOwnedBy(model));
+            owned.addAll(sfsCache.setIdsAttachedTo(model));
+        }
         List<Grant> readers = holders(pi, model, AccessType.READ);
         List<Grant> editors = holders(pi, model, AccessType.UPDATE);
         List<Grant> deleters = holders(pi, model, AccessType.DELETE);
@@ -895,14 +901,16 @@ public class PermissionServiceImpl implements PermissionService {
         PermissionInfo pi = currentPi();
         if (PermissionInfo.hasFullDataAccess(pi)) return new CreateAccess(Set.of());
         Set<String> hidden = new java.util.TreeSet<>(sfsCache.setIdsOwnedBy(model));
-        for (Grant g : holders(pi, model, AccessType.CREATE)) {
-            hidden.removeAll(g.sensitiveSets().getOrDefault(model, Set.of()));
-        }
+        hidden.addAll(sfsCache.setIdsAttachedTo(model));
+        List<Grant> creators = holders(pi, model, AccessType.CREATE);
+        hidden.removeIf(set -> creators.stream().anyMatch(g -> grantsSet(g, model, set)));
         return new CreateAccess(hidden);
     }
 
-    private static boolean grantsSet(Grant g, String model, String set) {
-        return g.sensitiveSets().getOrDefault(model, Set.of()).contains(set);
+    /** Whether the grant holds {@code set}, wherever the set's own model is — {@code model} when unknown. */
+    private boolean grantsSet(Grant g, String model, String set) {
+        String setModel = sfsCache == null ? null : sfsCache.modelOf(set);
+        return g.sensitiveSets().getOrDefault(setModel != null ? setModel : model, Set.of()).contains(set);
     }
 
     // ─────────────────────── write guard ───────────────────────

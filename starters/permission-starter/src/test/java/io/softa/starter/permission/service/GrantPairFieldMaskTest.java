@@ -431,4 +431,27 @@ class GrantPairFieldMaskTest {
 
         assertThat(query.getOrders().getFields()).containsExactly("ipaBasic");
     }
+
+    @Test
+    @DisplayName("record access: a child's set shown on the form follows the record that owns the child")
+    void anAttachedChildSetFollowsTheOwningRecord() {
+        // Banking lives on EmpBankAccount and is shown on the employee form; R1 grants it.
+        RoleGrant banking = role(1, Set.of(VIEW, UPDATE), ScopeType.MANAGED_DEPARTMENTS, null, false);
+        banking.setModelSensitiveFieldSetsMap(Map.of("EmpBankAccount", Set.of("employee-bank")));
+        pi.setRoleGrants(List.of(banking, role(3, Set.of(VIEW), ScopeType.ALL, null, false)));
+        unionOf(VIEW, UPDATE);
+        departmentHoldsBothAndNonEpHoldsOne();
+        SensitiveFieldSetCache sets = (SensitiveFieldSetCache) org.springframework.test.util.ReflectionTestUtils
+                .getField(service, "sfsCache");
+        when(sets.setIdsAttachedTo("Employee")).thenReturn(Set.of("employee-bank"));
+        when(sets.modelOf("employee-bank")).thenReturn("EmpBankAccount");
+        when(modelService.getIds(eq("Employee"), any(Filters.class))).thenAnswer(inv ->
+                inv.getArgument(1).toString().contains("departmentId") ? List.of(1L) : List.of(1L, 2L));
+
+        List<io.softa.framework.orm.domain.RecordAccess> access =
+                as(() -> service.getRecordAccess("Employee", List.of(1L, 2L)));
+
+        assertThat(access.get(0).hiddenSets()).doesNotContain("employee-bank");
+        assertThat(access.get(1).hiddenSets()).contains("employee-bank");
+    }
 }
