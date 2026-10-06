@@ -56,7 +56,7 @@ class JoinContactSpellingTest {
     private final JoinProofGuard proofGuard = mock(JoinProofGuard.class);
     private final UserInvitationServiceImpl realInvitationService = spy(new UserInvitationServiceImpl(
             accountService, identityService, mock(ApplicationEventPublisher.class), null, proofGuard,
-            "http://localhost"));
+            mock(VerificationCodeGuard.class), "http://localhost"));
 
     JoinContactSpellingTest() {
         ReflectionTestUtils.setField(profileService, "identityService", identityService);

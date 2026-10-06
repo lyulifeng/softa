@@ -230,6 +230,112 @@ public class LoginServiceImpl implements LoginService {
 
     @Override
     public void sendEmailCode(String email) {
+        withoutSayingWhy(() -> {
+            if (identifierLinked(email)) {
+                this.deliverEmailCode(email);
+            }
+        });
+    }
+
+    @Override
+    public void sendMobileCode(String mobile) {
+        withoutSayingWhy(() -> {
+            if (identifierLinked(mobile)) {
+                this.deliverMobileCode(mobile);
+            }
+        });
+    }
+
+    /**
+     * Whether any account can sign in with this identifier — asked without ever saying so.
+     *
+     * <p>A code sent to an address no identity holds reaches a mailbox or handset nobody reading
+     * this screen controls, and would be refused at the verify step anyway. So the send is skipped.
+     * What the caller is told does NOT change: both outcomes return normally, and the screen says
+     * the same thing either way.
+     *
+     * <p>That silence is the point. This endpoint is unauthenticated, so a distinct "no such
+     * account" answer is an oracle: ask it once per address and it returns a verified roster of the
+     * people an organisation employs — exactly the list a phishing campaign wants, and free,
+     * because nothing here costs the asker anything. Telling the truth on screen and telling it to
+     * an attacker are the same act; there is no way to do one without the other before sign-in.
+     *
+     * <p>Whoever simply mistyped is served by the message instead of by the response: it says a
+     * code is on its way IF the address is linked, and to check the address otherwise. They learn
+     * the same thing, one sentence later, and an enumerator learns nothing.
+     *
+     * <p>Three things have to stay identical for that to hold, and each is easy to lose:
+     *
+     * <ul>
+     *   <li><b>The send budget.</b> {@link #generateNumericCode} runs on both paths. Skipping it
+     *       for an unknown address would make the limiter itself the oracle: the eleventh ask of
+     *       one address is refused when it exists and accepted when it does not.</li>
+     *   <li><b>The elapsed time.</b> Both paths do the same work — the same lookup, the same
+     *       {@code beforeSend} and {@code store} — so neither comes back visibly sooner. Delivery
+     *       is the only extra step on the linked path, and it hands off to an async publish rather
+     *       than waiting on a mail or SMS gateway. Change that and the clock becomes a channel.</li>
+     *   <li><b>The status.</b> Neither path throws. A {@code BusinessException} on one of them
+     *       would restore the oracle however the message were worded.</li>
+     * </ul>
+     *
+     * <p>The lookup gets the TYPED form, as every other identifier lookup here does: a row seeded
+     * with the separators the person still writes is found too (see {@link LoginIdentifiers}).
+     */
+    private boolean identifierLinked(String identifier) {
+        boolean linked = identityService
+                .findByLoginIdentifier(LoginIdentifiers.typedForm(identifier)).isPresent();
+        if (!linked) {
+            // The same Redis work the linked path is about to do, so the two cost the same and
+            // take the same time. Loud here; the entry point is what keeps it from being heard.
+            this.generateNumericCode(LoginIdentifiers.normalize(identifier));
+        }
+        return linked;
+    }
+
+    /**
+     * Swallow whatever went wrong, so that WHY it went wrong is not an answer either.
+     *
+     * <p>Wrapped at the entry point rather than inside the delivery, and that placement is the whole
+     * point: {@code /join} calls the delivery directly and must stay loud. An invitee who cannot be
+     * sent a code has no enumeration to offer — the caller IS the invitation — and telling them
+     * nothing recreates exactly the dead end this change exists to remove.
+     *
+     * <p>The guard's own "too many requests" is the case that matters. It can only be reported on
+     * one of the two paths if it is reported at all, and reporting it there is the oracle one layer
+     * down: ask one address eleven times and it starts failing when it exists while an unknown one
+     * keeps answering "sent".
+     *
+     * <p>That is a real loss — a legitimate person hammering the button no longer learns they are
+     * over the limit. It costs them a wait; the alternative costs an employer its staff list. The
+     * cooldown the screen already shows is what tells them to wait, and it does not depend on this.
+     *
+     * <p>Logged at WARN, never returned: an outage has to stay diagnosable without becoming
+     * readable from outside.
+     */
+    private void withoutSayingWhy(Runnable attempt) {
+        try {
+            attempt.run();
+        } catch (BusinessException e) {
+            // The expected one: over the limit, or a contact more than one account holds. Routine.
+            log.debug("Verification code request refused; answered uniformly anyway: {}", e.getMessage());
+        } catch (RuntimeException e) {
+            // Everything else is a fault, and it has to stay loud SOMEWHERE. Not in the response:
+            // publishing happens only on the linked path, so a broker failure surfacing here would
+            // say "this address exists" as plainly as the message this method exists to withhold.
+            log.error("Verification code request failed; answered uniformly anyway.", e);
+        }
+    }
+
+    /**
+     * Send a code to an address that has ALREADY been established as the right one to send to —
+     * by a login identifier that resolves, or by an invitation that named it.
+     *
+     * <p>Separate from {@link #sendEmailCode} because /join legitimately sends to someone who has
+     * no identity yet: the invitation is the authority there, and the address came from the
+     * invitation rather than from the caller, so the linked check would skip every first-time
+     * joiner and the code would never go out.
+     */
+    private void deliverEmailCode(String email) {
         // Normalised once, here, and the normalised value is what the code is keyed by AND sent to:
         // the verify step normalises its identifier the same way, so the two meet on one key
         // however the person spelt the address on either screen.
@@ -243,8 +349,8 @@ public class LoginServiceImpl implements LoginService {
                 Map.of("code", code, "expiryMinutes", CODE_EXPIRY_MINUTES), null, MessageScope.PLATFORM));
     }
 
-    @Override
-    public void sendMobileCode(String mobile) {
+    /** The mobile twin of {@link #deliverEmailCode}; see there for why it is separate. */
+    private void deliverMobileCode(String mobile) {
         mobile = LoginIdentifiers.normalize(mobile);
         String code = this.generateNumericCode(mobile);
         eventPublisher.publishEvent(new SmsRequestMessage(
@@ -463,10 +569,12 @@ public class LoginServiceImpl implements LoginService {
         // The address never crosses the wire in either direction: the caller sends a token, the
         // invitation service resolves it, and the code goes out to what IT stored.
         String address = invitationService.resolveJoinChannel(rawToken, channel);
+        // deliver*, not send*: the invitee has no identity yet — that is what joining is — so the
+        // linked check the public entry points carry would silently skip every first-time joiner.
         if ("mobile".equalsIgnoreCase(channel)) {
-            this.sendMobileCode(address);
+            this.deliverMobileCode(address);
         } else {
-            this.sendEmailCode(address);
+            this.deliverEmailCode(address);
         }
     }
 

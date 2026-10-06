@@ -203,7 +203,7 @@ class RevivedJoinTest {
     private UserInvitationServiceImpl realInvitationServiceFor(UserAccount account) {
         UserInvitationServiceImpl real = spy(new UserInvitationServiceImpl(
                 accountService, identityService, mock(ApplicationEventPublisher.class), null, proofGuard,
-                "http://localhost"));
+                mock(VerificationCodeGuard.class), "http://localhost"));
         UserInvitation invitation = new UserInvitation();
         invitation.setId(55L);
         invitation.setUserId(account.getId());

@@ -73,6 +73,8 @@ public class UserInvitationServiceImpl extends EntityServiceImpl<UserInvitation,
     private final TenantInfoService tenantInfoService;
     /** The "code was passed" proof that confirmJoin demands and spends. */
     private final JoinProofGuard proofGuard;
+    /** Send limits for one-time codes. A reset link spends the same budget — see forgotPassword. */
+    private final VerificationCodeGuard codeGuard;
     private final String frontendBaseUrl;
 
     public UserInvitationServiceImpl(UserAccountService accountService,
@@ -80,12 +82,14 @@ public class UserInvitationServiceImpl extends EntityServiceImpl<UserInvitation,
                                      ApplicationEventPublisher eventPublisher,
                                      @Autowired(required = false) TenantInfoService tenantInfoService,
                                      JoinProofGuard proofGuard,
+                                     VerificationCodeGuard codeGuard,
                                      @Value("${app.frontend-base-url:http://localhost:3000}") String frontendBaseUrl) {
         this.accountService = accountService;
         this.identityService = identityService;
         this.eventPublisher = eventPublisher;
         this.tenantInfoService = tenantInfoService;
         this.proofGuard = proofGuard;
+        this.codeGuard = codeGuard;
         this.frontendBaseUrl = frontendBaseUrl;
     }
 
@@ -241,6 +245,23 @@ public class UserInvitationServiceImpl extends EntityServiceImpl<UserInvitation,
         if (StringUtils.isBlank(email)) {
             return;
         }
+        // Asked BEFORE anything is looked up, so its refusal is the same answer for an address that
+        // exists and one that does not: it is keyed by what the caller typed, never by what was found.
+        //
+        // This was the one unauthenticated identifier entry point with no send limit. The code paths
+        // acquired one; this one issues a link instead and was not revisited. Unmetered it mails a
+        // real person a real reset link as fast as it is asked to, and it caps nothing for an
+        // attacker timing the two branches — issuing mints a token and writes a row, finding nothing
+        // returns after a single query, and the difference is only worth measuring if you may keep
+        // asking.
+        //
+        // Deliberately the SAME counter the login codes use rather than a prefix of its own: ten
+        // sends a day to one address is the budget for reaching that person at all, however the
+        // reaching is dressed. The two therefore compete — a day spent on login codes leaves none for
+        // a reset, and either route puts the address into the other's 60-second cooldown. For someone
+        // who genuinely cannot get in, ten attempts across both routes is already past the point
+        // where the answer is their HR, which is what the screen tells them.
+        codeGuard.beforeSend(LoginIdentifiers.normalize(email));
         Optional<ResetTarget> target = resolveResetTarget(email);
         if (target.isEmpty()) {
             // One log line and one (empty) response for "unknown", "no password yet", "no active
