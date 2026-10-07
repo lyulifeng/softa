@@ -1,6 +1,7 @@
 package io.softa.starter.es.controller;
 
 import java.io.Serializable;
+import java.util.List;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.Parameter;
 import io.swagger.v3.oas.annotations.Parameters;
@@ -87,6 +88,48 @@ public class ChangeLogController {
         order = Orders.ASC.equals(StringUtils.upperCase(order)) ? Orders.ASC : Orders.DESC;
 
         page = changeLogService.getChangeLog(modelName, id, page, order, Boolean.TRUE.equals(includeCreation));
+        return ApiResponse.success(page);
+    }
+
+    /**
+     * One record's history together with that of the rows its named relations hold.
+     *
+     * @param modelName model name
+     * @param id primary key id
+     * @param relations one-to-one and one-to-many fields of the model whose rows' history belongs
+     *                  with the record's; empty asks for the record alone
+     * @param pageNumber current page number, default is 1
+     * @param pageSize single page quantity, default is 50
+     * @param order sort rule based on change time, default is reverse order, only support DESC, ASC string
+     * @param includeCreation whether to include data at creation time, default is false
+     * @param dataMask whether to desensitize, default is true
+     * @return a page of the changeLog list, across every model involved
+     */
+    @Operation(description = "Read the change records of one record and of the rows its named one-to-one " +
+            "and one-to-many relations hold, as one page in reverse order by change time by default.")
+    @GetMapping("/getRecordChangeLog")
+    @Parameters({
+            @Parameter(name = "modelName", description = "Model name"),
+            @Parameter(name = "id", description = "Primary key id"),
+            @Parameter(name = "relations", description = "One-to-one / one-to-many field names, comma separated"),
+            @Parameter(name = "pageNumber", description = "Current page number, default 1"),
+            @Parameter(name = "pageSize", description = "Single page quantity, default 50"),
+            @Parameter(name = "order", description = "DESC or ASC sort rule based on changeTime, default is DESC."),
+            @Parameter(name = "includeCreation", description = "Whether to include data at creation time, default is false."),
+            @Parameter(name = "dataMask", description = "Whether to desensitize, default is true.")
+    })
+    public ApiResponse<Page<ChangeLog>> getRecordChangeLog(@RequestParam String modelName,
+                                                           @RequestParam Serializable id,
+                                                           @RequestParam(required = false) List<String> relations,
+                                                           @RequestParam(required = false) Integer pageNumber,
+                                                           @RequestParam(required = false) Integer pageSize,
+                                                           @RequestParam(required = false) String order,
+                                                           @RequestParam(required = false) Boolean includeCreation,
+                                                           @RequestParam(required = false) Boolean dataMask) {
+        Page<ChangeLog> page = this.initPageAndContext(pageNumber, pageSize, dataMask);
+        order = Orders.ASC.equals(StringUtils.upperCase(order)) ? Orders.ASC : Orders.DESC;
+        page = changeLogService.getRecordChangeLog(modelName, id, relations, page, order,
+                Boolean.TRUE.equals(includeCreation));
         return ApiResponse.success(page);
     }
 

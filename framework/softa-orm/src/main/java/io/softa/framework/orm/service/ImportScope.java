@@ -1,6 +1,7 @@
 package io.softa.framework.orm.service;
 
 import java.util.NoSuchElementException;
+import java.util.function.Supplier;
 
 /**
  * Marks the writes of a file import, for messages that should speak to the person who uploaded the
@@ -26,5 +27,10 @@ public final class ImportScope {
     /** Run the action as a file import's writes. */
     public static void run(Runnable action) {
         ScopedValue.where(ACTIVE, Boolean.TRUE).run(action);
+    }
+
+    /** Run the action as a file import's writes and return its result. */
+    public static <T> T call(Supplier<T> action) {
+        return ScopedValue.where(ACTIVE, Boolean.TRUE).call(action::get);
     }
 }

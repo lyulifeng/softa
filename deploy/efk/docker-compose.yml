@@ -102,6 +102,18 @@ services:
             --data-binary @/init/changelog-index.json
           echo "index $${CHANGELOG_INDEX} created"
         fi
+        # Fields added to the mapping after the index first existed. PUT
+        # /<index>/_mapping is additive and idempotent — it adds what is
+        # missing and accepts what is already mapped the same way — so it runs
+        # on every start and an index created before a field was introduced
+        # catches up without a reindex. Logs written before then simply do not
+        # carry the field. Kept apart from changelog-index.json because that
+        # file is a create-index body and this one is a mapping body.
+        curl -fsS -X PUT \
+          -H "Content-Type: application/json" \
+          "http://elasticsearch:9200/$${CHANGELOG_INDEX}/_mapping" \
+          --data-binary @/init/changelog-index-additions.json
+        echo "mapping of $${CHANGELOG_INDEX} up to date"
     restart: "no"
 
   kibana:

@@ -7,6 +7,7 @@ import org.junit.jupiter.api.Test;
 import io.softa.framework.base.utils.JsonUtils;
 import io.softa.framework.orm.domain.Filters;
 
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
 
@@ -26,6 +27,18 @@ class FiltersDeserializerTest {
         String json = JsonUtils.objectToString(modelFilters);
         log.info("json: {}", json);
         assertNotNull(json);
+    }
+
+    /**
+     * A string value with quotes and backslashes survives a serialize and deserialize round trip
+     */
+    @Test
+    void testSerializerEscapesStringValue() {
+        ModelFilters modelFilters = new ModelFilters();
+        modelFilters.setFilters(new Filters().eq("name", "say \"hi\"\\ok"));
+        String json = JsonUtils.objectToString(modelFilters);
+        ModelFilters parsed = JsonUtils.stringToObject(json, ModelFilters.class);
+        assertEquals(modelFilters.getFilters(), parsed.getFilters());
     }
 
     /** null filters value */

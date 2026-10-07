@@ -82,7 +82,14 @@ public class SelectBuilder extends BaseBuilder implements SqlClauseBuilder {
         if (flexQuery.isAcrossTimeline()
                 && ModelManager.isTimelineModel(mainModelName)
                 && ConvertType.EXPAND_TYPES.contains(flexQuery.getConvertType())) {
-            sqlWrapper.select(appendTimelineModelFields(storedFields));
+            // Not for the keep-id field. A OneToMany expansion reads its child rows with the back
+            // reference kept as a raw id, to group them by parent; no processor expands that field,
+            // so display columns joined in for it were never collected — they reached the caller as
+            // `parentId.name` keys on every child row, and cost a LEFT JOIN on each read.
+            String keepIdField = flexQuery.getKeepIdField();
+            List<String> joinedFields = keepIdField == null ? storedFields
+                    : storedFields.stream().filter(f -> !f.equals(keepIdField)).toList();
+            sqlWrapper.select(appendTimelineModelFields(joinedFields));
         }
     }
 

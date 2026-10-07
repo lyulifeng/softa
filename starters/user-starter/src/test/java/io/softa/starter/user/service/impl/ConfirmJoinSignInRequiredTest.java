@@ -65,7 +65,7 @@ class ConfirmJoinSignInRequiredTest {
     /** The real invitation service, so the row is bound and activated the way production does it. */
     private final UserInvitationServiceImpl invitationService = spy(new UserInvitationServiceImpl(
             accountService, identityService, mock(ApplicationEventPublisher.class), null, proofGuard,
-            "http://localhost"));
+            mock(VerificationCodeGuard.class), "http://localhost"));
     private final LoginServiceImpl loginService = new LoginServiceImpl();
 
     ConfirmJoinSignInRequiredTest() {

@@ -68,7 +68,7 @@ class JoinProofTest {
     private final LoginServiceImpl loginService = new LoginServiceImpl();
     private final UserInvitationServiceImpl realInvitationService = spy(new UserInvitationServiceImpl(
             accountService, identityService, mock(ApplicationEventPublisher.class), null, proofGuard,
-            "http://localhost"));
+            mock(VerificationCodeGuard.class), "http://localhost"));
 
     private final UserAccount revived = new UserAccount();
     private final UserIdentity ada = new UserIdentity();

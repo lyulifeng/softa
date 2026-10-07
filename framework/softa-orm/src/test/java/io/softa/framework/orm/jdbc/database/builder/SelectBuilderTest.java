@@ -8,6 +8,7 @@ import org.springframework.test.util.ReflectionTestUtils;
 
 import io.softa.framework.orm.constant.ModelConstant;
 import io.softa.framework.orm.domain.FlexQuery;
+import io.softa.framework.orm.enums.ConvertType;
 import io.softa.framework.orm.enums.FieldType;
 import io.softa.framework.orm.jdbc.database.SqlWrapper;
 import io.softa.framework.orm.meta.MetaField;
@@ -54,6 +55,35 @@ class SelectBuilderTest {
 
             assertFalse(flexQuery.getFields().contains(ModelConstant.SLICE_ID));
             assertTrue(flexQuery.getFields().contains(ModelConstant.ID));
+        }
+    }
+
+    @Test
+    void theKeepIdFieldGetsNoDisplayJoinOnAnAcrossTimelineRead() {
+        // A OneToMany expansion reads its child rows with the back reference kept as a raw id, to
+        // group them by parent; nothing expands that field afterwards. Joining in its display columns
+        // left them on every child row as `parentId.name`, and added a LEFT JOIN to each read.
+        try (MockedStatic<ModelManager> mm = Mockito.mockStatic(ModelManager.class)) {
+            stubModel(mm, true);
+            MetaField parentRef = new MetaField();
+            ReflectionTestUtils.setField(parentRef, "modelName", MODEL);
+            ReflectionTestUtils.setField(parentRef, "fieldName", "parentId");
+            ReflectionTestUtils.setField(parentRef, "columnName", "parent_id");
+            ReflectionTestUtils.setField(parentRef, "fieldType", FieldType.MANY_TO_ONE);
+            ReflectionTestUtils.setField(parentRef, "relatedModel", "ParentInfo");
+            mm.when(() -> ModelManager.getModelField(MODEL, "parentId")).thenReturn(parentRef);
+            mm.when(() -> ModelManager.existField(MODEL, "parentId")).thenReturn(true);
+            mm.when(() -> ModelManager.isStored(MODEL, "parentId")).thenReturn(true);
+            mm.when(() -> ModelManager.isTimelineModel("ParentInfo")).thenReturn(true);
+
+            FlexQuery flexQuery = new FlexQuery();
+            flexQuery.setFields(List.of("name", "parentId"));
+            flexQuery.acrossTimelineData();
+            flexQuery.setConvertType(ConvertType.REFERENCE);
+            flexQuery.setKeepIdField("parentId");
+            new SelectBuilder(new SqlWrapper(MODEL), flexQuery).build();
+
+            mm.verify(() -> ModelManager.getModelDisplayName("ParentInfo"), Mockito.never());
         }
     }
 
