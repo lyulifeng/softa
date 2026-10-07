@@ -232,7 +232,26 @@ class ChangeLogRecordHistoryTest {
 
         assertThatThrownBy(() ->
                 service.historyParts("Employee", EMPLOYEE, List.of(), List.of("EmpAccessCard.companyId")))
-                .hasMessageContaining("not a many-to-one to Employee");
+                .hasMessageContaining("not a many-to-one or one-to-one to Employee");
+    }
+
+    @Test
+    void findsAOneToOneThatPointsAtTheRecordByItsRow() {
+        // An employee's login identity points at them one-to-one: no reference in its logs, and no
+        // deleted history to lose — its current row is the whole answer.
+        MetaModel plain = mock(MetaModel.class);
+        when(plain.isTimeline()).thenReturn(false);
+        models.when(() -> ModelManager.getModel("EmpLogin")).thenReturn(plain);
+        models.when(() -> ModelManager.getModelFieldOrNull("EmpLogin", "employeeId"))
+                .thenReturn(relation("employeeId", FieldType.ONE_TO_ONE, "Employee", null));
+        when(modelService.getIds(eq("EmpLogin"), any(Filters.class), org.mockito.ArgumentMatchers.anyInt()))
+                .thenReturn(List.of(601L));
+
+        ChangeLogServiceImpl.HistoryPart login =
+                service.historyParts("Employee", EMPLOYEE, List.of(), List.of("EmpLogin.employeeId")).get(1);
+
+        assertThat(login.model()).isEqualTo("EmpLogin");
+        assertThat(login.rowIds()).containsExactly("601");
     }
 
     @Test

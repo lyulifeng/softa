@@ -76,8 +76,9 @@ model the reader cannot read is left out.
 `referencing` (comma separated `Model.field`) reaches rows the model has no
 relation field for: every row of another model whose many-to-one `field`
 points at the record, matched the same way as a one-to-many — so rows since
-deleted stay in the history. Only a many-to-one to the record's own model is
-accepted.
+deleted stay in the history. A one-to-one to the record is accepted too and
+matched by its current row (logs carry references for many-to-one fields
+only). Only a field to the record's own model is accepted.
 
 Fields the reader may not see are taken out of every result: they are removed
 from the payloads, an UPDATE that wrote nothing else is not returned, and a

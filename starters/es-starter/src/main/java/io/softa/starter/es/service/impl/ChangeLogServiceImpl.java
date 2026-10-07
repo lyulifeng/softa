@@ -150,7 +150,9 @@ public class ChangeLogServiceImpl extends ESServiceImpl<ChangeLog> implements Ch
      * <p>For rows the record's model has no relation field to reach — a grant that points at a
      * person through a many-to-one, on a model the person's own does not list. Asked like a
      * one-to-many: by the reference every recent log carries, so a deleted row is found, and by
-     * the rows that point at the record now.
+     * the rows that point at the record now. A one-to-one is accepted too — the person's login
+     * identity — and found by its row alone: logs carry references for many-to-one fields only,
+     * and a row that lives and dies with the record has no deleted history to lose.
      */
     List<HistoryPart> historyParts(String modelName, Serializable id, List<String> relations,
                                    List<String> referencing) {
@@ -187,9 +189,10 @@ public class ChangeLogServiceImpl extends ESServiceImpl<ChangeLog> implements Ch
             Assert.notNull(field, "Model {0} has no field {1}.", model, fieldName);
             // Only a reference to this record's model: anything else would let one record's
             // history read the logs of rows that have nothing to do with it.
-            Assert.isTrue(FieldType.MANY_TO_ONE.equals(field.getFieldType())
+            Assert.isTrue((FieldType.MANY_TO_ONE.equals(field.getFieldType())
+                            || FieldType.ONE_TO_ONE.equals(field.getFieldType()))
                             && modelName.equals(field.getRelatedModel()),
-                    "Field {0}.{1} is not a many-to-one to {2}.", model, fieldName, modelName);
+                    "Field {0}.{1} is not a many-to-one or one-to-one to {2}.", model, fieldName, modelName);
             if (mayRead(model)) {
                 parts.add(this.pointingPart(model, fieldName, id));
             }
