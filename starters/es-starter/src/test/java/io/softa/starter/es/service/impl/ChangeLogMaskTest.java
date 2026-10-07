@@ -64,4 +64,24 @@ class ChangeLogMaskTest {
         assertThat(hidden.getDataBeforeChange()).doesNotContainKey("salary").containsEntry("name", "C");
         assertThat(hidden.getDataAfterChange()).doesNotContainKey("salary").containsEntry("name", "D");
     }
+
+    @Test
+    void everyReadPathMasksPerRecordBeforeDroppingBlockedFields() {
+        PermissionService permissions = mock(PermissionService.class);
+        doAnswer(inv -> {
+            List<Map<String, Object>> rows = inv.getArgument(1);
+            rows.forEach(row -> row.put("salary", null));
+            return null;
+        }).when(permissions).maskRows(eq("Employee"), anyList());
+        ChangeLogServiceImpl service = new ChangeLogServiceImpl();
+        ReflectionTestUtils.setField(service, "permissionService", permissions);
+
+        ChangeLog hidden = update("2", values("salary", 300, "name", "C"), values("salary", 400, "name", "D"));
+
+        List<ChangeLog> visible = ReflectionTestUtils.invokeMethod(service, "visibleToReader", List.of(hidden));
+
+        assertThat(visible).hasSize(1);
+        assertThat(visible.getFirst().getDataBeforeChange()).doesNotContainKey("salary");
+        assertThat(visible.getFirst().getDataAfterChange()).doesNotContainKey("salary").containsEntry("name", "D");
+    }
 }

@@ -79,11 +79,18 @@ public class ChangeLogServiceImpl extends ESServiceImpl<ChangeLog> implements Ch
         super.searchPage(ChangeLogDocument.class, filters, orders, docPage);
         page.setTotalCount(docPage.getTotalCount());
         List<ChangeLog> logs = docPage.getRows().stream().map(ChangeLogDocument::toChangeLog).toList();
-        // Per record first, then the fields hidden on every record: an update left with nothing the
-        // reader may see is then dropped whole by withoutBlockedFields.
-        maskInaccessibleFields(logs);
-        page.setRows(withoutBlockedFields(logs));
+        page.setRows(visibleToReader(logs));
         return page;
+    }
+
+    /**
+     * The logs as the reader may see them — what every read of the log returns. Per record first,
+     * then the fields hidden on every record: an update left with nothing the reader may see is then
+     * dropped whole by {@link #withoutBlockedFields}.
+     */
+    private List<ChangeLog> visibleToReader(List<ChangeLog> logs) {
+        maskInaccessibleFields(logs);
+        return withoutBlockedFields(logs);
     }
 
     /**
@@ -124,7 +131,7 @@ public class ChangeLogServiceImpl extends ESServiceImpl<ChangeLog> implements Ch
         SearchHits<ChangeLogDocument> hits =
                 esOperations.search(query, ChangeLogDocument.class, IndexCoordinates.of(getIndexName()));
         page.setTotalCount(hits.getTotalHits());
-        page.setRows(withoutBlockedFields(hits.getSearchHits().stream()
+        page.setRows(visibleToReader(hits.getSearchHits().stream()
                 .map(SearchHit::getContent).map(ChangeLogDocument::toChangeLog).toList()));
         return this.processChangeLogData(modelName, page, ConvertType.REFERENCE);
     }
