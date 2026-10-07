@@ -479,9 +479,20 @@ public class ImportServiceImpl implements ImportService {
      * template with no columns.
      */
     private Optional<ImportTemplate> loadTemplate(Long templateId, SubQueries subQueries) {
+        return pastRowScope(() -> importTemplateService.getById(templateId, subQueries));
+    }
+
+    /** The template's columns in sequence, read past the caller's row scope for the reason above. */
+    private List<ImportTemplateField> loadTemplateFields(Long templateId) {
+        Filters filters = new Filters().eq(ImportTemplateField::getTemplateId, templateId);
+        Orders orders = Orders.ofAsc(ImportTemplateField::getSequence);
+        return pastRowScope(() -> importTemplateFieldService.searchList(new FlexQuery(filters, orders)));
+    }
+
+    private static <T> T pastRowScope(ScopedValue.CallableOp<T, RuntimeException> read) {
         Context ctx = ContextHolder.cloneContext();
         ctx.setSkipPermissionCheck(true);
-        return ContextHolder.callWith(ctx, () -> importTemplateService.getById(templateId, subQueries));
+        return ContextHolder.callWith(ctx, read);
     }
 
     /**
@@ -493,9 +504,7 @@ public class ImportServiceImpl implements ImportService {
     public ImportTemplateDTO getImportTemplateDTO(ImportTemplate importTemplate, Map<String, Object> env) {
         ImportTemplateDTO importTemplateDTO = this.convertToImportTemplateDTO(importTemplate, env);
         // Construct the headers order by sequence of the export fields
-        Filters filters = new Filters().eq(ImportTemplateField::getTemplateId, importTemplate.getId());
-        Orders orders = Orders.ofAsc(ImportTemplateField::getSequence);
-        List<ImportTemplateField> importTemplateFields = importTemplateFieldService.searchList(new FlexQuery(filters, orders));
+        List<ImportTemplateField> importTemplateFields = loadTemplateFields(importTemplate.getId());
         importTemplateFields.forEach(importTemplateField -> {
             ImportFieldDTO importFieldDTO = convertToImportFieldDTO(importTemplateDTO, importTemplateField);
             importTemplateDTO.addImportField(importFieldDTO);
