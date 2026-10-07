@@ -63,6 +63,8 @@ public class ChangeLogServiceImpl extends ESServiceImpl<ChangeLog> implements Ch
         super.searchPage(ChangeLogDocument.class, filters, orders, docPage);
         page.setTotalCount(docPage.getTotalCount());
         page.setRows(docPage.getRows().stream().map(ChangeLogDocument::toChangeLog).toList());
+        // Every read of the log passes through here, so this is where its values are masked.
+        maskInaccessibleFields(page.getRows());
         return page;
     }
 
@@ -79,7 +81,6 @@ public class ChangeLogServiceImpl extends ESServiceImpl<ChangeLog> implements Ch
         // Check if current user has access to the model and id
         permissionService.checkIdsFieldsAccess(modelName, Collections.singletonList(id), null, READ);
         page = this.getRowChangeLog(modelName, id, page, order, includeCreation);
-        maskInaccessibleFields(modelName, page.getRows());
         return this.processChangeLogData(modelName, page, ConvertType.REFERENCE);
     }
 
@@ -101,7 +102,6 @@ public class ChangeLogServiceImpl extends ESServiceImpl<ChangeLog> implements Ch
         // Check if current user has access to the timeline model and business id
         permissionService.checkIdsFieldsAccess(modelName, ids, null, READ);
         this.getRowChangeLog(modelName, sliceId, page, order, includeCreation);
-        maskInaccessibleFields(modelName, page.getRows());
         return this.processChangeLogData(modelName, page, ConvertType.REFERENCE);
     }
 
@@ -118,7 +118,6 @@ public class ChangeLogServiceImpl extends ESServiceImpl<ChangeLog> implements Ch
         Filters filters = Filters.and(flexQuery.getFilters(), new Filters().eq(ChangeLog::getModel, model));
         Orders orders = flexQuery.getOrders();
         this.searchPage(filters, orders, page);
-        maskInaccessibleFields(model, page.getRows());
         ConvertType convertType = flexQuery.getConvertType();
         if (ConvertType.REFERENCE.equals(convertType) || ConvertType.DISPLAY.equals(convertType)) {
             // Enhance the field values in before and after data
@@ -183,38 +182,55 @@ public class ChangeLogServiceImpl extends ESServiceImpl<ChangeLog> implements Ch
 
     /**
      * Drop from each entry the fields the caller may not see on that record — its before and after
-     * values alike, so the entry neither shows the value nor what it was changed from.
+     * values alike, so the entry neither shows the value nor what it was changed from. Each entry is
+     * judged as a row of its own model, so a page mixing models is masked correctly.
      *
      * <p>Judged per record, exactly as a read of the record would be: the values are masked by the
      * permission service as rows of the model, keyed by the record's id. A field hidden on either side
      * is removed from both.
      */
-    private void maskInaccessibleFields(String modelName, List<ChangeLog> changeLogs) {
+    private void maskInaccessibleFields(List<ChangeLog> changeLogs) {
+        // One mask call per model for the whole page, not one per entry: each call may ask which of
+        // the rows the caller's roles reach.
+        Map<String, List<ChangeLog>> byModel = new LinkedHashMap<>();
         for (ChangeLog changeLog : changeLogs) {
-            List<Map<String, Object>> sides = new ArrayList<>(2);
-            if (changeLog.getDataBeforeChange() != null) sides.add(changeLog.getDataBeforeChange());
-            if (changeLog.getDataAfterChange() != null) sides.add(changeLog.getDataAfterChange());
-            if (sides.isEmpty()) continue;
-            // Masked as copies carrying the record's id, so the stored maps are only ever pruned.
-            List<Map<String, Object>> masked = new ArrayList<>(sides.size());
-            for (Map<String, Object> side : sides) {
-                Map<String, Object> copy = new HashMap<>(side);
-                copy.putIfAbsent(ModelConstant.ID, changeLog.getRowId());
-                masked.add(copy);
-            }
-            permissionService.maskRows(modelName, masked);
-            Set<String> hidden = new HashSet<>();
-            for (int i = 0; i < sides.size(); i++) {
-                for (Map.Entry<String, Object> entry : sides.get(i).entrySet()) {
-                    if (entry.getValue() != null && masked.get(i).get(entry.getKey()) == null) {
-                        hidden.add(entry.getKey());
-                    }
-                }
-            }
-            if (!hidden.isEmpty()) {
-                sides.forEach(side -> side.keySet().removeAll(hidden));
+            if (changeLog.getModel() != null) {
+                byModel.computeIfAbsent(changeLog.getModel(), k -> new ArrayList<>()).add(changeLog);
             }
         }
+        byModel.forEach((modelName, logs) -> {
+            List<List<Map<String, Object>>> sidesByLog = new ArrayList<>(logs.size());
+            List<Map<String, Object>> masked = new ArrayList<>();
+            for (ChangeLog changeLog : logs) {
+                List<Map<String, Object>> sides = new ArrayList<>(2);
+                if (changeLog.getDataBeforeChange() != null) sides.add(changeLog.getDataBeforeChange());
+                if (changeLog.getDataAfterChange() != null) sides.add(changeLog.getDataAfterChange());
+                sidesByLog.add(sides);
+                // Masked as copies carrying the record's id, so the stored maps are only ever pruned.
+                for (Map<String, Object> side : sides) {
+                    Map<String, Object> copy = new HashMap<>(side);
+                    copy.putIfAbsent(ModelConstant.ID, changeLog.getRowId());
+                    masked.add(copy);
+                }
+            }
+            if (masked.isEmpty()) return;
+            permissionService.maskRows(modelName, masked);
+            int next = 0;
+            for (List<Map<String, Object>> sides : sidesByLog) {
+                Set<String> hidden = new HashSet<>();
+                for (Map<String, Object> side : sides) {
+                    Map<String, Object> maskedSide = masked.get(next++);
+                    for (Map.Entry<String, Object> entry : side.entrySet()) {
+                        if (entry.getValue() != null && maskedSide.get(entry.getKey()) == null) {
+                            hidden.add(entry.getKey());
+                        }
+                    }
+                }
+                if (!hidden.isEmpty()) {
+                    sides.forEach(side -> side.keySet().removeAll(hidden));
+                }
+            }
+        });
     }
 
 }

@@ -57,7 +57,7 @@ class ChangeLogMaskTest {
         // A clear: the old value is the one that must not leak.
         ChangeLog hidden = update("2", values("salary", 300, "name", "C"), values("salary", null, "name", "D"));
 
-        ReflectionTestUtils.invokeMethod(service, "maskInaccessibleFields", "Employee", List.of(shown, hidden));
+        ReflectionTestUtils.invokeMethod(service, "maskInaccessibleFields", List.of(shown, hidden));
 
         assertThat(shown.getDataBeforeChange()).containsEntry("salary", 100);
         assertThat(shown.getDataAfterChange()).containsEntry("salary", 200);
