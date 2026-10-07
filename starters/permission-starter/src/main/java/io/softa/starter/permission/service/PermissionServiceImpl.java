@@ -1117,7 +1117,8 @@ public class PermissionServiceImpl implements PermissionService {
      *       entry, a cron log. On CREATE the ids were minted by this very call, so there is no
      *       pre-existing row to expose and no rule could ever put them "in scope" — the check would be a
      *       wall rather than a control. What authorized the write is the action that caused it, checked
-     *       where it happened. Reading, updating and deleting such a row by id still fail closed;</li>
+     *       where it happened. Reading, updating and deleting such a row by id follow the scope the model
+     *       declares for every caller (its own rows, for a history), and fail closed without one;</li>
      *   <li>anything else — a one-to-many child, or a model with an anchor nobody granted — is its
      *       ordinary row range, which already resolves to "the back-reference lands on an in-range
      *       parent" or to nothing.</li>
@@ -1138,7 +1139,16 @@ public class PermissionServiceImpl implements PermissionService {
             return null;
         }
         if (kind == null && !hasForwardAnchor(model)) {
-            return AccessType.CREATE.equals(accessType) ? null : ScopeRuleCompiler.matchNone();
+            if (AccessType.CREATE.equals(accessType)) {
+                return null;
+            }
+            // A model declaring a default scope says who its rows belong to — an import history row to
+            // whoever ran the import. Its own rows can then be named by id: the import that ran under
+            // the caller has to write its outcome back, and refusing that left the run "Processing".
+            ScopeType declared = declaredScope(model);
+            return declared == null
+                    ? ScopeRuleCompiler.matchNone()
+                    : scopeCompiler.compile(List.of(ruleOf(declared)), model);
         }
         return grantScope(g, model);
     }
