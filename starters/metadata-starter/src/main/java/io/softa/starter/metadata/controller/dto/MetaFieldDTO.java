@@ -49,6 +49,13 @@ public class MetaFieldDTO {
     private OnDelete onDelete;
 
     /**
+     * Whether this MANY_TO_ONE is the parent its model's rows are filed under — the level a track
+     * belongs to. A form that edits a reference to this model next to a reference to that parent
+     * narrows the first by the second, the same pairing an import template's dropdowns make.
+     */
+    private Boolean cascadeParent;
+
+    /**
      * Countries this field applies to (ISO 3166-1 alpha-2); empty or null = every country.
      *
      * <p>Rides along with the metadata the client already fetches, which is the point of keeping the
