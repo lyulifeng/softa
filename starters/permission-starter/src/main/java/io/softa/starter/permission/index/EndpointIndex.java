@@ -129,6 +129,7 @@ public class EndpointIndex {
             // per-model /<Model>/<suffix> shape the CRUD actions use.
             Map.entry("export", List.of(
                     "POST /export/dynamicExport", "POST /export/exportByTemplate",
+                    "POST /export/countExportable",
                     "POST /ExportTemplate/listByModel", "POST /ExportHistory/myExportHistory")),
             Map.entry("import", List.of(
                     "POST /import/dynamicImport", "POST /import/importByTemplate",
