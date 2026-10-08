@@ -178,7 +178,7 @@ class EndpointIndexTest {
                 "POST /EmpTransferRequest/createOne", "POST /EmpTransferRequest/approve")));
 
         assertThat(idx.lookup("/EmpTransferRequest/getCreateAccess", "GET")).containsExactly("employee.transfer");
-        assertThat(idx.lookup("/EmpTransferRequest/getRecordAccess", "POST")).isEmpty();
+        assertThat(idx.lookup("/EmpTransferRequest/getById", "POST")).isEmpty();
         assertThat(idx.lookup("/EmpTransferRequest/updateOne", "POST")).isEmpty();
     }
 
@@ -187,5 +187,18 @@ class EndpointIndexTest {
         EndpointIndex idx = build(List.of(explicit("doc.view", "POST /Doc/getById")));
 
         assertThat(idx.lookup("/Doc/getRecordAccess", "POST")).containsExactly("doc.view");
+    }
+
+    /** A list read and a read by id are one view under one row scope. */
+    @Test
+    void anExplicitListReadAlsoGrantsTheReadsById() {
+        EndpointIndex idx = build(List.of(explicit("employee.transfer",
+                "POST /EmpTransferRequest/createOne", "POST /EmpTransferRequest/searchList")));
+
+        assertThat(idx.lookup("/EmpTransferRequest/getById", "POST")).containsExactly("employee.transfer");
+        assertThat(idx.lookup("/EmpTransferRequest/getByIds", "POST")).containsExactly("employee.transfer");
+        assertThat(idx.lookup("/EmpTransferRequest/getRecordAccess", "POST")).containsExactly("employee.transfer");
+        assertThat(idx.lookup("/EmpTransferRequest/updateOne", "POST")).isEmpty();
+        assertThat(idx.lookup("/EmpTransferRequest/deleteById", "POST")).isEmpty();
     }
 }

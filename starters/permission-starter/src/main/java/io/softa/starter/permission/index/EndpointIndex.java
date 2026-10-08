@@ -284,9 +284,10 @@ public class EndpointIndex {
                 // that grant nothing at runtime.
                 validateExplicitEndpoint(def.permissionId(), ep, contextPath);
                 out.add(ep);
-                String companion = companionOf(ep);
-                if (companion != null && !out.contains(companion) && !explicit.contains(companion)) {
-                    out.add(companion);
+                for (String companion : companionsOf(ep)) {
+                    if (!out.contains(companion) && !explicit.contains(companion)) {
+                        out.add(companion);
+                    }
                 }
             }
             return out;
@@ -295,31 +296,44 @@ public class EndpointIndex {
     }
 
     /**
-     * What a form asks before it renders, keyed by the write or read the form is for. A permission
-     * listing its endpoints by hand names the write (an action button that creates a request) but
-     * never the question the form asks first — which sensitive sections it may show — so every such
-     * form was refused on opening. The questions answer only about the caller's own access, so the
-     * endpoint that opens the form opens them too, as the standard actions already do.
+     * Endpoints a hand-listed endpoint brings with it on the same model.
+     *
+     * <ul>
+     *   <li>A create brings the question its form asks before rendering — which sensitive sections
+     *       it may show. A permission listing its endpoints by hand names the write its button
+     *       makes, never that question, so every such form was refused on opening.</li>
+     *   <li>A list read brings the reads by id. Both are the same view, filtered by the same row
+     *       scope: a record the list returns is one a read by id may return, so naming one and not
+     *       the other only breaks the page that opens a row it was just shown (a workflow page
+     *       reopening its own draft).</li>
+     *   <li>A read by id brings the question a detail form asks before rendering.</li>
+     * </ul>
+     * Each answers only within what the listed endpoint already allows; the standard actions bring
+     * the same through {@link #STANDARD_ACTION_MAP}.
      */
-    private static final Map<String, String> FORM_COMPANIONS = Map.of(
-            "POST createOne", "GET getCreateAccess",
-            "POST createOneAndFetch", "GET getCreateAccess",
-            "POST createList", "GET getCreateAccess",
-            "POST createListAndFetch", "GET getCreateAccess",
-            "POST getById", "POST getRecordAccess",
-            "POST getOne", "POST getRecordAccess");
+    private static final Map<String, List<String>> COMPANIONS = Map.of(
+            "POST createOne", List.of("GET getCreateAccess"),
+            "POST createOneAndFetch", List.of("GET getCreateAccess"),
+            "POST createList", List.of("GET getCreateAccess"),
+            "POST createListAndFetch", List.of("GET getCreateAccess"),
+            "POST searchList", List.of("POST getById", "POST getByIds", "POST getRecordAccess"),
+            "POST searchPage", List.of("POST getById", "POST getByIds", "POST getRecordAccess"),
+            "POST getById", List.of("POST getRecordAccess"),
+            "POST getOne", List.of("POST getRecordAccess"));
 
-    /** {@code POST /M/createOne} → {@code GET /M/getCreateAccess}; null when the endpoint has none. */
-    static String companionOf(String endpoint) {
+    /** {@code POST /M/createOne} → {@code [GET /M/getCreateAccess]}; empty when it brings none. */
+    static List<String> companionsOf(String endpoint) {
         int space = endpoint.indexOf(' ');
         int slash = endpoint.lastIndexOf('/');
-        if (space <= 0 || slash <= space + 1) return null;
-        String verb = endpoint.substring(0, space);
+        if (space <= 0 || slash <= space + 1) return List.of();
         String base = endpoint.substring(space + 1, slash);
-        String companion = FORM_COMPANIONS.get(verb + " " + endpoint.substring(slash + 1));
-        if (companion == null || base.isEmpty() || base.indexOf('/', 1) >= 0) return null;
-        int sep = companion.indexOf(' ');
-        return companion.substring(0, sep) + " " + base + "/" + companion.substring(sep + 1);
+        if (base.indexOf('/', 1) >= 0) return List.of();
+        List<String> companions = COMPANIONS.get(endpoint.substring(0, space) + " " + endpoint.substring(slash + 1));
+        if (companions == null) return List.of();
+        return companions.stream().map(c -> {
+            int sep = c.indexOf(' ');
+            return c.substring(0, sep) + " " + base + "/" + c.substring(sep + 1);
+        }).toList();
     }
 
     /**
