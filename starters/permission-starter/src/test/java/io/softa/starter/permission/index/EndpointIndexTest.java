@@ -170,4 +170,22 @@ class EndpointIndexTest {
         // Only the exact match returns; pattern isn't consulted.
         assertThat(hit).containsExactly("perm.exact");
     }
+
+    /** A hand-listed create opens the form, so it opens the question the form asks first. */
+    @Test
+    void anExplicitCreateAlsoGrantsTheCreateFormsAccessQuestion() {
+        EndpointIndex idx = build(List.of(explicit("employee.transfer",
+                "POST /EmpTransferRequest/createOne", "POST /EmpTransferRequest/approve")));
+
+        assertThat(idx.lookup("/EmpTransferRequest/getCreateAccess", "GET")).containsExactly("employee.transfer");
+        assertThat(idx.lookup("/EmpTransferRequest/getRecordAccess", "POST")).isEmpty();
+        assertThat(idx.lookup("/EmpTransferRequest/updateOne", "POST")).isEmpty();
+    }
+
+    @Test
+    void anExplicitReadByIdAlsoGrantsTheRecordAccessQuestion() {
+        EndpointIndex idx = build(List.of(explicit("doc.view", "POST /Doc/getById")));
+
+        assertThat(idx.lookup("/Doc/getRecordAccess", "POST")).containsExactly("doc.view");
+    }
 }

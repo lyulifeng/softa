@@ -284,10 +284,42 @@ public class EndpointIndex {
                 // that grant nothing at runtime.
                 validateExplicitEndpoint(def.permissionId(), ep, contextPath);
                 out.add(ep);
+                String companion = companionOf(ep);
+                if (companion != null && !out.contains(companion) && !explicit.contains(companion)) {
+                    out.add(companion);
+                }
             }
             return out;
         }
         return deriveStandardEndpoints(def);
+    }
+
+    /**
+     * What a form asks before it renders, keyed by the write or read the form is for. A permission
+     * listing its endpoints by hand names the write (an action button that creates a request) but
+     * never the question the form asks first — which sensitive sections it may show — so every such
+     * form was refused on opening. The questions answer only about the caller's own access, so the
+     * endpoint that opens the form opens them too, as the standard actions already do.
+     */
+    private static final Map<String, String> FORM_COMPANIONS = Map.of(
+            "POST createOne", "GET getCreateAccess",
+            "POST createOneAndFetch", "GET getCreateAccess",
+            "POST createList", "GET getCreateAccess",
+            "POST createListAndFetch", "GET getCreateAccess",
+            "POST getById", "POST getRecordAccess",
+            "POST getOne", "POST getRecordAccess");
+
+    /** {@code POST /M/createOne} → {@code GET /M/getCreateAccess}; null when the endpoint has none. */
+    static String companionOf(String endpoint) {
+        int space = endpoint.indexOf(' ');
+        int slash = endpoint.lastIndexOf('/');
+        if (space <= 0 || slash <= space + 1) return null;
+        String verb = endpoint.substring(0, space);
+        String base = endpoint.substring(space + 1, slash);
+        String companion = FORM_COMPANIONS.get(verb + " " + endpoint.substring(slash + 1));
+        if (companion == null || base.isEmpty() || base.indexOf('/', 1) >= 0) return null;
+        int sep = companion.indexOf(' ');
+        return companion.substring(0, sep) + " " + base + "/" + companion.substring(sep + 1);
     }
 
     /**
