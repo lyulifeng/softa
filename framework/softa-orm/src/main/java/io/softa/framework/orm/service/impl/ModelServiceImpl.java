@@ -260,6 +260,7 @@ public class ModelServiceImpl<K extends Serializable> implements ModelService<K>
                 this.getRowKeyMapFromDB(modelName, uniqueConstraints, rowKeyMap.keySet(), nestedToOneFields);
 
         // Step 3: Compare the row key map from the database and the import data, to get the data to be created and updated
+        List<Map<String, Object>> unmatched = new ArrayList<>();
         for (Map.Entry<UniqueKey, Map<String, Object>> entry : rowKeyMap.entrySet()) {
             UniqueKey key = entry.getKey();
             Map<String, Object> row = entry.getValue();
@@ -269,8 +270,15 @@ public class ModelServiceImpl<K extends Serializable> implements ModelService<K>
                 this.linkExistingNestedRows(row, dbRow, nestedToOneFields);
                 updateDataList.add(row);
             } else {
-                createDataList.add(row);
+                unmatched.add(row);
             }
+        }
+        // Step 4: a generated code is matched ignoring case, as it is judged unique ignoring case.
+        Map<String, List<Map<String, Object>>> byLowerCode =
+                this.caseInsensitiveCandidates(modelName, uniqueConstraints, unmatched, nestedToOneFields);
+        for (Map<String, Object> row : unmatched) {
+            (this.matchCodeIgnoringCase(uniqueConstraints, row, byLowerCode, nestedToOneFields)
+                    ? updateDataList : createDataList).add(row);
         }
         return new CreateOrUpdateResult(createDataList, updateDataList);
     }
@@ -295,6 +303,84 @@ public class ModelServiceImpl<K extends Serializable> implements ModelService<K>
         }
         return split;
     }
+
+    /**
+     * Match a row whose generated code was typed in another case — {@code zk1000021} for the stored
+     * {@code ZK1000021} — to the record it names, so an import updates that record instead of trying to
+     * create a second one with the same code. Only when the unique key is that code alone. The stored
+     * spelling is kept: the row's code is replaced by it.
+     *
+     * <p>A code that matches two stored records differing only in case matches neither — there is no
+     * telling which one is meant.
+     *
+     * @param byLowerCode the candidates read for the batch, see {@link #caseInsensitiveCandidates}
+     * @return true when the row now names an existing record (its id is set)
+     */
+    private boolean matchCodeIgnoringCase(List<String> uniqueConstraints, Map<String, Object> row,
+                                          Map<String, List<Map<String, Object>>> byLowerCode,
+                                          Set<String> nestedToOneFields) {
+        if (byLowerCode.isEmpty() || !(row.get(uniqueConstraints.getFirst()) instanceof String code)) {
+            return false;
+        }
+        String field = uniqueConstraints.getFirst();
+        List<Map<String, Object>> hits = byLowerCode.getOrDefault(code.toLowerCase(Locale.ROOT), List.of());
+        if (hits.size() != 1) {
+            return false;
+        }
+        Map<String, Object> dbRow = hits.getFirst();
+        row.put(field, dbRow.get(field));
+        row.put(ModelConstant.ID, dbRow.get(ModelConstant.ID));
+        this.linkExistingNestedRows(row, dbRow, nestedToOneFields);
+        return true;
+    }
+
+    /**
+     * Stored rows whose code equals, ignoring case, a code in the batch, keyed by the lower-cased code —
+     * one query for the batch (prefix match, which is case-insensitive on every database, then compared
+     * exactly ignoring case). Empty unless the unique key is a single generated-code field.
+     */
+    private Map<String, List<Map<String, Object>>> caseInsensitiveCandidates(String modelName,
+                                                                             List<String> uniqueConstraints,
+                                                                             List<Map<String, Object>> batch,
+                                                                             Set<String> nestedToOneFields) {
+        if (batch.isEmpty() || uniqueConstraints.size() != 1
+                || !ModelManager.getModelField(modelName, uniqueConstraints.getFirst()).isAutoSequence()) {
+            return Map.of();
+        }
+        String field = uniqueConstraints.getFirst();
+        Set<String> wanted = new LinkedHashSet<>();
+        for (Map<String, Object> row : batch) {
+            if (row.get(field) instanceof String code && !code.isBlank()) {
+                wanted.add(code);
+            }
+        }
+        Map<String, List<Map<String, Object>>> byLowerCode = new HashMap<>();
+        if (wanted.isEmpty()) {
+            return byLowerCode;
+        }
+        Set<String> lower = wanted.stream().map(c -> c.toLowerCase(Locale.ROOT)).collect(Collectors.toSet());
+        List<String> fields = new ArrayList<>(List.of(ModelConstant.ID, field));
+        nestedToOneFields.stream().filter(f -> !fields.contains(f)).forEach(fields::add);
+        List<String> pending = new ArrayList<>(wanted);
+        for (int from = 0; from < pending.size(); from += CASE_INSENSITIVE_CHUNK) {
+            List<String> chunk = pending.subList(from, Math.min(from + CASE_INSENSITIVE_CHUNK, pending.size()));
+            Filters[] prefixes = chunk.stream()
+                    .map(code -> Filters.of(field, Operator.START_WITH, code))
+                    .toArray(Filters[]::new);
+            Filters filters = prefixes.length == 1 ? prefixes[0]
+                    : Filters.or(prefixes[0], prefixes[1], Arrays.copyOfRange(prefixes, 2, prefixes.length));
+            FlexQuery query = new FlexQuery(fields, filters);
+            query.setFilterControl(FilterControl.bypassAll());
+            for (Map<String, Object> dbRow : this.searchList(modelName, query)) {
+                if (dbRow.get(field) instanceof String stored && lower.contains(stored.toLowerCase(Locale.ROOT))) {
+                    byLowerCode.computeIfAbsent(stored.toLowerCase(Locale.ROOT), k -> new ArrayList<>()).add(dbRow);
+                }
+            }
+        }
+        return byLowerCode;
+    }
+
+    private static final int CASE_INSENSITIVE_CHUNK = 200;
 
     /**
      * Whether the row's unique-constraint values include a blank one on an autoSequence field.
@@ -941,6 +1027,10 @@ public class ModelServiceImpl<K extends Serializable> implements ModelService<K>
             writeValidators.validateUpdate(modelName, toUpdateRows, originalsById);
         }
         Integer updateCount = strategy.update(modelName, rows, toUpdateFields);
+        // The check above judged the rows as they were. Judge them again as written, in the same
+        // transaction: an update may not carry a row out of the caller's range by rewriting the very
+        // field the range is anchored on.
+        permissionService.checkIdsAccess(modelName, targetIds, AccessType.UPDATE);
         return updateCount > 0;
     }
 
@@ -1449,6 +1539,16 @@ public class ModelServiceImpl<K extends Serializable> implements ModelService<K>
     }
 
     /**
+     * {@inheritDoc}
+     *
+     * <p>The same read body, with the row range decided by the related model rather than by the call site.
+     */
+    @Override
+    public List<Map<String, Object>> searchRelatedRows(String modelName, FlexQuery flexQuery) {
+        return searchList(modelName, flexQuery, permissionService.hasOwnRowScope(modelName));
+    }
+
+    /**
      * The one read body, with the row range as the only thing either caller varies.
      *
      * <p>{@code applyRowScope == false} skips {@link #scopedAccess} and NOTHING else. The field guards
@@ -1489,20 +1589,41 @@ public class ModelServiceImpl<K extends Serializable> implements ModelService<K>
     }
 
     /**
-     * Performs a non-paginated query based on FlexQuery, intended for internal code use.
-     * <p>If the result set exceeds {@code MAX_BATCH_SIZE}, an error is logged but no exception is thrown.</p>
+     * Name search within the caller's row range: the display fields plus {@code displayName}.
+     * <p>This is the read behind {@code /{model}/searchName} and its typed shadows, so it must stay
+     * row-scoped. The read pipeline names related rows through {@link #searchNameIgnoringRowScope}.</p>
      *
      * @param modelName the name of the model
      * @param flexQuery a {@link FlexQuery} object defining fields, filters, sorting, etc.
-     * @return a list of maps representing the matching rows
+     * @return a list of maps representing the matching rows with displayName and ID
      */
     @Override
     public List<Map<String, Object>> searchName(String modelName, FlexQuery flexQuery) {
+        return searchName(modelName, flexQuery, true);
+    }
+
+    /**
+     * {@inheritDoc}
+     *
+     * <p>Everything {@link #searchName} does except appending the caller's row range.
+     */
+    @Override
+    public List<Map<String, Object>> searchNameIgnoringRowScope(String modelName, FlexQuery flexQuery) {
+        return searchName(modelName, flexQuery, false);
+    }
+
+    /**
+     * The one name-search body, with the row range as the only thing either caller varies.
+     *
+     * <p>The plain entry point keeps the range on because it is what {@code /{model}/searchName} and every
+     * typed shadow of it call: the rows it returns are the candidates a picker offers, and a candidate
+     * outside the caller's range is one they can choose but not use. It ran without the range for a
+     * while, which is how a picker came to list employees whose detail read then refused them.
+     */
+    private List<Map<String, Object>> searchName(String modelName, FlexQuery flexQuery, boolean applyRowScope) {
         List<String> displayFields = ModelManager.getModelDisplayName(modelName);
         flexQuery.select(displayFields);
-        // Same reason as getDisplayNames: this resolves labels, and a label outside the caller's row
-        // range is still the label of a row they were legitimately shown a reference to.
-        List<Map<String, Object>> rows = searchListIgnoringRowScope(modelName, flexQuery);
+        List<Map<String, Object>> rows = searchList(modelName, flexQuery, applyRowScope);
         for (Map<String, Object> row : rows) {
             // Filter out field values for null or empty strings
             List<Object> displayValues = displayFields.stream().map(row::get)

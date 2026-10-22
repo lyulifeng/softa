@@ -89,6 +89,21 @@ class AnnotationParserTest {
         assertTrue(m.getSoftDelete());
         assertEquals(false, m.getMultiTenant());
         assertEquals(Boolean.TRUE, m.getCopyable(), "copyable defaults to true");
+        assertEquals(Boolean.TRUE, m.getEnableAuditLog(), "enableAuditLog defaults to true");
+    }
+
+    @Test
+    void modelEnableAuditLog_falseIsParsed() {
+        @Model(enableAuditLog = false)
+        @SuppressWarnings("unused")
+        class HeadcountSnapshot extends AuditableModel {
+            @Override
+            public Serializable getId() {
+                return null;
+            }
+        }
+        SysModel m = parser.parse(List.of(HeadcountSnapshot.class), List.of()).models().get(0);
+        assertEquals(Boolean.FALSE, m.getEnableAuditLog());
     }
 
     @Test
@@ -103,6 +118,33 @@ class AnnotationParserTest {
         }
         SysModel m = parser.parse(List.of(AuditTrail.class), List.of()).models().get(0);
         assertEquals(Boolean.FALSE, m.getCopyable());
+    }
+
+    @Test
+    void fieldHidden_isTrueWhenMarkedAndNullOtherwise() {
+        @Model
+        @SuppressWarnings("unused")
+        class Applicant extends AuditableModel {
+            @Field
+            private Long id;
+
+            @Field
+            private String name;
+
+            @Field(hidden = true)
+            private String inviteToken;
+
+            @Override
+            public Serializable getId() {
+                return id;
+            }
+        }
+        var fields = parser.parse(List.of(Applicant.class), List.of()).fields();
+        var byName = new java.util.HashMap<String, io.softa.starter.metadata.entity.SysField>();
+        fields.forEach(f -> byName.put(f.getFieldName(), f));
+        assertEquals(Boolean.TRUE, byName.get("inviteToken").getHidden());
+        // Null rather than false, so rows written before the attribute existed are not a change.
+        assertEquals(null, byName.get("name").getHidden());
     }
 
     // ------- request-scoped narrowing attributes -------------------------

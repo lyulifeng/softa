@@ -20,9 +20,13 @@ import io.softa.starter.message.mail.enums.MailSendStatus;
 /**
  * Outgoing mail record.
  * Written automatically by MessageService; not created manually via API.
+ *
+ * <p>Searched by recipient and subject: the send log is where "this user never got the email" is
+ * looked into, and the recipient is what the person investigating has in hand.
  */
 @Data
-@Model(idStrategy = IdStrategy.DISTRIBUTED_LONG, versionLock = true, copyable = false, multiTenant = true)
+@Model(idStrategy = IdStrategy.DISTRIBUTED_LONG, versionLock = true, copyable = false, multiTenant = true,
+        searchName = {"toAddresses", "subject"})
 @Index(indexName = "idx_mail_send_tenant_status", fields = {"tenantId", "status"})
 @Index(indexName = "idx_mail_send_sent_at", fields = {"sentAt"})
 @Index(indexName = "idx_mail_send_status_updated", fields = {"status", "updatedTime"})
@@ -102,6 +106,16 @@ public class MailSendRecord extends AuditableModel {
 
     @Field(description = "Timestamp when the email was accepted by the SMTP server")
     private LocalDateTime sentAt;
+
+    @Field(description = "When the latest delivery attempt started: a consumer claimed the record (status → "
+            + "Sending). The attempt's queue wait is this minus the publishedAt of the outbox row that "
+            + "delivered it.")
+    private LocalDateTime attemptStartedAt;
+
+    @Field(label = "Send Duration (ms)", description = "How long the SMTP call of the successful attempt took, "
+            + "in milliseconds — connection setup (when no pooled connection was reused) and attachment "
+            + "streaming included. Null until the record is sent.")
+    private Integer sendDurationMs;
 
     @Field(label = "Message ID", description = "SMTP Message-ID header value", length = 255)
     private String messageId;

@@ -14,8 +14,9 @@ import io.softa.framework.orm.enums.WidgetType;
  * Marks a Java field on a {@link Model}-annotated class as a Softa metadata Field.
  * <p>
  * The {@code fieldName} is derived from the Java field name (no override).
- * Only declared fields are processed—inherited audit fields from
- * {@code AuditableModel} are skipped via {@code Class.getDeclaredFields()}.
+ * Fields declared on superclasses are processed too: the scanner walks the
+ * superclass chain, which is how the audit fields on {@code AuditableModel}
+ * reach every model. A subclass field of the same name shadows the inherited one.
  *
  * <p><b>Requires {@code metadata-starter}</b> on the classpath to take effect
  * (see {@link Model}).
@@ -147,6 +148,14 @@ public @interface Field {
 
     /** Readonly (not editable in default views). */
     boolean readonly() default false;
+
+    /**
+     * Left out of the field lists a client builds from the metadata on its own — the columns a list
+     * offers, a template's insertable fields — because the field is internal: a helper a sort or
+     * report reads, a token, a flag another field restates. Nothing else changes: the field is read
+     * and written as before, and a view that names it still shows it.
+     */
+    boolean hidden() default false;
 
     /** I18n-translatable column. */
     boolean translatable() default false;

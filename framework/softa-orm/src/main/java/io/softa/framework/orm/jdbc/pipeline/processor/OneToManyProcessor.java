@@ -11,6 +11,7 @@ import org.springframework.util.CollectionUtils;
 import io.softa.framework.base.enums.Operator;
 import io.softa.framework.base.utils.Assert;
 import io.softa.framework.base.utils.Cast;
+import io.softa.framework.orm.aspect.CallerPermissions;
 import io.softa.framework.orm.constant.ModelConstant;
 import io.softa.framework.orm.domain.FilterControl;
 import io.softa.framework.orm.domain.Filters;
@@ -95,7 +96,8 @@ public class OneToManyProcessor extends BaseProcessor {
         }
         if (!CollectionUtils.isEmpty(createRows)) {
             changed = true;
-            ReflectTool.createList(metaField.getRelatedModel(), createRows);
+            // The children are the caller's own writes to the related model, judged as the caller.
+            CallerPermissions.asCaller(() -> ReflectTool.createList(metaField.getRelatedModel(), createRows));
         }
     }
 
@@ -140,9 +142,11 @@ public class OneToManyProcessor extends BaseProcessor {
                         modelName, fieldName, value.getClass().getSimpleName());
             }
         }
-        List<?> newIds = ReflectTool.createList(metaField.getRelatedModel(), createRows);
-        boolean updated = ReflectTool.updateList(metaField.getRelatedModel(), updateRows);
-        boolean deleted = ReflectTool.deleteList(metaField.getRelatedModel(), deleteIds);
+        // The children are the caller's own writes to the related model, judged as the caller.
+        String relatedModel = metaField.getRelatedModel();
+        List<?> newIds = CallerPermissions.asCaller(() -> ReflectTool.createList(relatedModel, createRows));
+        boolean updated = CallerPermissions.asCaller(() -> ReflectTool.updateList(relatedModel, updateRows));
+        boolean deleted = CallerPermissions.asCaller(() -> ReflectTool.deleteList(relatedModel, deleteIds));
         if (updated || deleted || !newIds.isEmpty()) {
             changed = true;
         }
@@ -344,7 +348,9 @@ public class OneToManyProcessor extends BaseProcessor {
         applyAcrossTimeline(relatedFlexQuery);
         // Count is automatically added during the groupBy operation
         relatedFlexQuery.setGroupBy(metaField.getRelatedField());
-        List<Map<String, Object>> countRows = ReflectTool.searchListIgnoringRowScope(metaField.getRelatedModel(), relatedFlexQuery);
+        // Counted as the rows would be read: the subQuery's filters are the caller's, and a count over rows
+        // outside their range would answer questions about them one filter at a time.
+        List<Map<String, Object>> countRows = ReflectTool.searchRelatedRows(metaField.getRelatedModel(), relatedFlexQuery);
         // COUNT(*) comes back from MySQL JDBC as Long. The previous
         // `(Integer)` cast threw ClassCastException on rows whose count
         // exceeded int width or whose JDBC driver typed BIGINT explicitly.
@@ -370,7 +376,7 @@ public class OneToManyProcessor extends BaseProcessor {
         relatedFlexQuery.setConvertType(ConvertType.REFERENCE);
         relatedFlexQuery.select(metaField.getRelatedField());
         relatedFlexQuery.setKeepIdField(metaField.getRelatedField());
-        return ReflectTool.searchName(metaField.getRelatedModel(), relatedFlexQuery);
+        return ReflectTool.searchNameIgnoringRowScope(metaField.getRelatedModel(), relatedFlexQuery);
     }
 
     /** Lifts the as-of clamp when the sub query asked for every slice. See {@link SubQuery#getAcrossTimeline()}. */
@@ -423,7 +429,9 @@ public class OneToManyProcessor extends BaseProcessor {
         // When get the related model rows of OneToMany field, the `relatedField` field of the related model is only
         // needed to get the ID for GroupBy, which might be a ManyToOne field defined in the related model.
         relatedFlexQuery.setKeepIdField(metaField.getRelatedField());
-        return ReflectTool.searchListIgnoringRowScope(metaField.getRelatedModel(), relatedFlexQuery);
+        // More than labels — the subQuery's fields, or every field: the caller's row range applies unless the
+        // related model is an owned child, visible through the parent row being expanded.
+        return ReflectTool.searchRelatedRows(metaField.getRelatedModel(), relatedFlexQuery);
     }
 
     /**

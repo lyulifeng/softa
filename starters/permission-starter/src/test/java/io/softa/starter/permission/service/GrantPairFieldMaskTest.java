@@ -101,6 +101,8 @@ class GrantPairFieldMaskTest {
         when(sets.nameOf("pay-details")).thenReturn("Pay Details");
         when(sets.shortNameOf("pay-details")).thenReturn("Pay");
         when(sets.setIdsOwnedBy("Employee")).thenReturn(Set.of("pay-details"));
+        when(sets.modelOf(anyString())).thenReturn("Employee");
+        when(sets.fieldCodesOf("pay-details")).thenReturn(PAY);
 
         models = Mockito.mockStatic(ModelManager.class);
         MetaModel meta = mock(MetaModel.class);
@@ -369,6 +371,11 @@ class GrantPairFieldMaskTest {
         assertThat(access.get(0).actions()).contains(AccessType.UPDATE);
         assertThat(access.get(1).hiddenSets()).containsExactly("pay-details");
         assertThat(access.get(1).actions()).contains(AccessType.UPDATE);
+        // The same answer by field, so a page can lock a cell or a form field without the set catalogue.
+        assertThat(access.get(0).hiddenFields()).isEmpty();
+        assertThat(access.get(1).hiddenFields()).containsOnlyKeys("Employee");
+        assertThat(access.get(1).hiddenFields().get("Employee")).containsExactlyInAnyOrder("payGrade", "basePay");
+        assertThat(access.get(1).readonlyFields()).isEmpty();
     }
 
     @Test
@@ -385,6 +392,8 @@ class GrantPairFieldMaskTest {
 
         assertThat(access.getFirst().hiddenSets()).isEmpty();
         assertThat(access.getFirst().readonlySets()).containsExactly("pay-details");
+        assertThat(access.getFirst().readonlyFields().get("Employee")).containsExactlyInAnyOrder("payGrade", "basePay");
+        assertThat(access.getFirst().hiddenFields()).isEmpty();
     }
 
     @Test
@@ -408,6 +417,8 @@ class GrantPairFieldMaskTest {
         SensitiveFieldSetCache sets = (SensitiveFieldSetCache) org.springframework.test.util.ReflectionTestUtils
                 .getField(service, "sfsCache");
         when(sets.setIdsOwnedBy("Employee")).thenReturn(Set.of("pay-details", "grade-info", "bank-info"));
+        when(sets.fieldCodesOf("grade-info")).thenReturn(Set.of("payGrade"));
+        when(sets.fieldCodesOf("bank-info")).thenReturn(Set.of("bankAccount"));
         when(sets.grantedFieldsFor(eq("Employee"), anySet())).thenAnswer(inv -> {
             Set<String> granted = inv.getArgument(1);
             Set<String> fields = new HashSet<>();
@@ -427,7 +438,41 @@ class GrantPairFieldMaskTest {
         assertThat(access.getFirst().hiddenSets()).containsExactly("bank-info");
         // Visible through the viewing role, editable through none.
         assertThat(access.getFirst().readonlySets()).containsExactly("grade-info", "pay-details");
-        assertThat(as(() -> service.getCreateAccess("Employee")).hiddenSets()).containsExactly("bank-info");
+        assertThat(access.getFirst().hiddenFields()).isEqualTo(Map.of("Employee", Set.of("bankAccount")));
+        assertThat(access.getFirst().readonlyFields().get("Employee")).containsExactlyInAnyOrder("payGrade", "basePay");
+        var create = as(() -> service.getCreateAccess("Employee"));
+        assertThat(create.hiddenSets()).containsExactly("bank-info");
+        assertThat(create.hiddenFields()).isEqualTo(Map.of("Employee", Set.of("bankAccount")));
+    }
+
+    @Test
+    @DisplayName("record access: the field breakdown follows each field, not the set around it")
+    void aSharedFieldFollowsTheSetThatLetsItThrough() {
+        // "grade-info" covers payGrade only and is granted by the editing role; "pay-details" only by a
+        // viewing one. payGrade is editable through grade-info, so only basePay is read-only.
+        SensitiveFieldSetCache sets = (SensitiveFieldSetCache) org.springframework.test.util.ReflectionTestUtils
+                .getField(service, "sfsCache");
+        when(sets.setIdsOwnedBy("Employee")).thenReturn(Set.of("pay-details", "grade-info"));
+        when(sets.fieldCodesOf("grade-info")).thenReturn(Set.of("payGrade"));
+        when(sets.grantedFieldsFor(eq("Employee"), anySet())).thenAnswer(inv -> {
+            Set<String> granted = inv.getArgument(1);
+            Set<String> fields = new HashSet<>();
+            if (granted.contains("pay-details")) fields.addAll(PAY);
+            if (granted.contains("grade-info")) fields.add("payGrade");
+            return fields;
+        });
+        RoleGrant editor = role(1, Set.of(VIEW, UPDATE), ScopeType.ALL, null, false);
+        editor.setModelSensitiveFieldSetsMap(Map.of("Employee", Set.of("grade-info")));
+        pi.setRoleGrants(List.of(editor, role(4, Set.of(VIEW), ScopeType.ALL, null, true)));
+        unionOf(VIEW, UPDATE);
+
+        List<io.softa.framework.orm.domain.RecordAccess> access =
+                as(() -> service.getRecordAccess("Employee", List.of(1L)));
+
+        // Set by set, pay-details counts as editable: one of its fields is. Field by field it is not
+        // all editable, and the write check refuses basePay — the breakdown says so.
+        assertThat(access.getFirst().readonlySets()).isEmpty();
+        assertThat(access.getFirst().readonlyFields()).isEqualTo(Map.of("Employee", Set.of("basePay")));
     }
 
     @Test
@@ -587,18 +632,36 @@ class GrantPairFieldMaskTest {
         relationsLeadToEmployee();
         holdTheExampleRoles();
         when(modelService.getIds(eq("Employee"), any(Filters.class))).thenReturn(List.of(1L));
+        when(modelService.getIds(eq("EmpLeave"), any(Filters.class))).thenReturn(List.of(7L));
 
         Filters oneHop = guardedOn("EmpLeave", Filters.of("employeeId.basePay", Operator.GREATER_THAN, 5000));
         Filters twoHops = guardedOn("EmpLeaveDay",
                 Filters.of("leaveId.employeeId.basePay", Operator.GREATER_THAN, 5000));
 
         assertThat(oneHop).isEqualTo(Filters.of("employeeId", Operator.IN, List.of(1L)));
-        assertThat(twoHops).isEqualTo(Filters.of("leaveId.employeeId", Operator.IN, List.of(1L)));
+        // Two hops cross a leave on the way, which the caller reads under a range too: the leaves are the
+        // ones inside it whose employee is among those.
+        assertThat(twoHops).isEqualTo(Filters.of("leaveId", Operator.IN, List.of(7L)));
         // The employees asked for: the condition, on Employee, AND the rows of R2 — the role granting pay.
         ArgumentCaptor<Filters> asked = ArgumentCaptor.forClass(Filters.class);
         verify(modelService, Mockito.times(2)).getIds(eq("Employee"), asked.capture());
         assertThat(asked.getValue().toString()).contains("basePay", "5000", "employmentType");
         assertThat(asked.getValue().toString()).doesNotContain("employeeId.basePay");
+    }
+
+    @Test
+    @DisplayName("a declared cascaded field onto pay is judged as the path it stands for")
+    void aDeclaredCascadedFieldOntoPayIsJudgedAsItsPath() {
+        relationsLeadToEmployee();
+        io.softa.framework.orm.meta.MetaField alias = new io.softa.framework.orm.meta.MetaField();
+        org.springframework.test.util.ReflectionTestUtils.setField(alias, "fieldName", "employeePay");
+        org.springframework.test.util.ReflectionTestUtils.setField(alias, "cascadedField", "employeeId.basePay");
+        models.when(() -> ModelManager.existField("EmpLeave", "employeePay")).thenReturn(true);
+        models.when(() -> ModelManager.getModelField("EmpLeave", "employeePay")).thenReturn(alias);
+        pi.setRoleGrants(List.of(role(3, Set.of(VIEW), ScopeType.ALL, null, false)));
+
+        assertThat(guardedOn("EmpLeave", Filters.of("employeePay", Operator.GREATER_THAN, 5000)))
+                .isEqualTo(ScopeRuleCompiler.matchNone());
     }
 
     @Test

@@ -139,6 +139,27 @@ public interface PermissionService {
     }
 
     /**
+     * Whether the caller's row range on {@code model} stands on its own — an anchor, a declared scope
+     * or a rule the caller holds for it — rather than coming only from the parent that owns its rows.
+     *
+     * <p>Asked by {@link ModelService#searchRelatedRows}, for a relation expansion that reads more of a
+     * related row than its label. A model whose rows are visible only through their owner — a one-to-one
+     * profile, the lines of a document — has to be read across the range: its visibility is that of the
+     * parent row being expanded, which the caller already sees, and applying the range to it would fail
+     * closed and blank the parent's sub-rows. Any other model is read as a direct read would read it,
+     * because a sub-query names its own fields and filters, and with the range crossed it reads rows the
+     * caller could never open.
+     *
+     * <p>Default {@code true}: an implementation that cannot tell keeps the range, the closed side.
+     *
+     * @param model the related model being read
+     * @return true when the caller's row range applies to {@code model} in its own right
+     */
+    default boolean hasOwnRowScope(String model) {
+        return true;
+    }
+
+    /**
      * Silently drop blocked-for-{@code accessType} fields from the caller's
      * requested field set. Used inside read entry points
      * ({@code searchList}/{@code searchPage}/etc.) before the SELECT clause
@@ -273,6 +294,24 @@ public interface PermissionService {
      * @return true when the caller may perform it, or when no permission covers it
      */
     boolean hasModelActionGrant(String model, AccessType accessType);
+
+    /**
+     * Whether the caller holds the import of {@code model}.
+     *
+     * <p>The import endpoints are shared by every model — the model rides in a template or a request
+     * part — so the endpoint gate admits anyone holding the import of <em>some</em> model and cannot
+     * have authorized this one. The import service asks here, naming the model, before it reads a row.
+     * A model with no import permission registered is granted, as {@link #hasModelActionGrant} grants
+     * an unregistered model.
+     *
+     * <p>Default: granted.
+     *
+     * @param model the model being imported
+     * @return true when the caller may import it, or when no permission covers it
+     */
+    default boolean hasModelImportGrant(String model) {
+        return true;
+    }
 
     /**
      * What the caller may do with each of these existing records: which sensitive sets are hidden or

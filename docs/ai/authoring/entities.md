@@ -105,7 +105,8 @@ Common attributes — omit any that equals the default:
 | `multiTenant` | `false` | adds a `tenant_id` scope to the table |
 | `idStrategy` | `DB_AUTO_ID` | use `DISTRIBUTED_LONG` for CosID distributed IDs; `EXTERNAL_ID` for code-as-id masters |
 | `copyable` | `true` | `false` = row can't be duplicated (log / runtime models) |
-| `versionLock` | `false` | optimistic locking: declare a `@Field(required = true) private Long version;` on the class. The starting value is materialized to `0` for you (don't set `defaultValue`); the framework stamps it on insert and CAS-increments it on update — a stale update throws `VersionException` |
+| `enableAuditLog` | `true` | `false` = writes build no change log, for derived / report models rewritten in bulk. The model then has no Audit Log history and fires no change-triggered flows — check none is bound to it first |
+| `versionLock` | `false` | optimistic locking: declare a `@Field(required = true) private Long version;` on the class. The starting value is materialized to `0` for you (don't set `defaultValue`); the framework stamps it on insert and increments it on every update; an update that carries a stale `version` throws `VersionException` |
 | `renamedFrom` | `""` | previous class name, for a safe rename — see §5 |
 
 `modelName` is always the class simple name; there is no attribute for it.
@@ -168,9 +169,16 @@ Stack as many as you need — no wrapper.
   `MULTI_STRING` field and cannot be combined with `unique = true` — violations
   fail at boot with the model named. Declare them only on columns users
   actually search: a trigram GIN index has real write-amplification cost.
-- You rarely declare `SEARCH` yourself: one `SEARCH` index per
+- `@Model(searchName)` members must be `STRING` or `MULTI_STRING` (stored as
+  delimited text, so the search box's `CONTAINS` is a substring match on it).
+  With no declaration a model is searched by a field named `name`, else by
+  `id` — and an `id` search matches a typed whole number exactly and anything
+  else matches nothing (a `LIKE` on a BIGINT is refused by PostgreSQL). A model
+  people will look things up in should declare its text columns.
+- You rarely declare `SEARCH` yourself: one `SEARCH` index per `STRING`
   `@Model(searchName)` member (fallback: a `STRING` field named `name`) is
   **derived automatically** at scan time, named `idx_<table>_<column>_search`.
+  A `MULTI_STRING` member is searched but gets no derived index.
   Declaring an explicit non-BTREE `method` on a column opts that column out of
   the derivation; a plain BTREE declaration does not (it cannot serve the
   search box, so the derived index still appears next to it). On PostgreSQL
@@ -438,10 +446,35 @@ private String employeeNo;
 - **With `readonly = true`** (recommended): strict system numbering — callers
   can never hand-assign the value. **Without it**: blank values are filled,
   caller-provided values are trusted (useful for data imports).
+- Template tokens: `{seq}` / `{seq:N}` (number, zero-padded to N), `{yyyy}`
+  `{yy}` `{MM}` `{dd}`, and **`{companyAbbr}`** — the abbreviation of the company
+  the record being numbered belongs to (`{companyAbbr}{seq:7}` → `ZK1000021`;
+  empty, not an error, when there is none). The counter stays one per sequence,
+  shared across companies. For the token to work, the app's `Company` model
+  extends `BaseCompany` (metadata-starter), which declares `abbreviation`.
+  Which company a record belongs to is answered per model: the company model is
+  its own, any other model the company its `companyId` names. A model that
+  belongs to a company some other way — a signing entity, a parent record —
+  registers a `CompanyCascadePathResolver` bean ordered ahead of the default,
+  returning the dot-path to the company (e.g. `"employeeId.legalEntityId"`).
+- A generated value **already in use is skipped** — present in the field
+  ignoring case, or typed into another row of the same insert — and the counter
+  moves on. Skipped numbers are spent for every company.
 - Pair with a **unique index** on the field if numbers must be unique — the
   sequence guarantees allocation order, the index guarantees uniqueness.
 - Duplicating a row never copies the number; the copy gets a fresh one on
   insert.
+- Without `readonly`, a value **typed by hand** is accepted, and checked at the
+  write root on every path (forms, import, the model API): no spaces inside,
+  unique **ignoring case** (the duplicate message is the field's unique index
+  `message`), then the sequence's own **Manual Entry** rule (`SysSequence.manualEntry`):
+  `Any`, `SameAsAutoGeneration` (the template's shape — company abbreviation,
+  literals, as many digits), `LengthAndCharacters`, or `Pattern`. Only a new or
+  changed value is checked; sending the stored value back passes. System writes
+  (`skipPermissionCheck`, e.g. seeding) are not checked. A form can ask
+  `POST /Sequence/checkManualCode` on blur for the same answer.
+- Import matching by such a field (`uniqueConstraints = ["code"]`) ignores case:
+  `zk1000021` updates the record stored as `ZK1000021`, which keeps its spelling.
 
 ### Rename a field or model
 **Declare the rename** with `renamedFrom` — don't just change the name. Without

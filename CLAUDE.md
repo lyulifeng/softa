@@ -9,7 +9,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-**Softa** is a metadata-driven, open-source enterprise application development framework (Java 25, Spring Boot 4.1.0) with an integrated ERP system. It is published to Maven Central and GitHub Packages.
+**Softa** is a metadata-driven, open-source enterprise application development framework (Java 25, Spring Boot 4.1.1) with an integrated ERP system. It is published to Maven Central and GitHub Packages.
 
 ## Build & Test Commands
 
@@ -121,6 +121,7 @@ rows by business key. Per-tenant metadata customization is **not supported**.
     softDelete = false, activeControl = false, timeline = false,
     versionLock = false,
     copyable = true,                            // default true; false = copy APIs reject + UI hides Duplicate (runtime/log models)
+    enableAuditLog = true,                      // default true; false = writes build no change log (derived/report models): no Audit Log history, no change-triggered flows
     projection = false                          // default false; true = read-only model over a table it does NOT own: no DDL ever, writes rejected, @Index rejected
 )
 @Index(fields = {"status", "createdTime"})            // @Repeatable; index names are GLOBALLY unique (≤60 chars, boot-enforced)
@@ -535,7 +536,7 @@ DRY · SOLID · KISS · YAGNI · Separation of Concerns · Composition over Inhe
 
 | Concern | Library/Version                     |
 |---|-------------------------------------|
-| Framework | Spring Boot 4.1.0                        |
+| Framework | Spring Boot 4.1.1                   |
 | Language | Java 25, Lombok 1.18.42             |
 | ORM | Spring Data (JDBC)                  |
 | Databases | MySQL 9.6.0, PostgreSQL 42.7.10     |

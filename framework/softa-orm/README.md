@@ -85,11 +85,12 @@ public enum CustomerTier {
 | `timeline` | boolean | `false` | `timeline` | effective-dated rows (see Timeline Model) |
 | `idStrategy` | `IdStrategy` | `DB_AUTO_ID` | `idStrategy` | |
 | `storageType` | `StorageType` | `RDBMS` | `storageType` | |
-| `versionLock` | boolean | `false` | `versionLock` | requires a `version` field on the class; the field is readonly (framework-managed), stamped onto every insert, and its starting value is materialized into `sys_field.default_value` (`0` unless the field declares `defaultValue`) so the column DDL carries `DEFAULT 0` |
+| `versionLock` | boolean | `false` | `versionLock` | requires a `version` field on the class; the field is readonly (framework-managed), stamped onto every insert, and its starting value is materialized into `sys_field.default_value` (`0` unless the field declares `defaultValue`) so the column DDL carries `DEFAULT 0`. On update every written row moves it on in SQL (`version=version+1`); a patch that carries `version` (the version its client read) is checked against the stored one and written only at it (`AND version = ?`), else `VersionException`. A patch without one is not checked, and a client never sets the value |
 | `multiTenant` | boolean | `false` | `multiTenant` | requires a `tenantId` field on the class |
 | `multiCountry` | boolean | `false` | `multiCountry` | rows are partitioned by country; reads narrow to the countries the caller works in (see [Request-scoped narrowing](#request-scoped-narrowing)) |
 | `multiCompany` | boolean | `false` | `multiCompany` | rows belong to one company; the anchor field the permission grant bounds every read by (see [Request-scoped narrowing](#request-scoped-narrowing)) |
 | `copyable` | boolean | `true` | `copyable` | `false` ⇒ copy APIs reject the model; UI hides Duplicate |
+| `enableAuditLog` | boolean | `true` | `enableAuditLog` | `false` ⇒ creates / updates / deletes build no change log — for derived / report models rewritten in bulk, whose source data carries the audit trail. Also means no Audit Log history for the model, no change-triggered flows on it (sync or async), and its rows missing from a parent's history; the update's stored-row read stays. `system.enable-change-log` still gates MQ delivery for models that keep it on. A NULL column reads as enabled |
 | `projection` | boolean | `false` | `projection` | `true` ⇒ read-only model over a table it does NOT own (another model's table, or one created externally, e.g. by a BI pipeline). No DDL is ever generated for it (`sys_*` rows still reconcile); write APIs reject it; `@Index` on it is boot-rejected; RDBMS only. Every non-projection RDBMS model owns its table exclusively — two owners on one `tableName` fail at boot |
 | `dataSource` | String | `""` | `dataSource` | empty → primary datasource |
 | `businessKey` | String[] | `{}` | `businessKey` | composite supported |
@@ -142,6 +143,7 @@ it remains what the JSON form and the stored row carry, since only the authoring
 Compare an option by its item code: a wrong code never fires and never reports.
 | `required` | boolean | `false` | `required` | NOT NULL constraint |
 | `readonly` | boolean | `false` | `readonly` | UI hint |
+| `hidden` | boolean | `false` | `hidden` | internal field: left out of the field lists a client builds from metadata on its own (offered list columns, template fields); still read, written and shown where a view names it. Stored as null when unmarked |
 | `translatable` | boolean | `false` | `translatable` | i18n-aware column |
 | `copyable` | boolean | `true` | `copyable` | `false` ⇒ value not carried over by `copyById` (business keys, credentials, runtime state) |
 
@@ -174,7 +176,6 @@ value-preserving rename would have carried wrong values.
 | (scanner sets) | — | — | `optionSetCode` | derived from enum type when fieldType is `OPTION`/`MULTI_OPTION` |
 | (scanner sets) | — | — | `appCode` / `id` | |
 | (FK fixup post-init) | — | — | `modelId` | |
-| (not exposed via `@Field`) | — | — | `hidden` | UI-only flag set via Studio |
 
 #### Field constraints (`constraints` — one column, seven attributes)
 

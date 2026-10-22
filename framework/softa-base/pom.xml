@@ -6,7 +6,7 @@
     <parent>
         <groupId>io.softa</groupId>
         <artifactId>framework</artifactId>
-        <version>2.7.3</version>
+        <version>2.7.8</version>
     </parent>
 
     <name>Softa Base</name>
@@ -91,7 +91,7 @@
         <dependency>
             <groupId>org.springdoc</groupId>
             <artifactId>springdoc-openapi-starter-webmvc-ui</artifactId>
-            <version>3.0.3</version>
+            <version>3.1.1</version>
         </dependency>
 
         <!-- Jsoup pre-parser: relaxes strict XHTML requirement on HTML templates -->
