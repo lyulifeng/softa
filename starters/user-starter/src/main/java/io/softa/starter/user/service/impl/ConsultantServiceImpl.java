@@ -921,5 +921,13 @@ public class ConsultantServiceImpl extends EntityServiceImpl<ConsultantProfile, 
         if (tenantInfoService != null && tenantInfoService.getTenantName(a.getTenantId()) == null) {
             throw new BusinessException("No company exists with id " + a.getTenantId() + ".");
         }
+        // Existing is not enough: the company has to be in use. A Draft one is still being set up,
+        // and a rebuild of its setup discards every account under it — a consultant admitted now
+        // would have the membership minted here deleted underneath the grant. A Suspended or Closed
+        // one admits nobody, so a grant into it could never be used. Entry asks the same question
+        // (canEnter), so refusing here keeps a grant from being made that entry would never honour.
+        if (tenantInfoService != null && !tenantInfoService.isTenantActive(a.getTenantId())) {
+            throw new BusinessException("A consultant can only be authorized into an active company.");
+        }
     }
 }

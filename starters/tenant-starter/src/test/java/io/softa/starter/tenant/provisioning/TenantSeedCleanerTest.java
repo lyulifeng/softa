@@ -1,6 +1,7 @@
 package io.softa.starter.tenant.provisioning;
 
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -23,6 +24,7 @@ import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -186,6 +188,92 @@ class TenantSeedCleanerTest {
     void noBindings_isANoOp() {
         assertThat(cleaner.clearPreData(TENANT)).isEmpty();
         verify(modelService, never()).deleteByIds(anyString(), anyList());
+    }
+
+    // ─── clearing the people only this tenant holds ───
+
+    @Test
+    @DisplayName("a person who belongs to this tenant alone is deleted with it")
+    void clearProfilesOf_deletesAPersonOnlyThisTenantHolds() {
+        accountsHere(account(501L));
+
+        assertThat(cleaner.clearProfilesOf(TENANT)).isEqualTo(1);
+        assertThat(idsDeletedFor("UserProfile")).isEqualTo(List.of(501L));
+    }
+
+    @Test
+    @DisplayName("a person who also works for another company stays — only the membership here goes")
+    void clearProfilesOf_keepsAPersonWithAMembershipElsewhere() {
+        // The consultant case that started this: one person, a membership in every company they work
+        // for. Deleting the person left their other memberships naming nobody, so they could sign in
+        // nowhere — not just not here.
+        accountsHere(account(501L), account(502L));
+        accountsElsewhere(account(502L));
+
+        assertThat(cleaner.clearProfilesOf(TENANT)).isEqualTo(1);
+        assertThat(idsDeletedFor("UserProfile")).isEqualTo(List.of(501L));
+    }
+
+    @Test
+    @DisplayName("a consultant stays even with no other membership — the consultant record outlives any company")
+    void clearProfilesOf_keepsAConsultant() {
+        accountsHere(account(503L));
+        when(modelService.searchList(eq("ConsultantProfile"), any(FlexQuery.class)))
+                .thenReturn(List.of(account(503L)));
+
+        assertThat(cleaner.clearProfilesOf(TENANT)).isZero();
+        verify(modelService, never()).deleteByIds(eq("UserProfile"), anyList());
+    }
+
+    @Test
+    @DisplayName("the other-tenant check excludes this tenant, or every person would look shared with itself")
+    void clearProfilesOf_asksAboutOtherTenantsOnly() {
+        accountsHere(account(501L));
+
+        cleaner.clearProfilesOf(TENANT);
+
+        ArgumentCaptor<FlexQuery> queries = ArgumentCaptor.forClass(FlexQuery.class);
+        verify(modelService, times(2)).searchList(eq("UserAccount"), queries.capture());
+        String elsewhere = queries.getAllValues().get(1).getFilters().toString();
+        assertThat(elsewhere).contains("profileId").contains("tenantId").contains("!=");
+    }
+
+    @Test
+    @DisplayName("no accounts — no person is looked up or deleted")
+    void clearProfilesOf_noAccounts_isANoOp() {
+        accountsHere();
+
+        assertThat(cleaner.clearProfilesOf(TENANT)).isZero();
+        verify(modelService, never()).searchList(eq("ConsultantProfile"), any(FlexQuery.class));
+        verify(modelService, never()).deleteByIds(eq("UserProfile"), anyList());
+    }
+
+    /** The first UserAccount read is this tenant's accounts; the second, the same people's elsewhere. */
+    private List<Map<String, Object>> here = List.of();
+    private List<Map<String, Object>> elsewhere = List.of();
+
+    @SafeVarargs
+    private void accountsHere(Map<String, Object>... rows) {
+        here = List.of(rows);
+        stubAccounts();
+    }
+
+    @SafeVarargs
+    private void accountsElsewhere(Map<String, Object>... rows) {
+        elsewhere = List.of(rows);
+        stubAccounts();
+    }
+
+    private void stubAccounts() {
+        when(modelService.searchList(eq("UserAccount"), any(FlexQuery.class)))
+                .thenAnswer(inv -> new ArrayList<>(here))
+                .thenAnswer(inv -> new ArrayList<>(elsewhere));
+    }
+
+    private static Map<String, Object> account(Long profileId) {
+        Map<String, Object> row = new HashMap<>();
+        row.put("profileId", profileId);
+        return row;
     }
 
     private List<String> modelsDeleted() {

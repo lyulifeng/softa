@@ -82,9 +82,14 @@ public class TenantSeedPurgeService {
      * explicitly instead of arriving through {@link TenantSeedCleaner}. In practice they are usually empty —
      * {@code createAdmin} refuses a tenant that is not READY, and a rebuild is only possible while it is not —
      * so they are listed so the outcome does not depend on that gate holding.
+     *
+     * <p>{@code ConsultantAuthorization} comes first because a grant points at the membership it minted, and
+     * that membership is deleted right after. A consultant authorized into a Draft tenant (before the grant
+     * refused one) would otherwise keep a grant naming an account that no longer exists. The grant is not
+     * multi-tenant but carries the tenant it admits as a plain {@code tenantId}, so the same filter reaches it.
      */
     private static final List<String> PROVISIONING_STATE = List.of(
-            "UserRoleRel", "UserInvitation", "UserAccount", "TenantSeedProgress");
+            "ConsultantAuthorization", "UserRoleRel", "UserInvitation", "UserAccount", "TenantSeedProgress");
 
     private final TenantInfoServiceImpl tenantInfoService;
     private final TenantProvisioningStatusService statusService;
@@ -130,7 +135,8 @@ public class TenantSeedPurgeService {
 
         Map<String, Integer> cleared = inSystemContext(() -> {
             // Profiles first: a person is global now and can only be found THROUGH this tenant's
-            // accounts, so they must be resolved and deleted while the accounts still exist.
+            // accounts, so they must be resolved while the accounts still exist. Only the people this
+            // tenant holds alone go; anyone shared with another company, or a consultant, stays.
             int profiles = seedCleaner.clearProfilesOf(tenantId);
             Map<String, Integer> byModel = seedCleaner.clearModels(tenantId, PROVISIONING_STATE);
             if (profiles > 0) {

@@ -64,9 +64,28 @@ class ConsultantGrantTargetTest {
         verifyNoInteractions(authorizationService);
     }
 
+    /**
+     * A company still being set up admits no consultant.
+     *
+     * <p>A Draft tenant is the one a rebuild of its setup may run against, and the rebuild discards
+     * every account under it — the membership minted for this grant included. Refused before the
+     * reconciliation, so nothing is minted for it either.
+     */
+    @Test
+    void aCompanyThatIsNotActiveIsRefused() {
+        when(tenantInfoService.getTenantName(10L)).thenReturn("Acme");
+        when(tenantInfoService.isTenantActive(10L)).thenReturn(false);
+
+        assertThatThrownBy(() -> service.applyAuthorizations(7L, granting(grant(10L))))
+                .isInstanceOf(BusinessException.class)
+                .hasMessageContaining("active company");
+        verifyNoInteractions(authorizationService);
+    }
+
     @Test
     void anOrdinaryCompanyIsStillAccepted() {
         when(tenantInfoService.getTenantName(10L)).thenReturn("Acme");
+        when(tenantInfoService.isTenantActive(10L)).thenReturn(true);
         when(authorizationService.searchList(org.mockito.ArgumentMatchers.any(Filters.class)))
                 .thenReturn(List.of());
 

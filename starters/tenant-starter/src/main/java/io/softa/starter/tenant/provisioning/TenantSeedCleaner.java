@@ -2,9 +2,12 @@ package io.softa.starter.tenant.provisioning;
 
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
+import java.util.Set;
 
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
@@ -44,6 +47,9 @@ public class TenantSeedCleaner {
     /** The predefined-data ledger: one row per seeded row, carrying the model and the row id it created. */
     private static final String PRE_DATA_LEDGER = "SysPreData";
 
+    /** The person an account (or a consultant record) belongs to. */
+    private static final String PROFILE_ID = "profileId";
+
     private final ModelService<Long> modelService;
 
     public TenantSeedCleaner(ModelService<Long> modelService) {
@@ -77,9 +83,21 @@ public class TenantSeedCleaner {
     }
 
     /**
-     * Delete the PROFILES of this tenant's accounts — resolved through the accounts, because a
-     * person is a global model with no tenant column of its own. Filtering {@code UserProfile} by
+     * Delete the PROFILES that belong to this tenant alone — resolved through the accounts, because
+     * a person is a global model with no tenant column of its own. Filtering {@code UserProfile} by
      * {@code tenantId} does not merely return nothing, it throws: the field no longer exists.
+     *
+     * <p>"Alone" is the whole point. A person is shared: a consultant holds a membership in every
+     * company they work for, and the same person can be an employee here and a consultant elsewhere.
+     * Deleting everyone this tenant's accounts point at took those people out of every other
+     * company with them — the account there survives, but it names a person who no longer exists,
+     * so they could sign in nowhere. Kept, therefore:
+     * <ul>
+     *   <li>anyone holding a membership in another tenant — they still work there;</li>
+     *   <li>anyone who is a consultant — the consultant record is the platform's, outlives any one
+     *       company, and deleting the person would take it (and every grant) along.</li>
+     * </ul>
+     * Their membership in THIS tenant still goes with the rest of the accounts; only the person stays.
      *
      * <p>Must run BEFORE the accounts are cleared — the accounts are the only route to these rows,
      * and once they are gone the profiles are unreachable orphans.
@@ -89,21 +107,36 @@ public class TenantSeedCleaner {
         // UserProfile.userId, which is the DEPRECATED back-reference: keying off it would miss any
         // account whose back-ref was never backfilled and leave the profile as an unreachable
         // orphan (a person is global, so nothing else can find it) while the account is deleted
-        // below. It also stays correct when one person holds several memberships in future.
-        List<Map<String, Object>> accounts = modelService.searchList("UserAccount", new FlexQuery(
-                new Filters().eq(ModelConstant.TENANT_ID, tenantId)));
-        List<Long> profileIds = accounts.stream()
-                .map(a -> a.get("profileId"))
-                .filter(java.util.Objects::nonNull)
-                .map(v -> Long.valueOf(v.toString()))
-                .distinct().toList();
-        if (!profileIds.isEmpty()) {
+        // below.
+        List<Long> profileIds = profileIdsOf(modelService.searchList("UserAccount", new FlexQuery(
+                new Filters().eq(ModelConstant.TENANT_ID, tenantId))));
+        if (profileIds.isEmpty()) {
+            return 0;
+        }
+        Set<Long> kept = new HashSet<>(profileIdsOf(modelService.searchList("UserAccount", new FlexQuery(
+                new Filters().in(PROFILE_ID, profileIds).ne(ModelConstant.TENANT_ID, tenantId)))));
+        kept.addAll(profileIdsOf(modelService.searchList("ConsultantProfile", new FlexQuery(
+                new Filters().in(PROFILE_ID, profileIds)))));
+        List<Long> owned = profileIds.stream().filter(id -> !kept.contains(id)).toList();
+        if (!owned.isEmpty()) {
             // Deleting the person takes their UserIdentity with them: the credentials carry
             // onDelete=CASCADE on their profileId, so there is no separate cleanup to keep in step
             // here (and no orphaned credential row if one is ever added to the person).
-            modelService.deleteByIds("UserProfile", profileIds);
+            modelService.deleteByIds("UserProfile", owned);
         }
-        return profileIds.size();
+        if (!kept.isEmpty()) {
+            log.info("Tenant {} rebuild keeps {} shared person record(s) — they belong to another company "
+                    + "or are consultants; only their membership here is cleared", tenantId, kept.size());
+        }
+        return owned.size();
+    }
+
+    private static List<Long> profileIdsOf(List<Map<String, Object>> rows) {
+        return rows.stream()
+                .map(row -> row.get(PROFILE_ID))
+                .filter(Objects::nonNull)
+                .map(v -> Long.valueOf(v.toString()))
+                .distinct().toList();
     }
 
     /**

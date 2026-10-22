@@ -66,7 +66,7 @@ class TenantSeedPurgeServiceTest {
     // ─── what it clears, and what it does not ───
 
     @Test
-    @DisplayName("it clears the provisioning state it owns — the progress ledger and the accounts")
+    @DisplayName("it clears the provisioning state it owns — the progress ledger, the accounts and the grants that point at them")
     void clearsOnlyItsOwnProvisioningState() {
         service.rebuild(TENANT);
 
@@ -74,7 +74,7 @@ class TenantSeedPurgeServiceTest {
         // through this tenant's accounts, so it is cleared via clearProfilesOf (asserted below)
         // rather than by a tenantId filter that would throw on a field the model no longer has.
         assertThat(clearedModels()).containsExactly(
-                "UserRoleRel", "UserInvitation", "UserAccount", "TenantSeedProgress");
+                "ConsultantAuthorization", "UserRoleRel", "UserInvitation", "UserAccount", "TenantSeedProgress");
         verify(seedCleaner).clearProfilesOf(TENANT);
     }
 
