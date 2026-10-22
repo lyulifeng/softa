@@ -4,6 +4,7 @@ import java.util.ArrayDeque;
 import java.util.Deque;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Optional;
 import java.util.Set;
 import java.util.TreeSet;
 
@@ -25,6 +26,11 @@ import static org.assertj.core.api.Assertions.assertThat;
  * on its own path, following calls inside the class (lambdas included). A new write entry, or a
  * refactor that routes an existing one around the check, fails here instead of letting a caller write
  * rows outside its range.
+ *
+ * <p>It proves a path exists, not that every branch takes it: a check behind a condition counts. Nor does
+ * it see writes made with the check switched off for the whole call — a nested relation written under a
+ * skipped context goes through these same entries and passes them unchecked. Those are left to the
+ * scenario tests.
  */
 class ModelServiceWriteIdCheckTest {
 
@@ -70,10 +76,17 @@ class ModelServiceWriteIdCheckTest {
                     return true;
                 }
                 if (call.getTargetOwner().equals(service)) {
-                    // Every overload of the called name: a delegating overload may pick any of them.
-                    for (JavaCodeUnit candidate : service.getCodeUnits()) {
-                        if (candidate.getName().equals(call.getName())) {
-                            todo.add(candidate);
+                    // The overload actually called. Following every overload of the name let one that
+                    // checks stand in for one that does not; the name is the fallback only when the
+                    // call does not resolve to a single method.
+                    Optional<JavaMethod> called = call.getTarget().resolveMember();
+                    if (called.isPresent()) {
+                        todo.add(called.get());
+                    } else {
+                        for (JavaCodeUnit candidate : service.getCodeUnits()) {
+                            if (candidate.getName().equals(call.getName())) {
+                                todo.add(candidate);
+                            }
                         }
                     }
                 }
