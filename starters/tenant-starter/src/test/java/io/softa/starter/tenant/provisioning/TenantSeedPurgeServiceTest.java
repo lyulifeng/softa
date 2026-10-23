@@ -58,7 +58,7 @@ class TenantSeedPurgeServiceTest {
 
         // DRAFT — the only status a rebuild is allowed in.
         when(tenantInfoService.getById(TENANT)).thenReturn(Optional.of(tenant()));
-        when(seedCleaner.clearModels(anyLong(), anyList())).thenReturn(Map.of("UserAccount", 1));
+        when(seedCleaner.clearModels(anyLong(), anyList())).thenReturn(Map.of("TenantSeedProgress", 1));
 
         service = new TenantSeedPurgeService(tenantInfoService, statusService, seedCleaner, eventPublisher);
     }
@@ -66,16 +66,23 @@ class TenantSeedPurgeServiceTest {
     // ─── what it clears, and what it does not ───
 
     @Test
-    @DisplayName("it clears the provisioning state it owns — the progress ledger, the accounts and the grants that point at them")
+    @DisplayName("it clears the progress ledger and nothing else it owns")
     void clearsOnlyItsOwnProvisioningState() {
         service.rebuild(TENANT);
 
-        // UserProfile is deliberately absent: a person is a global model now, reachable only
-        // through this tenant's accounts, so it is cleared via clearProfilesOf (asserted below)
-        // rather than by a tenantId filter that would throw on a field the model no longer has.
-        assertThat(clearedModels()).containsExactly(
-                "ConsultantAuthorization", "UserRoleRel", "UserInvitation", "UserAccount", "TenantSeedProgress");
-        verify(seedCleaner).clearProfilesOf(TENANT);
+        assertThat(clearedModels()).containsExactly("TenantSeedProgress");
+    }
+
+    @Test
+    @DisplayName("no account and no person is cleared — a person is global, and a Draft tenant holds no account")
+    void neverClearsAccountsOrPeople() {
+        // A rebuild once deleted the people this tenant's accounts pointed at, and with them every membership
+        // those people held in other companies: a consultant serving several companies could sign in nowhere.
+        service.rebuild(TENANT);
+
+        assertThat(clearedModels()).doesNotContain(
+                "UserProfile", "UserIdentity", "UserAccount", "UserRoleRel", "UserInvitation",
+                "ConsultantProfile", "ConsultantAuthorization");
     }
 
     @Test

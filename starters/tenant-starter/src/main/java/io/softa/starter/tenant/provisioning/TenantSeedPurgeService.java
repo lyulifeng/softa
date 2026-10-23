@@ -36,16 +36,24 @@ import io.softa.starter.tenant.service.impl.TenantProvisioningStatusService;
  * "everybody finished purging" latch to build and get wrong.
  *
  * <h3>What this method itself clears</h3>
- * Only what belongs to tenant-starter and to the tenant's own provisioning:
+ * Only the provisioning ledger:
  * <ul>
  *   <li>the {@link TenantSeedProgress} ledger — not tidiness. {@code markSeederReady} flips a tenant to READY
  *       as soon as the DONE keys cover the expected set, so leaving the previous run's rows means the FIRST
  *       seeder to report satisfies that check alone, and the tenant is announced READY while the others are
  *       still seeding — opening login onto a half-built workspace;</li>
- *   <li>the tenant's accounts. They come from {@code createAdmin}, and a rebuild re-seeds the roles with new
- *       ids, so an account kept across it would hold grants pointing at roles that no longer exist — an admin
- *       who appears to have access and does not.</li>
  * </ul>
+ *
+ * <h3>Why accounts and people are not cleared</h3>
+ * Provisioning writes no account, role grant, invitation or consultant grant, and nothing else can put one in a
+ * Draft tenant: an admin is created only once the tenant is READY, a user or an employee account only by someone
+ * signed in to it — which a tenant short of READY refuses — and a consultant only into an active tenant. So a
+ * tenant that can be rebuilt holds none of them, and there is nothing of the kind to clear.
+ *
+ * <p>A person above all is not for a rebuild to touch. {@code UserProfile} is global: the same person holds
+ * memberships in other companies, and a consultant one in every company they serve. Deleting the people this
+ * tenant's accounts pointed at took them out of every other company with them — the accounts there survived,
+ * naming a person who no longer existed, so they could sign in nowhere.
  *
  * <h3>Why deleting anything is safe here</h3>
  * Nobody can get into a tenant before it is READY — login and admin creation both refuse one — so a
@@ -75,21 +83,8 @@ import io.softa.starter.tenant.service.impl.TenantProvisioningStatusService;
 @Service
 public class TenantSeedPurgeService {
 
-    /**
-     * Provisioning state owned here, child-first.
-     *
-     * <p>The accounts are user-starter's models rather than a seeder's output, which is why they are named
-     * explicitly instead of arriving through {@link TenantSeedCleaner}. In practice they are usually empty —
-     * {@code createAdmin} refuses a tenant that is not READY, and a rebuild is only possible while it is not —
-     * so they are listed so the outcome does not depend on that gate holding.
-     *
-     * <p>{@code ConsultantAuthorization} comes first because a grant points at the membership it minted, and
-     * that membership is deleted right after. A consultant authorized into a Draft tenant (before the grant
-     * refused one) would otherwise keep a grant naming an account that no longer exists. The grant is not
-     * multi-tenant but carries the tenant it admits as a plain {@code tenantId}, so the same filter reaches it.
-     */
-    private static final List<String> PROVISIONING_STATE = List.of(
-            "ConsultantAuthorization", "UserRoleRel", "UserInvitation", "UserAccount", "TenantSeedProgress");
+    /** Provisioning state owned here: the seeders' progress ledger, see the class comment. */
+    private static final List<String> PROVISIONING_STATE = List.of("TenantSeedProgress");
 
     private final TenantInfoServiceImpl tenantInfoService;
     private final TenantProvisioningStatusService statusService;
@@ -133,17 +128,7 @@ public class TenantSeedPurgeService {
                         + "own; one stuck in Initializing with nothing running (message lost, consumer down) has "
                         + "to be set to Draft by hand before it can be rebuilt.", tenantId, tenant.getStatus());
 
-        Map<String, Integer> cleared = inSystemContext(() -> {
-            // Profiles first: a person is global now and can only be found THROUGH this tenant's
-            // accounts, so they must be resolved while the accounts still exist. Only the people this
-            // tenant holds alone go; anyone shared with another company, or a consultant, stays.
-            int profiles = seedCleaner.clearProfilesOf(tenantId);
-            Map<String, Integer> byModel = seedCleaner.clearModels(tenantId, PROVISIONING_STATE);
-            if (profiles > 0) {
-                byModel.put("UserProfile", profiles);
-            }
-            return byModel;
-        });
+        Map<String, Integer> cleared = inSystemContext(() -> seedCleaner.clearModels(tenantId, PROVISIONING_STATE));
         statusService.beginProvisioning(tenantId);
         eventPublisher.publishEvent(new TenantProvisionedEvent(tenantId, tenant.getCode(), tenant.getName(), true));
         log.warn("Tenant {} setup restarted — provisioning state cleared {}; each seeder discards its own "
