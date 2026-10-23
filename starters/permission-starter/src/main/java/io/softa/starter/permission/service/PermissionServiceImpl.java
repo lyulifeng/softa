@@ -1156,7 +1156,7 @@ public class PermissionServiceImpl implements PermissionService {
         if (scope == null) {
             return ids.stream().map(PermissionServiceImpl::normalizeId).collect(Collectors.toSet());
         }
-        Filters target = Filters.and(Filters.of(ModelConstant.ID, Operator.IN, ids), scope);
+        Filters target = Filters.and(byIds(model, ids), scope);
         List<?> reached = unscoped(() -> modelService.getIds(model, target));
         return reached.stream().map(PermissionServiceImpl::normalizeId).collect(Collectors.toSet());
     }
@@ -1657,7 +1657,7 @@ public class PermissionServiceImpl implements PermissionService {
                     .map(g -> judgedOnOwner(g, model, accessType) ? null : grantScope(g, model))
                     .toList());
             if (scope == null) return;
-            Filters target = Filters.and(Filters.of(ModelConstant.ID, Operator.IN, idList), scope);
+            Filters target = Filters.and(byIds(model, idList), scope);
             long reached = unscoped(() -> modelService.count(model, target));
             if (reached != idList.size()) {
                 throw sensitiveWriteDenied(model, written.getFirst());
@@ -1809,7 +1809,7 @@ public class PermissionServiceImpl implements PermissionService {
         if (scope == null) {
             return;
         }
-        Filters target = Filters.and(Filters.of(ModelConstant.ID, Operator.IN, idList), scope);
+        Filters target = Filters.and(byIds(model, idList), scope);
         long visible = unscoped(() -> modelService.count(model, target));
         if (visible != idList.size()
                 && !(ModelManager.existModel(model) && ModelManager.isTimelineModel(model)
@@ -1828,7 +1828,7 @@ public class PermissionServiceImpl implements PermissionService {
      * has since left.
      */
     private boolean reachedOnAnySlice(String model, List<Serializable> ids, Filters scope) {
-        Filters byId = Filters.of(ModelConstant.ID, Operator.IN, ids);
+        Filters byId = byIds(model, ids);
         Set<String> reachedNow = texts(unscoped(() -> modelService.getIds(model, Filters.and(byId, scope))));
         Set<String> existNow = texts(unscoped(() -> modelService.getIds(model, byId)));
         List<Serializable> withoutSlice = ids.stream().filter(id -> !existNow.contains(id.toString())).toList();
@@ -1836,10 +1836,25 @@ public class PermissionServiceImpl implements PermissionService {
             return false;
         }
         FlexQuery anySlice = new FlexQuery(List.of(ModelConstant.ID),
-                Filters.and(Filters.of(ModelConstant.ID, Operator.IN, withoutSlice), scope)).acrossTimelineData();
+                Filters.and(byIds(model, withoutSlice), scope)).acrossTimelineData();
         Set<String> reachedEver = texts(unscoped(() -> modelService.searchList(model, anySlice)).stream()
                 .map(row -> row.get(ModelConstant.ID)).toList());
         return reachedEver.size() == withoutSlice.size();
+    }
+
+    /**
+     * The rows named by {@code ids}, enabled or not.
+     *
+     * <p>A read of an active-controlled model adds {@code active = true} by itself, so a disabled row
+     * counted as out of range: a disabled cost centre — the only kind that may be deleted — could not
+     * be deleted by anyone whose range is checked.
+     */
+    private static Filters byIds(String model, List<? extends Serializable> ids) {
+        Filters byId = Filters.of(ModelConstant.ID, Operator.IN, ids);
+        if (ModelManager.existModel(model) && ModelManager.isActiveControl(model)) {
+            return Filters.and(byId, Filters.of(ModelConstant.ACTIVE_CONTROL_FIELD, Operator.IN, List.of(true, false)));
+        }
+        return byId;
     }
 
     private static Set<String> texts(Collection<?> ids) {

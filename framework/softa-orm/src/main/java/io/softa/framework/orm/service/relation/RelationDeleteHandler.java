@@ -4,6 +4,7 @@ import java.io.Serializable;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.function.Supplier;
 
 import org.springframework.stereotype.Component;
 import org.springframework.util.CollectionUtils;
@@ -14,7 +15,6 @@ import io.softa.framework.base.context.ContextHolder;
 import io.softa.framework.base.utils.Assert;
 import io.softa.framework.orm.constant.ModelConstant;
 import io.softa.framework.orm.domain.Filters;
-import io.softa.framework.orm.domain.FlexQuery;
 import io.softa.framework.orm.enums.OnDelete;
 import io.softa.framework.orm.meta.MetaField;
 import io.softa.framework.orm.meta.MetaModel;
@@ -86,7 +86,7 @@ public class RelationDeleteHandler {
     }
 
     private void restrict(String deletedModel, List<Serializable> ids, MetaField f) {
-        long count = referrers(f, ids, BaseConstant.MAX_BATCH_SIZE + 1).size();
+        long count = asSystem(() -> ReflectTool.count(f.getModelName(), reverseFilters(f, ids)));
         Assert.isTrue(count == 0,
                 "Cannot delete {0}: {1} row(s) in {2}.{3} still reference it (onDelete=RESTRICT).",
                 deletedModel, count, f.getModelName(), f.getFieldName());
@@ -120,17 +120,16 @@ public class RelationDeleteHandler {
     }
 
     /**
-     * The referrers' ids, read past the caller's row range. Whether a row is still referenced does not
-     * depend on who asks: counted within the caller's range, a referrer the caller cannot see did not
-     * count, a RESTRICT let the delete through, and a CASCADE or SET_NULL left it pointing at nothing.
-     * The ids are not returned to the caller; the writes that follow on them are judged as the caller.
+     * Reads the referrers as the system. Whether a row is still referenced does not depend on who asks:
+     * read as the caller, a referrer outside their range did not count, a RESTRICT let the delete through,
+     * and a CASCADE or SET_NULL left it pointing at nothing. Their field guards had the same effect — a
+     * referrer shown only by its label hides the foreign key the probe matches on. Nothing read here is
+     * returned to the caller; the writes that follow on the ids are judged as the caller.
      */
-    private List<Serializable> referrers(MetaField f, List<Serializable> ids, int limit) {
-        FlexQuery query = new FlexQuery(List.of(ModelConstant.ID), reverseFilters(f, ids));
-        query.setLimitSize(limit);
-        return ReflectTool.searchListIgnoringRowScope(f.getModelName(), query).stream()
-                .map(row -> (Serializable) row.get(ModelConstant.ID))
-                .toList();
+    private static <T> T asSystem(Supplier<T> read) {
+        Context ctx = ContextHolder.cloneContext();
+        ctx.setSkipPermissionCheck(true);
+        return ContextHolder.callWith(ctx, read::get);
     }
 
     /**
@@ -142,7 +141,8 @@ public class RelationDeleteHandler {
      * without a separate {@code count}.
      */
     private List<Serializable> referrerIds(List<Serializable> ids, MetaField f) {
-        List<Serializable> referrerIds = referrers(f, ids, BaseConstant.MAX_BATCH_SIZE + 1);
+        List<Serializable> referrerIds = asSystem(() ->
+                ReflectTool.getIds(f.getModelName(), reverseFilters(f, ids), BaseConstant.MAX_BATCH_SIZE + 1));
         Assert.isTrue(referrerIds.size() <= BaseConstant.MAX_BATCH_SIZE,
                 "onDelete={0} on {1}.{2} would affect more than the MAX_BATCH_SIZE limit ({3}) referrer "
                         + "row(s) — narrow the delete, or reap the hierarchy in batches (application code).",
