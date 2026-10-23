@@ -9,7 +9,7 @@ import org.mockito.ArgumentCaptor;
 import org.mockito.MockedStatic;
 
 import io.softa.framework.base.constant.BaseConstant;
-import io.softa.framework.orm.domain.Filters;
+import io.softa.framework.orm.domain.FlexQuery;
 import io.softa.framework.orm.enums.OnDelete;
 import io.softa.framework.orm.meta.MetaField;
 import io.softa.framework.orm.meta.MetaModel;
@@ -56,7 +56,8 @@ class RelationDeleteHandlerTest {
         try (MockedStatic<ModelManager> mm = mockStatic(ModelManager.class);
              MockedStatic<ReflectTool> rt = mockStatic(ReflectTool.class)) {
             stubModelManager(mm, f);
-            rt.when(() -> ReflectTool.count(eq("Order"), any(Filters.class))).thenReturn(3L);
+            rt.when(() -> ReflectTool.searchListIgnoringRowScope(eq("Order"), any(FlexQuery.class)))
+                    .thenReturn(rows(1L, 2L, 3L));
 
             RuntimeException ex = assertThrows(RuntimeException.class,
                     () -> handler.handle("Customer", ONE_ID));
@@ -71,7 +72,8 @@ class RelationDeleteHandlerTest {
         try (MockedStatic<ModelManager> mm = mockStatic(ModelManager.class);
              MockedStatic<ReflectTool> rt = mockStatic(ReflectTool.class)) {
             stubModelManager(mm, f);
-            rt.when(() -> ReflectTool.count(eq("Order"), any(Filters.class))).thenReturn(0L);
+            rt.when(() -> ReflectTool.searchListIgnoringRowScope(eq("Order"), any(FlexQuery.class)))
+                    .thenReturn(List.of());
 
             handler.handle("Customer", ONE_ID);   // no throw
             rt.verify(() -> ReflectTool.deleteList(any(), anyList()), never());
@@ -84,8 +86,8 @@ class RelationDeleteHandlerTest {
         try (MockedStatic<ModelManager> mm = mockStatic(ModelManager.class);
              MockedStatic<ReflectTool> rt = mockStatic(ReflectTool.class)) {
             stubModelManager(mm, f);
-            rt.when(() -> ReflectTool.getIds(eq("Order"), any(Filters.class), anyInt()))
-                    .thenReturn(List.of((Serializable) 101L, 102L));
+            rt.when(() -> ReflectTool.searchListIgnoringRowScope(eq("Order"), any(FlexQuery.class)))
+                    .thenReturn(rows(101L, 102L));
 
             handler.handle("Customer", ONE_ID);
 
@@ -101,8 +103,8 @@ class RelationDeleteHandlerTest {
         try (MockedStatic<ModelManager> mm = mockStatic(ModelManager.class);
              MockedStatic<ReflectTool> rt = mockStatic(ReflectTool.class)) {
             stubModelManager(mm, f);
-            rt.when(() -> ReflectTool.getIds(eq("Order"), any(Filters.class), anyInt()))
-                    .thenReturn(Collections.nCopies(BaseConstant.MAX_BATCH_SIZE + 1, (Serializable) 1L));
+            rt.when(() -> ReflectTool.searchListIgnoringRowScope(eq("Order"), any(FlexQuery.class)))
+                    .thenReturn(Collections.nCopies(BaseConstant.MAX_BATCH_SIZE + 1, Map.of("id", (Object) 1L)));
 
             RuntimeException ex = assertThrows(RuntimeException.class,
                     () -> handler.handle("Customer", ONE_ID));
@@ -118,8 +120,8 @@ class RelationDeleteHandlerTest {
              MockedStatic<ReflectTool> rt = mockStatic(ReflectTool.class)) {
             stubModelManager(mm, f);
             mm.when(() -> ModelManager.isSoftDeleted("Customer")).thenReturn(false);   // hard delete
-            rt.when(() -> ReflectTool.getIds(eq("Order"), any(Filters.class), anyInt()))
-                    .thenReturn(List.of((Serializable) 101L));
+            rt.when(() -> ReflectTool.searchListIgnoringRowScope(eq("Order"), any(FlexQuery.class)))
+                    .thenReturn(rows(101L));
 
             handler.handle("Customer", ONE_ID);
 
@@ -143,7 +145,7 @@ class RelationDeleteHandlerTest {
 
             handler.handle("Customer", ONE_ID);
 
-            rt.verify(() -> ReflectTool.getIds(any(), any(), anyInt()), never());
+            rt.verify(() -> ReflectTool.searchListIgnoringRowScope(any(), any()), never());
             rt.verify(() -> ReflectTool.updateList(any(), anyList()), never());
         }
     }
@@ -160,5 +162,26 @@ class RelationDeleteHandlerTest {
 
             rt.verifyNoInteractions();   // no inbound onDelete refs → no scan / cascade / set-null
         }
+    }
+
+    @Test
+    void restrict_countsReferrersPastTheCallersRowRange() {
+        // A referrer the caller cannot see still references the row: the count must not shrink with
+        // the caller's range, or the delete goes through and leaves it pointing at nothing.
+        MetaField f = inboundField(OnDelete.RESTRICT);
+        try (MockedStatic<ModelManager> mm = mockStatic(ModelManager.class);
+             MockedStatic<ReflectTool> rt = mockStatic(ReflectTool.class)) {
+            stubModelManager(mm, f);
+            rt.when(() -> ReflectTool.count(eq("Order"), any())).thenReturn(0L);
+            rt.when(() -> ReflectTool.getIds(eq("Order"), any(), anyInt())).thenReturn(List.of());
+            rt.when(() -> ReflectTool.searchListIgnoringRowScope(eq("Order"), any(FlexQuery.class)))
+                    .thenReturn(rows(1L));
+
+            assertThrows(RuntimeException.class, () -> handler.handle("Customer", ONE_ID));
+        }
+    }
+
+    private static List<Map<String, Object>> rows(Long... ids) {
+        return java.util.Arrays.stream(ids).map(id -> Map.<String, Object>of("id", id)).toList();
     }
 }

@@ -149,11 +149,12 @@ public class ImportRowPipeline {
             uniqueConstraintValidator.validate(importTemplateDTO.getModelName(),
                     importTemplateDTO.getUniqueConstraints(), importDataDTO.getRows(), skipException);
         }
-        executeCustomHandler(importTemplateDTO.getCustomHandler(), importDataDTO, mode);
+        executeCustomHandler(importTemplateDTO.getCustomHandler(), importTemplateDTO.getModelName(), importDataDTO, mode);
         importFailureCollector.collect(importDataDTO);
     }
 
-    private void executeCustomHandler(String handlerName, ImportDataDTO importDataDTO, ImportMode mode) {
+    private void executeCustomHandler(String handlerName, String modelName, ImportDataDTO importDataDTO,
+                                      ImportMode mode) {
         if (StringUtils.isBlank(handlerName)) {
             return;
         }
@@ -162,6 +163,10 @@ public class ImportRowPipeline {
         }
         try {
             CustomImportHandler handler = SpringContextUtils.getBean(handlerName, CustomImportHandler.class);
+            if (!handler.supports(modelName)) {
+                throw new IllegalArgumentException(
+                        "The custom import handler `{0}` does not serve imports into {1}.", handlerName, modelName);
+            }
             List<Map<String, Object>> rows = importDataDTO.getRows();
             int originalSize = rows.size();
             List<Integer> rowIdentitySnapshot = rows.stream().map(System::identityHashCode).toList();
