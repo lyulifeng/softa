@@ -439,7 +439,9 @@ private String employeeNo;
   `computed`, `dynamic`, and non-RDBMS models.
 - The number format lives in a **`sys_sequence` row** whose `code` is
   `"<ModelName>.<fieldName>"` (e.g. `"Employee.employeeNo"`), provisioned per
-  tenant via `loadPreTenantData`. The row holds the template
+  tenant by a tenant seed file (`data-tenant/SysSequence.*.json`, listed in the
+  app's `seed-manifest.yml`; a new field's row goes in a new file, see
+  [seed-data.md](seed-data.md)). The row holds the template
   (`EMP-{yyyy}-{seq:5}`), reset cadence, and gap policy. **The row must exist**
   — an insert with no matching row fails with `SequenceNotFoundException`
   (fail-closed; there is no silent fallback).
@@ -457,16 +459,16 @@ private String employeeNo;
   belongs to a company some other way — a signing entity, a parent record —
   registers a `CompanyCascadePathResolver` bean ordered ahead of the default,
   returning the dot-path to the company (e.g. `"employeeId.legalEntityId"`).
-- A generated value **already in use is skipped** — present in the field
-  ignoring case, or typed into another row of the same insert — and the counter
-  moves on. Skipped numbers are spent for every company.
+- A generated value **already in use is skipped** — present in the field, or
+  typed into another row of the same insert — and the counter moves on. Codes
+  compare exactly as spelled: `zk1000030` and `ZK1000030` are two codes. Skipped numbers are spent for every company.
 - Pair with a **unique index** on the field if numbers must be unique — the
   sequence guarantees allocation order, the index guarantees uniqueness.
 - Duplicating a row never copies the number; the copy gets a fresh one on
   insert.
 - Without `readonly`, a value **typed by hand** is accepted, and checked at the
   write root on every path (forms, import, the model API): no spaces inside,
-  unique **ignoring case** (the duplicate message is the field's unique index
+  unique **as spelled** — codes differing only in case are different codes (the duplicate message is the field's unique index
   `message`), then the sequence's own **Manual Entry** rule (`SysSequence.manualEntry`):
   `Any`, `SameAsAutoGeneration` (the template's shape — company abbreviation,
   literals, as many digits), `LengthAndCharacters`, or `Pattern`. Only a new or
