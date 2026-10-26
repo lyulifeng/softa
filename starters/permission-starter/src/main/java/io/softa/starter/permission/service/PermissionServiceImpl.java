@@ -1254,13 +1254,19 @@ public class PermissionServiceImpl implements PermissionService {
 
     /**
      * Whether a read of {@code model} can come down to its label for some role: a read, of a model a role
-     * can be granted in its own right or one owned by such a model, and not declared public
-     * configuration. A model no role can be granted and nothing owns is left whole — nobody could see more
-     * of it than anybody else.
+     * can be granted in its own right or one owned by such a model, and declaring no scope of its own. A
+     * model no role can be granted and nothing owns is left whole — nobody could see more of it than
+     * anybody else.
+     *
+     * <p>A declared scope says, for every caller, which rows are theirs to read: all of them for public
+     * configuration, their own for a per-user log such as an import history. Those rows are not reached by
+     * reference, so they are not cut to a label — cut, the {@code createdId} condition a "my imports" list
+     * reads by was a field past the label, and the list came back empty for anyone not granted the log's
+     * own page.
      */
     private boolean mayBeLabelOnly(String model, AccessType access) {
         if (!READS.contains(access) || model == null || !ModelManager.existModel(model)) return false;
-        if (declaredScope(model) == ScopeType.ALL) return false;
+        if (declaredScope(model) != null) return false;
         return !directViewPermissions(model).isEmpty() || !ownersOf(model).isEmpty();
     }
 

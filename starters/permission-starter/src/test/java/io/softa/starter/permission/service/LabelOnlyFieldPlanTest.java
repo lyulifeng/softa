@@ -25,6 +25,7 @@ import io.softa.framework.orm.meta.MetaModel;
 import io.softa.framework.orm.meta.ModelManager;
 import io.softa.framework.orm.service.ModelService;
 import io.softa.starter.permission.index.EndpointIndex;
+import io.softa.starter.permission.scope.ModelDefaultScopeRegistry;
 import io.softa.starter.permission.scope.ScopeApplicabilityResolver;
 import io.softa.starter.permission.scope.ScopeRuleCompiler;
 import io.softa.starter.permission.sensitive.SensitiveFieldSetCache;
@@ -269,6 +270,34 @@ class LabelOnlyFieldPlanTest {
 
         assertThat(as(() -> service.filterReadableFields("EmpDocument", List.of("id", "name", "startDate"),
                 AccessType.READ))).containsExactly("id", "name", "startDate");
+    }
+
+    /**
+     * An import history is a per-user log with a page of its own: a role importing employees reads its own
+     * entries by {@code createdId} without being granted that page. Cut to a label, the condition matched
+     * nothing and "my imports" came back empty.
+     */
+    @Test
+    void aModelDeclaringItsOwnScopeIsReadWhole() {
+        ModelDefaultScopeRegistry registry = mock(ModelDefaultScopeRegistry.class);
+        when(registry.scopeFor("ImportHistory")).thenReturn(ScopeType.CREATED_BY_SELF);
+        when(index.directModelActionPermissions("ImportHistory", "view")).thenReturn(Set.of("permission.import-history.view"));
+        model("ImportHistory", List.of("id", "modelName", "createdId", "status"), List.of("id"));
+        service = new PermissionServiceImpl(providerOf(pi), stubCompiler(), null, modelService,
+                mock(ScopeApplicabilityResolver.class), () -> index, () -> null, () -> registry);
+        pi.setRoleGrants(List.of(role(1, Set.of(EMPLOYEE_VIEW), "Employee", ScopeType.ALL)));
+
+        assertThat(as(() -> service.filterReadableFields("ImportHistory", List.of("id", "modelName", "createdId", "status"),
+                AccessType.READ))).containsExactly("id", "modelName", "createdId", "status");
+        Filters guarded = as(() -> service.appendScopeAccessFilters("ImportHistory",
+                Filters.of("createdId", Operator.EQUAL, 2L)));
+        assertThat(guarded.toString()).contains("createdId");
+    }
+
+    private static PermissionSnapshotProvider providerOf(PermissionInfo pi) {
+        PermissionSnapshotProvider provider = mock(PermissionSnapshotProvider.class);
+        when(provider.get(anyLong(), anyLong())).thenReturn(pi);
+        return provider;
     }
 
     @Test
