@@ -301,6 +301,17 @@ class LabelOnlyFieldPlanTest {
     }
 
     @Test
+    void aCompanyReachedByReferenceKeepsItsCountry() {
+        when(index.directModelActionPermissions("Company", "view")).thenReturn(Set.of("permission.company.view"));
+        model("Company", List.of("id", "name", "country", "registrationNo"), List.of("name"));
+        models.when(() -> ModelManager.existField("Company", "country")).thenReturn(true);
+        pi.setRoleGrants(List.of(role(1, Set.of(EMPLOYEE_VIEW), "Employee", ScopeType.ALL)));
+
+        assertThat(as(() -> service.filterReadableFields("Company", List.of("id", "name", "country", "registrationNo"),
+                AccessType.READ))).containsExactly("id", "name", "country");
+    }
+
+    @Test
     void aConditionPastTheLabelMatchesNothing() {
         pi.setRoleGrants(List.of(role(1, Set.of(EMPLOYEE_VIEW), "Employee", ScopeType.ALL)));
 

@@ -1316,6 +1316,11 @@ public class PermissionServiceImpl implements PermissionService {
         // — an employee's company is derived from the department chosen for them — not a detail of it.
         if (meta.isMultiCompany()) labels.add(ModelConstant.COMPANY_FIELD);
         if (meta.isMultiCountry()) labels.add(ModelConstant.COUNTRY_FIELD);
+        // A company's country is where the country axis comes from: an employee's form decides which
+        // country's fields and options it shows from the country of the legal entity picked on it.
+        if (ModelConstant.COMPANY_MODEL.equals(model) && ModelManager.existField(model, ModelConstant.COUNTRY_FIELD)) {
+            labels.add(ModelConstant.COUNTRY_FIELD);
+        }
         return labels;
     }
 
