@@ -1049,7 +1049,7 @@ public class UserAccountController extends EntityController<UserAccountService, 
         }
 
         try {
-            UserAccount existingAccount = service.getById(currentUserId)
+            UserAccount existingAccount = service.getMyAccount()
                     .orElseThrow(() -> new BusinessException(ResponseCode.USER_NOT_FOUND,
                             "Current user account not found for update."));
 

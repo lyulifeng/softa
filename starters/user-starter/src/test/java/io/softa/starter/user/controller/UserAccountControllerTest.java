@@ -402,7 +402,7 @@ class UserAccountControllerTest {
         stored.setNickname("Old Name");
         stored.setEmail("alice@acme.com");
         stored.setMobile("+6591234567");
-        when(accountService.getById(42L)).thenReturn(java.util.Optional.of(stored));
+        when(accountService.getMyAccount()).thenReturn(java.util.Optional.of(stored));
         when(accountService.updateOne(any(UserAccount.class))).thenReturn(true);
 
         UserAccountDTO body = new UserAccountDTO();
