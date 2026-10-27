@@ -15,6 +15,7 @@ import io.softa.starter.user.service.UserAccountService;
 import io.softa.starter.user.service.UserIdentityService;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.doReturn;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.spy;
@@ -266,5 +267,21 @@ class MustSetMyPasswordTest {
                 .thenReturn(List.of(membership(false, null), membership(true)));
 
         assertThat(asUser(USER)).isFalse();
+    }
+
+    /**
+     * A role that reaches accounts only by reference reads their label — no person behind it. The
+     * caller's own account is read whole, or nobody without the accounts page could ever be asked for
+     * a first password.
+     */
+    @Test
+    void theOwnAccountIsReadWholeForARoleThatSeesAccountsAsALabel() {
+        UserAccount label = account(null);
+        doAnswer(inv -> Optional.of(ContextHolder.getContext().isSkipPermissionCheck() ? account(PROFILE) : label))
+                .when(accountService).getById(USER);
+        when(identityService.findByProfile(PROFILE)).thenReturn(Optional.of(identity(null)));
+
+        assertThat(asUser(USER)).isTrue();
+        assertThat(canSetAsUser(USER)).isTrue();
     }
 }

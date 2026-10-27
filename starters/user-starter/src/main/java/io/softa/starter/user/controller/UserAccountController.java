@@ -1015,7 +1015,7 @@ public class UserAccountController extends EntityController<UserAccountService, 
     public ApiResponse<UserAccount> getMyAccount() {
         Long userId = ContextHolder.getContext().getUserId();
         try {
-            Optional<UserAccount> accountOpt = service.getById(userId);
+            Optional<UserAccount> accountOpt = service.getMyAccount();
 
             if (accountOpt.isEmpty()) {
                 log.warn("Current user account not found for ID: {}", userId);

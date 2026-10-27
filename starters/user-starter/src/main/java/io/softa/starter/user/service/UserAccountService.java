@@ -204,6 +204,17 @@ public interface UserAccountService extends EntityService<UserAccount, Long> {
     java.util.Optional<UserAccount> reviveMembership(Long profileId, String workEmail, String workMobile);
 
     /**
+     * The logged-in person's own account, read whole.
+     *
+     * <p>Whole regardless of what the caller's roles grant on the account model: a role that reaches
+     * accounts only by reference reads their label, and the self-service flows need the rest of their
+     * own row — the person it belongs to, to find their credentials; the email, to show it.
+     *
+     * @return the account, empty when there is no logged-in user or the account does not exist
+     */
+    java.util.Optional<UserAccount> getMyAccount();
+
+    /**
      * Change the current user's password
      *
      * @param currentPassword Current password

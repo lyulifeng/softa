@@ -1025,6 +1025,19 @@ public class UserAccountServiceImpl extends EntityServiceImpl<UserAccount, Long>
     }
 
     @Override
+    public Optional<UserAccount> getMyAccount() {
+        Long userId = ContextHolder.getContext().getUserId();
+        if (userId == null) {
+            return Optional.empty();
+        }
+        // Permission-skipped, still in the caller's tenant: the row is the caller's own, so no role
+        // decides how much of it they see.
+        Context ctx = ContextHolder.cloneContext();
+        ctx.setSkipPermissionCheck(true);
+        return ContextHolder.callWith(ctx, () -> this.getById(userId));
+    }
+
+    @Override
     @Transactional
     public void changeMyPassword(String currentPassword, String newPassword) {
         Assert.notBlank(currentPassword, "Old password cannot be empty.");
@@ -1035,7 +1048,7 @@ public class UserAccountServiceImpl extends EntityServiceImpl<UserAccount, Long>
         Long userId = ContextHolder.getContext().getUserId();
         Assert.notNull(userId, "Cannot change password without logged-in user context.");
 
-        UserAccount user = this.getById(userId).orElseThrow(() -> new BusinessException("Current user not found."));
+        UserAccount user = getMyAccount().orElseThrow(() -> new BusinessException("Current user not found."));
 
         // The password is the PERSON's, so changing it here changes it for every company they
         // belong to. That is the intended meaning of one global credential.
@@ -1063,7 +1076,7 @@ public class UserAccountServiceImpl extends EntityServiceImpl<UserAccount, Long>
         // no and this said yes, and the login page ORs the two. Whether somebody must set a password
         // has one answer, and LoginService owns it — a consultant is exempt, a person with
         // no credentials row at all is not forced into a screen the set-password call would refuse.
-        return this.getById(userId)
+        return getMyAccount()
                 .map(UserAccount::getProfileId)
                 .map(loginService::mustSetPassword)
                 .orElse(false);
@@ -1080,7 +1093,7 @@ public class UserAccountServiceImpl extends EntityServiceImpl<UserAccount, Long>
         // it exempts consultants — who are exactly the people with no password and no other way to
         // get one. The lenient identity lookup, because "no credentials row" is a false here rather
         // than an error: nothing is being done, only answered.
-        return this.getById(userId)
+        return getMyAccount()
                 .map(UserAccount::getProfileId)
                 .flatMap(identityService::findByProfile)
                 .map(identity -> StringUtils.isBlank(identity.getPassword()))
@@ -1094,7 +1107,7 @@ public class UserAccountServiceImpl extends EntityServiceImpl<UserAccount, Long>
         Long userId = ContextHolder.getContext().getUserId();
         Assert.notNull(userId, "Cannot set a password without logged-in user context.");
 
-        UserAccount user = this.getById(userId)
+        UserAccount user = getMyAccount()
                 .orElseThrow(() -> new BusinessException("Current user not found."));
         UserIdentity identity = identityService.requireIdentity(user);
         if (StringUtils.isNotBlank(identity.getPassword())) {
