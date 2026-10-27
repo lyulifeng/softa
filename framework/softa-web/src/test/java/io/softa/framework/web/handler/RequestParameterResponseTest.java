@@ -7,10 +7,13 @@ import org.mockito.Mockito;
 import org.springframework.core.MethodParameter;
 import org.springframework.http.ResponseEntity;
 import org.springframework.test.util.ReflectionTestUtils;
+import org.springframework.web.bind.MissingPathVariableException;
 import org.springframework.web.bind.MissingServletRequestParameterException;
 import org.springframework.web.bind.UnsatisfiedServletRequestParameterException;
 import org.springframework.web.method.annotation.MethodArgumentTypeMismatchException;
 
+import io.softa.framework.base.context.Context;
+import io.softa.framework.base.context.ContextHolder;
 import io.softa.framework.base.enums.ResponseCode;
 import io.softa.framework.web.response.ApiResponse;
 import io.softa.framework.web.response.ApiResponseErrorDetails;
@@ -42,6 +45,25 @@ class RequestParameterResponseTest {
         assertThat(body.getError()).contains("mode=copy");
     }
 
+    /** A path variable the URI template does not declare is a mistake in the code: still a system error. */
+    @Test
+    void aPathVariableMissingFromTheTemplateStaysASystemError() throws NoSuchMethodException {
+        ApiResponseErrorDetails<Void> body = ContextHolder.callWith(new Context(), () -> body(handler().handleException(
+                new MissingPathVariableException("modelName", modelNameParameter()))));
+
+        assertThat(body.getCode()).isEqualTo(ResponseCode.ERROR.getCode());
+    }
+
+    /** One present in the path that converted to nothing is the caller's: a 400. */
+    @Test
+    void aPathVariableEmptyAfterConversionIsABadRequest() throws NoSuchMethodException {
+        ApiResponseErrorDetails<Void> body = body(handler().handleException(
+                new MissingPathVariableException("modelName", modelNameParameter(), true)));
+
+        assertThat(body.getCode()).isEqualTo(ResponseCode.BAD_REQUEST.getCode());
+        assertThat(body.getError()).contains("modelName");
+    }
+
     @Test
     void aParameterOfTheWrongTypeIsABadRequestThatNamesItAndTheValue() throws NoSuchMethodException {
         MethodParameter parameter = new MethodParameter(
@@ -66,8 +88,17 @@ class RequestParameterResponseTest {
         return (ApiResponseErrorDetails<Void>) response.getBody();
     }
 
+    private static MethodParameter modelNameParameter() throws NoSuchMethodException {
+        return new MethodParameter(RequestParameterResponseTest.class.getDeclaredMethod("search", String.class), 0);
+    }
+
     /** Stands in for the endpoint whose parameter failed to bind. */
     @SuppressWarnings("unused")
     private void deleteById(Long id) {
+    }
+
+    /** Stands in for an endpoint that binds a path variable. */
+    @SuppressWarnings("unused")
+    private void search(String modelName) {
     }
 }
