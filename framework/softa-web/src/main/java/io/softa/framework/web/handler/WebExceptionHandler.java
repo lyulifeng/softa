@@ -17,9 +17,10 @@ import org.springframework.jdbc.BadSqlGrammarException;
 import org.springframework.validation.FieldError;
 import org.springframework.web.HttpRequestMethodNotSupportedException;
 import org.springframework.web.bind.MethodArgumentNotValidException;
-import org.springframework.web.bind.UnsatisfiedServletRequestParameterException;
+import org.springframework.web.bind.ServletRequestBindingException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
+import org.springframework.web.method.annotation.MethodArgumentTypeMismatchException;
 import org.springframework.web.multipart.MaxUploadSizeExceededException;
 import org.springframework.web.servlet.NoHandlerFoundException;
 
@@ -246,14 +247,33 @@ public class WebExceptionHandler {
     }
 
     /**
-     * Handle UnsatisfiedServletRequestParameterException
+     * A request that does not carry what the endpoint binds from it: a required parameter, header or path
+     * variable missing, or parameter conditions unmet. The caller's mistake, so a 400 that names what is
+     * missing — not the 500 "System exception" it fell through to, which sends the caller to an
+     * administrator for a request they can correct themselves.
      *
      * @param e Exception
      * @return ResponseEntity
      */
-    @ExceptionHandler(value = UnsatisfiedServletRequestParameterException.class)
-    public ResponseEntity<ApiResponse<Void>> handleException(UnsatisfiedServletRequestParameterException e) {
+    @ExceptionHandler(value = ServletRequestBindingException.class)
+    public ResponseEntity<ApiResponse<Void>> handleException(ServletRequestBindingException e) {
         return handler(ResponseCode.BAD_REQUEST, e);
+    }
+
+    /**
+     * A parameter that does not convert to the type the endpoint takes, such as {@code id=abc} for a
+     * numeric id. A 400 naming the parameter, the type and the value received.
+     *
+     * @param e Exception
+     * @return ResponseEntity
+     */
+    @ExceptionHandler(value = MethodArgumentTypeMismatchException.class)
+    public ResponseEntity<ApiResponse<Void>> handleException(MethodArgumentTypeMismatchException e) {
+        Class<?> requiredType = e.getRequiredType();
+        String message = "Parameter '" + e.getName() + "' must be "
+                + (requiredType == null ? "of another type" : "a " + requiredType.getSimpleName())
+                + ", got '" + e.getValue() + "'.";
+        return handler(ResponseCode.BAD_REQUEST, e, message);
     }
 
     /**
