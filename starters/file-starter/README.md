@@ -160,6 +160,14 @@ The `fieldName` in ImportTemplateField (or `importFieldDTOList` in dynamic impor
 - When a lookup fails (no matching record found):
   - If `skipException = true`: the row is marked as failed with a reason message.
   - If `skipException = false`: a `ValidationException` is thrown immediately.
+  - The reason names the relation by its label, the way the sheet's reader knows the column: `IPA Position not found: Bar Bender`. Several lookup columns name each field and say they must describe one record: `Department not found: code=D1, name=Sales — these must all describe the same Department; …`.
+
+**Which field to look up by.** `LookupKeys.of(relation)` (softa-orm) answers it for a ManyToOne whose related id is numeric, and serves it as `MetaFieldDTO.lookupFields` so an import screen can default a column naming the relation to `relation.<first>` instead of the bare id. Every field it returns identifies one row on its own; the first is recommended:
+1. the related model's first `displayName` field, when a unique index covers it alone (plus `tenantId` on a multi-tenant model) — a name a person writes and an export writes, so a filled-in or exported sheet matches as it is;
+2. otherwise its `businessKey`, when one component is left after those the relation's own `filters` pin;
+3. then any other field a unique index covers alone.
+
+A name unique only under a parent (a department per parent department) does not count, nor does a composite key with more than one free component — both would match several rows — and a code-as-id master (`CountryRegion`) needs none, its id being the code. The `RelationIdHandler` hint for a bare column filled with a non-id (`map this column to ipaPositionId.name`) suggests the same first field.
 
 #### 1.1.1 Nested OneToOne Import (Cascade Write)
 

@@ -479,7 +479,7 @@ public class RelationLookupResolver {
                     }
                     Object resolvedId = resolvedByPath.get(nestedLookup.dottedPath()).idFor(row, List.of(raw));
                     if (resolvedId == null) {
-                        markFailure(row, buildNotFoundMessage(nestedLookup.relatedModel(),
+                        markFailure(row, buildNotFoundMessage(subjectOf(null, null, nestedLookup.relatedModel()),
                                 List.of(nestedLookup.lookupField()), List.of(raw)), skipException);
                         failed = true;
                         break;
@@ -562,7 +562,8 @@ public class RelationLookupResolver {
             }
             Object resolvedId = lookedUp.idFor(row, keyValues);
             if (resolvedId == null) {
-                markFailure(row, buildNotFoundMessage(group, keyValues), skipException);
+                markFailure(row, buildNotFoundMessage(subjectOf(modelName, group.rootField(), group.relatedModel()),
+                        group, keyValues), skipException);
             } else {
                 row.put(group.rootField(), resolvedId);
             }
@@ -620,7 +621,8 @@ public class RelationLookupResolver {
                 }
             }
             if (!missingKeys.isEmpty()) {
-                String message = missingKeys.stream().map(keys -> buildNotFoundMessage(group, keys))
+                String subject = subjectOf(null, group.rootField(), group.relatedModel());
+                String message = missingKeys.stream().map(keys -> buildNotFoundMessage(subject, group, keys))
                         .collect(Collectors.joining("; "));
                 markFailure(row, message, skipException);
             } else {
@@ -795,24 +797,49 @@ public class RelationLookupResolver {
      * catching it looks like. Left unexplained, the reader sees two values they know exist and
      * concludes the import is broken rather than that it just did its job.
      */
-    private String buildNotFoundMessage(LookupGroup group, List<Object> keyValues) {
-        return buildNotFoundMessage(group.relatedModel(), group.lookupFields(), keyValues);
+    private String buildNotFoundMessage(String subject, LookupGroup group, List<Object> keyValues) {
+        return buildNotFoundMessage(subject, group.lookupFields(), keyValues);
     }
 
-    private String buildNotFoundMessage(String relatedModel, List<String> lookupFields,
-                                        List<Object> keyValues) {
-        StringBuilder sb = new StringBuilder();
-        sb.append("Cannot find ").append(relatedModel).append(" by ");
+    /**
+     * "IPA Position not found: Bar Bender" — named the way the sheet's reader knows the column, by the
+     * relation's label, not by the model behind it ({@code IpaPosition}) and the field it was matched
+     * on, which they never see. Several columns name the fields, since the reader needs to know which
+     * values were taken together.
+     */
+    private String buildNotFoundMessage(String subject, List<String> lookupFields, List<Object> keyValues) {
+        StringBuilder sb = new StringBuilder(subject).append(" not found: ");
+        if (lookupFields.size() == 1) {
+            return sb.append(keyValues.getFirst()).toString();
+        }
         for (int i = 0; i < lookupFields.size(); i++) {
             if (i > 0) {
                 sb.append(", ");
             }
             sb.append(lookupFields.get(i)).append("=").append(keyValues.get(i));
         }
-        if (lookupFields.size() > 1) {
-            sb.append(" — these must all describe the same ").append(relatedModel)
-                    .append("; no one record matches them together.");
-        }
+        sb.append(" — these must all describe the same ").append(subject)
+                .append("; no one record matches them together.");
         return sb.toString();
+    }
+
+    /**
+     * What a missed lookup is called in its message: the relation's own label on {@code modelName}, or —
+     * when the field is not known there — the related model's label, and its name as a last resort.
+     */
+    private static String subjectOf(String modelName, String rootField, String relatedModel) {
+        if (StringUtils.isNotBlank(modelName) && ModelManager.existField(modelName, rootField)) {
+            String label = ModelManager.getModelField(modelName, rootField).getLabel();
+            if (StringUtils.isNotBlank(label)) {
+                return label;
+            }
+        }
+        if (StringUtils.isNotBlank(relatedModel) && ModelManager.existModel(relatedModel)) {
+            String label = ModelManager.getModel(relatedModel).getLabel();
+            if (StringUtils.isNotBlank(label)) {
+                return label;
+            }
+        }
+        return relatedModel;
     }
 }

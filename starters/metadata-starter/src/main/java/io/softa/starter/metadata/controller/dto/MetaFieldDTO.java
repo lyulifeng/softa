@@ -65,4 +65,12 @@ public class MetaFieldDTO {
      * date-picker bounds derived from {@code invalidWhen}). Null when the field declares none.
      */
     private FieldConstraints constraints;
+
+    /**
+     * For a to-one relation: the fields of the related model a value can be looked up by, each one
+     * identifying a single row, the recommended first — an import column naming this relation is
+     * matched by it rather than by the related row's id. Null when there is none to offer: the related
+     * id is itself a code, or no single field identifies a row.
+     */
+    private List<String> lookupFields;
 }

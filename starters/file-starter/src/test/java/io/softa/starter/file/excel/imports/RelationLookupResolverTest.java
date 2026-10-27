@@ -263,7 +263,51 @@ class RelationLookupResolverTest {
 
         resolver.resolveRows(new ArrayList<>(List.of(row)), List.of(group), true);
 
-        assertEquals("Cannot find Department by code=D999", row.get(FileConstant.FAILED_REASON));
+        assertEquals("Department not found: D999", row.get(FileConstant.FAILED_REASON));
+    }
+
+    /**
+     * A miss is named the way the sheet's reader knows the column — by the relation's label — rather
+     * than by the model behind it and the field it was matched on.
+     */
+    @Test
+    @SuppressWarnings("unchecked")
+    void aMissIsNamedByTheRelationsLabel() {
+        try (MockedStatic<ModelManager> mm = Mockito.mockStatic(ModelManager.class)) {
+            MetaField ipaPosition = metaField("Employee", "ipaPositionId", FieldType.MANY_TO_ONE, "IpaPosition");
+            ReflectionTestUtils.setField(ipaPosition, "label", "IPA Position");
+            mm.when(() -> ModelManager.existField("Employee", "ipaPositionId")).thenReturn(true);
+            mm.when(() -> ModelManager.getModelField("Employee", "ipaPositionId")).thenReturn(ipaPosition);
+            RelationLookupResolver resolver = createResolver();
+            var group = new RelationLookupResolver.LookupGroup("ipaPositionId", "IpaPosition", List.of("name"),
+                    List.of("ipaPositionId.name"), true, false, false, null);
+            Map<String, Object> row = new LinkedHashMap<>(Map.of("ipaPositionId.name", "Bar Bender"));
+            ModelService<Long> typedService = (ModelService<Long>) getModelService(resolver);
+            when(typedService.getIdsByBusinessKeys(eq("IpaPosition"), eq(List.of("name")), anyCollection(), any()))
+                    .thenReturn(Map.of());
+
+            resolver.resolveRows("Employee", new ArrayList<>(List.of(row)), List.of(group), true);
+
+            assertEquals("IPA Position not found: Bar Bender", row.get(FileConstant.FAILED_REASON));
+        }
+    }
+
+    /** Several columns taken together still say which values were taken together, and why that failed. */
+    @Test
+    @SuppressWarnings("unchecked")
+    void aMissOnSeveralColumnsNamesEachAndSaysTheyMustAgree() {
+        RelationLookupResolver resolver = createResolver();
+        var group = new RelationLookupResolver.LookupGroup("deptId", "Department", List.of("code", "name"),
+                List.of("deptId.code", "deptId.name"), true, false, false, null);
+        Map<String, Object> row = new LinkedHashMap<>(Map.of("deptId.code", "D1", "deptId.name", "Sales"));
+        ModelService<Long> typedService = (ModelService<Long>) getModelService(resolver);
+        when(typedService.getIdsByBusinessKeys(eq("Department"), eq(List.of("code", "name")), anyCollection(), any()))
+                .thenReturn(Map.of());
+
+        resolver.resolveRows(new ArrayList<>(List.of(row)), List.of(group), true);
+
+        assertEquals("Department not found: code=D1, name=Sales — these must all describe the same Department; "
+                + "no one record matches them together.", row.get(FileConstant.FAILED_REASON));
     }
 
     @Test
@@ -281,7 +325,7 @@ class RelationLookupResolverTest {
         resolver.resolveRows(new ArrayList<>(List.of(row)), List.of(group), true);
 
         assertTrue(row.containsKey(FileConstant.FAILED_REASON));
-        assertTrue(row.get(FileConstant.FAILED_REASON).toString().contains("Cannot find Role by code=UNKNOWN"));
+        assertTrue(row.get(FileConstant.FAILED_REASON).toString().contains("Role not found: UNKNOWN"));
         assertFalse(row.containsKey("roleIds"));
     }
 
@@ -456,7 +500,7 @@ class RelationLookupResolverTest {
         resolver.resolveRows(rows, List.of(group), true);
 
         assertTrue(rows.getFirst().get(FileConstant.FAILED_REASON).toString()
-                .contains("Cannot find IdType by name=NRIIC"));
+                .contains("IdType not found: NRIIC"));
         assertFalse(rows.getFirst().containsKey("profileId.idType.name"));
     }
 
