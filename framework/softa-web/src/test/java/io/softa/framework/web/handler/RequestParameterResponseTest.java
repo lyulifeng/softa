@@ -1,11 +1,14 @@
 package io.softa.framework.web.handler;
 
+import java.util.Map;
+
 import org.junit.jupiter.api.Test;
 import org.mockito.Mockito;
 import org.springframework.core.MethodParameter;
 import org.springframework.http.ResponseEntity;
 import org.springframework.test.util.ReflectionTestUtils;
 import org.springframework.web.bind.MissingServletRequestParameterException;
+import org.springframework.web.bind.UnsatisfiedServletRequestParameterException;
 import org.springframework.web.method.annotation.MethodArgumentTypeMismatchException;
 
 import io.softa.framework.base.enums.ResponseCode;
@@ -27,6 +30,16 @@ class RequestParameterResponseTest {
 
         assertThat(body.getCode()).isEqualTo(ResponseCode.BAD_REQUEST.getCode());
         assertThat(body.getError()).contains("'id'");
+    }
+
+    /** Unmet parameter conditions were a 400 before the handler took their parent class, and stay one. */
+    @Test
+    void unmetParameterConditionsStayABadRequest() {
+        ApiResponseErrorDetails<Void> body = body(handler().handleException(
+                new UnsatisfiedServletRequestParameterException(new String[] {"mode=copy"}, Map.of())));
+
+        assertThat(body.getCode()).isEqualTo(ResponseCode.BAD_REQUEST.getCode());
+        assertThat(body.getError()).contains("mode=copy");
     }
 
     @Test
