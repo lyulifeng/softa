@@ -10,6 +10,8 @@ import tools.jackson.core.type.TypeReference;
 
 import io.softa.framework.base.constant.BaseConstant;
 import io.softa.framework.base.constant.RedisConstant;
+import io.softa.framework.base.context.Context;
+import io.softa.framework.base.context.ContextHolder;
 import io.softa.framework.base.utils.Assert;
 import io.softa.framework.orm.domain.Filters;
 import io.softa.framework.orm.jdbc.JdbcService;
@@ -278,7 +280,11 @@ public class TenantInfoServiceImpl extends EntityServiceImpl<TenantInfo, Long> i
         if (tenantInfo != null) {
             return tenantInfo;
         }
-        tenantInfo = this.getById(tenantId).orElse(null);
+        // Read whole, whoever asks: the row is cached for every later caller, and a caller seeing tenants
+        // only as a reference would otherwise cache their label — no default time zone, no settings.
+        Context whole = ContextHolder.cloneContext();
+        whole.setSkipPermissionCheck(true);
+        tenantInfo = ContextHolder.callWith(whole, () -> this.getById(tenantId)).orElse(null);
         if (tenantInfo != null) {
             cacheService.save(RedisConstant.TENANT_INFO + tenantId, tenantInfo);
         }

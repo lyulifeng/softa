@@ -7,6 +7,8 @@ import org.junit.jupiter.api.Test;
 import org.mockito.Mockito;
 import org.springframework.test.util.ReflectionTestUtils;
 
+import io.softa.framework.base.context.ContextHolder;
+import io.softa.framework.base.context.Context;
 import io.softa.framework.base.constant.BaseConstant;
 import io.softa.framework.base.constant.RedisConstant;
 import io.softa.framework.base.exception.IllegalArgumentException;
@@ -17,6 +19,7 @@ import io.softa.starter.tenant.enums.TenantStatus;
 import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.doReturn;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
@@ -66,6 +69,25 @@ class TenantInfoServiceImplTest {
         // Both tenant caches evicted so isTenantActive() / active-id filtering flip immediately.
         verify(cacheService).clear(RedisConstant.TENANT_INFO + 1L);
         verify(cacheService).clear(RedisConstant.TENANT_IDS);
+    }
+
+    /** The row is cached for every later caller, so it is read whole even when the first caller sees
+     *  tenants only as a reference — its label would carry no settings. */
+    @Test
+    void getTenantInfo_readsTheRowItCachesWhole() {
+        TenantInfoServiceImpl svc = Mockito.spy(new TenantInfoServiceImpl());
+        CacheService cacheService = mock(CacheService.class);
+        ReflectionTestUtils.setField(svc, "cacheService", cacheService);
+        TenantInfo whole = tenant(TenantStatus.ACTIVE);
+        TenantInfo label = new TenantInfo();
+        label.setId(1L);
+        doAnswer(inv -> Optional.of(ContextHolder.getContext().isSkipPermissionCheck() ? whole : label))
+                .when(svc).getById(1L);
+
+        TenantInfo read = ContextHolder.callWith(new Context(), () -> svc.getTenantInfo(1L));
+
+        assertEquals(TenantStatus.ACTIVE, read.getStatus());
+        verify(cacheService).save(RedisConstant.TENANT_INFO + 1L, whole);
     }
 
     // ─── the other two transitions on the same choke point ───
