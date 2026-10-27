@@ -20,6 +20,7 @@ import io.softa.framework.orm.constant.ModelConstant;
 import io.softa.framework.orm.domain.Filters;
 import io.softa.framework.orm.domain.FlexQuery;
 import io.softa.framework.orm.enums.AccessType;
+import io.softa.framework.orm.enums.FieldType;
 import io.softa.framework.orm.meta.CascadeFieldWalker;
 import io.softa.framework.orm.meta.MetaField;
 import io.softa.framework.orm.meta.ModelManager;
@@ -65,6 +66,10 @@ public class MetadataServiceImpl implements MetadataService {
      * caller, so neither does their definition — a screen offers no input, column or filter for them.
      * Fields hidden on some records only stay; which records is a per-record answer.
      *
+     * <p>A relation onto a model the caller can read nothing of goes with them: when every field of the
+     * related model but its plumbing is withheld, the relation would offer a column, an export field and
+     * a filter that can only ever come back empty.
+     *
      * @param modelName model name
      * @return metaModelDTO object
      */
@@ -79,14 +84,53 @@ public class MetadataServiceImpl implements MetadataService {
 
     /** {@code dto} with the caller's withheld fields of its model removed; the DTO is built per request. */
     private static MetaModelDTO withoutWithheldFields(MetaModelDTO dto, Map<String, Set<String>> withheld) {
-        Set<String> fields = withheld.get(dto.getModelName());
-        if (fields == null || fields.isEmpty() || dto.getModelFields() == null) {
+        if (withheld.isEmpty() || dto.getModelFields() == null) {
             return dto;
         }
         Map<String, MetaFieldDTO> kept = new LinkedHashMap<>(dto.getModelFields());
-        kept.keySet().removeAll(fields);
+        kept.values().removeIf(field -> isWithheld(dto.getModelName(), field.getFieldName(),
+                field.getFieldType(), field.getRelatedModel(), withheld));
         dto.setModelFields(kept);
         return dto;
+    }
+
+    /**
+     * Whether a field of {@code model} is withheld from the caller: one of its withheld sensitive fields,
+     * or a relation onto a model the caller can read nothing of ({@link #nothingLeftToRead}).
+     */
+    static boolean isWithheld(String model, String fieldName, FieldType fieldType, String relatedModel,
+                              Map<String, Set<String>> withheld) {
+        if (withheld.getOrDefault(model, Set.of()).contains(fieldName)) {
+            return true;
+        }
+        return FieldType.RELATED_TYPES.contains(fieldType) && nothingLeftToRead(relatedModel, model, withheld);
+    }
+
+    /**
+     * Whether every field of {@code related} that carries content is withheld from the caller, read as
+     * reached from {@code owner}. Plumbing does not count: the reserved fields (id, tenant, version,
+     * audit, soft delete) and a to-one back onto the owner, which names the record the caller came from.
+     */
+    static boolean nothingLeftToRead(String related, String owner, Map<String, Set<String>> withheld) {
+        Set<String> hidden = related == null ? null : withheld.get(related);
+        if (hidden == null || hidden.isEmpty()) {
+            return false;
+        }
+        // Only a model seen to withhold something is empty to the caller, not one with no fields known.
+        boolean withholdsAny = false;
+        for (MetaField field : ModelManager.getModelFields(related)) {
+            String name = field.getFieldName();
+            if (hidden.contains(name)) {
+                withholdsAny = true;
+                continue;
+            }
+            boolean backToOwner = FieldType.TO_ONE_TYPES.contains(field.getFieldType())
+                    && owner.equals(field.getRelatedModel());
+            if (!ModelConstant.RESERVED_KEYWORD.contains(name) && !backToOwner) {
+                return false;
+            }
+        }
+        return withholdsAny;
     }
 
     /**
@@ -128,8 +172,8 @@ public class MetadataServiceImpl implements MetadataService {
                 public void onSegment(int index, String currentModel, MetaField field) {
                     localAccess.computeIfAbsent(currentModel, k -> new HashSet<>())
                             .add(field.getFieldName());
-                    if (firstWithheld[0] == null
-                            && withheld.getOrDefault(currentModel, Set.of()).contains(field.getFieldName())) {
+                    if (firstWithheld[0] == null && isWithheld(currentModel, field.getFieldName(),
+                            field.getFieldType(), field.getRelatedModel(), withheld)) {
                         firstWithheld[0] = new WithheldSegment(index, currentModel, field.getFieldName());
                     }
                 }
