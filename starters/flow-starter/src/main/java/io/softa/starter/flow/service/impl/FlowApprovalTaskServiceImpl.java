@@ -11,6 +11,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.util.StringUtils;
 
+import io.softa.framework.base.context.ContextUtils;
 import io.softa.framework.orm.domain.Filters;
 import io.softa.framework.orm.domain.FlexQuery;
 import io.softa.framework.orm.domain.Orders;
@@ -71,8 +72,9 @@ public class FlowApprovalTaskServiceImpl extends EntityServiceImpl<FlowApprovalT
         ApprovalTaskQuerySupport.requireActorId(actorId);
         Filters filters = ApprovalTaskQuerySupport.pendingApprovalFilters(actorId);
         applyOptionalFilters(filters, flowId, instanceId, nodeId);
-        FlexQuery query = new FlexQuery(filters, Orders.ofAsc(FlowApprovalTask::getStartTime)
-                .addAsc(FlowApprovalTask::getId));
+        // Newest first: what reached the approver last is what they look for.
+        FlexQuery query = new FlexQuery(filters, Orders.ofDesc(FlowApprovalTask::getStartTime)
+                .addDesc(FlowApprovalTask::getId));
         return mapPage(this.searchPage(query, Page.of(pageNumber, pageSize)), pageNumber, pageSize);
     }
 
@@ -147,9 +149,13 @@ public class FlowApprovalTaskServiceImpl extends EntityServiceImpl<FlowApprovalT
         return views;
     }
 
+    /**
+     * Every task of an instance, read past the caller's data permissions: for the projection sync, the
+     * engine's own bookkeeping; for {@link #getTasksByInstanceId}, rows the access guard rules on next.
+     */
     private List<FlowApprovalTask> getTaskEntitiesByInstanceId(String instanceId) {
         Filters filters = new Filters().eq(FlowApprovalTask::getInstanceId, instanceId);
-        return this.searchList(filters).stream()
+        return ContextUtils.withoutPermissionChecks(() -> this.searchList(filters)).stream()
                 .sorted(ApprovalTaskQuerySupport.pendingTaskComparator())
                 .toList();
     }

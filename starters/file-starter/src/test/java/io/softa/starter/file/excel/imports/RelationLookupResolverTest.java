@@ -276,8 +276,7 @@ class RelationLookupResolverTest {
         try (MockedStatic<ModelManager> mm = Mockito.mockStatic(ModelManager.class)) {
             MetaField ipaPosition = metaField("Employee", "ipaPositionId", FieldType.MANY_TO_ONE, "IpaPosition");
             ReflectionTestUtils.setField(ipaPosition, "label", "IPA Position");
-            mm.when(() -> ModelManager.existField("Employee", "ipaPositionId")).thenReturn(true);
-            mm.when(() -> ModelManager.getModelField("Employee", "ipaPositionId")).thenReturn(ipaPosition);
+            mm.when(() -> ModelManager.getModelFieldOrNull("Employee", "ipaPositionId")).thenReturn(ipaPosition);
             RelationLookupResolver resolver = createResolver();
             var group = new RelationLookupResolver.LookupGroup("ipaPositionId", "IpaPosition", List.of("name"),
                     List.of("ipaPositionId.name"), true, false, false, null);

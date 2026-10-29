@@ -23,6 +23,7 @@ import io.softa.framework.orm.service.ModelService;
 import io.softa.starter.user.dto.NavConfigOptions.SfsRef;
 import io.softa.starter.user.dto.RoleModelConfigOption;
 import io.softa.starter.user.service.NavigationModelResolver;
+import io.softa.starter.user.service.RoleGrantCeiling;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.tuple;
@@ -44,15 +45,19 @@ class NavigationConfigOptionsControllerTest {
 
     private NavigationModelResolver navResolver;
     private ModelService<?> modelService;
+    private RoleGrantCeiling roleGrantCeiling;
     private NavigationConfigOptionsController controller;
 
     @BeforeEach
     void setUp() {
         navResolver = mock(NavigationModelResolver.class);
         modelService = mock(ModelService.class);
-        controller = new NavigationConfigOptionsController(navResolver, modelService);
+        roleGrantCeiling = mock(RoleGrantCeiling.class);
+        controller = new NavigationConfigOptionsController(navResolver, modelService, roleGrantCeiling);
         // The DataScopeType + SensitiveFieldSet reads default to empty (Mockito) →
-        // only "ALL" scope and no SFS rows unless a test stubs the registry reads.
+        // only "ALL" scope and no SFS rows unless a test stubs the registry reads
+        // and builds again, as startup does once the seed files have loaded.
+        controller.build();
     }
 
     private static MetaField field(String name, FieldType type, String relatedModel) {
@@ -228,6 +233,7 @@ class NavigationConfigOptionsControllerTest {
                 eq(NavigationConfigOptionsController.SensitiveFieldSetView.class))).thenReturn(List.of(
                 sfsView("emp-comp", "Employee", "Compensation", arrayOf("Employee")),
                 sfsView("emp-bank", "Employee", null, null)));
+        controller.build();
 
         try (MockedStatic<ModelManager> mm = Mockito.mockStatic(ModelManager.class)) {
             mm.when(() -> ModelManager.existModel("Employee")).thenReturn(true);
@@ -261,6 +267,7 @@ class NavigationConfigOptionsControllerTest {
                 dstFilter("LEGAL_ENTITY", arrayOf("legalEntityId", "=", "USER_COMP_ID"), null, null)));
         when(modelService.searchList(eq("SensitiveFieldSet"), any(FlexQuery.class),
                 eq(NavigationConfigOptionsController.SensitiveFieldSetView.class))).thenReturn(List.of());
+        controller.build();
 
         try (MockedStatic<ModelManager> mm = Mockito.mockStatic(ModelManager.class)) {
             mm.when(() -> ModelManager.existModel("Employee")).thenReturn(true);
@@ -272,5 +279,62 @@ class NavigationConfigOptionsControllerTest {
             RoleModelConfigOption opt = controller.getModelOptions(List.of("hr.employee")).getData().get(0);
             assertThat(opt.applicableScopes()).containsExactly("ALL", "SELF");
         }
+    }
+
+    @Test
+    void anAdministratorMayGrantAnything() {
+        when(roleGrantCeiling.callerGrants()).thenReturn(null);
+
+        NavigationConfigOptionsController.GrantCeilingView view = controller.getGrantCeiling().getData();
+
+        assertThat(view.unrestricted()).isTrue();
+        assertThat(view.roles()).isEmpty();
+    }
+
+    @Test
+    void anyoneElseMayGrantWhatTheirOwnRolesHoldRoleByRole() {
+        RoleGrantCeiling.Grants hr = new RoleGrantCeiling.Grants(Set.of("nav.employee"), Set.of("employee.view"),
+                Set.of("sfs.salary"), Map.of());
+        RoleGrantCeiling.Grants self = new RoleGrantCeiling.Grants(Set.of("nav.home"), Set.of("home.view"),
+                Set.of(), Map.of());
+        when(roleGrantCeiling.callerGrants()).thenReturn(List.of(hr, self));
+
+        NavigationConfigOptionsController.GrantCeilingView view = controller.getGrantCeiling().getData();
+
+        assertThat(view.unrestricted()).isFalse();
+        assertThat(view.roles()).containsExactly(hr, self);
+    }
+
+    @Test
+    void theCataloguesAreReadInTheSystemContextWhoeverAsks() {
+        // A role manager has no range on DataScopeType or SensitiveFieldSet: read as them, every model
+        // offered All alone, and the shared snapshot kept it that way for everyone after. Whatever context
+        // the snapshot is built in — a caller's here — the reads are the system's.
+        when(navResolver.resolvePrimaryModel("hr.employee")).thenReturn("Employee");
+        List<Boolean> skipped = new java.util.ArrayList<>();
+        when(modelService.searchList(eq("DataScopeType"), any(FlexQuery.class), eq(NavigationConfigOptionsController.DataScopeTypeView.class)))
+                .thenAnswer(inv -> {
+                    skipped.add(io.softa.framework.base.context.ContextHolder.getContext().isSkipPermissionCheck());
+                    return List.of(dst("SELF"));
+                });
+        when(modelService.searchList(eq("SensitiveFieldSet"), any(FlexQuery.class), eq(NavigationConfigOptionsController.SensitiveFieldSetView.class)))
+                .thenAnswer(inv -> {
+                    skipped.add(io.softa.framework.base.context.ContextHolder.getContext().isSkipPermissionCheck());
+                    return List.of();
+                });
+
+        io.softa.framework.base.context.Context caller = new io.softa.framework.base.context.Context();
+        io.softa.framework.base.context.ContextHolder.runWith(caller, controller::build);
+
+        try (MockedStatic<ModelManager> mm = Mockito.mockStatic(ModelManager.class)) {
+            mm.when(() -> ModelManager.existModel("Employee")).thenReturn(true);
+            mm.when(() -> ModelManager.getModelFields("Employee")).thenReturn(List.of());
+            RoleModelConfigOption opt = io.softa.framework.base.context.ContextHolder.callWith(caller,
+                    () -> controller.getModelOptions(List.of("hr.employee")).getData().get(0));
+            // What the system read reaches every caller.
+            assertThat(opt.applicableScopes()).contains("SELF");
+        }
+
+        assertThat(skipped).isNotEmpty().containsOnly(true);
     }
 }
