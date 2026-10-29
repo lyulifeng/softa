@@ -3,10 +3,13 @@ package io.softa.framework.orm.utils;
 import java.io.Serializable;
 import java.util.List;
 
+import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 import org.mockito.MockedStatic;
 import org.springframework.test.util.ReflectionTestUtils;
 
+import io.softa.framework.base.config.SystemConfig;
+import io.softa.framework.base.exception.IllegalArgumentException;
 import io.softa.framework.orm.constant.ModelConstant;
 import io.softa.framework.orm.enums.FieldType;
 import io.softa.framework.orm.meta.MetaField;
@@ -14,9 +17,19 @@ import io.softa.framework.orm.meta.ModelManager;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.Mockito.mockStatic;
 
 class IdUtilsTest {
+
+    @BeforeAll
+    static void ensureSystemConfig() {
+        // The refusal below is a BaseException, whose message goes through I18n, which reads SystemConfig.
+        if (SystemConfig.env == null) {
+            SystemConfig.env = new SystemConfig();
+        }
+    }
 
     @Test
     void convertIdToLong() {
@@ -25,6 +38,14 @@ class IdUtilsTest {
         assertEquals(1L, IdUtils.convertIdToLong(1));
         assertEquals(1L, IdUtils.convertIdToLong("1"));
         assertEquals(1L, IdUtils.convertIdToLong(1L));
+    }
+
+    /** A malformed id is the caller's mistake: refused as a bad request naming it, not a bare parse failure. */
+    @Test
+    void aStringThatIsNotANumberIsRefusedAsABadRequest() {
+        IllegalArgumentException refused = assertThrows(IllegalArgumentException.class,
+                () -> IdUtils.convertIdToLong("abc"));
+        assertTrue(refused.getMessage().contains("abc"), refused.getMessage());
     }
 
     private static MetaField field(FieldType type, String relatedModel, FieldType relatedFieldType) {

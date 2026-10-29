@@ -464,6 +464,10 @@ public class ModelServiceImpl<K extends Serializable> implements ModelService<K>
         return switch (fieldType) {
             case INTEGER -> value instanceof Number number ? number.intValue() : Integer.parseInt(value.toString());
             case LONG, STRING -> IdUtils.formatId(fieldType, value);
+            // A relation in the key holds the id it references, read back from the database typed as
+            // that id; one sent as a string must take the same type, or the stored row is never matched.
+            case MANY_TO_ONE, ONE_TO_ONE -> value instanceof String || value instanceof Integer || value instanceof Long
+                    ? IdUtils.formatId(modelName, fieldName, (Serializable) value) : value;
             case DOUBLE -> value instanceof Number number ? number.doubleValue() : Double.parseDouble(value.toString());
             case BIG_DECIMAL -> value instanceof BigDecimal decimal ? decimal : new BigDecimal(value.toString());
             default -> value;

@@ -210,6 +210,37 @@ class ModelServiceImplTest {
         }
     }
 
+    /**
+     * A relation in the unique key is read back from the database as the Long id it references; the
+     * same id sent as a string must match that row and update it, not miss it and create a duplicate.
+     */
+    @Test
+    void createOrUpdateMatchesARelationKeySentAsAString() {
+        try (MockedStatic<ModelManager> modelManager = Mockito.mockStatic(ModelManager.class)) {
+            for (String field : List.of("userId", "roleId")) {
+                MetaField relation = createMetaField("UserRoleRel", field, FieldType.MANY_TO_ONE);
+                ReflectionTestUtils.setField(relation, "relatedFieldType", FieldType.LONG);
+                modelManager.when(() -> ModelManager.getModelField("UserRoleRel", field)).thenReturn(relation);
+            }
+
+            ModelServiceImpl<Long> modelService = Mockito.spy(new ModelServiceImpl<>());
+            doReturn(List.of(new HashMap<>(Map.of(ModelConstant.ID, 10L, "userId", 7L, "roleId", 100L))))
+                    .when(modelService).searchList(eq("UserRoleRel"), any(FlexQuery.class));
+            doReturn(Boolean.TRUE).when(modelService).updateList(eq("UserRoleRel"), anyList());
+
+            List<Map<String, Object>> rows = new ArrayList<>();
+            rows.add(new HashMap<>(Map.of("userId", "7", "roleId", "100", "source", "Manual")));
+
+            modelService.createOrUpdate("UserRoleRel", rows, List.of("userId", "roleId"));
+
+            @SuppressWarnings("unchecked")
+            ArgumentCaptor<List<Map<String, Object>>> updateCaptor = ArgumentCaptor.forClass(List.class);
+            verify(modelService).updateList(eq("UserRoleRel"), updateCaptor.capture());
+            Assertions.assertEquals(10L, updateCaptor.getValue().getFirst().get(ModelConstant.ID));
+            verify(modelService, never()).createList(eq("UserRoleRel"), anyList());
+        }
+    }
+
     private void stubEmployeeWithProfile(MockedStatic<ModelManager> modelManager) {
         modelManager.when(() -> ModelManager.getModelField("Employee", "code"))
                 .thenReturn(createMetaField("Employee", "code", FieldType.STRING));

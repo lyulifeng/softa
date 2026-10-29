@@ -5,6 +5,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.stream.Collectors;
 
+import io.softa.framework.base.exception.IllegalArgumentException;
 import io.softa.framework.base.utils.Cast;
 import io.softa.framework.orm.constant.ModelConstant;
 import io.softa.framework.orm.enums.FieldType;
@@ -22,6 +23,10 @@ public class IdUtils {
     /**
      * Convert object id to Long.
      *
+     * <p>A string that is not a number is refused as a bad request naming the value, not left to
+     * surface as a {@link NumberFormatException}: ids arrive as strings from a client, and a malformed
+     * one is the caller's mistake.
+     *
      * @param id object
      * @return Long
      */
@@ -29,7 +34,11 @@ public class IdUtils {
         if (id instanceof Integer intId) {
             return intId.longValue();
         } else if (id instanceof String stringId) {
-            return Long.parseLong(stringId);
+            try {
+                return Long.parseLong(stringId);
+            } catch (NumberFormatException e) {
+                throw new IllegalArgumentException("The id `{0}` is not a number.", stringId);
+            }
         } else {
             return (Long) id;
         }
@@ -96,9 +105,11 @@ public class IdUtils {
     }
 
     /**
-     * Format ids, when the model primary key field type is Long, convert the id to Long type.
+     * Format ids held in a field to the type of that field's ids: Long or String, by the field's own
+     * type, or, for a to-one relation, by the type of the id it references ({@link #idTypeOf}).
      *
      * @param modelName model name
+     * @param fieldName the field holding the ids: the primary key, or a to-one relation
      * @param ids List<?>
      * @return List<Serializable>
      */
@@ -126,10 +137,12 @@ public class IdUtils {
     }
 
     /**
-     * Format single id, when the model primary key field type is Long, convert the id to Long type.
+     * Format a single id held in a field to the type of that field's ids: Long or String, by the
+     * field's own type, or, for a to-one relation, by the type of the id it references
+     * ({@link #idTypeOf}).
      *
      * @param modelName model name
-     * @param field field name
+     * @param field the field holding the id: the primary key, or a to-one relation
      * @param id id
      * @return K
      * @param <K> K
