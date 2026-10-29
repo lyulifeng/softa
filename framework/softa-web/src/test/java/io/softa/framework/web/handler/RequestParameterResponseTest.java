@@ -11,6 +11,7 @@ import org.springframework.web.bind.MissingPathVariableException;
 import org.springframework.web.bind.MissingServletRequestParameterException;
 import org.springframework.web.bind.UnsatisfiedServletRequestParameterException;
 import org.springframework.web.method.annotation.MethodArgumentTypeMismatchException;
+import org.springframework.web.multipart.support.MissingServletRequestPartException;
 
 import io.softa.framework.base.context.Context;
 import io.softa.framework.base.context.ContextHolder;
@@ -21,8 +22,8 @@ import io.softa.framework.web.response.ApiResponseErrorDetails;
 import static org.assertj.core.api.Assertions.assertThat;
 
 /**
- * A request parameter that is missing or of the wrong type is the caller's mistake: a 400 naming the
- * parameter, not the 500 "System exception" both used to fall through to.
+ * A request parameter or upload part that is missing, or a parameter of the wrong type, is the caller's
+ * mistake: a 400 naming it, not the 500 "System exception" each used to fall through to.
  */
 class RequestParameterResponseTest {
 
@@ -62,6 +63,16 @@ class RequestParameterResponseTest {
 
         assertThat(body.getCode()).isEqualTo(ResponseCode.BAD_REQUEST.getCode());
         assertThat(body.getError()).contains("modelName");
+    }
+
+    /** An upload without its file: the missing part is the caller's, a 400 that names it. */
+    @Test
+    void aMissingFilePartIsABadRequestThatNamesIt() {
+        ApiResponseErrorDetails<Void> body = body(handler().handleException(
+                new MissingServletRequestPartException("file")));
+
+        assertThat(body.getCode()).isEqualTo(ResponseCode.BAD_REQUEST.getCode());
+        assertThat(body.getError()).contains("'file'");
     }
 
     @Test

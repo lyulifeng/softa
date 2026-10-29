@@ -23,6 +23,7 @@ import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
 import org.springframework.web.method.annotation.MethodArgumentTypeMismatchException;
 import org.springframework.web.multipart.MaxUploadSizeExceededException;
+import org.springframework.web.multipart.support.MissingServletRequestPartException;
 import org.springframework.web.servlet.NoHandlerFoundException;
 
 import io.softa.framework.base.context.ContextHolder;
@@ -265,6 +266,19 @@ public class WebExceptionHandler {
         if (e instanceof MissingPathVariableException missing && !missing.isMissingAfterConversion()) {
             return handleException((Exception) e);
         }
+        return handler(ResponseCode.BAD_REQUEST, e);
+    }
+
+    /**
+     * A multipart request without the part the endpoint takes — an upload with no file. The caller's
+     * mistake, like a missing parameter, and a 400 that names the part. Handled on its own: it is not a
+     * {@link ServletRequestBindingException}.
+     *
+     * @param e Exception
+     * @return ResponseEntity
+     */
+    @ExceptionHandler(value = MissingServletRequestPartException.class)
+    public ResponseEntity<ApiResponse<Void>> handleException(MissingServletRequestPartException e) {
         return handler(ResponseCode.BAD_REQUEST, e);
     }
 
