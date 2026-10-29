@@ -23,6 +23,7 @@ import org.springframework.transaction.annotation.Transactional;
 import io.softa.framework.base.config.SystemConfig;
 import io.softa.framework.base.context.Context;
 import io.softa.framework.base.context.ContextHolder;
+import io.softa.framework.base.context.ContextUtils;
 import io.softa.framework.base.utils.SFunction;
 import io.softa.framework.base.context.UserInfo;
 import io.softa.framework.base.exception.BusinessException;
@@ -1032,9 +1033,7 @@ public class UserAccountServiceImpl extends EntityServiceImpl<UserAccount, Long>
         }
         // Permission-skipped, still in the caller's tenant: the row is the caller's own, so no role
         // decides how much of it they see.
-        Context ctx = ContextHolder.cloneContext();
-        ctx.setSkipPermissionCheck(true);
-        return ContextHolder.callWith(ctx, () -> this.getById(userId));
+        return ContextUtils.withoutPermissionChecks(() -> this.getById(userId));
     }
 
     @Override
