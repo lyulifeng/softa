@@ -992,15 +992,6 @@ public class ModelManager {
     }
 
     /**
-     * Get the names of all loaded models.
-     *
-     * @return model names
-     */
-    public static Set<String> getModelNames() {
-        return Set.copyOf(modelMap().keySet());
-    }
-
-    /**
      * Check if the model exists, if not, throw an exception
      * @param modelName model name
      */
@@ -1580,6 +1571,11 @@ public class ModelManager {
         return modelFields().get(modelName).values().stream()
                 .filter(f -> columnName != null && columnName.equals(f.getColumnName()))
                 .findFirst();
+    }
+
+    /** Every model name in the current metadata, as a copy. */
+    public static Set<String> getModelNames() {
+        return Set.copyOf(modelMap().keySet());
     }
 
     public static Set<String> getChildModels(String modelName) {
