@@ -29,7 +29,7 @@ models, before the first load. `sys_pre_data` needs nothing — only the entity'
 |---|---|---|
 | Directory | `data-system/` (`PLATFORM_GLOBAL`), `data-platform/` (`PLATFORM_TENANT`) | `data-tenant/` (`TENANT`) |
 | Whose rows | Shared models, or the platform tenant (-1) | Each tenant's own copy |
-| Loaded by | The platform admin, from the Seed Data page, after a deploy (the first time, by initializing the environment) | Each new tenant's setup, and the platform admin's **Run** for tenants that are already set up |
+| Loaded by | The files the build owns (`auto`): every start, wherever they are pending, before the application takes traffic. The others: the platform admin, from the Seed Data page, after a deploy (the first time, by initializing the environment) | Each new tenant's setup, and the platform admin's **Run** for tenants that are already set up |
 | When it changes | Loads again, whole (`OVERWRITE`) | Never runs again in a tenant that ran it; new tenants get the new version. A file marked `overwrite: true` runs again, whole |
 | Write mode | `OVERWRITE` | `ADDITIVE`; `OVERWRITE` for `overwrite: true` files |
 
@@ -75,8 +75,10 @@ so a broken manifest can be fixed in one pass.
 
 ```yaml
 platform:                                   # loaded whole, on the platform admin's load
-  - data-system/Navigation.json             # shared rows
-  - data-system/Permission.json
+  - file: data-system/Navigation.json       # shared rows
+    auto: true                              # the build owns it: loads at startup, wherever pending
+  - file: data-system/Permission.json
+    auto: true
   - data-platform/MailTemplate.Platform.json  # the platform tenant's own rows
 tenant:                                     # run once in each tenant
   - files:                                  # every tenant
@@ -100,12 +102,16 @@ tenant:                                     # run once in each tenant
   a tenant working in one of them — its default country or a company's. A group with neither is for every
   tenant. Platform files have no group: they are not handed out per tenant.
 - **`overwrite`** is for tenant files only; platform files always reload.
+- **`auto`** is for platform files only: the ones the build owns (see *Files the build owns*).
 - **Rejected at startup**: an unknown key (a misspelled `countrys` would otherwise be silently ignored), a key
   written twice (YAML would keep the second and drop the first one's files), a file in a directory its list
-  does not take, a file that is not `.json` or `.csv`, `overwrite` on a platform file, the same file name
+  does not take, a file that is not `.json` or `.csv`, `overwrite` on a platform file, `auto` on a tenant
+  file, the same file name
   registered twice (the load records name a file by its name), a file that is not on the classpath, a
   `module` that is not one name (a group is for one module), a country that is not a two-letter upper-case
-  code (quote `"NO"`: YAML reads it bare as false), and blank or repeated entries.
+  code (quote `"NO"`: YAML reads it bare as false), and blank or repeated entries. Once the application is
+  wired, the startup load also refuses a platform file without `auto` that writes a model an in-memory
+  startup snapshot is built from (see *Files the build owns*).
 
 The manifest does not reject a seed file that it fails to list. The application checks that in its own
 tests, because only the application knows which files on its classpath are seeds and which are templates.
@@ -136,23 +142,60 @@ file reads as `LOADED` while the database still holds the newer content.
 
 ## Platform load
 
-`GET /SeedData/platform` lists the platform files with their states, the running build (version, build
-time, start time) and the latest platform load. `POST /SeedData/platform/load` loads the pending files.
-Its body `{"fileNames": [...]}` loads only the named files, which must all be pending, in manifest order;
-the files left out stay pending. With no body (or no `fileNames`), every pending file loads. An empty list is
-refused, because a caller that sends one picked nothing, and so is a file a newer build loaded
-(`LOADED_BY_NEWER_BUILD`). An environment's first load initializes it before loading anything (see
+`GET /SeedData/platform` lists the platform files with their states, whether the build owns each (`auto`),
+the running build (version, build time, start time) and the latest platform load. `POST /SeedData/platform/load`
+loads the pending files, leaving out the files the build owns: those load at startup (see *Files the build
+owns*), and naming one is refused. Its body `{"fileNames": [...]}` loads only the named files, which must all be
+pending, in manifest order; the files left out stay pending. With no body (or no `fileNames`), every pending file
+loads. An empty list is refused, because a caller that sends one picked nothing, and so is a file a newer build
+loaded (`LOADED_BY_NEWER_BUILD`). An environment's first load initializes it before loading anything (see
 *Initializing an environment*).
 
 The files load **in one transaction**: either all of them load or none does. A failure names the file and
 the cause, and is recorded against the file. Afterwards the permission snapshots (`perm:*`) and
-entitlements (`entl:*`) cached in Redis are cleared. **Then restart the instances.** What an instance built
-in memory at startup (the endpoint index, sensitive field sets, navigation, cron schedules) is rebuilt only
-by a restart. The status response says when a load ended after the instance started, so the page can ask
-for the restart.
+entitlements (`entl:*`) cached in Redis are cleared. **No restart follows.** What the instances build in memory
+from seed rows at startup is built only from the files the build owns, which this load never touches. One thing
+still reads seed rows once: the cron leader reads the `SysCron` rows when it takes over, so a changed `SysCron`
+file takes effect at the leader's next start.
 
 Loading is meant for one person, once per deploy. There is no lock beyond refusing to start while another
 seed operation is running.
+
+### Files the build owns (`auto`)
+
+Some platform files are not data an operator looks after but part of the build: the navigation and permissions
+generated from the frontend's manifests, the sensitive field sets, the data scope types. The running code
+depends on them matching it — a new endpoint is refused until its permission row exists — and nobody changes
+their rows on a page. The manifest marks them `auto: true`.
+
+They load at startup, wherever they are pending (never loaded, changed, or failed last time), before the
+application takes traffic. `SeedStartupLoad` runs as a startup convergence of softa-orm's `StartupSnapshots`: once
+every bean exists and before the web server opens its port, it loads the pending files as one platform load, and
+only then are the in-memory snapshots every request reads — the endpoint index, the sensitive field sets, the
+navigation tree, the scope registries — built from their rows, once. A deploy therefore brings its navigation and
+permissions with it, and no instance ever holds a snapshot older than its rows: nothing to load from the page,
+and no restart after it.
+
+- **One owner per model.** Every platform file writing a model a startup snapshot is built from must be `auto`;
+  the startup load refuses a manifest that leaves one to the page, which would change those rows while the
+  instances run. Those models then accept writes only during the startup load (softa-orm's
+  `StartupSnapshotWriteGuard`): a write at any other time would reach no snapshot until the next start.
+- **Only rows nobody changes on a page.** An `auto` file goes over its rows on every deploy that changes it, the
+  way a page load would, without anyone choosing it.
+- **A failure stops the start.** It is recorded against the file, and the application does not take traffic on
+  rows that do not match its build; in a rolling deploy the instance being replaced keeps serving. The next start
+  tries again.
+- **Instances starting together take turns** on a database lock (`softa:seed-startup:<database>`): one loads the
+  files, the others find nothing pending once they hold it.
+- **A file a newer build loaded is left alone**, with a warning: after a rollback, the older content does not go
+  over the newer one (see *Where a file stands*).
+- It does not initialize the environment — the first load from the page does — and it does not wait for another
+  seed operation: nothing else loads these files.
+
+During a rolling deploy the instance being replaced keeps serving for a moment over rows the new build has
+already loaded, so a change to these files must not break the version it replaces: add freely, and remove or
+rename across two releases. Permission snapshots are stamped with the build that computed them, so neither
+version serves the other's.
 
 ## Tenant runs
 
@@ -175,6 +218,12 @@ interrupted (its instance went down), and the next operation closes it as `INTER
 
 When a tenant runs any file, the cached permission snapshots of its users (`perm:{tenantId}:*`) are cleared.
 
+A file that created rows announces them with a `SeedFileLoadedEvent` (tenant, file, the new row ids by
+model) — rows bound by an earlier load do not count. It is published inside the file's transaction, in the
+tenant's context with permission checks skipped, so listeners act on the tenant's new rows whoever started
+the run, and a listener that throws fails the file like a load error would. flow-starter listens for it to
+publish the default flows a file brings (`FlowDesign` rows).
+
 After a deploy, load the platform files before running the tenants. Tenant files refer to platform rows
 (roles to permissions, leave types to countries), and a reference to a row that is not loaded yet fails the
 file.
@@ -186,10 +235,10 @@ file.
 ## Initializing an environment
 
 An environment is initialized once, by its first platform load — from the Seed Data page, like any later load.
-Until then tenant runs are refused; setting up a new tenant does not wait for it. The page works before its own
-menu and permissions are loaded: the platform admin reaches it by its address, and reaches endpoints no
-permission lists yet. Before loading anything, that first load **records the tenant files tenants already
-have**:
+Until then tenant runs are refused; setting up a new tenant does not wait for it. The page is in the platform
+administrator's menu by then: its own menu and permissions are in files the build owns, loaded at startup (see
+*Files the build owns*); that load does not count as the first. Before loading anything, the first load
+**records the tenant files tenants already have**:
 
 - An environment that held seed data before this starter recorded loads has tenants with rows but no records,
   so the first run would load every tenant file again over what the tenants changed since. For each tenant,
@@ -203,12 +252,12 @@ have**:
 
 Which files the first load takes:
 
-- **A new environment** loads every platform file.
+- **A new environment** loads every platform file still pending.
 - **An environment that already holds platform seed data** (system-scope bindings from an earlier loader)
   leaves out the files whose rows were changed on the pages: loading them would put each one over what was
   changed. A first load that names no file is refused there.
 
-Then restart every instance.
+No restart follows (see *Platform load*).
 
 ## Records
 
@@ -263,3 +312,8 @@ The ledger is read through the generic model API, so treat `/SysPreData/*` as op
     takes `(tenantId, seederKey)`. `TenantSeedPurgeService` and `TenantSeedCleaner` are gone, and so is the
     unused `softa.tenant.provisioning.ready-timeout-seconds` property.
   - `CacheService` gained `clearByPrefix`; a custom `CacheService` implementation has to add it.
+- The manifest's `bootstrap: true` (a file that loaded on its own once, where it never loaded, and from the
+  page after) is replaced by `auto: true` (a file the build owns, loaded at startup wherever pending and never
+  from the page); `bootstrap` is now an unknown key. `SeedBootstrap` is replaced by `SeedStartupLoad`,
+  `PlatformSeedLoader.loadBootstrapFiles` by `loadAutoFiles`, and `SeedManifest.bootstrapFiles` by `autoFiles`.
+  `PlatformSeedStatus.restartRequired` is gone with the restart it announced; `PlatformFileStatus` gained `auto`.

@@ -28,8 +28,11 @@ public class FlowApprovalRecordView {
     @Schema(description = "Runtime instance id")
     private String instanceId;
 
-    @Schema(description = "Flow code")
-    private String flowCode;
+    @Schema(description = "Flow ID")
+    private String flowId;
+
+    @Schema(description = "Flow name")
+    private String flowName;
 
     @Schema(description = "Published flow revision")
     private Integer flowRevision;
@@ -61,12 +64,6 @@ public class FlowApprovalRecordView {
     @Schema(description = "Add-sign position when the record represents an add-sign action")
     private AddSignPosition addSignPosition;
 
-    @Schema(description = "Target node id")
-    private String targetNodeId;
-
-    @Schema(description = "Target node label")
-    private String targetNodeLabel;
-
     @Schema(description = "Comment")
     private String comment;
 
@@ -81,9 +78,6 @@ public class FlowApprovalRecordView {
 
     @Schema(description = "Actors who had already rejected")
     private List<String> rejectedActors;
-
-    @Schema(description = "Updated variable keys")
-    private List<String> variableKeys;
 
     @Schema(description = "Recorded time")
     private LocalDateTime eventTime;

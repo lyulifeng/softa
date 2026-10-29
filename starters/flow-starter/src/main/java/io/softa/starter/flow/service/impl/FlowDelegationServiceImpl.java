@@ -11,6 +11,7 @@ import org.springframework.stereotype.Service;
 import io.softa.framework.orm.domain.Filters;
 import io.softa.framework.orm.service.impl.EntityServiceImpl;
 import io.softa.starter.flow.entity.FlowDelegation;
+import io.softa.starter.flow.runtime.exception.FlowAuthorizationException;
 import io.softa.starter.flow.service.FlowDelegationService;
 
 /**
@@ -38,12 +39,12 @@ public class FlowDelegationServiceImpl extends EntityServiceImpl<FlowDelegation,
     }
 
     @Override
-    public Optional<FlowDelegation> findActiveDelegation(String delegatorId, String flowCode, String nodeId, LocalDateTime now) {
+    public Optional<FlowDelegation> findActiveDelegation(String delegatorId, String flowId, String nodeId, LocalDateTime now) {
         List<FlowDelegation> active = findActiveDelegations(delegatorId, now);
         // Prefer most specific scope: node > flow > all
         return active.stream()
-                .filter(d -> matchesScope(d, flowCode, nodeId))
-                .max(Comparator.comparingInt(d -> scopePriority(d, flowCode, nodeId)));
+                .filter(d -> matchesScope(d, flowId, nodeId))
+                .max(Comparator.comparingInt(d -> scopePriority(d, flowId, nodeId)));
     }
 
     @Override
@@ -64,11 +65,13 @@ public class FlowDelegationServiceImpl extends EntityServiceImpl<FlowDelegation,
     }
 
     @Override
-    public void cancelDelegation(Long delegationId) {
-        this.getById(delegationId).ifPresent(d -> {
-            d.setActive(false);
-            this.updateOne(d, false);
-        });
+    public void cancelDelegation(Long delegationId, String requesterId) {
+        FlowDelegation delegation = this.getById(delegationId)
+                .filter(d -> requesterId != null && requesterId.equals(d.getDelegatorId()))
+                .orElseThrow(() -> new FlowAuthorizationException(
+                        "You have no delegation " + delegationId + " to cancel"));
+        delegation.setActive(false);
+        this.updateOne(delegation, false);
     }
 
     @Override
@@ -103,26 +106,26 @@ public class FlowDelegationServiceImpl extends EntityServiceImpl<FlowDelegation,
         return d.getEndTime() == null || !now.isAfter(d.getEndTime());
     }
 
-    private boolean matchesScope(FlowDelegation d, String flowCode, String nodeId) {
+    private boolean matchesScope(FlowDelegation d, String flowId, String nodeId) {
         String scope = d.getScope();
         if (scope == null || "ALL".equalsIgnoreCase(scope)) {
             return true;
         }
         if ("FLOW".equalsIgnoreCase(scope)) {
-            return Objects.equals(d.getFlowCode(), flowCode);
+            return Objects.equals(d.getFlowId(), flowId);
         }
         if ("NODE".equalsIgnoreCase(scope)) {
-            return Objects.equals(d.getFlowCode(), flowCode) && Objects.equals(d.getNodeId(), nodeId);
+            return Objects.equals(d.getFlowId(), flowId) && Objects.equals(d.getNodeId(), nodeId);
         }
         return false;
     }
 
-    private int scopePriority(FlowDelegation d, String flowCode, String nodeId) {
+    private int scopePriority(FlowDelegation d, String flowId, String nodeId) {
         String scope = d.getScope();
-        if ("NODE".equalsIgnoreCase(scope) && Objects.equals(d.getFlowCode(), flowCode) && Objects.equals(d.getNodeId(), nodeId)) {
+        if ("NODE".equalsIgnoreCase(scope) && Objects.equals(d.getFlowId(), flowId) && Objects.equals(d.getNodeId(), nodeId)) {
             return 3;
         }
-        if ("FLOW".equalsIgnoreCase(scope) && Objects.equals(d.getFlowCode(), flowCode)) {
+        if ("FLOW".equalsIgnoreCase(scope) && Objects.equals(d.getFlowId(), flowId)) {
             return 2;
         }
         if (scope == null || "ALL".equalsIgnoreCase(scope)) {

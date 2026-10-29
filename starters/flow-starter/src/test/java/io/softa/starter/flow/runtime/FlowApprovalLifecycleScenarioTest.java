@@ -15,7 +15,6 @@ import io.softa.starter.flow.enums.FlowNodeType;
 import io.softa.starter.flow.enums.FlowScenario;
 import io.softa.starter.flow.runtime.api.FlowAddSignAfterRequest;
 import io.softa.starter.flow.runtime.api.FlowAddSignBeforeRequest;
-import io.softa.starter.flow.runtime.api.FlowResubmitRequest;
 import io.softa.starter.flow.runtime.api.FlowReturnRequest;
 import io.softa.starter.flow.runtime.api.FlowStartRequest;
 import io.softa.starter.flow.runtime.api.FlowWithdrawRequest;
@@ -30,15 +29,16 @@ import io.softa.starter.flow.service.impl.FlowPublishServiceImpl;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
  * Lifecycle scenarios that need a withdraw-enabled, return-enabled approval flow:
- * withdraw, add-sign (before/after), and return-to-initiator → resubmit. Together with
+ * withdraw, add-sign (before/after), and return-to-initiator, which ends the instance. Together with
  * {@code FlowActionScenarioTest} these cover the full approval action-handler set.
  */
 class FlowApprovalLifecycleScenarioTest {
 
-    private static final Long DESIGN_ID = 9200L;
+    private static final String FLOW_ID = "9200";
     private static final String APPROVER = "manager-1";
     private static final String OTHER = "manager-2";
     private static final String INITIATOR = "initiator-1";
@@ -56,12 +56,12 @@ class FlowApprovalLifecycleScenarioTest {
 
     @BeforeEach
     void publishFlow() {
-        publishService.publish(DESIGN_ID, flowDefinition());
+        publishService.publish(FLOW_ID, flowDefinition());
     }
 
     private FlowExecutionState start() {
         FlowStartRequest start = new FlowStartRequest();
-        start.setDesignId(DESIGN_ID);
+        start.setFlowId(FLOW_ID);
         start.setInitiatorId(INITIATOR);
         FlowExecutionState state = engine.start(start);
         assertEquals(FlowExecutionStatus.WAITING, state.getStatus());
@@ -121,7 +121,7 @@ class FlowApprovalLifecycleScenarioTest {
     }
 
     @Test
-    void returnToInitiatorThenResubmitReopensApproval() {
+    void returnToInitiatorEndsTheInstance() {
         FlowExecutionState started = start();
 
         FlowReturnRequest ret = new FlowReturnRequest();
@@ -129,34 +129,43 @@ class FlowApprovalLifecycleScenarioTest {
         ret.setNodeId("approval");
         ret.setActorId(APPROVER);
         ret.setComment("please add detail");
-        assertEquals(FlowExecutionStatus.RETURNED, engine.returnApproval(ret).getStatus());
+        FlowExecutionState returned = engine.returnApproval(ret);
 
-        FlowResubmitRequest resubmit = new FlowResubmitRequest();
-        resubmit.setInstanceId(started.getInstanceId());
-        resubmit.setActorId(INITIATOR);
-        FlowExecutionState afterResubmit = engine.resubmit(resubmit);
-        assertEquals(FlowExecutionStatus.WAITING, afterResubmit.getStatus());
-        assertEquals(1, afterResubmit.getResubmissionCount());
+        assertEquals(FlowExecutionStatus.RETURNED, returned.getStatus());
+        assertTrue(returned.getStatus().isTerminal(), "the initiator submits again as a new instance");
+        assertTrue(returned.getPendingApprovals().isEmpty());
+
+        // Nothing more happens on a returned instance.
+        FlowWithdrawRequest withdraw = new FlowWithdrawRequest();
+        withdraw.setInstanceId(started.getInstanceId());
+        withdraw.setActorId(INITIATOR);
+        assertThrows(FlowActionValidationException.class, () -> engine.withdraw(withdraw));
     }
 
     @Test
-    void nonInitiatorCannotResubmit() {
+    void aReturnSaysWhatToChangeAndComesFromTheStepsApprover() {
         FlowExecutionState started = start();
-        FlowReturnRequest ret = new FlowReturnRequest();
-        ret.setInstanceId(started.getInstanceId());
-        ret.setNodeId("approval");
-        ret.setActorId(APPROVER);
-        engine.returnApproval(ret);
 
-        FlowResubmitRequest resubmit = new FlowResubmitRequest();
-        resubmit.setInstanceId(started.getInstanceId());
-        resubmit.setActorId(OTHER);
-        assertThrows(FlowActionValidationException.class, () -> engine.resubmit(resubmit));
+        FlowReturnRequest silent = new FlowReturnRequest();
+        silent.setInstanceId(started.getInstanceId());
+        silent.setNodeId("approval");
+        silent.setActorId(APPROVER);
+        silent.setComment(" ");
+        assertThrows(FlowActionValidationException.class, () -> engine.returnApproval(silent));
+
+        FlowReturnRequest notTheirs = new FlowReturnRequest();
+        notTheirs.setInstanceId(started.getInstanceId());
+        notTheirs.setNodeId("approval");
+        notTheirs.setActorId(OTHER);
+        notTheirs.setComment("please add detail");
+        assertThrows(FlowActionValidationException.class, () -> engine.returnApproval(notTheirs));
+
+        assertEquals(FlowExecutionStatus.WAITING, engine.getInstance(started.getInstanceId()).orElseThrow().getStatus(),
+                "a refused return changes nothing");
     }
 
     private static DesignFlowDefinition flowDefinition() {
         return DesignFlowDefinition.builder()
-                .code("approval-lifecycle")
                 .name("Approval Lifecycle")
                 .scenario(FlowScenario.PROCESS)
                 .allowInitiatorWithdraw(true)
@@ -170,8 +179,7 @@ class FlowApprovalLifecycleScenarioTest {
                                         .label("approval")
                                         .config(Map.of(
                                                 "approvers", List.of(APPROVER),
-                                                "returnEnabled", true,
-                                                "returnTarget", "Initiator"))
+                                                "returnEnabled", true))
                                         .build(),
                                 node("end", FlowNodeType.END)))
                         .edges(List.of(

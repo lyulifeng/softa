@@ -6,6 +6,7 @@ import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.Set;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
@@ -34,14 +35,18 @@ import io.softa.starter.seed.manifest.SeedLevel;
  *
  * <p>A platform file is the data, so it is loaded whole whenever it was never loaded or has changed since. The
  * pending files load in one transaction, in manifest order: either all of them or none. Afterwards the
- * permission snapshots and entitlements cached in Redis are cleared; what each instance built in memory at
- * startup (endpoint index, sensitive field sets, navigation, cron schedules) is rebuilt by restarting it.
+ * permission snapshots and entitlements cached in Redis are cleared.
  *
- * <p>An environment's first load initializes it, before loading anything: in every set-up tenant it records as
- * run the tenant files the tenant already has rows of, changing no data, so the first tenant run does not load
- * them again over what the tenants changed since. Tenant runs are refused until then; setting up a new tenant
- * is not. The Seed Data page is the way in even before its own menu and permissions are loaded: the platform
- * administrator reaches it by its address, and reaches endpoints no permission lists yet.
+ * <p>The files the build owns are marked {@code auto} in the manifest, and load at startup wherever they are
+ * pending ({@link #loadAutoFiles}), before the application takes traffic and before the in-memory snapshots read
+ * by every request (endpoint index, sensitive field sets, navigation) are built from their rows. The Seed Data page
+ * loads the other files, and never those: a page load at any other time would reach no snapshot until the next
+ * start.
+ *
+ * <p>An environment's first load from the page initializes it, before loading anything: in every set-up tenant it
+ * records as run the tenant files the tenant already has rows of, changing no data, so the first tenant run does
+ * not load them again over what the tenants changed since. Tenant runs are refused until then; setting up a new
+ * tenant is not.
  */
 @Slf4j
 @Service
@@ -75,22 +80,20 @@ public class PlatformSeedLoader {
             SeedLoadLog.FileRecords fileRecords = records.get(file.file());
             var success = fileRecords == null ? null : fileRecords.latestSuccess();
             var latest = fileRecords == null ? null : fileRecords.latest();
-            return new PlatformFileStatus(file.file(), file.level(), loadLog.state(file, fileRecords),
+            return new PlatformFileStatus(file.file(), file.level(), file.auto(), loadLog.state(file, fileRecords),
                     catalog.checksum(file),
                     success == null ? null : success.getChecksum(),
                     success == null ? null : success.getEndTime(),
                     success == null ? null : success.getCreatedBy(),
                     latest != null && latest.getStatus() == SeedRecordStatus.FAILED ? latest.getErrorMessage() : null);
         }).toList();
-        LocalDateTime lastLoadedAt = loadLog.lastPlatformLoad();
-        return new PlatformSeedStatus(catalog.appVersion(), catalog.buildTime(), catalog.startedAt(), lastLoadedAt,
-                lastLoadedAt != null && lastLoadedAt.isAfter(catalog.startedAt()), loadLog.initialized(),
-                loadLog.running().orElse(null), files);
+        return new PlatformSeedStatus(catalog.appVersion(), catalog.buildTime(), catalog.startedAt(),
+                loadLog.lastPlatformLoad(), loadLog.initialized(), loadLog.running().orElse(null), files);
     }
 
     /**
-     * Load the pending platform files — all of them, or the ones named. The environment's first load initializes
-     * it first (see the class comment).
+     * Load the pending platform files — all of them, or the ones named — leaving out the files the build owns,
+     * which load at startup. The environment's first load initializes it first (see the class comment).
      *
      * <p>That first load decides on the recording: when it fails outright nothing is loaded, and the next load
      * tries again. When the files fail to load after it, the environment is initialized all the same.
@@ -126,6 +129,45 @@ public class PlatformSeedLoader {
                     + "a tenant recorded already is not recorded twice.", initialization);
         }
         return loadFiles(files).initializing(initialization);
+    }
+
+    /**
+     * The files the build owns that are pending here: never loaded, changed since, or failed last time. A file a
+     * newer build loaded is not: after a rollback, this build's older content does not go over the newer one.
+     */
+    public List<SeedFile> pendingAutoFiles() {
+        List<SeedFile> autoFiles = catalog.manifest().autoFiles();
+        if (autoFiles.isEmpty()) {
+            return List.of();
+        }
+        Map<String, SeedLoadLog.FileRecords> records = loadLog.platformRecords();
+        List<SeedFile> pending = new ArrayList<>();
+        for (SeedFile file : autoFiles) {
+            FileState state = loadLog.state(file, records.get(file.file()));
+            if (state.pending()) {
+                pending.add(file);
+            } else if (state == FileState.LOADED_BY_NEWER_BUILD) {
+                log.warn("{} was loaded by a newer build than the one running and is left as that build loaded it; "
+                        + "this build's older content does not go over it.", file.file());
+            }
+        }
+        return pending;
+    }
+
+    /**
+     * Load the files the build owns that are pending here — the platform files the manifest marks {@code auto}.
+     * {@link SeedStartupLoad} calls it at startup, before the application takes traffic and before the in-memory
+     * snapshots are built from the files' rows.
+     *
+     * <p>This does not initialize the environment — the first load from the page still does, after whatever the
+     * deployment runs once the new build is up. Nor does it wait for another seed operation to finish: nothing else
+     * loads these files, and a batch left Running by an instance that stopped part-way must not hold the start up.
+     *
+     * @return how the load went, or empty when no file the build owns is pending
+     */
+    public Optional<PlatformLoadResult> loadAutoFiles() {
+        List<SeedFile> files = pendingAutoFiles();
+        return files.isEmpty() ? Optional.empty() : Optional.of(loadFiles(files));
     }
 
     /** Whether platform seed rows were loaded here before: bindings at system scope. */
@@ -172,12 +214,14 @@ public class PlatformSeedLoader {
         }
         loadLog.finish(batchId, SeedLoadStatus.SUCCEEDED, files.size(), null);
         clearCachedPermissions();
-        log.info("Platform seed load {}: {} file(s) loaded; restart the instances to rebuild their in-memory indexes",
-                batchId, files.size());
+        log.info("Platform seed load {}: {} file(s) loaded", batchId, files.size());
         return new PlatformLoadResult(batchId, true, files.stream().map(SeedFile::file).toList(), null, null);
     }
 
-    /** The pending platform files, or the named ones among them — all of which must be pending. */
+    /**
+     * The pending platform files the page loads, or the named ones among them — all of which must be pending, and
+     * none of which the build owns.
+     */
     private List<SeedFile> selectPending(List<String> fileNames) {
         if (fileNames != null && fileNames.isEmpty()) {
             throw new BusinessException("Nothing was loaded: no platform file was picked.");
@@ -187,7 +231,8 @@ public class PlatformSeedLoader {
         }
         Map<String, SeedLoadLog.FileRecords> records = loadLog.platformRecords();
         Map<SeedFile, FileState> states = new LinkedHashMap<>();
-        catalog.manifest().platformFiles()
+        catalog.manifest().platformFiles().stream()
+                .filter(file -> !file.auto())
                 .forEach(file -> states.put(file, loadLog.state(file, records.get(file.file()))));
         List<SeedFile> pending = states.entrySet().stream()
                 .filter(entry -> entry.getValue().pending())
@@ -200,6 +245,15 @@ public class PlatformSeedLoader {
             return pending;
         }
         Set<String> named = new LinkedHashSet<>(fileNames);
+        List<String> owned = catalog.manifest().autoFiles().stream()
+                .map(SeedFile::file)
+                .filter(named::contains)
+                .toList();
+        if (!owned.isEmpty()) {
+            throw new BusinessException("Nothing was loaded: {0} belongs to the build and loads at startup, before "
+                    + "anything is read from it; loaded now, no instance would see it until it restarts.",
+                    String.join(", ", owned));
+        }
         List<String> loadedByNewerBuild = states.entrySet().stream()
                 .filter(entry -> entry.getValue() == FileState.LOADED_BY_NEWER_BUILD
                         && named.contains(entry.getKey().file()))

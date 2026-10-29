@@ -13,18 +13,15 @@ import io.softa.starter.flow.runtime.state.FlowExecutionStatus;
 @Schema(name = "FlowInstanceSearchRequest")
 public record FlowInstanceSearchRequest(
 
-        @Schema(description = "Filter by flow code")
-        String flowCode,
-
-        @Schema(description = "Filter by design id")
-        Long designId,
+        @Schema(description = "Filter by flow id")
+        String flowId,
 
         @Schema(description = "Filter by execution status")
         FlowExecutionStatus status,
 
         @Schema(description = "Filter by initiator id. Honored only by the monitor endpoint "
-                + "(POST /flow/monitor/instances/search); the runtime endpoint always overrides "
-                + "it with the authenticated caller")
+                + "(POST /flow/monitor/instances/search); POST /flow/instances/search always "
+                + "overrides it with the authenticated caller")
         String initiatorId,
 
         @Schema(description = "Filter by related model name")

@@ -31,6 +31,11 @@ public final class SeedManifest {
         return platformFiles;
     }
 
+    /** The platform files the build owns, which load at startup, in load order. */
+    public List<SeedFile> autoFiles() {
+        return platformFiles.stream().filter(SeedFile::auto).toList();
+    }
+
     /** Every tenant file, in run order. */
     public List<SeedFile> tenantFiles() {
         return tenantFiles;

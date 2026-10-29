@@ -21,8 +21,8 @@ import static org.mockito.Mockito.verify;
 
 /**
  * Tests for {@link FlowInstanceServiceImpl#searchSummaries} — the filter and
- * projection builder shared by the runtime "my instances" endpoint and the
- * cross-initiator monitor endpoint.
+ * projection builder shared by the caller's "my instances" reads (REST and
+ * {@code FlowClient}) and the cross-initiator monitor endpoint.
  */
 class FlowInstanceServiceImplSearchTest {
 
@@ -37,7 +37,7 @@ class FlowInstanceServiceImplSearchTest {
     private static FlowInstanceSearchRequest request(String initiatorId,
                                                      LocalDateTime createdFrom, LocalDateTime createdTo,
                                                      Integer pageNumber, Integer pageSize) {
-        return new FlowInstanceSearchRequest(null, null, null, initiatorId, null, null,
+        return new FlowInstanceSearchRequest(null, null, initiatorId, null, null,
                 createdFrom, createdTo, pageNumber, pageSize);
     }
 
@@ -83,9 +83,9 @@ class FlowInstanceServiceImplSearchTest {
         runSearch(request(null, null, null, null, null), null);
         List<String> fields = queryCaptor.getValue().getFields();
         assertEquals(16, fields.size());
-        assertTrue(fields.containsAll(List.of("id", "instanceId", "bundleId", "designId", "flowCode",
-                "flowRevision", "title", "modelName", "rowId", "initiatorId", "status", "failedNodeId",
-                "nextFireAt", "resubmissionCount", "createdTime", "updatedTime")));
+        assertTrue(fields.containsAll(List.of("id", "instanceId", "bundleId", "flowId", "flowName",
+                "flowRevision", "title", "modelName", "rowId", "initiatorId", "recordApproval", "status",
+                "failedNodeId", "nextFireAt", "createdTime", "updatedTime")));
         assertFalse(fields.contains("variables"));
         assertFalse(fields.contains("inputPayload"));
         assertFalse(fields.contains("pendingApprovals"));

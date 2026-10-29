@@ -34,12 +34,13 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
  * In-process {@code FlowClient} contract: start → pending → approve through the
  * {@link InProcessFlowClient} port. Proves the port delegates to the engine AND resolves the
  * actor from {@link ContextHolder} — the approve carries no {@code actorId}, so it can only
- * succeed because {@code me()} ("100") matches the node's approver. Only the {@code engine}
- * delegate is exercised here, so the other bean dependencies are left null.
+ * succeed because {@code FlowActors.currentUserId()} ("100") matches the node's approver.
+ * Only the {@code engine} delegate is exercised here, so the other bean dependencies are left
+ * null.
  */
 class InProcessFlowClientContractTest {
 
-    private static final Long DESIGN_ID = 9300L;
+    private static final String FLOW_ID = "9300";
     private static final Long USER_ID = 100L;
     private static final String ACTOR = "100"; // String.valueOf(USER_ID)
 
@@ -59,7 +60,7 @@ class InProcessFlowClientContractTest {
 
     @BeforeEach
     void publishFlow() {
-        publishService.publish(DESIGN_ID, flowDefinition());
+        publishService.publish(FLOW_ID, flowDefinition());
     }
 
     @Test
@@ -68,7 +69,7 @@ class InProcessFlowClientContractTest {
         ctx.setUserId(USER_ID);
         ContextHolder.runWith(ctx, () -> {
             FlowStartRequest start = new FlowStartRequest();
-            start.setDesignId(DESIGN_ID);
+            start.setFlowId(FLOW_ID);
             // initiatorId intentionally not set — resolved from context
             FlowExecutionState started = client.start(start);
             assertEquals(FlowExecutionStatus.WAITING, started.getStatus());
@@ -84,7 +85,6 @@ class InProcessFlowClientContractTest {
 
     private static DesignFlowDefinition flowDefinition() {
         return DesignFlowDefinition.builder()
-                .code("inprocess-contract")
                 .name("In-Process Contract")
                 .scenario(FlowScenario.PROCESS)
                 .trigger(new ApiTrigger(null))

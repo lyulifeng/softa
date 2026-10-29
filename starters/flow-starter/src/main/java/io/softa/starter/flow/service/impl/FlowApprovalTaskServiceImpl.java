@@ -11,6 +11,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.util.StringUtils;
 
+import io.softa.framework.base.context.ContextUtils;
 import io.softa.framework.orm.domain.Filters;
 import io.softa.framework.orm.domain.FlexQuery;
 import io.softa.framework.orm.domain.Orders;
@@ -57,54 +58,54 @@ public class FlowApprovalTaskServiceImpl extends EntityServiceImpl<FlowApprovalT
     }
 
     @Override
-    public List<FlowApprovalTaskView> getPendingTasks(String actorId, String flowCode, String instanceId, String nodeId) {
-        return pagePendingTasks(actorId, flowCode, instanceId, nodeId, 1, 50).getRows();
+    public List<FlowApprovalTaskView> getPendingTasks(String actorId, String flowId, String instanceId, String nodeId) {
+        return pagePendingTasks(actorId, flowId, instanceId, nodeId, 1, 50).getRows();
     }
 
     @Override
     public Page<FlowApprovalTaskView> pagePendingTasks(String actorId,
-                                                       String flowCode,
+                                                       String flowId,
                                                        String instanceId,
                                                        String nodeId,
                                                        Integer pageNumber,
                                                        Integer pageSize) {
         ApprovalTaskQuerySupport.requireActorId(actorId);
         Filters filters = ApprovalTaskQuerySupport.pendingApprovalFilters(actorId);
-        applyOptionalFilters(filters, flowCode, instanceId, nodeId);
+        applyOptionalFilters(filters, flowId, instanceId, nodeId);
         FlexQuery query = new FlexQuery(filters, Orders.ofAsc(FlowApprovalTask::getStartTime)
                 .addAsc(FlowApprovalTask::getId));
         return mapPage(this.searchPage(query, Page.of(pageNumber, pageSize)), pageNumber, pageSize);
     }
 
     @Override
-    public List<FlowApprovalTaskView> getCompletedTasks(String actorId, String flowCode, String instanceId, String nodeId) {
-        return pageCompletedTasks(actorId, flowCode, instanceId, nodeId, 1, 50).getRows();
+    public List<FlowApprovalTaskView> getCompletedTasks(String actorId, String flowId, String instanceId, String nodeId) {
+        return pageCompletedTasks(actorId, flowId, instanceId, nodeId, 1, 50).getRows();
     }
 
     @Override
     public Page<FlowApprovalTaskView> pageCompletedTasks(String actorId,
-                                                         String flowCode,
+                                                         String flowId,
                                                          String instanceId,
                                                          String nodeId,
                                                          Integer pageNumber,
                                                          Integer pageSize) {
         ApprovalTaskQuerySupport.requireActorId(actorId);
         Filters filters = ApprovalTaskQuerySupport.completedApprovalFilters(actorId);
-        applyOptionalFilters(filters, flowCode, instanceId, nodeId);
+        applyOptionalFilters(filters, flowId, instanceId, nodeId);
         FlexQuery query = new FlexQuery(filters, Orders.ofDesc(FlowApprovalTask::getEndTime)
                 .addDesc(FlowApprovalTask::getId));
         return mapPage(this.searchPage(query, Page.of(pageNumber, pageSize)), pageNumber, pageSize);
     }
 
     @Override
-    public List<FlowApprovalTaskView> getCcTasks(String actorId, Boolean read, String flowCode, String instanceId, String nodeId) {
-        return pageCcTasks(actorId, read, flowCode, instanceId, nodeId, 1, 50).getRows();
+    public List<FlowApprovalTaskView> getCcTasks(String actorId, Boolean read, String flowId, String instanceId, String nodeId) {
+        return pageCcTasks(actorId, read, flowId, instanceId, nodeId, 1, 50).getRows();
     }
 
     @Override
     public Page<FlowApprovalTaskView> pageCcTasks(String actorId,
                                                   Boolean read,
-                                                  String flowCode,
+                                                  String flowId,
                                                   String instanceId,
                                                   String nodeId,
                                                   Integer pageNumber,
@@ -121,7 +122,7 @@ public class FlowApprovalTaskServiceImpl extends EntityServiceImpl<FlowApprovalT
                     .eq(FlowApprovalTask::getActorId, actorId)
                     .eq(FlowApprovalTask::getTaskType, FlowApprovalTaskType.CC);
         }
-        applyOptionalFilters(filters, flowCode, instanceId, nodeId);
+        applyOptionalFilters(filters, flowId, instanceId, nodeId);
         Orders orders = Boolean.TRUE.equals(read)
                 ? Orders.ofDesc(FlowApprovalTask::getEndTime).addDesc(FlowApprovalTask::getId)
                 : Orders.ofAsc(FlowApprovalTask::getStartTime).addAsc(FlowApprovalTask::getId);
@@ -147,16 +148,20 @@ public class FlowApprovalTaskServiceImpl extends EntityServiceImpl<FlowApprovalT
         return views;
     }
 
+    /**
+     * Every task of an instance, read past the caller's data permissions: for the projection sync, the
+     * engine's own bookkeeping; for {@link #getTasksByInstanceId}, rows the access guard rules on next.
+     */
     private List<FlowApprovalTask> getTaskEntitiesByInstanceId(String instanceId) {
         Filters filters = new Filters().eq(FlowApprovalTask::getInstanceId, instanceId);
-        return this.searchList(filters).stream()
+        return ContextUtils.withoutPermissionChecks(() -> this.searchList(filters)).stream()
                 .sorted(ApprovalTaskQuerySupport.pendingTaskComparator())
                 .toList();
     }
 
-    private static void applyOptionalFilters(Filters filters, String flowCode, String instanceId, String nodeId) {
-        if (StringUtils.hasText(flowCode)) {
-            filters.eq(FlowApprovalTask::getFlowCode, flowCode);
+    private static void applyOptionalFilters(Filters filters, String flowId, String instanceId, String nodeId) {
+        if (StringUtils.hasText(flowId)) {
+            filters.eq(FlowApprovalTask::getFlowId, flowId);
         }
         if (StringUtils.hasText(instanceId)) {
             filters.eq(FlowApprovalTask::getInstanceId, instanceId);

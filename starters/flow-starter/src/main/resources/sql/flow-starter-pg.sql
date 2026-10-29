@@ -25,7 +25,7 @@ CREATE TABLE IF NOT EXISTS flow_approval_record (
     id BIGINT NOT NULL,
     tenant_id BIGINT NOT NULL,
     instance_id VARCHAR(64) NOT NULL DEFAULT '',
-    flow_code VARCHAR(100),
+    flow_id VARCHAR(24),
     flow_revision INT,
     node_id VARCHAR(100),
     node_label VARCHAR(200),
@@ -36,14 +36,11 @@ CREATE TABLE IF NOT EXISTS flow_approval_record (
     actor_id VARCHAR(64),
     target_actor_id VARCHAR(64),
     add_sign_position VARCHAR(64),
-    target_node_id VARCHAR(100),
-    target_node_label VARCHAR(200),
     comment VARCHAR(2000),
     status_before VARCHAR(64),
     status_after VARCHAR(64),
     approved_actors VARCHAR(4000),
     rejected_actors VARCHAR(4000),
-    variable_keys VARCHAR(2000),
     event_time TIMESTAMP,
     created_time TIMESTAMP,
     created_id BIGINT,
@@ -54,7 +51,6 @@ CREATE TABLE IF NOT EXISTS flow_approval_record (
     PRIMARY KEY (id)
 );
 COMMENT ON COLUMN flow_approval_record.instance_id IS 'Runtime instance id';
-COMMENT ON COLUMN flow_approval_record.flow_code IS 'Flow code';
 COMMENT ON COLUMN flow_approval_record.flow_revision IS 'Published flow revision';
 COMMENT ON COLUMN flow_approval_record.node_id IS 'Primary node id';
 COMMENT ON COLUMN flow_approval_record.node_label IS 'Primary node label';
@@ -65,14 +61,11 @@ COMMENT ON COLUMN flow_approval_record.action IS 'Action type';
 COMMENT ON COLUMN flow_approval_record.actor_id IS 'Operator actor id';
 COMMENT ON COLUMN flow_approval_record.target_actor_id IS 'Target actor id';
 COMMENT ON COLUMN flow_approval_record.add_sign_position IS 'Add-sign position when the record represents an add-sign action';
-COMMENT ON COLUMN flow_approval_record.target_node_id IS 'Target node id';
-COMMENT ON COLUMN flow_approval_record.target_node_label IS 'Target node label';
 COMMENT ON COLUMN flow_approval_record.comment IS 'Comment';
 COMMENT ON COLUMN flow_approval_record.status_before IS 'Status before action';
 COMMENT ON COLUMN flow_approval_record.status_after IS 'Status after action';
 COMMENT ON COLUMN flow_approval_record.approved_actors IS 'Actors who had already approved';
 COMMENT ON COLUMN flow_approval_record.rejected_actors IS 'Actors who had already rejected';
-COMMENT ON COLUMN flow_approval_record.variable_keys IS 'Updated variable keys';
 COMMENT ON COLUMN flow_approval_record.event_time IS 'Recorded time';
 CREATE UNIQUE INDEX IF NOT EXISTS uk_flow_approval_record_instance_id_sequence ON flow_approval_record (instance_id, sequence);
 CREATE INDEX IF NOT EXISTS idx_flow_approval_record_tenant_id_instance_id ON flow_approval_record (tenant_id, instance_id);
@@ -85,7 +78,7 @@ CREATE TABLE IF NOT EXISTS flow_approval_task (
     id BIGINT NOT NULL,
     tenant_id BIGINT NOT NULL,
     instance_id VARCHAR(64) NOT NULL DEFAULT '',
-    flow_code VARCHAR(100),
+    flow_id VARCHAR(24),
     flow_revision INT,
     node_id VARCHAR(100) NOT NULL DEFAULT '',
     node_label VARCHAR(200),
@@ -124,7 +117,6 @@ CREATE TABLE IF NOT EXISTS flow_approval_task (
 );
 COMMENT ON COLUMN flow_approval_task.tenant_id IS 'Tenant ID';
 COMMENT ON COLUMN flow_approval_task.instance_id IS 'Runtime instance id';
-COMMENT ON COLUMN flow_approval_task.flow_code IS 'Flow code';
 COMMENT ON COLUMN flow_approval_task.flow_revision IS 'Published flow revision';
 COMMENT ON COLUMN flow_approval_task.node_id IS 'Approval node id';
 COMMENT ON COLUMN flow_approval_task.node_label IS 'Approval node label';
@@ -163,13 +155,13 @@ CREATE TABLE IF NOT EXISTS flow_bundle (
     id BIGINT NOT NULL,
     tenant_id BIGINT NOT NULL,
     version INT NOT NULL DEFAULT 1,
-    flow_code VARCHAR(100) NOT NULL DEFAULT '',
     flow_name VARCHAR(100),
     revision INT NOT NULL,
     scenario VARCHAR(64),
     sync BOOLEAN,
     rollback_on_fail BOOLEAN,
-    design_id BIGINT,
+    cron_expression VARCHAR(64),
+    flow_id VARCHAR(24),
     compiled_json TEXT,
     design_json TEXT,
     compiled_at TIMESTAMP,
@@ -186,12 +178,12 @@ CREATE TABLE IF NOT EXISTS flow_bundle (
     PRIMARY KEY (id)
 );
 COMMENT ON COLUMN flow_bundle.version IS 'Optimistic-lock version; serializes concurrent publish/activate so a design cannot end up with two active revisions';
-COMMENT ON COLUMN flow_bundle.flow_code IS 'Flow code (business identifier)';
 COMMENT ON COLUMN flow_bundle.revision IS 'Published revision number';
 COMMENT ON COLUMN flow_bundle.scenario IS 'Execution scenario';
 COMMENT ON COLUMN flow_bundle.sync IS 'Whether the flow executes synchronously';
 COMMENT ON COLUMN flow_bundle.rollback_on_fail IS 'Whether to roll back on failure';
-COMMENT ON COLUMN flow_bundle.design_id IS 'FK to FlowDesign.id; null for bundles published before this field was added';
+COMMENT ON COLUMN flow_bundle.cron_expression IS 'Schedule of a Cron-triggered revision, copied from its trigger so that the cron scheduler lists the scheduled flows without reading their compiled JSON; empty for other triggers';
+COMMENT ON COLUMN flow_bundle.flow_id IS 'The flow this revision belongs to';
 COMMENT ON COLUMN flow_bundle.compiled_json IS 'Compiled flow definition (JSON)';
 COMMENT ON COLUMN flow_bundle.design_json IS 'Design flow definition at publish time (auto-converted by ORM)';
 COMMENT ON COLUMN flow_bundle.compiled_at IS 'Compile timestamp';
@@ -199,15 +191,15 @@ COMMENT ON COLUMN flow_bundle.published_at IS 'Published timestamp';
 COMMENT ON COLUMN flow_bundle.change_description IS 'Change description for this revision';
 COMMENT ON COLUMN flow_bundle.active IS 'Whether this is the currently effective revision (one per design)';
 COMMENT ON COLUMN flow_bundle.debug IS 'Debug-run bundle: compiled from an unpublished draft, never active, hidden from revision lists, purged by the maintenance job';
-CREATE UNIQUE INDEX IF NOT EXISTS uk_tenant_design_revision ON flow_bundle (tenant_id, design_id, revision);
-CREATE INDEX IF NOT EXISTS idx_tenant_flow_revision ON flow_bundle (tenant_id, flow_code, revision, active);
+CREATE UNIQUE INDEX IF NOT EXISTS uk_tenant_flow_revision ON flow_bundle (tenant_id, flow_id, revision);
+CREATE INDEX IF NOT EXISTS idx_flow_bundle_active_cron_expression ON flow_bundle (active, cron_expression);
 
 -- FlowCcConfig
 /* Create table for model: Flow CC Config */
 CREATE TABLE IF NOT EXISTS flow_cc_config (
     id BIGINT NOT NULL,
     tenant_id BIGINT,
-    flow_code VARCHAR(100) NOT NULL DEFAULT '',
+    flow_id VARCHAR(24),
     node_id VARCHAR(100),
     cc_timing VARCHAR(64),
     cc_name VARCHAR(100),
@@ -236,14 +228,14 @@ COMMENT ON COLUMN flow_cc_config.create_read_task IS 'Whether to create CC read 
 COMMENT ON COLUMN flow_cc_config.send_notification IS 'Whether to send notification to recipients';
 COMMENT ON COLUMN flow_cc_config.message_template IS 'Optional message template for the notification';
 COMMENT ON COLUMN flow_cc_config.active IS 'Whether this CC rule is active';
-CREATE INDEX IF NOT EXISTS idx_tenant_flow_active ON flow_cc_config (tenant_id, flow_code, active);
+CREATE INDEX IF NOT EXISTS idx_tenant_flow_active ON flow_cc_config (tenant_id, flow_id, active);
 
 -- FlowDebugHistory
 /* Create table for model: Flow Debug History */
 CREATE TABLE IF NOT EXISTS flow_debug_history (
     id BIGINT NOT NULL,
     tenant_id BIGINT NOT NULL,
-    flow_code VARCHAR(100),
+    flow_id VARCHAR(24),
     flow_revision INT,
     instance_id VARCHAR(64),
     status VARCHAR(64),
@@ -268,7 +260,7 @@ COMMENT ON COLUMN flow_debug_history.event_message IS 'Trigger event message (JS
 COMMENT ON COLUMN flow_debug_history.node_trace IS 'Full node execution trace (JSON)';
 COMMENT ON COLUMN flow_debug_history.final_variables IS 'Final variables snapshot (JSON)';
 COMMENT ON COLUMN flow_debug_history.error_message IS 'Error message if execution failed';
-CREATE INDEX IF NOT EXISTS idx_flow_debug_history_tenant_id_flow_code ON flow_debug_history (tenant_id, flow_code);
+CREATE INDEX IF NOT EXISTS idx_flow_debug_history_tenant_id_flow_id ON flow_debug_history (tenant_id, flow_id);
 CREATE INDEX IF NOT EXISTS idx_flow_debug_history_tenant_id_instance_id ON flow_debug_history (tenant_id, instance_id);
 
 -- FlowDelegation
@@ -283,7 +275,7 @@ CREATE TABLE IF NOT EXISTS flow_delegation (
     end_time TIMESTAMP,
     active BOOLEAN,
     scope VARCHAR(30),
-    flow_code VARCHAR(100),
+    flow_id VARCHAR(24),
     node_id VARCHAR(100),
     auto_expire BOOLEAN,
     delegated_task_count INT,
@@ -301,8 +293,8 @@ COMMENT ON COLUMN flow_delegation.delegate_id IS 'Delegate actor id';
 COMMENT ON COLUMN flow_delegation.start_time IS 'Delegation start time';
 COMMENT ON COLUMN flow_delegation.end_time IS 'Delegation end time';
 COMMENT ON COLUMN flow_delegation.active IS 'Whether the rule is active';
-COMMENT ON COLUMN flow_delegation.scope IS 'Delegation scope such as All, FlowCode or Node';
-COMMENT ON COLUMN flow_delegation.flow_code IS 'Flow code when the scope is flow-specific';
+COMMENT ON COLUMN flow_delegation.scope IS 'Delegation scope: All, Flow or Node';
+COMMENT ON COLUMN flow_delegation.flow_id IS 'The flow when the scope is flow- or node-specific';
 COMMENT ON COLUMN flow_delegation.node_id IS 'Node id when the scope is node-specific';
 COMMENT ON COLUMN flow_delegation.auto_expire IS 'Auto expire at end time';
 COMMENT ON COLUMN flow_delegation.delegated_task_count IS 'Delegated task count';
@@ -313,10 +305,9 @@ CREATE INDEX IF NOT EXISTS idx_tenant_delegate_active ON flow_delegation (tenant
 -- FlowDesign
 /* Create table for model: Flow Design */
 CREATE TABLE IF NOT EXISTS flow_design (
-    id BIGINT NOT NULL,
+    id VARCHAR(24) NOT NULL DEFAULT '',
     tenant_id BIGINT NOT NULL,
     flow_name VARCHAR(100) NOT NULL DEFAULT '',
-    flow_code VARCHAR(100) NOT NULL DEFAULT '',
     scenario VARCHAR(64),
     version INT DEFAULT 0,
     design_json TEXT,
@@ -330,14 +321,13 @@ CREATE TABLE IF NOT EXISTS flow_design (
     updated_by VARCHAR(64),
     PRIMARY KEY (id)
 );
-COMMENT ON COLUMN flow_design.flow_name IS 'Flow display name (denormalised for list views)';
-COMMENT ON COLUMN flow_design.flow_code IS 'Flow code (business identifier)';
+COMMENT ON COLUMN flow_design.flow_name IS 'Flow name, unique within the tenant';
 COMMENT ON COLUMN flow_design.scenario IS 'Flow scenario (denormalised for list views)';
 COMMENT ON COLUMN flow_design.version IS 'Optimistic-lock version; the editor echoes the loaded value on save and a mismatch is rejected as a version conflict';
 COMMENT ON COLUMN flow_design.design_json IS 'Full design definition (stored as JSON, auto-converted by ORM)';
 COMMENT ON COLUMN flow_design.published_revision IS 'Revision of the most recent successful publish (null = never published)';
 COMMENT ON COLUMN flow_design.published_checksum IS 'SHA-256 of designJson at the most recent successful publish; compared against the current draft to derive the editor''s dirty flag';
-CREATE UNIQUE INDEX IF NOT EXISTS uk_tenant_flow_code ON flow_design (tenant_id, flow_code);
+CREATE UNIQUE INDEX IF NOT EXISTS uk_tenant_flow_name ON flow_design (tenant_id, flow_name);
 CREATE INDEX IF NOT EXISTS idx_tenant_scenario ON flow_design (tenant_id, scenario);
 
 -- FlowEvent
@@ -349,7 +339,7 @@ CREATE TABLE IF NOT EXISTS flow_event (
     source_model VARCHAR(100),
     source_row_id VARCHAR(64),
     actor_id VARCHAR(64),
-    flow_code VARCHAR(100),
+    flow_id VARCHAR(24),
     flow_revision INT,
     instance_id VARCHAR(64),
     success BOOLEAN,
@@ -369,7 +359,7 @@ COMMENT ON COLUMN flow_event.trigger_type IS 'Trigger type discriminator string 
 COMMENT ON COLUMN flow_event.source_model IS 'Source model when the trigger is entity-related';
 COMMENT ON COLUMN flow_event.source_row_id IS 'Source row id when the trigger is entity-related';
 COMMENT ON COLUMN flow_event.actor_id IS 'Actor who triggered the event';
-COMMENT ON COLUMN flow_event.flow_code IS 'Flow code of the matched and started flow';
+COMMENT ON COLUMN flow_event.flow_id IS 'The matched and started flow';
 COMMENT ON COLUMN flow_event.flow_revision IS 'Flow revision that was started';
 COMMENT ON COLUMN flow_event.instance_id IS 'Runtime instance id of the started flow';
 COMMENT ON COLUMN flow_event.success IS 'Whether the flow was started successfully';
@@ -377,7 +367,7 @@ COMMENT ON COLUMN flow_event.error_message IS 'Error message when the flow faile
 COMMENT ON COLUMN flow_event.fire_method IS 'Trigger fire method: fire, fireSyncOnly, fireAsyncOnly, fireForPurpose';
 COMMENT ON COLUMN flow_event.event_time IS 'Event timestamp';
 COMMENT ON COLUMN flow_event.parameters IS 'Trigger parameters (JSON)';
-CREATE INDEX IF NOT EXISTS idx_flow_event_tenant_id_flow_code ON flow_event (tenant_id, flow_code);
+CREATE INDEX IF NOT EXISTS idx_flow_event_tenant_id_flow_id ON flow_event (tenant_id, flow_id);
 CREATE INDEX IF NOT EXISTS idx_flow_event_tenant_id_instance_id ON flow_event (tenant_id, instance_id);
 CREATE INDEX IF NOT EXISTS idx_tenant_source ON flow_event (tenant_id, source_model, source_row_id);
 
@@ -388,7 +378,7 @@ CREATE TABLE IF NOT EXISTS flow_execution_trace (
     tenant_id BIGINT,
     instance_id VARCHAR(64) NOT NULL DEFAULT '',
     sequence INT NOT NULL,
-    flow_code VARCHAR(100),
+    flow_id VARCHAR(24),
     node_id VARCHAR(100),
     flow_node_type VARCHAR(64),
     event_type VARCHAR(64) NOT NULL DEFAULT '',
@@ -413,15 +403,15 @@ CREATE TABLE IF NOT EXISTS flow_instance (
     version INT NOT NULL DEFAULT 1,
     instance_id VARCHAR(64) NOT NULL DEFAULT '',
     bundle_id BIGINT,
-    design_id BIGINT,
-    flow_code VARCHAR(100) NOT NULL DEFAULT '',
+    flow_id VARCHAR(24),
     flow_revision INT,
     title VARCHAR(200),
     model_name VARCHAR(100),
     row_id VARCHAR(64),
     initiator_id VARCHAR(64),
+    record_approval BOOLEAN,
+    open_record_id VARCHAR(64),
     status VARCHAR(64) NOT NULL DEFAULT '',
-    resubmission_count INT,
     error_message VARCHAR(2000),
     failed_node_id VARCHAR(100),
     input_payload TEXT,
@@ -430,7 +420,6 @@ CREATE TABLE IF NOT EXISTS flow_instance (
     next_fire_at TIMESTAMP,
     completed_node_ids TEXT,
     pending_approvals TEXT,
-    returned_approval TEXT,
     join_arrival_counts TEXT,
     return_data TEXT,
     created_time TIMESTAMP,
@@ -444,15 +433,15 @@ CREATE TABLE IF NOT EXISTS flow_instance (
 COMMENT ON COLUMN flow_instance.version IS 'Optimistic-lock version for runtime state updates';
 COMMENT ON COLUMN flow_instance.instance_id IS 'Runtime instance id (UUID)';
 COMMENT ON COLUMN flow_instance.bundle_id IS 'Exact FlowBundle.id this instance was created from; required to resolve the definition for approval/resume actions after a DB reload';
-COMMENT ON COLUMN flow_instance.design_id IS 'Source FlowDesign.id (stable flow handle)';
-COMMENT ON COLUMN flow_instance.flow_code IS 'Flow code';
+COMMENT ON COLUMN flow_instance.flow_id IS 'The flow this instance runs (stable flow handle)';
 COMMENT ON COLUMN flow_instance.flow_revision IS 'Published flow revision';
 COMMENT ON COLUMN flow_instance.title IS 'Instance title';
 COMMENT ON COLUMN flow_instance.model_name IS 'Related model name';
 COMMENT ON COLUMN flow_instance.row_id IS 'Related row data ID';
 COMMENT ON COLUMN flow_instance.initiator_id IS 'Flow initiator id';
+COMMENT ON COLUMN flow_instance.record_approval IS 'Whether the instance is its record''s approval: started by submitting the record, so its result is written back to it';
+COMMENT ON COLUMN flow_instance.open_record_id IS 'The record''s id while this record approval is unfinished, empty otherwise. Unique with the model in a tenant: a record has at most one approval in progress';
 COMMENT ON COLUMN flow_instance.status IS 'Execution status';
-COMMENT ON COLUMN flow_instance.resubmission_count IS 'Resubmission count after return';
 COMMENT ON COLUMN flow_instance.error_message IS 'Error message when execution fails';
 COMMENT ON COLUMN flow_instance.failed_node_id IS 'Node where execution failed (set when status = Failed)';
 COMMENT ON COLUMN flow_instance.input_payload IS 'Immutable trigger payload (JSON)';
@@ -461,15 +450,14 @@ COMMENT ON COLUMN flow_instance.wait_tokens IS 'Active timer/async waits (JSON a
 COMMENT ON COLUMN flow_instance.next_fire_at IS 'Earliest due time across timer waits (denormalized from waitTokens for the sweep index)';
 COMMENT ON COLUMN flow_instance.completed_node_ids IS 'Completed node ids (JSON array)';
 COMMENT ON COLUMN flow_instance.pending_approvals IS 'Pending approvals (JSON array)';
-COMMENT ON COLUMN flow_instance.returned_approval IS 'Returned approval context (JSON)';
 COMMENT ON COLUMN flow_instance.join_arrival_counts IS 'Parallel join arrival counts (JSON map)';
 COMMENT ON COLUMN flow_instance.return_data IS 'Return data from ReturnValue nodes (JSON)';
 CREATE UNIQUE INDEX IF NOT EXISTS uk_instance_id ON flow_instance (instance_id);
-CREATE INDEX IF NOT EXISTS idx_tenant_flow_status ON flow_instance (tenant_id, flow_code, status);
+CREATE INDEX IF NOT EXISTS idx_tenant_flow_status ON flow_instance (tenant_id, flow_id, status);
 CREATE INDEX IF NOT EXISTS idx_tenant_status_fire ON flow_instance (tenant_id, status, next_fire_at);
 CREATE INDEX IF NOT EXISTS idx_tenant_initiator_status ON flow_instance (tenant_id, initiator_id, status);
 CREATE INDEX IF NOT EXISTS idx_tenant_model_row ON flow_instance (tenant_id, model_name, row_id);
-CREATE INDEX IF NOT EXISTS idx_tenant_design ON flow_instance (tenant_id, design_id);
+CREATE UNIQUE INDEX IF NOT EXISTS uk_flow_instance_open_record ON flow_instance (tenant_id, model_name, open_record_id);
 
 -- FlowParallelBranch
 /* Create table for model: Flow Parallel Branch */

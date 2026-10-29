@@ -9,6 +9,7 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 
+import io.softa.framework.base.context.ContextUtils;
 import io.softa.framework.orm.compute.ComputeUtils;
 import io.softa.starter.flow.entity.FlowCcConfig;
 import io.softa.starter.flow.enums.CcTiming;
@@ -24,6 +25,7 @@ import io.softa.starter.flow.service.FlowCcConfigService;
  * <p>
  * Evaluates conditions, resolves recipients from config, appends audit trails,
  * and dispatches notifications via {@link ApprovalNotificationService}.
+ * The configurations are read past the caller's data permissions — they are the flow's, not the actor's.
  * </p>
  */
 @Slf4j
@@ -52,7 +54,8 @@ public class AutoCcService {
         }
 
         String nodeId = node != null ? node.getNodeId() : null;
-        List<FlowCcConfig> configs = ccConfigService.getActiveConfigs(state.getFlowCode(), nodeId, ccTiming);
+        List<FlowCcConfig> configs = ContextUtils.withoutPermissionChecks(
+                () -> ccConfigService.getActiveConfigs(state.getFlowId(), nodeId, ccTiming));
         if (configs == null || configs.isEmpty()) {
             return;
         }
@@ -95,7 +98,7 @@ public class AutoCcService {
 
         // Add trace
         if (auditService != null && node != null) {
-            auditService.addTrace(state, state.getFlowCode(), node, FlowTraceEventType.APPROVAL_CCED,
+            auditService.addTrace(state, state.getFlowId(), node, FlowTraceEventType.APPROVAL_CCED,
                     "Auto-CC '" + config.getCcName() + "' sent to " + recipientActorIds);
         }
 
@@ -103,7 +106,7 @@ public class AutoCcService {
         if (Boolean.TRUE.equals(config.getSendNotification()) && notificationService != null) {
             String message = config.getMessageTemplate() != null
                     ? config.getMessageTemplate()
-                    : "You have been CC'd on: " + state.getFlowCode();
+                    : "You have been CC'd on: " + (state.getTitle() != null ? state.getTitle() : state.getInstanceId());
             notificationService.notify(new FlowNotificationEvent.CcSent(state,
                     node != null ? node.getNodeId() : null,
                     recipientActorIds, message));

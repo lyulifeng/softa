@@ -10,6 +10,7 @@ import io.softa.starter.flow.design.trigger.*;
 import io.softa.starter.flow.message.ChangeLogTriggerMapper;
 import io.softa.starter.flow.runtime.bundle.CompiledFlowDefinition;
 import io.softa.starter.flow.runtime.bundle.FlowBundleRegistry;
+import io.softa.starter.flow.runtime.exception.FlowRuntimeException;
 
 /**
  * Default trigger registry that matches the bundles the registry offers for an event's
@@ -44,6 +45,59 @@ public class DefaultFlowTriggerRegistry {
     }
 
     /**
+     * The current tenant's active flows (plus platform-shared ones) whose {@link SubmitTrigger}
+     * names {@code modelName} and whose condition holds for {@code record} — the flows that may
+     * approve the submitted record. The caller decides what zero or several matches mean.
+     *
+     * @param modelName the submitted record's model
+     * @param record    the submitted record's fields, the condition's variables
+     * @throws FlowRuntimeException when a matching flow's condition cannot be evaluated: an
+     *                              unusable condition is a configuration fault to report, not a
+     *                              "does not apply"
+     */
+    public List<CompiledFlowDefinition> findSubmitFlows(String modelName, Map<String, Object> record) {
+        Long currentTenant = ContextHolder.existContext() ? ContextHolder.getContext().getTenantId() : null;
+        List<CompiledFlowDefinition> matches = new ArrayList<>();
+        for (CompiledFlowDefinition definition : bundleRegistry.listTriggerCandidates(modelName)) {
+            if (!tenantMatches(definition, currentTenant)
+                    || !(definition.getTrigger() instanceof SubmitTrigger trigger)
+                    || !Objects.equals(trigger.modelName(), modelName)) {
+                continue;
+            }
+            if (!StringUtils.hasText(trigger.conditionExpression())
+                    || evaluateSubmitCondition(definition, trigger, record)) {
+                matches.add(definition);
+            }
+        }
+        return matches;
+    }
+
+    /**
+     * The Cron-triggered flow a schedule fired for: revision {@code bundleId}, the one its cron job was
+     * scheduled from, while it is still its flow's active revision — the job of a revision a publish or a
+     * rollback has replaced starts nothing in the moments before the scheduler drops it. Like any bundle, it
+     * is found only in its own tenant, or in every tenant when platform-shared.
+     */
+    public Optional<CompiledFlowDefinition> findCronFlow(Long bundleId) {
+        return bundleRegistry.getByBundleId(bundleId)
+                .filter(definition -> definition.getTrigger() instanceof CronTrigger)
+                .filter(definition -> bundleRegistry.getActiveByFlowId(definition.getFlowId())
+                        .map(active -> Objects.equals(active.getBundleId(), bundleId))
+                        .orElse(false));
+    }
+
+    private static boolean evaluateSubmitCondition(CompiledFlowDefinition definition, SubmitTrigger trigger,
+                                                   Map<String, Object> record) {
+        try {
+            return ComputeUtils.executeBoolean(trigger.conditionExpression(),
+                    record == null ? new HashMap<>() : new HashMap<>(record));
+        } catch (Exception e) {
+            throw new FlowRuntimeException("The submit condition of flow '" + definition.getFlowName()
+                    + "' cannot be evaluated: " + e.getMessage(), e);
+        }
+    }
+
+    /**
      * Whether any flow in the current context watches entity changes of {@code model} — lets the
      * change-log paths skip mapping rows nothing listens to.
      */
@@ -71,7 +125,9 @@ public class DefaultFlowTriggerRegistry {
 
     private boolean matches(CompiledFlowDefinition definition, FlowTriggerEvent event) {
         TriggerSource trigger = definition.getTrigger();
-        if (trigger == null) {
+        // A submit trigger is chosen per record by findSubmitFlows and a cron trigger per schedule by
+        // findCronFlow, never by a generic event.
+        if (trigger == null || trigger instanceof SubmitTrigger || trigger instanceof CronTrigger) {
             return false;
         }
         // Derive the trigger type discriminator from the TriggerSource class name
@@ -159,6 +215,7 @@ public class DefaultFlowTriggerRegistry {
             case CronTrigger t         -> "Cron";
             case SubflowTrigger t      -> "Subflow";
             case FieldChangeTrigger t  -> "FieldChange";
+            case SubmitTrigger t       -> "Submit";
         };
     }
 }

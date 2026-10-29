@@ -16,7 +16,6 @@ import java.util.stream.Collectors;
 
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
-import jakarta.annotation.PostConstruct;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 
@@ -115,9 +114,10 @@ public class UiContextBuilder {
     @org.springframework.beans.factory.annotation.Autowired(required = false)
     private io.softa.framework.orm.service.EntitlementService entitlementService;
 
-    /** leafNavId → root→leaf ancestor chain (inclusive). Built once from the same
-     *  seed-only Navigation snapshot {@link NavigationModelResolver} exposes. */
-    private volatile Map<String, List<String>> ancestorChains = Map.of();
+    /** leafNavId → root→leaf ancestor chain (inclusive), derived on first use from the Navigation
+     *  snapshot {@link NavigationModelResolver} exposes. That snapshot is built at startup and never
+     *  changes after, so neither does this; asked before startup, the snapshot refuses. */
+    private volatile Map<String, List<String>> ancestorChains;
 
     /**
      * Build the current user's UI context from user-starter's own RBAC entities.
@@ -317,15 +317,16 @@ public class UiContextBuilder {
      * <p>The mirror of {@link #tenantAdminGrants} — that one takes everything EXCEPT the platform
      * prefixes. No plan narrowing: a platform module is not something a tenant buys, and there is no
      * subscription on the platform's own tenant to read.
+     *
+     * <p>The navigations come from the startup snapshot, like the other branches: the seed files holding
+     * them load at startup, before the snapshot is built, so the snapshot holds every navigation there is —
+     * the Seed Data page's own menu included.
      */
     private UiContext platformAdminGrants(UiContext out) {
-        Collection<Navigation> allNavs = navigationModelResolver.allNavigations();
         Set<String> navigations = new HashSet<>();
-        if (allNavs != null) {
-            for (Navigation n : allNavs) {
-                if (n != null && n.getId() != null && isPlatformAdminNav(n.getId())) {
-                    navigations.add(n.getId());
-                }
+        for (Navigation n : navigationModelResolver.allNavigations()) {
+            if (n != null && n.getId() != null && isPlatformAdminNav(n.getId())) {
+                navigations.add(n.getId());
             }
         }
         Set<String> permissions = new HashSet<>();
@@ -592,6 +593,10 @@ public class UiContextBuilder {
         if (leafNavIds.isEmpty()) return Collections.emptySet();
         Set<String> out = new LinkedHashSet<>(leafNavIds);
         Map<String, List<String>> chains = ancestorChains;
+        if (chains == null) {
+            initAncestorIndex();
+            chains = ancestorChains;
+        }
         for (String leaf : leafNavIds) {
             List<String> chain = chains.get(leaf);
             if (chain == null) continue;
@@ -602,10 +607,9 @@ public class UiContextBuilder {
         return out;
     }
 
-    /** Build the leaf→ancestor-chain index once (nav tree is seed-only). Mirrors the
+    /** Build the leaf→ancestor-chain index from the navigation snapshot. Mirrors the
      *  former {@code PermissionInfoEnricher.initAncestorIndex}: root→leaf order,
      *  cycle guard + depth cap 32. */
-    @PostConstruct
     void initAncestorIndex() {
         Collection<Navigation> all = navigationModelResolver.allNavigations();
         if (all == null || all.isEmpty()) {

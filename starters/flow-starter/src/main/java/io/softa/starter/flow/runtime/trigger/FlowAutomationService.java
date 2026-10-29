@@ -9,6 +9,7 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 
 import io.softa.framework.base.context.ContextHolder;
+import io.softa.framework.base.context.ContextUtils;
 import io.softa.framework.base.utils.JsonUtils;
 import io.softa.starter.flow.entity.FlowEvent;
 import io.softa.starter.flow.enums.FlowScenario;
@@ -20,6 +21,7 @@ import io.softa.starter.flow.runtime.api.FlowStartRequest;
 import io.softa.starter.flow.runtime.api.FlowValidationRequest;
 import io.softa.starter.flow.runtime.bundle.CompiledFlowDefinition;
 import io.softa.starter.flow.runtime.engine.FlowRuntimeEngine;
+import io.softa.starter.flow.runtime.exception.FlowActionValidationException;
 import io.softa.starter.flow.runtime.state.FlowExecutionState;
 import io.softa.starter.flow.service.FlowEventService;
 import io.softa.starter.flow.service.FlowInstanceService;
@@ -36,6 +38,12 @@ import io.softa.starter.flow.service.FlowInstanceService;
 @Slf4j
 @Service
 public class FlowAutomationService {
+
+    /** Trigger type of {@code SubmitTrigger}: started per record, never fired as an event. */
+    public static final String SUBMIT_TRIGGER_TYPE = "Submit";
+
+    /** Trigger type of {@code CronTrigger}: started on its own schedule, never fired as an event. */
+    public static final String CRON_TRIGGER_TYPE = "Cron";
 
     private final DefaultFlowTriggerRegistry triggerRegistry;
     private final FlowRuntimeEngine runtimeEngine;
@@ -90,9 +98,42 @@ public class FlowAutomationService {
 
     /**
      * Fire a trigger event. All matching flows will be started synchronously.
+     * <p>
+     * Refuses the {@code Submit} type: a submit-triggered flow is chosen for one record and
+     * started by {@code FlowLaunchService.submitRecord}, which runs the business checks and the
+     * record's callbacks — firing it from here would start the approval without either. Refuses
+     * the {@code Cron} type too: a Cron-triggered flow starts on its own schedule, through
+     * {@link #fireCron}.
      */
     public List<FlowTriggerResult> fire(FlowTriggerEvent event) {
-        return dispatch(event, null, definition -> startFlow(definition, event), "fire");
+        if (SUBMIT_TRIGGER_TYPE.equals(event.getType())) {
+            throw new FlowActionValidationException(
+                    "Submit triggers start only through record submission, not as a trigger event");
+        }
+        if (CRON_TRIGGER_TYPE.equals(event.getType())) {
+            throw new FlowActionValidationException(
+                    "Cron triggers start only on their own schedule, not as a trigger event");
+        }
+        return dispatch(event, triggerRegistry.findMatchingFlows(event), null,
+                definition -> startFlow(definition, event), "fire");
+    }
+
+    /**
+     * Start the Cron-triggered flow revision a schedule fired for, in the current tenant — the one its
+     * cron job runs in — and record the fire like any other. Starts nothing once the revision is no longer
+     * its flow's active one (see {@link DefaultFlowTriggerRegistry#findCronFlow}).
+     *
+     * @param bundleId   the revision the cron job was scheduled from
+     * @param parameters the flow's initial variables
+     * @return the start, or nothing when the revision no longer runs on this schedule
+     */
+    public List<FlowTriggerResult> fireCron(Long bundleId, Map<String, Object> parameters) {
+        FlowTriggerEvent event = FlowTriggerEvent.builder()
+                .type(CRON_TRIGGER_TYPE)
+                .parameters(parameters)
+                .build();
+        List<CompiledFlowDefinition> scheduledFlow = triggerRegistry.findCronFlow(bundleId).stream().toList();
+        return dispatch(event, scheduledFlow, null, definition -> startFlow(definition, event), "fireCron");
     }
 
     /**
@@ -101,7 +142,7 @@ public class FlowAutomationService {
      * can roll back.
      */
     public void fireSyncOnly(FlowTriggerEvent event) {
-        dispatch(event,
+        dispatch(event, triggerRegistry.findMatchingFlows(event),
                 definition -> Boolean.TRUE.equals(definition.getSync()),
                 definition -> Boolean.TRUE.equals(definition.getRollbackOnFail())
                         ? startFlowWithPropagation(definition, event)
@@ -113,7 +154,7 @@ public class FlowAutomationService {
      * Fire a trigger event but only execute flows with {@code sync=false} (async flows).
      */
     public List<FlowTriggerResult> fireAsyncOnly(FlowTriggerEvent event) {
-        return dispatch(event,
+        return dispatch(event, triggerRegistry.findMatchingFlows(event),
                 definition -> !Boolean.TRUE.equals(definition.getSync()),
                 definition -> startFlow(definition, event),
                 "fireAsyncOnly");
@@ -123,22 +164,22 @@ public class FlowAutomationService {
      * Fire a trigger event and only run flows matching the given scenario.
      */
     public List<FlowTriggerResult> fireForScenario(FlowTriggerEvent event, FlowScenario scenario) {
-        return dispatch(event,
+        return dispatch(event, triggerRegistry.findMatchingFlows(event),
                 definition -> scenario.equals(definition.getScenario()),
                 definition -> startFlow(definition, event),
                 "fireForScenario");
     }
 
     /**
-     * Shared trigger-dispatch skeleton: resolve matching flows, run each {@code accept}-ed flow
+     * Shared trigger-dispatch skeleton: run each {@code accept}-ed flow of those the event matched
      * through {@code starter}, and record an event-log entry per fire. {@code accept} may be null
      * (accept all matching flows).
      */
     private List<FlowTriggerResult> dispatch(FlowTriggerEvent event,
+                                             List<CompiledFlowDefinition> matchingFlows,
                                              Predicate<CompiledFlowDefinition> accept,
                                              Function<CompiledFlowDefinition, FlowTriggerResult> starter,
                                              String fireMethod) {
-        List<CompiledFlowDefinition> matchingFlows = triggerRegistry.findMatchingFlows(event);
         if (matchingFlows.isEmpty()) {
             log.debug("No flows matched trigger event ({}): type={}, sourceModel={}",
                     fireMethod, event.getType(), event.getSourceModel());
@@ -222,7 +263,7 @@ public class FlowAutomationService {
     /**
      * Evaluate all {@link FlowScenario#VALIDATION} flows bound to the given model transiently
      * and return each flow's declared outputs (plus {@code _returnData} when present), keyed
-     * by flow code. Fail-closed: a validation flow that cannot run propagates its exception
+     * by flow ID. Fail-closed: a validation flow that cannot run propagates its exception
      * instead of being silently skipped — a validation that did not execute must not read as
      * "passed".
      */
@@ -248,7 +289,7 @@ public class FlowAutomationService {
                 continue;
             }
             FlowTriggerResult result = startFlowWithPropagation(definition, event);
-            outputsByFlow.put(definition.getFlowCode(), projectDeclaredOutputs(definition, result.getState()));
+            outputsByFlow.put(definition.getFlowId(), projectDeclaredOutputs(definition, result.getState()));
         }
         return outputsByFlow;
     }
@@ -276,14 +317,14 @@ public class FlowAutomationService {
         try {
             FlowExecutionState state = doStartFlow(definition, event);
             return FlowTriggerResult.builder()
-                    .flowCode(definition.getFlowCode())
+                    .flowId(definition.getFlowId())
                     .success(true)
                     .state(state)
                     .build();
         } catch (Exception e) {
-            log.error("Failed to start flow {} from trigger: {}", definition.getFlowCode(), e.getMessage(), e);
+            log.error("Failed to start flow {} from trigger: {}", definition.getFlowId(), e.getMessage(), e);
             return FlowTriggerResult.builder()
-                    .flowCode(definition.getFlowCode())
+                    .flowId(definition.getFlowId())
                     .success(false)
                     .error(e.getMessage())
                     .build();
@@ -296,7 +337,7 @@ public class FlowAutomationService {
     private FlowTriggerResult startFlowWithPropagation(CompiledFlowDefinition definition, FlowTriggerEvent event) {
         FlowExecutionState state = doStartFlow(definition, event);
         return FlowTriggerResult.builder()
-                .flowCode(definition.getFlowCode())
+                .flowId(definition.getFlowId())
                 .success(true)
                 .state(state)
                 .build();
@@ -310,7 +351,7 @@ public class FlowAutomationService {
         // Start-dedup: a change-log redelivery must not open a SECOND active instance
         // for the same business row + flow. If one is already active, return it idempotently.
         FlowExecutionState active = findActiveInstanceState(
-                definition.getFlowCode(), event.getSourceModel(), event.getSourceRowId());
+                definition.getFlowId(), event.getSourceModel(), event.getSourceRowId());
         if (active != null) {
             return active;
         }
@@ -340,14 +381,15 @@ public class FlowAutomationService {
      * The currently-active instance for a business row + flow, or {@code null}. "Active" = not in a
      * terminal status, so a re-submitted row (whose prior instance is terminal) can legitimately start
      * a new one. Returns null when no {@link FlowInstanceService} is wired or the event carries no
-     * business row (modelName / rowId).
+     * business row (modelName / rowId). Read past the caller's data permissions: whether a run is
+     * already open must not depend on whose write fired the trigger.
      */
-    FlowExecutionState findActiveInstanceState(String flowCode, String model, String rowId) {
+    FlowExecutionState findActiveInstanceState(String flowId, String model, String rowId) {
         if (instanceService == null || model == null || model.isBlank() || rowId == null || rowId.isBlank()) {
             return null;
         }
-        return instanceService.findByModelNameAndRowId(model, rowId).stream()
-                .filter(i -> flowCode != null && flowCode.equals(i.getFlowCode()))
+        return ContextUtils.withoutPermissionChecks(() -> instanceService.findByModelNameAndRowId(model, rowId)).stream()
+                .filter(i -> flowId != null && flowId.equals(i.getFlowId()))
                 .filter(i -> i.getStatus() != null && !i.getStatus().isTerminal())
                 .findFirst()
                 .flatMap(i -> runtimeEngine.getInstance(i.getInstanceId()))
@@ -367,7 +409,7 @@ public class FlowAutomationService {
             logEntry.setSourceModel(event.getSourceModel());
             logEntry.setSourceRowId(event.getSourceRowId());
             logEntry.setActorId(event.getActorId());
-            logEntry.setFlowCode(definition.getFlowCode());
+            logEntry.setFlowId(definition.getFlowId());
             logEntry.setFlowRevision(definition.getRevision());
             logEntry.setInstanceId(result.getState() != null ? result.getState().getInstanceId() : null);
             logEntry.setSuccess(result.isSuccess());

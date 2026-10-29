@@ -31,7 +31,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 
 class DefaultFlowLaunchServiceTest {
 
-    private static final Long DESIGN_ID = 10L;
+    private static final String FLOW_ID = "10";
 
     private final DefaultFlowCompiler compiler = new DefaultFlowCompiler();
     private final StubFlowBundleRegistry bundleRegistry = new StubFlowBundleRegistry();
@@ -56,13 +56,15 @@ class DefaultFlowLaunchServiceTest {
             )),
             approvalHandler
     );
+    // Record submission's and its preview's collaborators stay null: these tests cover publish-and-start only.
     private final FlowLaunchServiceImpl launchService =
-            new FlowLaunchServiceImpl(publishService, runtimeEngine, bundleRegistry, new DefaultFlowCompiler());
+            new FlowLaunchServiceImpl(publishService, runtimeEngine, bundleRegistry, new DefaultFlowCompiler(),
+                    null, null, null, null, null, null, null);
 
     @Test
     void shouldPublishAndStartExactRevision() {
         PublishAndStartRequest request = new PublishAndStartRequest();
-        request.setDesignId(DESIGN_ID);
+        request.setFlowId(FLOW_ID);
         request.setDefinition(flowDefinition("launchable-flow", "v1"));
         request.setInitiatorId("initiator-100");
         request.setVariables(Map.of("requestId", 100L));
@@ -78,7 +80,6 @@ class DefaultFlowLaunchServiceTest {
 
     private static DesignFlowDefinition flowDefinition(String code, String routeValue) {
         return DesignFlowDefinition.builder()
-                .code(code)
                 .name(routeValue)
                 .scenario(FlowScenario.PROCESS)
                 .trigger(new ApiTrigger(null))

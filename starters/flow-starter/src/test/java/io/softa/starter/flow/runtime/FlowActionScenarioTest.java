@@ -42,7 +42,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  */
 class FlowActionScenarioTest {
 
-    private static final Long DESIGN_ID = 9100L;
+    private static final String FLOW_ID = "9100";
     private static final String APPROVER = "manager-1";
     private static final String OTHER = "manager-2";
 
@@ -59,12 +59,12 @@ class FlowActionScenarioTest {
 
     @BeforeEach
     void publishFlow() {
-        publishService.publish(DESIGN_ID, flowDefinition());
+        publishService.publish(FLOW_ID, flowDefinition());
     }
 
     private FlowExecutionState startAndExpectPending() {
         FlowStartRequest start = new FlowStartRequest();
-        start.setDesignId(DESIGN_ID);
+        start.setFlowId(FLOW_ID);
         start.setInitiatorId("initiator-1");
         FlowExecutionState state = engine.start(start);
         assertEquals(FlowExecutionStatus.WAITING, state.getStatus());
@@ -145,6 +145,19 @@ class FlowActionScenarioTest {
     }
 
     @Test
+    void aRejectionWithoutACommentIsRefusedAndChangesNothing() {
+        FlowExecutionState started = startAndExpectPending();
+        FlowRejectRequest req = new FlowRejectRequest();
+        req.setInstanceId(started.getInstanceId());
+        req.setNodeId("approval");
+        req.setActorId(APPROVER);
+        req.setComment(" ");
+
+        assertThrows(FlowActionValidationException.class, () -> engine.reject(req));
+        assertEquals(FlowExecutionStatus.WAITING, engine.getInstance(started.getInstanceId()).orElseThrow().getStatus());
+    }
+
+    @Test
     void rejectByNonApproverIsRejectedWithValidationError() {
         FlowExecutionState started = startAndExpectPending();
         FlowRejectRequest req = new FlowRejectRequest();
@@ -168,7 +181,6 @@ class FlowActionScenarioTest {
 
     private static DesignFlowDefinition flowDefinition() {
         return DesignFlowDefinition.builder()
-                .code("action-scenarios")
                 .name("Action Scenarios")
                 .scenario(FlowScenario.PROCESS)
                 .trigger(new ApiTrigger(null))

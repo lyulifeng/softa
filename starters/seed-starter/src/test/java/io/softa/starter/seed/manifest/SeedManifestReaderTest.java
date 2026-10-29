@@ -57,6 +57,50 @@ class SeedManifestReaderTest {
     }
 
     @Test
+    void thePlatformFilesMarkedAutoAreTheOnesTheBuildOwns() {
+        SeedManifest manifest = read("""
+                platform:
+                  - file: data-system/Navigation.Hcm.json
+                    auto: true
+                  - data-system/Currency.json
+                  - file: data-system/Permission.Hcm.json
+                    auto: true
+                """);
+
+        // Only the marked ones, in load order.
+        assertEquals(List.of("Navigation.Hcm.json", "Permission.Hcm.json"), names(manifest.autoFiles()));
+        assertFalse(manifest.file("Currency.json").orElseThrow().auto());
+    }
+
+    @Test
+    void onlyAPlatformFileLoadsAtStartup() {
+        SeedManifestException failure = assertThrows(SeedManifestException.class, () -> read("""
+                platform:
+                  - file: data-system/A.json
+                    auto: yes please
+                tenant:
+                  - files:
+                      - file: data-tenant/B.json
+                        auto: true
+                """));
+
+        List<String> problems = failure.getProblems();
+        assertHas(problems, "file 'data-tenant/B.json' is a tenant file, and only platform files load at startup");
+        assertHas(problems, "auto must be true or false");
+    }
+
+    @Test
+    void theRetiredBootstrapFlagIsAnUnknownKey() {
+        SeedManifestException failure = assertThrows(SeedManifestException.class, () -> read("""
+                platform:
+                  - file: data-system/Navigation.Hcm.json
+                    bootstrap: true
+                """));
+
+        assertHas(failure.getProblems(), "has an unknown key 'bootstrap'");
+    }
+
+    @Test
     void aTenantIsDueTheFilesOfItsPlanAndCountries() {
         SeedManifest manifest = read("""
                 tenant:

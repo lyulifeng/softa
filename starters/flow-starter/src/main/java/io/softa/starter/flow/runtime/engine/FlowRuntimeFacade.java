@@ -37,7 +37,6 @@ public class FlowRuntimeFacade implements FlowRuntimeEngine {
     private final BatchCcActionHandler batchCcHandler;
     private final ReadCcActionHandler readCcHandler;
     private final ReturnApprovalActionHandler returnApprovalHandler;
-    private final ResubmitActionHandler resubmitHandler;
     private final WithdrawActionHandler withdrawHandler;
     private final UrgeActionHandler urgeHandler;
     private final CommentActionHandler commentHandler;
@@ -56,7 +55,6 @@ public class FlowRuntimeFacade implements FlowRuntimeEngine {
                              BatchCcActionHandler batchCcHandler,
                              ReadCcActionHandler readCcHandler,
                              ReturnApprovalActionHandler returnApprovalHandler,
-                             ResubmitActionHandler resubmitHandler,
                              WithdrawActionHandler withdrawHandler,
                              UrgeActionHandler urgeHandler,
                              CommentActionHandler commentHandler) {
@@ -74,7 +72,6 @@ public class FlowRuntimeFacade implements FlowRuntimeEngine {
         this.batchCcHandler = batchCcHandler;
         this.readCcHandler = readCcHandler;
         this.returnApprovalHandler = returnApprovalHandler;
-        this.resubmitHandler = resubmitHandler;
         this.withdrawHandler = withdrawHandler;
         this.urgeHandler = urgeHandler;
         this.commentHandler = commentHandler;
@@ -82,13 +79,22 @@ public class FlowRuntimeFacade implements FlowRuntimeEngine {
 
     @Override
     public FlowExecutionState start(FlowStartRequest request) {
+        return startInstance(request, false);
+    }
+
+    @Override
+    public FlowExecutionState startRecordApproval(FlowStartRequest request) {
+        return startInstance(request, true);
+    }
+
+    private FlowExecutionState startInstance(FlowStartRequest request, boolean recordApproval) {
         CompiledFlowDefinition definition = resolveRequestedDefinition(request);
-        FlowExecutionState state = buildInitialState(definition, request);
+        FlowExecutionState state = buildInitialState(definition, request, recordApproval);
 
         try {
             orchestrator.executeRoot(definition, state);
         } catch (RuntimeException e) {
-            orchestrator.failState(state, definition.getFlowCode(), null, e.getMessage());
+            orchestrator.failState(state, definition.getFlowId(), null, e.getMessage());
             // Record the FAILED instance in its own transaction so it survives this method's
             // rollback — the failed node's partial writes still roll back with the outer transaction,
             // but operators keep a record of the failed start.
@@ -105,9 +111,9 @@ public class FlowRuntimeFacade implements FlowRuntimeEngine {
         CompiledFlowDefinition definition = resolveRequestedDefinition(request);
         if (definition.getScenario() == null || FlowScenario.PROCESS.equals(definition.getScenario())) {
             throw new FlowActionValidationException("evaluate() only runs stateless Validation/Compute flows; "
-                    + "use start() for Process flows: " + definition.getFlowCode());
+                    + "use start() for Process flows: " + definition.getFlowName());
         }
-        FlowExecutionState state = buildInitialState(definition, request);
+        FlowExecutionState state = buildInitialState(definition, request, false);
         // Zero flow footprint: nothing is persisted on success or failure. A failure propagates
         // so the caller's transaction rolls back any business writes made by task nodes.
         orchestrator.evaluateRoot(definition, state);
@@ -118,45 +124,52 @@ public class FlowRuntimeFacade implements FlowRuntimeEngine {
         if (request == null) {
             throw new FlowActionValidationException("FlowStartRequest must not be null");
         }
-        // Resolution priority: bundleId > designId
+        // Resolution priority: bundleId > flowId
         if (request.getBundleId() != null) {
             return contextService.resolveDefinition(request.getBundleId());
         }
-        if (request.getDesignId() != null) {
-            return contextService.resolveDefinitionByDesignId(request.getDesignId());
+        if (request.getFlowId() != null) {
+            return contextService.resolveDefinitionByFlowId(request.getFlowId());
         }
         throw new FlowActionValidationException(
-                "bundleId or designId is required to start execution");
+                "bundleId or flowId is required to start execution");
     }
 
-    private FlowExecutionState buildInitialState(CompiledFlowDefinition definition, FlowStartRequest request) {
-        String instanceId = UUID.randomUUID().toString();
+    private FlowExecutionState buildInitialState(CompiledFlowDefinition definition, FlowStartRequest request,
+                                                 boolean recordApproval) {
+        return initialState(definition, request, recordApproval, UUID.randomUUID().toString());
+    }
+
+    /**
+     * The state an instance of {@code definition} starts from. The approval path preview walks from it
+     * with no instance id: nothing is started, and the state is never saved.
+     */
+    static FlowExecutionState initialState(CompiledFlowDefinition definition, FlowStartRequest request,
+                                           boolean recordApproval, String instanceId) {
         Map<String, Object> vars = new LinkedHashMap<>(
                 request.getVariables() == null ? Map.of() : request.getVariables());
         vars.put("_instanceId", instanceId);
         if (definition.getBundleId() != null) vars.put("_bundleId", definition.getBundleId());
-        if (definition.getDesignId() != null) vars.put("_designId", definition.getDesignId());
-        vars.put("_flowCode", definition.getFlowCode());
+        if (definition.getFlowId() != null) vars.put("_flowId", definition.getFlowId());
         vars.put("_flowRevision", definition.getRevision());
 
         return FlowExecutionState.builder()
                 .instanceId(instanceId)
                 .bundleId(definition.getBundleId())
-                .designId(definition.getDesignId())
-                .flowCode(definition.getFlowCode())
+                .flowId(definition.getFlowId())
+                .flowName(definition.getFlowName())
                 .flowRevision(definition.getRevision())
                 .title(request.getTitle())
                 .modelName(request.getModelName())
                 .rowId(request.getRowId())
                 .initiatorId(request.getInitiatorId())
+                .recordApproval(recordApproval)
                 .status(FlowExecutionStatus.RUNNING)
                 .inputPayload(Map.of())
                 .variables(vars)
                 .completedNodeIds(new ArrayList<>())
                 .pendingApprovals(new ArrayList<>())
-                .returnedApproval(null)
                 .approvalAuditDelta(new ArrayList<>())
-                .resubmissionCount(0)
                 .joinArrivalCounts(new LinkedHashMap<>())
                 .trace(new ArrayList<>())
                 .build();
@@ -217,11 +230,6 @@ public class FlowRuntimeFacade implements FlowRuntimeEngine {
     }
 
     @Override
-    public FlowExecutionState resubmit(FlowResubmitRequest request) {
-        return resubmitHandler.handle(request);
-    }
-
-    @Override
     public FlowExecutionState withdraw(FlowWithdrawRequest request) {
         return withdrawHandler.handle(request);
     }
@@ -272,7 +280,7 @@ public class FlowRuntimeFacade implements FlowRuntimeEngine {
         try {
             orchestrator.resumeFromSuspendedNode(state, definition, nodeId, callbackOutputs);
         } catch (RuntimeException e) {
-            orchestrator.failState(state, state.getFlowCode(), null, e.getMessage());
+            orchestrator.failState(state, state.getFlowId(), null, e.getMessage());
             contextService.persistStateInNewTransaction(state);
             throw e;
         }
