@@ -61,14 +61,12 @@ public class FlowApprovalRecordView {
     @Schema(description = "Target actor id")
     private String targetActorId;
 
+    @Schema(description = "Who did it on the actor's behalf: an administrator who reassigned the actor's task; "
+            + "null when the actor acted themselves")
+    private String operatorId;
+
     @Schema(description = "Add-sign position when the record represents an add-sign action")
     private AddSignPosition addSignPosition;
-
-    @Schema(description = "Target node id")
-    private String targetNodeId;
-
-    @Schema(description = "Target node label")
-    private String targetNodeLabel;
 
     @Schema(description = "Comment")
     private String comment;
@@ -84,9 +82,6 @@ public class FlowApprovalRecordView {
 
     @Schema(description = "Actors who had already rejected")
     private List<String> rejectedActors;
-
-    @Schema(description = "Updated variable keys")
-    private List<String> variableKeys;
 
     @Schema(description = "Recorded time")
     private LocalDateTime eventTime;

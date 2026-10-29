@@ -27,7 +27,7 @@ import static org.junit.jupiter.api.Assertions.*;
  * Tests for {@link OrmFlowBundleRegistry}, {@link FlowBundleMapper},
  * and their interaction with the persistence layer.
  */
-class OrmFlowBundleRegistryTest {
+public class OrmFlowBundleRegistryTest {
 
     private static final String FLOW_A = "100";
     private static final String FLOW_B = "200";
@@ -51,7 +51,7 @@ class OrmFlowBundleRegistryTest {
 
         assertEquals("Mapper flow", entity.getFlowName());
         assertEquals(1, entity.getRevision());
-        assertEquals(FlowScenario.PROCESS, entity.getScenario());
+        assertEquals(FlowScenario.AUTOMATION, entity.getScenario());
         assertTrue(entity.getActive());
         assertNotNull(entity.getCompiledJson());
 
@@ -351,7 +351,7 @@ class OrmFlowBundleRegistryTest {
                 + slug.substring(1).replace("-", " ").replace("_", " ");
         return CompiledFlowDefinition.builder()
                 .flowName(flowName)
-                .scenario(FlowScenario.PROCESS)
+                .scenario(FlowScenario.AUTOMATION)
                 .compiledAt(LocalDateTime.now())
                 .revision(revision)
                 .sync(false)
@@ -370,7 +370,6 @@ class OrmFlowBundleRegistryTest {
                         "e2", CompiledFlowTransition.builder().edgeId("e2").source("task1").target("end").build()
                 ))
                 .capabilitySummary(CompiledFlowCapabilitySummary.builder()
-                        .hasApproval(false)
                         .hasSubflow(false)
                         .hasParallelGateway(false)
                         .hasLoop(false)
@@ -383,9 +382,9 @@ class OrmFlowBundleRegistryTest {
     /**
      * In-memory {@link FlowBundleService} that isolates tenants the way the ORM does: a created
      * row takes the context's tenant, and reads see only that tenant's rows unless the context
-     * is cross-tenant.
+     * is cross-tenant. Public for the tests of other packages.
      */
-    static class StubBundleService implements FlowBundleService {
+    public static class StubBundleService implements FlowBundleService {
 
         final Map<Long, FlowBundle> savedBundles = new ConcurrentHashMap<>();
         private final AtomicLong idSequence = new AtomicLong(1);
@@ -462,6 +461,13 @@ class OrmFlowBundleRegistryTest {
             activeQueries.merge(ContextHolder.getContext().getTenantId(), 1, Integer::sum);
             return visibleBundles()
                     .filter(b -> Boolean.TRUE.equals(b.getActive()) && b.getFlowId() != null)
+                    .toList();
+        }
+
+        @Override
+        public List<FlowBundle> listActiveCronBundles() {
+            return visibleBundles()
+                    .filter(b -> Boolean.TRUE.equals(b.getActive()) && b.getCronExpression() != null)
                     .toList();
         }
 
