@@ -1,6 +1,7 @@
 package io.softa.framework.orm.utils;
 
 import java.io.Serializable;
+import java.math.BigDecimal;
 import java.util.List;
 import java.util.Map;
 import java.util.stream.Collectors;
@@ -23,25 +24,37 @@ public class IdUtils {
     /**
      * Convert object id to Long.
      *
-     * <p>A string that is not a number is refused as a bad request naming the value, not left to
-     * surface as a {@link NumberFormatException}: ids arrive as strings from a client, and a malformed
-     * one is the caller's mistake.
+     * <p>Any whole number converts, whatever its numeric type — a driver or a JSON parser may hand one
+     * over as a {@code BigInteger} or {@code BigDecimal}. Anything else is refused as a bad request
+     * naming the value, not left to surface as a {@link NumberFormatException} or a
+     * {@link ClassCastException}: ids arrive as strings from a client, and a malformed one is the
+     * caller's mistake.
      *
      * @param id object
      * @return Long
      */
     public static Long convertIdToLong(Object id) {
-        if (id instanceof Integer intId) {
-            return intId.longValue();
+        if (id == null || id instanceof Long) {
+            return (Long) id;
+        } else if (id instanceof Integer || id instanceof Short || id instanceof Byte) {
+            return ((Number) id).longValue();
         } else if (id instanceof String stringId) {
+            if (stringId.isBlank()) {
+                throw new IllegalArgumentException("The id cannot be blank.");
+            }
             try {
                 return Long.parseLong(stringId);
             } catch (NumberFormatException e) {
                 throw new IllegalArgumentException("The id `{0}` is not a number.", stringId);
             }
-        } else {
-            return (Long) id;
+        } else if (id instanceof Number number) {
+            try {
+                return new BigDecimal(number.toString()).longValueExact();
+            } catch (ArithmeticException | NumberFormatException e) {
+                throw new IllegalArgumentException("The id `{0}` is not a whole number.", id);
+            }
         }
+        throw new IllegalArgumentException("The id `{0}` is not a number.", id);
     }
 
     /**
@@ -51,9 +64,7 @@ public class IdUtils {
      * @return String
      */
     public static String convertIdToString(Object id) {
-        if (id instanceof Integer) {
-            return String.valueOf(id);
-        } else if (id instanceof Long) {
+        if (id instanceof Number) {
             return String.valueOf(id);
         }
         return (String) id;

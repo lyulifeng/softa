@@ -1,6 +1,8 @@
 package io.softa.framework.orm.utils;
 
 import java.io.Serializable;
+import java.math.BigDecimal;
+import java.math.BigInteger;
 import java.util.List;
 
 import org.junit.jupiter.api.BeforeAll;
@@ -38,6 +40,29 @@ class IdUtilsTest {
         assertEquals(1L, IdUtils.convertIdToLong(1));
         assertEquals(1L, IdUtils.convertIdToLong("1"));
         assertEquals(1L, IdUtils.convertIdToLong(1L));
+    }
+
+    /** A whole number converts whatever its numeric type: a driver or a JSON parser may hand over any. */
+    @Test
+    void aWholeNumberOfAnyNumericTypeConverts() {
+        assertEquals(5L, IdUtils.convertIdToLong(BigInteger.valueOf(5)));
+        assertEquals(5L, IdUtils.convertIdToLong(new BigDecimal("5")));
+        assertEquals(5L, IdUtils.convertIdToLong(new BigDecimal("5.0")));
+        assertEquals(5L, IdUtils.convertIdToLong((short) 5));
+        assertEquals("5", IdUtils.convertIdToString(BigInteger.valueOf(5)));
+    }
+
+    @Test
+    void aFractionOrANonNumberIsRefusedAsABadRequest() {
+        assertThrows(IllegalArgumentException.class, () -> IdUtils.convertIdToLong(new BigDecimal("5.5")));
+        assertThrows(IllegalArgumentException.class, () -> IdUtils.convertIdToLong(java.util.Map.of("id", 5)));
+    }
+
+    @Test
+    void aBlankIdIsRefusedAsBlank() {
+        IllegalArgumentException refused = assertThrows(IllegalArgumentException.class,
+                () -> IdUtils.convertIdToLong(" "));
+        assertTrue(refused.getMessage().contains("blank"), refused.getMessage());
     }
 
     /** A malformed id is the caller's mistake: refused as a bad request naming it, not a bare parse failure. */
