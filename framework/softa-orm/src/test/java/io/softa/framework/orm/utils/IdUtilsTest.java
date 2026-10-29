@@ -106,10 +106,23 @@ class IdUtilsTest {
         try (MockedStatic<ModelManager> models = mockStatic(ModelManager.class)) {
             models.when(() -> ModelManager.getModelField("Rel", "roleId"))
                     .thenReturn(field(FieldType.ONE_TO_ONE, "Role", null));
-            models.when(() -> ModelManager.getModelField("Role", ModelConstant.ID))
+            models.when(() -> ModelManager.getModelFieldOrNull("Role", ModelConstant.ID))
                     .thenReturn(field(FieldType.LONG, null, null));
 
             assertEquals(List.of(7L), IdUtils.formatIds("Rel", "roleId", List.of("7")));
+        }
+    }
+
+    /** Neither the column type nor the referenced model to read it from: the ids pass as they come, as before. */
+    @Test
+    void aToOneFieldWhoseReferencedModelIsUnknownLeavesTheIdsAsTheyCome() {
+        try (MockedStatic<ModelManager> models = mockStatic(ModelManager.class)) {
+            models.when(() -> ModelManager.getModelField("Rel", "groupId"))
+                    .thenReturn(field(FieldType.MANY_TO_ONE, "Gone", null));
+            models.when(() -> ModelManager.getModelFieldOrNull("Gone", ModelConstant.ID)).thenReturn(null);
+
+            assertEquals(List.of("7"), IdUtils.formatIds("Rel", "groupId", List.of("7")));
+            assertEquals("7", IdUtils.formatId("Rel", "groupId", "7"));
         }
     }
 

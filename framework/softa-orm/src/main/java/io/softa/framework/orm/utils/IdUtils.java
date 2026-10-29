@@ -100,6 +100,11 @@ public class IdUtils {
      * ids read back from the join table: a Remove matched nothing and was silently dropped, an Add
      * did not see the link already there and wrote it again.
      *
+     * <p>The referenced id's type is the one the catalog materialized onto the field; a field read
+     * without it falls back to the referenced model's {@code id}. When that model is not registered
+     * either, the ids are left as they come, as they always were before — a lookup that cannot be
+     * answered is no reason to fail a write.
+     *
      * @param modelName model name
      * @param fieldName field name
      * @return the field type an id in this field is converted to
@@ -112,7 +117,8 @@ public class IdUtils {
         if (field.getRelatedFieldType() != null) {
             return field.getRelatedFieldType();
         }
-        return ModelManager.getModelField(field.getRelatedModel(), ModelConstant.ID).getFieldType();
+        MetaField referencedId = ModelManager.getModelFieldOrNull(field.getRelatedModel(), ModelConstant.ID);
+        return referencedId == null ? field.getFieldType() : referencedId.getFieldType();
     }
 
     /**
