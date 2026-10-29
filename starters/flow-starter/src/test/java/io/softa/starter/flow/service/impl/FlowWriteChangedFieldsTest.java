@@ -1,15 +1,18 @@
 package io.softa.starter.flow.service.impl;
 
+import java.util.List;
 import java.util.Optional;
 
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
 import org.springframework.test.util.ReflectionTestUtils;
 
+import io.softa.framework.orm.domain.Filters;
 import io.softa.starter.flow.design.DesignFlowDefinition;
 import io.softa.starter.flow.dto.FlowDesignSaveRequest;
 import io.softa.starter.flow.entity.FlowBundle;
 import io.softa.starter.flow.entity.FlowCcConfig;
+import io.softa.starter.flow.entity.FlowDelegation;
 import io.softa.starter.flow.entity.FlowDesign;
 import io.softa.starter.flow.enums.FlowScenario;
 import io.softa.starter.flow.service.FlowBundleService;
@@ -20,7 +23,7 @@ import static org.mockito.ArgumentMatchers.anyBoolean;
 import static org.mockito.Mockito.*;
 
 /**
- * A design or CC configuration is read before it is changed, and the read may come back cut — a caller
+ * A design, CC configuration, delegation or bundle is read before it is changed, and the read may come back cut — a caller
  * reaching the model only by reference reads its label, every other field null. Each change writes only
  * what it sets, so those nulls never reach the database.
  */
@@ -116,5 +119,81 @@ class FlowWriteChangedFieldsTest {
         assertEquals(Boolean.FALSE, patch.getValue().getActive());
         assertNull(patch.getValue().getFlowId());
         assertNull(patch.getValue().getRecipientConfig());
+    }
+
+    /** The label of a delegation: id and the owner the cancel check reads, every other field cut. */
+    private static FlowDelegationServiceImpl delegationService() {
+        FlowDelegation label = new FlowDelegation();
+        label.setId(9L);
+        label.setDelegatorId("emp-1");
+        FlowDelegationServiceImpl service = spy(new FlowDelegationServiceImpl());
+        doReturn(Optional.of(label)).when(service).getById(9L);
+        doReturn(true).when(service).updateOne(any(FlowDelegation.class));
+        return service;
+    }
+
+    private static FlowDelegation writtenDelegation(FlowDelegationServiceImpl service) {
+        ArgumentCaptor<FlowDelegation> patch = ArgumentCaptor.forClass(FlowDelegation.class);
+        verify(service).updateOne(patch.capture());
+        verify(service, never()).updateOne(any(FlowDelegation.class), anyBoolean());
+        assertEquals(9L, patch.getValue().getId());
+        assertNull(patch.getValue().getDelegateId(), "the delegate read as null must not be written back");
+        assertNull(patch.getValue().getStartTime());
+        return patch.getValue();
+    }
+
+    @Test
+    void cancellingADelegationWritesOnlyTheFlag() {
+        FlowDelegationServiceImpl service = delegationService();
+
+        service.cancelDelegation(9L, "emp-1");
+
+        assertEquals(Boolean.FALSE, writtenDelegation(service).getActive());
+    }
+
+    @Test
+    void recordingADelegatedTaskWritesOnlyTheUsage() {
+        FlowDelegationServiceImpl service = delegationService();
+
+        service.recordDelegationUsage(9L);
+
+        FlowDelegation patch = writtenDelegation(service);
+        assertEquals(1, patch.getDelegatedTaskCount());
+        assertNotNull(patch.getLastDelegationTime());
+        assertNull(patch.getActive());
+    }
+
+    @Test
+    void activatingARevisionWritesOnlyTheFlags() {
+        FlowBundle current = new FlowBundle();
+        current.setId(1L);
+        current.setFlowId(FLOW);
+        current.setRevision(1);
+        current.setActive(true);
+        FlowBundle target = new FlowBundle();
+        target.setId(2L);
+        target.setFlowId(FLOW);
+        target.setRevision(2);
+        target.setActive(false);
+        FlowBundleServiceImpl service = spy(new FlowBundleServiceImpl());
+        doReturn(List.of(current)).when(service).searchList(any(Filters.class));
+        doReturn(Optional.of(target)).when(service).searchOne(any(Filters.class));
+        doReturn(true).when(service).updateOne(any(FlowBundle.class));
+
+        service.markAsActive(FLOW, 2);
+
+        ArgumentCaptor<FlowBundle> patch = ArgumentCaptor.forClass(FlowBundle.class);
+        verify(service, times(2)).updateOne(patch.capture());
+        verify(service, never()).updateOne(any(FlowBundle.class), anyBoolean());
+        List<FlowBundle> patches = patch.getAllValues();
+        assertEquals(1L, patches.get(0).getId());
+        assertEquals(Boolean.FALSE, patches.get(0).getActive());
+        assertEquals(2L, patches.get(1).getId());
+        assertEquals(Boolean.TRUE, patches.get(1).getActive());
+        patches.forEach(p -> {
+            assertNull(p.getCompiledJson(), "the compiled definition must not be written back");
+            assertNull(p.getRevision());
+            assertNull(p.getFlowId());
+        });
     }
 }

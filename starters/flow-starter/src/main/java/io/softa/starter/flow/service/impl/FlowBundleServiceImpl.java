@@ -126,16 +126,25 @@ public class FlowBundleServiceImpl extends EntityServiceImpl<FlowBundle, Long>
                 .eq(FlowBundle::getActive, true);
         for (FlowBundle bundle : this.searchList(activeFilters)) {
             if (!revision.equals(bundle.getRevision())) {
-                bundle.setActive(false);
-                this.updateOne(bundle, false);
+                writeActive(bundle.getId(), false);
             }
         }
         findByFlowIdAndRevision(flowId, revision).ifPresent(bundle -> {
             if (!Boolean.TRUE.equals(bundle.getActive())) {
-                bundle.setActive(true);
-                this.updateOne(bundle, false);
+                writeActive(bundle.getId(), true);
             }
         });
+    }
+
+    /**
+     * Only the flag: a bundle read here may come back cut to its label, and written back whole it
+     * would clear the compiled definition the reader never saw.
+     */
+    private void writeActive(Long bundleId, boolean active) {
+        FlowBundle patch = new FlowBundle();
+        patch.setId(bundleId);
+        patch.setActive(active);
+        this.updateOne(patch);
     }
 
     /**
