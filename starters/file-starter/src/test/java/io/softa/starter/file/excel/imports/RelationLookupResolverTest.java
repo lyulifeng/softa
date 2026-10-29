@@ -328,6 +328,33 @@ class RelationLookupResolverTest {
         assertFalse(row.containsKey("roleIds"));
     }
 
+    /** A to-many column and a nested relation column are named by their own field's label too, like a to-one. */
+    @Test
+    @SuppressWarnings("unchecked")
+    void everyKindOfRelationColumnIsNamedByItsLabel() {
+        try (MockedStatic<ModelManager> mm = Mockito.mockStatic(ModelManager.class)) {
+            MetaField roles = metaField("Employee", "roleIds", FieldType.MANY_TO_MANY, "Role");
+            ReflectionTestUtils.setField(roles, "label", "Access Roles");
+            mm.when(() -> ModelManager.getModelFieldOrNull("Employee", "roleIds")).thenReturn(roles);
+            MetaField idType = metaField("Profile", "idType", FieldType.MANY_TO_ONE, "IdType");
+            ReflectionTestUtils.setField(idType, "label", "ID Type");
+            mm.when(() -> ModelManager.getModelFieldOrNull("Profile", "idType")).thenReturn(idType);
+            RelationLookupResolver resolver = createResolver();
+            var toMany = new RelationLookupResolver.LookupGroup(
+                    "roleIds", "Role", List.of("code"), List.of("roleIds.code"), true, true, false, null);
+            Map<String, Object> roleRow = new LinkedHashMap<>(Map.of("roleIds.code", "UNKNOWN"));
+            Map<String, Object> idTypeRow = new LinkedHashMap<>(Map.of("profileId.idType.name", "Passport"));
+            ModelService<Long> typedService = (ModelService<Long>) getModelService(resolver);
+            when(typedService.getIdsByBusinessKeys(any(), any(), anyCollection(), any())).thenReturn(Map.of());
+
+            resolver.resolveRows("Employee", new ArrayList<>(List.of(roleRow)), List.of(toMany), true);
+            resolver.resolveRows("Employee", new ArrayList<>(List.of(idTypeRow)), List.of(nestedGroup()), true);
+
+            assertEquals("Access Roles not found: UNKNOWN", roleRow.get(FileConstant.FAILED_REASON));
+            assertEquals("ID Type not found: Passport", idTypeRow.get(FileConstant.FAILED_REASON));
+        }
+    }
+
     @Test
     void resolveRowsToManyIgnoreEmptyFalseWritesEmptyList() {
         RelationLookupResolver resolver = createResolver();

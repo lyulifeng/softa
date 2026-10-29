@@ -363,7 +363,7 @@ public class RelationLookupResolver {
             if (group.oneToOne()) {
                 resolveNestedOneToOneGroup(modelName, rows, group, skipException);
             } else if (group.toMany()) {
-                resolveToManyGroup(rows, group, skipException);
+                resolveToManyGroup(modelName, rows, group, skipException);
             } else {
                 resolveToOneGroup(modelName, rows, group, skipException, inFile);
             }
@@ -523,7 +523,8 @@ public class RelationLookupResolver {
                     }
                     Object resolvedId = resolvedByPath.get(nestedLookup.dottedPath()).idFor(row, List.of(raw));
                     if (resolvedId == null) {
-                        markFailure(row, buildNotFoundMessage(subjectOf(null, null, nestedLookup.relatedModel()),
+                        markFailure(row, buildNotFoundMessage(subjectOf(group.relatedModel(), nestedLookup.nestedField(),
+                                nestedLookup.relatedModel()),
                                 List.of(nestedLookup.lookupField()), List.of(raw)), skipException);
                         failed = true;
                         break;
@@ -637,7 +638,8 @@ public class RelationLookupResolver {
      * <p>Example: {@code roleIds.code -> roleIds} where the source cell may contain
      * comma-separated values such as {@code ADMIN,USER}.</p>
      */
-    private void resolveToManyGroup(List<Map<String, Object>> rows, LookupGroup group, boolean skipException) {
+    private void resolveToManyGroup(String modelName, List<Map<String, Object>> rows, LookupGroup group,
+                                    boolean skipException) {
         Set<List<Object>> distinctKeys = new LinkedHashSet<>();
         Map<Map<String, Object>, List<List<Object>>> rowResolvedKeys = new IdentityHashMap<>();
         for (Map<String, Object> row : rows) {
@@ -681,7 +683,7 @@ public class RelationLookupResolver {
                 }
             }
             if (!missingKeys.isEmpty()) {
-                String subject = subjectOf(null, group.rootField(), group.relatedModel());
+                String subject = subjectOf(modelName, group.rootField(), group.relatedModel());
                 String message = missingKeys.stream().map(keys -> buildNotFoundMessage(subject, group, keys))
                         .collect(Collectors.joining("; "));
                 markFailure(row, message, skipException);
