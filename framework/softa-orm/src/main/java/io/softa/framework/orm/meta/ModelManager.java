@@ -992,6 +992,15 @@ public class ModelManager {
     }
 
     /**
+     * Get the names of all loaded models.
+     *
+     * @return model names
+     */
+    public static Set<String> getModelNames() {
+        return Set.copyOf(modelMap().keySet());
+    }
+
+    /**
      * Check if the model exists, if not, throw an exception
      * @param modelName model name
      */

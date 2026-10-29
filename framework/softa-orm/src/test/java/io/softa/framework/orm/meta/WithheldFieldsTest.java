@@ -1,4 +1,4 @@
-package io.softa.starter.metadata.service.impl;
+package io.softa.framework.orm.meta;
 
 import java.util.List;
 import java.util.Map;
@@ -9,8 +9,6 @@ import org.mockito.MockedStatic;
 import org.mockito.Mockito;
 
 import io.softa.framework.orm.enums.FieldType;
-import io.softa.framework.orm.meta.MetaField;
-import io.softa.framework.orm.meta.ModelManager;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.Mockito.mock;
@@ -20,7 +18,7 @@ import static org.mockito.Mockito.when;
  * A relation onto a model the caller can read nothing of is withheld with that model's fields: it could
  * only offer a column, an export field and a filter that come back empty.
  */
-class WithheldRelationTest {
+class WithheldFieldsTest {
 
     /** An employee's bank account holds nothing but sensitive fields and plumbing. */
     private static final List<MetaField> BANK_ACCOUNT = List.of(
@@ -30,6 +28,17 @@ class WithheldRelationTest {
             field("employeeId", FieldType.MANY_TO_ONE, "Employee"),
             field("accountNumber", FieldType.STRING, null),
             field("bank", FieldType.MANY_TO_ONE, "Bank"));
+
+    private static final List<MetaField> EMPLOYEE = List.of(
+            field("id", FieldType.LONG, null),
+            field("name", FieldType.STRING, null),
+            field("bankAccountId", FieldType.ONE_TO_ONE, "BankAccount"),
+            field("departmentId", FieldType.MANY_TO_ONE, "Department"));
+
+    /** Reached from a payslip, the bank account still names whose it is. */
+    private static final List<MetaField> PAYSLIP = List.of(
+            field("id", FieldType.LONG, null),
+            field("bankAccountId", FieldType.MANY_TO_ONE, "BankAccount"));
 
     @Test
     void aRelationOntoAModelWhoseEveryFieldIsWithheldIsWithheldToo() {
@@ -60,9 +69,9 @@ class WithheldRelationTest {
     void theBackReferenceOntoTheOwnerIsPlumbing() {
         Map<String, Set<String>> withheld = Map.of("BankAccount", Set.of("accountNumber", "bank"));
         try (MockedStatic<ModelManager> models = models()) {
-            assertThat(MetadataServiceImpl.nothingLeftToRead("BankAccount", "Employee", withheld)).isTrue();
+            assertThat(WithheldFields.nothingLeftToRead("BankAccount", "Employee", withheld)).isTrue();
             // Reached from another model, the employee it points at is something to read.
-            assertThat(MetadataServiceImpl.nothingLeftToRead("BankAccount", "Payslip", withheld)).isFalse();
+            assertThat(WithheldFields.nothingLeftToRead("BankAccount", "Payslip", withheld)).isFalse();
         }
     }
 
@@ -82,8 +91,30 @@ class WithheldRelationTest {
         assertThat(isWithheld("bankAccountId", FieldType.ONE_TO_ONE, "BankAccount", Map.of())).isFalse();
     }
 
+    /** The hidden-field list a screen checks declared fields against names such a relation too, under its owner. */
+    @Test
+    void theListNamesTheRelationUnderTheModelThatDeclaresIt() {
+        Map<String, Set<String>> withheld = Map.of("BankAccount", Set.of("accountNumber", "bank"));
+        try (MockedStatic<ModelManager> models = models()) {
+            models.when(ModelManager::getModelNames).thenReturn(Set.of("Employee", "Payslip", "BankAccount"));
+            models.when(() -> ModelManager.getModelFields("Employee")).thenReturn(EMPLOYEE);
+            models.when(() -> ModelManager.getModelFields("Payslip")).thenReturn(PAYSLIP);
+
+            assertThat(WithheldFields.withRelations(withheld)).containsExactlyInAnyOrderEntriesOf(Map.of(
+                    "BankAccount", Set.of("accountNumber", "bank"),
+                    "Employee", Set.of("bankAccountId")));
+        }
+    }
+
+    /** Nothing withheld: the list is returned as is, without looking at a single model. */
+    @Test
+    void nothingWithheldAddsNothing() {
+        Map<String, Set<String>> withheld = Map.of();
+        assertThat(WithheldFields.withRelations(withheld)).isSameAs(withheld);
+    }
+
     private static boolean isWithheld(String field, FieldType type, String related, Map<String, Set<String>> withheld) {
-        return MetadataServiceImpl.isWithheld("Employee", field, type, related, withheld);
+        return WithheldFields.isWithheld("Employee", field, type, related, withheld);
     }
 
     private static MockedStatic<ModelManager> models() {
