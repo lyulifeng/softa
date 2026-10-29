@@ -23,6 +23,7 @@ import io.softa.framework.orm.domain.Filters;
 import io.softa.framework.orm.enums.AccessType;
 import io.softa.framework.orm.meta.MetaModel;
 import io.softa.framework.orm.meta.ModelManager;
+import io.softa.framework.orm.service.CascadeRead;
 import io.softa.framework.orm.service.ModelService;
 import io.softa.starter.permission.index.EndpointIndex;
 import io.softa.starter.permission.scope.ModelDefaultScopeRegistry;
@@ -309,6 +310,43 @@ class LabelOnlyFieldPlanTest {
 
         assertThat(as(() -> service.filterReadableFields("Company", List.of("id", "name", "country", "registrationNo"),
                 AccessType.READ))).containsExactly("id", "name", "country");
+    }
+
+    @Test
+    void aCountryValueDomainIsReadWhole() {
+        // The boxes an address is written in, per country: every address form reads them in full.
+        when(index.directModelActionPermissions("CountryAddressComponent", "view"))
+                .thenReturn(Set.of("permission.country-address-format.view"));
+        model("CountryAddressComponent", List.of("id", "fieldName", "label", "sortOrder", "pattern"), List.of("label"));
+        when(ModelManager.getModel("CountryAddressComponent").isMultiCountry()).thenReturn(true);
+        pi.setRoleGrants(List.of(role(1, Set.of(EMPLOYEE_VIEW), "Employee", ScopeType.ALL)));
+
+        assertThat(as(() -> service.filterReadableFields("CountryAddressComponent",
+                List.of("id", "fieldName", "label", "sortOrder", "pattern"), AccessType.READ)))
+                .containsExactly("id", "fieldName", "label", "sortOrder", "pattern");
+    }
+
+    @Test
+    void aReadForADeclaredCascadeKeepsTheFieldItReads() {
+        // Employee declares a cascaded field reading the account's username: resolved for an employee row,
+        // the username is the employee's to show; read directly, the account is still its label.
+        MetaField user = new MetaField();
+        ReflectionTestUtils.setField(user, "fieldName", "userId");
+        ReflectionTestUtils.setField(user, "fieldType", FieldType.MANY_TO_ONE);
+        ReflectionTestUtils.setField(user, "relatedModel", "UserAccount");
+        MetaField username = new MetaField();
+        ReflectionTestUtils.setField(username, "fieldName", "username");
+        ReflectionTestUtils.setField(username, "cascadedField", "userId.username");
+        models.when(() -> ModelManager.getModelFields("Employee")).thenReturn(List.of(username));
+        models.when(() -> ModelManager.existField("Employee", "userId")).thenReturn(true);
+        models.when(() -> ModelManager.getModelField("Employee", "userId")).thenReturn(user);
+        pi.setRoleGrants(List.of(role(1, Set.of(EMPLOYEE_VIEW), "Employee", ScopeType.ALL)));
+
+        assertThat(as(() -> CascadeRead.callExposing("UserAccount", Set.of("username", "mobile"),
+                () -> service.filterReadableFields("UserAccount", ACCOUNT_FIELDS, AccessType.READ))))
+                .containsExactly("id", "nickname", "username");
+        assertThat(as(() -> service.filterReadableFields("UserAccount", ACCOUNT_FIELDS, AccessType.READ)))
+                .containsExactly("id", "nickname");
     }
 
     @Test

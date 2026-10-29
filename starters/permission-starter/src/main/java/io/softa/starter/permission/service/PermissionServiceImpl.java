@@ -20,6 +20,7 @@ import io.softa.framework.orm.meta.MetaField;
 import io.softa.framework.orm.meta.MetaModel;
 import io.softa.framework.orm.meta.ModelManager;
 import io.softa.framework.orm.service.AccessScope;
+import io.softa.framework.orm.service.CascadeRead;
 import io.softa.framework.orm.service.ImportScope;
 import io.softa.framework.orm.service.ModelService;
 import io.softa.framework.orm.service.PermissionService;
@@ -1193,7 +1194,9 @@ public class PermissionServiceImpl implements PermissionService {
         boolean sensitive = sfsCache != null && sfsCache.hasSensitiveFieldsOn(model);
         if (!sensitive && !mayBeLabelOnly(model, access)) return FieldPlan.NONE;
         RequestMemo memo = RequestMemo.current();
-        if (memo == null) {
+        // A read for declared cascaded fields keeps them past the label: its plan is its own, never memoized
+        // for the plain reads of the model in the same request.
+        if (memo == null || !cascadeKept(model).isEmpty()) {
             return computeFieldPlan(pi, model, access);
         }
         FieldPlan plan = memo.plan(pi, model, access);
@@ -1208,7 +1211,11 @@ public class PermissionServiceImpl implements PermissionService {
         Set<String> sensitive = sfsCache != null && sfsCache.hasSensitiveFieldsOn(model)
                 ? sfsCache.allSensitiveFieldsOn(model) : Set.of();
         List<Grant> holders = holders(pi, model, access);
-        Set<String> pastLabel = mayBeLabelOnly(model, access) ? pastLabelFields(model) : Set.of();
+        Set<String> pastLabel = Set.of();
+        if (mayBeLabelOnly(model, access)) {
+            pastLabel = pastLabelFields(model);
+            pastLabel.removeAll(cascadeKept(model));
+        }
         Set<String> governed = new java.util.HashSet<>(sensitive);
         governed.addAll(pastLabel);
         if (governed.isEmpty()) return FieldPlan.NONE;
@@ -1271,10 +1278,14 @@ public class PermissionServiceImpl implements PermissionService {
      * reference, so they are not cut to a label — cut, the {@code createdId} condition a "my imports" list
      * reads by was a field past the label, and the list came back empty for anyone not granted the log's
      * own page.
+     *
+     * <p>A country value domain is left whole for the same reason: it is a catalogue every form of its
+     * country reads in full — the boxes an address is written in, with their labels, order and patterns —
+     * and no role is granted it as a page of its own.
      */
     private boolean mayBeLabelOnly(String model, AccessType access) {
         if (!READS.contains(access) || model == null || !ModelManager.existModel(model)) return false;
-        if (declaredScope(model) != null) return false;
+        if (declaredScope(model) != null || isCountryValueDomain(model)) return false;
         return !directViewPermissions(model).isEmpty() || !ownersOf(model).isEmpty();
     }
 
@@ -1330,6 +1341,21 @@ public class PermissionServiceImpl implements PermissionService {
             labels.add(ModelConstant.COUNTRY_FIELD);
         }
         return labels;
+    }
+
+    /**
+     * The fields of {@code model} the current read resolves for cascaded fields declared on a model referring
+     * to it — see {@link CascadeRead}. Only fields some declared cascade does read: the binding widens the label
+     * by what the models already show as their own, never by anything else.
+     */
+    private Set<String> cascadeKept(String model) {
+        Set<String> bound = CascadeRead.exposedOn(model);
+        if (bound.isEmpty()) return Set.of();
+        Set<String> kept = new java.util.HashSet<>();
+        for (String field : bound) {
+            if (cascadeExposed().contains(model + "." + field)) kept.add(field);
+        }
+        return kept;
     }
 
     private static Set<String> pastLabelFields(String model) {
@@ -1420,7 +1446,8 @@ public class PermissionServiceImpl implements PermissionService {
         java.util.function.Predicate<String> masked = field -> {
             if (field == null) return false;
             String path = expandAlias(model, field);
-            return (sfsCache != null && maskedTarget(pi, model, path, read, plans) != null)
+            PathTarget target = sfsCache == null ? null : maskedTarget(pi, model, path, read, plans);
+            return (target != null && !shownOnEveryRow(pi, target, plans.get(target.model()), read))
                     || readsBeyondRange(pi, model, path);
         };
         Orders orders = flexQuery.getOrders();
@@ -1448,6 +1475,29 @@ public class PermissionServiceImpl implements PermissionService {
                         + fieldLabel(model, field) + ": it is hidden on some of them.");
             }
         }
+    }
+
+    /**
+     * Whether a per-row field is shown on every row the caller reads of its model: the roles granting it
+     * reach every row any reading role does. Then nothing is hidden among the rows, and sorting or grouping
+     * by it orders or buckets only values the caller reads — an HR role that views every company in full
+     * sorts the company list by its creation time though the employee role beside it reads companies as
+     * labels.
+     *
+     * <p>Judged on the roles' compiled ranges, equal or unrestricted; ranges that differ in form are taken
+     * to differ, and the field stays held back.
+     */
+    private boolean shownOnEveryRow(PermissionInfo pi, PathTarget target, FieldPlan plan, AccessType read) {
+        if (plan == null || !plan.perRow().contains(target.leaf())) return false;
+        List<Filters> granting = new ArrayList<>();
+        plan.readersByFields().forEach((fields, readers) -> {
+            if (fields.contains(target.leaf())) readers.forEach(g -> granting.add(grantScope(g, target.model())));
+        });
+        if (granting.contains(null)) return true;
+        for (Grant g : holders(pi, target.model(), read)) {
+            if (!granting.contains(grantScope(g, target.model()))) return false;
+        }
+        return true;
     }
 
     private static String fieldLabel(String model, String field) {

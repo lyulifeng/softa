@@ -12,6 +12,7 @@ import io.softa.framework.base.constant.StringConstant;
 import io.softa.framework.base.enums.Operator;
 import io.softa.framework.base.utils.Cast;
 import io.softa.framework.orm.aspect.CallerPermissions;
+import io.softa.framework.orm.service.CascadeRead;
 import io.softa.framework.orm.constant.ModelConstant;
 import io.softa.framework.orm.domain.FilterControl;
 import io.softa.framework.orm.domain.Filters;
@@ -52,6 +53,8 @@ public class XToOneGroupProcessor extends BaseProcessor {
     // A dotted field of the request (`managerId.dateOfBirth`) asks past the label: the related rows are then
     // read within the caller's range, as for a subQuery.
     private boolean requestedPastLabel;
+    // The fields of the related model that the declared cascaded fields read, kept past its label.
+    private final Set<String> declaredCascades = new HashSet<>();
     private final FlexQuery flexQuery;
     private final SubQuery subQuery;
 
@@ -90,7 +93,10 @@ public class XToOneGroupProcessor extends BaseProcessor {
         // A cascaded field the model declares is part of what its references show. A dotted field built
         // from the request is the caller's own question about the related row, and past its label it is
         // answered only for the rows the caller may read.
-        if (!cascadedField.getFieldName().contains(".") || this.labelFields.contains(relatedField)) {
+        if (!cascadedField.getFieldName().contains(".")) {
+            this.labelFields.add(relatedField);
+            this.declaredCascades.add(relatedField);
+        } else if (this.labelFields.contains(relatedField)) {
             this.labelFields.add(relatedField);
         } else {
             this.requestedPastLabel = true;
@@ -173,7 +179,11 @@ public class XToOneGroupProcessor extends BaseProcessor {
         }
         if (!labelOnlyIds.isEmpty()) {
             FlexQuery labelFlexQuery = relatedFlexQuery(this.labelFields, labelOnlyIds);
-            List<Map<String, Object>> labelRows = ReflectTool.searchListIgnoringRowScope(metaField.getRelatedModel(), labelFlexQuery);
+            String relatedModel = metaField.getRelatedModel();
+            List<Map<String, Object>> labelRows = declaredCascades.isEmpty()
+                    ? ReflectTool.searchListIgnoringRowScope(relatedModel, labelFlexQuery)
+                    : CascadeRead.callExposing(relatedModel, declaredCascades,
+                            () -> ReflectTool.searchListIgnoringRowScope(relatedModel, labelFlexQuery));
             labelRows.forEach(row -> relatedValueMap.put((Serializable) row.get(ModelConstant.ID), row));
         }
         return relatedValueMap;

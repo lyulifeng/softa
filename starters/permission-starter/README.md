@@ -494,10 +494,16 @@ row belongs to is structure every reader needs, not a detail of the row).
   every user reads, such as attendance groups or leave policies — and what it owns; and a model no role can
   be granted that nothing owns. Being left whole for that last reason does not carry down to what such a
   model owns: `UserProfile` is granted to no one and owns the accounts, which are granted on their own.
-  Only reads are cut, not writes.
+  A country value domain (`multiCountry` and not `multiTenant`, the models whose reads skip row scope) is
+  left whole as well: a country's address boxes, with their labels, order and patterns, are what every
+  address form of that country renders. Only reads are cut, not writes.
 - *Conditions.* A condition, sort or group on a field past the label matches nothing, so a filter cannot
   probe what a read would not show. A field some model's cascaded field reads stays usable in
-  conditions — the cascade expands to it — though it is still masked on a direct read.
+  conditions — the cascade expands to it — though it is still masked on a direct read. Its value is
+  shown where the cascade is: the read resolving a declared cascaded field binds `CascadeRead`, and the
+  related row keeps the fields declared cascades read (sensitive ones stay masked). A field shown on some
+  rows only — per role — keeps its sort and grouping when the roles showing it reach every row any reading
+  role does (an unrestricted range, or the same compiled range): nothing among the rows is hidden.
 
 ## Configuration
 

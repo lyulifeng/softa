@@ -570,6 +570,41 @@ class GrantPairFieldMaskTest {
     }
 
     @Test
+    @DisplayName("a sort or grouping on pay stays when the role showing pay reaches every row")
+    void aPartlyGrantedFieldKeepsItsSortWhenItsGranterReachesEveryRow() {
+        pi.setRoleGrants(List.of(
+                role(1, Set.of(VIEW), ScopeType.ALL, null, true),
+                role(2, Set.of(VIEW), ScopeType.MANAGED_DEPARTMENTS, null, false)));
+        io.softa.framework.orm.domain.FlexQuery query = new io.softa.framework.orm.domain.FlexQuery();
+        query.setOrders(io.softa.framework.orm.domain.Orders.ofDesc("basePay"));
+        query.setGroupBy(List.of("payGrade"));
+
+        as(() -> {
+            service.guardQuery("Employee", query);
+            return null;
+        });
+
+        assertThat(query.getOrders().getFields()).containsExactly("basePay");
+    }
+
+    @Test
+    @DisplayName("a sort on pay stays when the role showing pay reaches the same rows as the one hiding it")
+    void aPartlyGrantedFieldKeepsItsSortWhenTheRangesAreTheSame() {
+        pi.setRoleGrants(List.of(
+                role(1, Set.of(VIEW), ScopeType.MANAGED_DEPARTMENTS, null, true),
+                role(2, Set.of(VIEW), ScopeType.MANAGED_DEPARTMENTS, null, false)));
+        io.softa.framework.orm.domain.FlexQuery query = new io.softa.framework.orm.domain.FlexQuery();
+        query.setOrders(io.softa.framework.orm.domain.Orders.ofDesc("basePay"));
+
+        as(() -> {
+            service.guardQuery("Employee", query);
+            return null;
+        });
+
+        assertThat(query.getOrders().getFields()).containsExactly("basePay");
+    }
+
+    @Test
     @DisplayName("record access: a child's set shown on the form follows the record that owns the child")
     void anAttachedChildSetFollowsTheOwningRecord() {
         // Banking lives on EmpBankAccount and is shown on the employee form; R1 grants it.
