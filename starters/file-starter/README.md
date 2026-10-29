@@ -168,7 +168,7 @@ The `fieldName` in ImportTemplateField (or `importFieldDTOList` in dynamic impor
   - The custom handler still sees the whole file once, and `afterImportData` is called once with every layer's rows.
   - **To the custom handler such a field reads as empty** — the write fills it in later — so a rule that reads it would mistake a department whose parent is in the file for a root. While the handler runs, `InFileReferences.targetOf(row, field)` returns the row of the file that `row` names through `field` (or `null`); a handler whose rules read a self-referencing field must ask it first.
 
-**Which field to look up by.** `LookupKeys.of(relation)` (softa-orm) answers it for a ManyToOne whose related id is numeric, and serves it as `MetaFieldDTO.lookupFields` so an import screen can default a column naming the relation to `relation.<first>` instead of the bare id. Every field it returns identifies one row on its own; the first is recommended:
+**Which field to look up by.** `LookupKeys.of(relation)` (softa-orm) answers it for a ManyToOne onto any model but a code-as-id master (whose id is already the code a person writes), and serves it as `MetaFieldDTO.lookupFields` so an import screen can default a column naming the relation to `relation.<first>` instead of the bare id. Every field it returns identifies one row on its own; the first is recommended:
 1. the related model's first `displayName` field, when a unique index covers it alone (plus `tenantId` on a multi-tenant model) — a name a person writes and an export writes, so a filled-in or exported sheet matches as it is;
 2. otherwise its `businessKey`, when one component is left after those the relation's own `filters` pin;
 3. then any other field a unique index covers alone.

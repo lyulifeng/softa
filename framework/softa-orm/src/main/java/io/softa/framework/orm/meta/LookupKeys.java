@@ -11,6 +11,7 @@ import org.springframework.util.CollectionUtils;
 import io.softa.framework.orm.constant.ModelConstant;
 import io.softa.framework.orm.domain.Filters;
 import io.softa.framework.orm.enums.FieldType;
+import io.softa.framework.orm.enums.IdStrategy;
 
 /**
  * The fields of a related model that a to-one value can be looked up by — what an import column
@@ -29,9 +30,15 @@ import io.softa.framework.orm.enums.FieldType;
  * multi-tenant model. A name unique only under a parent (a department name per parent department) is
  * not: it names several rows across the tenant.
  *
- * <p>Empty when the relation's id is not numeric — a code-as-id master ({@code CountryRegion}) is
- * already looked up by its code — and when nothing identifies a row on its own, such as a composite
- * business key: there is no single column to recommend, and a guess would match more than one row.
+ * <p>Empty for a code-as-id master ({@code @Model(idStrategy = EXTERNAL_ID)}, e.g. {@code CountryRegion}):
+ * its id is the code a person writes, so the bare column already matches. A generated id — numeric or a
+ * distributed string — means nothing on a sheet and gets a recommendation either way. Empty too when
+ * nothing identifies a row on its own, such as a composite business key: there is no single column to
+ * recommend, and a guess would match more than one row.
+ *
+ * <p>Only a {@code MANY_TO_ONE} is answered. A {@code ONE_TO_ONE} is the row's own sub-record, imported
+ * through its fields rather than found by a key, and a to-many cell names several rows, which has no
+ * one field to default to.
  */
 public final class LookupKeys {
 
@@ -42,12 +49,14 @@ public final class LookupKeys {
     public static List<String> of(MetaField relation) {
         if (relation == null
                 || relation.getFieldType() != FieldType.MANY_TO_ONE
-                || relation.getRelatedFieldType() != FieldType.LONG
                 || StringUtils.isBlank(relation.getRelatedModel())
                 || !ModelManager.existModel(relation.getRelatedModel())) {
             return List.of();
         }
         MetaModel related = ModelManager.getModel(relation.getRelatedModel());
+        if (related.getIdStrategy() == IdStrategy.EXTERNAL_ID) {
+            return List.of();
+        }
         Set<String> alone = uniqueAlone(related);
         Set<String> keys = new LinkedHashSet<>();
         if (!CollectionUtils.isEmpty(related.getDisplayName()) && alone.contains(related.getDisplayName().getFirst())) {

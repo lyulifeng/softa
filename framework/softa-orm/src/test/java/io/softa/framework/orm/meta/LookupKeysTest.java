@@ -9,6 +9,7 @@ import org.mockito.MockedStatic;
 import org.springframework.test.util.ReflectionTestUtils;
 
 import io.softa.framework.orm.enums.FieldType;
+import io.softa.framework.orm.enums.IdStrategy;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.Mockito.mockStatic;
@@ -112,9 +113,19 @@ class LookupKeysTest {
     @Test
     void aCodeAsIdMasterIsLookedUpByItsIdAlready() {
         model("CountryRegion", List.of(), List.of("name"));
+        ReflectionTestUtils.setField(models.get("CountryRegion"), "idStrategy", IdStrategy.EXTERNAL_ID);
         uniqueIndex("CountryRegion", "name");
 
         assertThat(lookupKeys(relationTo("CountryRegion", FieldType.STRING))).isEmpty();
+    }
+
+    @Test
+    void aGeneratedStringIdIsNoCodeAndStillGetsARecommendation() {
+        model("FlowDesign", List.of("code"), List.of("name"));
+        ReflectionTestUtils.setField(models.get("FlowDesign"), "idStrategy", IdStrategy.DISTRIBUTED_STRING);
+        uniqueIndex("FlowDesign", "code");
+
+        assertThat(lookupKeys(relationTo("FlowDesign", FieldType.STRING))).containsExactly("code");
     }
 
     @Test
