@@ -71,7 +71,7 @@ class ImportWithheldColumnsTest {
         ImportTemplateDTO template = template(true);
         List<Map<String, Object>> rows = read(template, workbookOf(List.of("Full Name"), List.of(List.of("Ada"))));
 
-        importService.refuseWithheldValues(rows, template);
+        importService.refuseWithheldValues(rows, template, false);
 
         assertThat(rows).singleElement().satisfies(row -> {
             assertThat(row).containsEntry("fullName", "Ada");
@@ -85,7 +85,7 @@ class ImportWithheldColumnsTest {
         List<Map<String, Object>> rows = read(template, workbookOf(List.of("Full Name", "Method of Payment"),
                 List.of(List.of("Ada", "Cash"), List.of("Ben", ""))));
 
-        importService.refuseWithheldValues(rows, template);
+        importService.refuseWithheldValues(rows, template, false);
 
         assertThat(rows.get(0)).containsEntry(FAILED_REASON, "You do not have permission to set Method of Payment.")
                 .doesNotContainKey("empBankAccountId.methodOfPayment");
@@ -99,9 +99,23 @@ class ImportWithheldColumnsTest {
         Map<String, Object> row = new HashMap<>(Map.of("fullName", "Ada", "empBankAccountId.methodOfPayment", "Cash",
                 FAILED_REASON, "Earlier reason"));
 
-        importService.refuseWithheldValues(new ArrayList<>(List.of(row)), template);
+        importService.refuseWithheldValues(new ArrayList<>(List.of(row)), template, false);
 
         assertThat(row.get(FAILED_REASON)).isEqualTo("Earlier reason; You do not have permission to set Method of Payment.");
+    }
+
+    @Test
+    void aValidationReportsTheRowEvenWithoutSkipException() {
+        // Validation reports every row: the file does not stop at the first filled withheld column, as an
+        // import without skipException does — the row carries the reason and the rest are still checked.
+        ImportTemplateDTO template = template(false);
+        Map<String, Object> filled = new HashMap<>(Map.of("fullName", "Ada", "empBankAccountId.methodOfPayment", "Cash"));
+        Map<String, Object> empty = new HashMap<>(Map.of("fullName", "Ben"));
+
+        importService.refuseWithheldValues(new ArrayList<>(List.of(filled, empty)), template, true);
+
+        assertThat(filled).containsEntry(FAILED_REASON, "You do not have permission to set Method of Payment.");
+        assertThat(empty).doesNotContainKey(FAILED_REASON);
     }
 
     @Test
@@ -109,7 +123,7 @@ class ImportWithheldColumnsTest {
         ImportTemplateDTO template = template(false);
         Map<String, Object> row = new HashMap<>(Map.of("fullName", "Ada", "empBankAccountId.methodOfPayment", "Cash"));
 
-        assertThatThrownBy(() -> importService.refuseWithheldValues(new ArrayList<>(List.of(row)), template))
+        assertThatThrownBy(() -> importService.refuseWithheldValues(new ArrayList<>(List.of(row)), template, false))
                 .isInstanceOf(ValidationException.class)
                 .hasMessageContaining("Method of Payment");
     }

@@ -94,14 +94,23 @@ public class ImportFieldAccess {
         if (parts == null || parts.length == 0 || !ModelManager.existModel(modelName)) {
             return null;
         }
-        MetaField first = ModelManager.getModelField(modelName, parts[0]);
+        // Looked up leniently: a template column can outlive its field (renamed or removed), and such a
+        // column fails on its own when the file is imported. Refusing it here would take down every
+        // surface that lists the template's columns — the import dialog included — for every caller.
+        MetaField first = ModelManager.getModelFieldOrNull(modelName, parts[0]);
+        if (first == null) {
+            return null;
+        }
         if (parts.length == 1 || first.getFieldType() != FieldType.ONE_TO_ONE) {
             return first;
         }
         MetaField field = first;
         String model = modelName;
         for (int i = 0; i < parts.length; i++) {
-            field = ModelManager.getModelField(model, parts[i]);
+            field = ModelManager.getModelFieldOrNull(model, parts[i]);
+            if (field == null) {
+                return null;
+            }
             if (i < parts.length - 1) {
                 if (field.getFieldType() != FieldType.ONE_TO_ONE || StringUtils.isBlank(field.getRelatedModel())) {
                     return field;

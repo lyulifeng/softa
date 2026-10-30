@@ -64,7 +64,7 @@ class ImportFieldAccessTest {
         when(field.getFieldName()).thenReturn(name);
         when(field.getFieldType()).thenReturn(type);
         when(field.getRelatedModel()).thenReturn(related);
-        models.when(() -> ModelManager.getModelField(model, name)).thenReturn(field);
+        models.when(() -> ModelManager.getModelFieldOrNull(model, name)).thenReturn(field);
     }
 
     private void blocked(String model, AccessType type, String... fields) {
@@ -103,6 +103,18 @@ class ImportFieldAccessTest {
 
         assertThat(access.withheld("Employee", ImportRule.ONLY_CREATE, COLUMNS)).isEmpty();
         verify(permissions, never()).getUserBlockedModelFields(anyString(), eq(AccessType.UPDATE));
+    }
+
+    @Test
+    void aColumnWhoseFieldIsGoneIsLeftAloneRatherThanFailingTheTemplate() {
+        // A template column can outlive its field. Resolving it strictly threw for every caller and took
+        // the import dialog's template list down with it; the column fails on its own at import time.
+        blocked("Employee", AccessType.CREATE, "code");
+        blocked("Employee", AccessType.UPDATE, "code");
+
+        assertThat(access.withheld("Employee", ImportRule.CREATE_OR_UPDATE,
+                List.of("code", "uenRegistrationNo", "empBankAccountId.retired")))
+                .containsExactly("code");
     }
 
     @Test

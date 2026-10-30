@@ -319,7 +319,7 @@ public class ImportServiceImpl implements ImportService {
         long startNanos = System.nanoTime();
         RuntimeException importException = null;
         try {
-            ImportDataDTO importDataDTO = this.generateImportDataDTO(importTemplateDTO, inputStream);
+            ImportDataDTO importDataDTO = this.generateImportDataDTO(importTemplateDTO, inputStream, false);
             importRowPipeline.importData(importTemplateDTO, importDataDTO);
             updateImportStatistics(importHistory, importDataDTO);
             // Every import leaves a result file — every row in file order with its outcome — not only
@@ -367,7 +367,7 @@ public class ImportServiceImpl implements ImportService {
         long startNanos = System.nanoTime();
         RuntimeException validateException = null;
         try {
-            ImportDataDTO importDataDTO = this.generateImportDataDTO(importTemplateDTO, inputStream);
+            ImportDataDTO importDataDTO = this.generateImportDataDTO(importTemplateDTO, inputStream, true);
             importRowPipeline.validateData(importTemplateDTO, importDataDTO);
             int failedCount = importDataDTO.getFailedRows() != null ? importDataDTO.getFailedRows().size() : 0;
             int successCount = importDataDTO.getRows().size();
@@ -465,16 +465,18 @@ public class ImportServiceImpl implements ImportService {
      *
      * @param importTemplateDTO the importTemplateDTO object
      * @param inputStream the input stream of the uploaded file
+     * @param validating whether this is a validation run, which reports every row instead of stopping
      * @return the generated ImportDataDTO object
      */
-    private ImportDataDTO generateImportDataDTO(ImportTemplateDTO importTemplateDTO, InputStream inputStream) {
+    private ImportDataDTO generateImportDataDTO(ImportTemplateDTO importTemplateDTO, InputStream inputStream,
+                                                boolean validating) {
         ImportHeaderMatcher headerMatcher = ImportHeaderMatcher.of(importTemplateDTO.getImportFields());
         ImportHeaderMatcher withheldMatcher = CollectionUtils.isEmpty(importTemplateDTO.getWithheldFields())
                 ? null : ImportHeaderMatcher.of(importTemplateDTO.getWithheldFields());
         List<Map<String, Object>> allDataList = this.extractDataFromExcel(headerMatcher, withheldMatcher,
                 importTemplateDTO.getFileName(), inputStream);
         Assert.notEmpty(allDataList, "No data exists in the excel file `{0}`", importTemplateDTO.getFileName());
-        refuseWithheldValues(allDataList, importTemplateDTO);
+        refuseWithheldValues(allDataList, importTemplateDTO, validating);
         ImportDataDTO importDataDTO = new ImportDataDTO();
         importDataDTO.setRows(allDataList);
         importDataDTO.setEnv(importTemplateDTO.getEnv());
@@ -578,7 +580,7 @@ public class ImportServiceImpl implements ImportService {
      * column, so a value there is said rather than silently lost: the row fails, naming the columns,
      * and the rows that leave them empty import as they would from the caller's own template.
      */
-    void refuseWithheldValues(List<Map<String, Object>> rows, ImportTemplateDTO importTemplateDTO) {
+    void refuseWithheldValues(List<Map<String, Object>> rows, ImportTemplateDTO importTemplateDTO, boolean validating) {
         List<ImportFieldDTO> withheld = importTemplateDTO.getWithheldFields();
         if (CollectionUtils.isEmpty(withheld)) {
             return;
@@ -595,7 +597,9 @@ public class ImportServiceImpl implements ImportService {
                 continue;
             }
             String reason = I18n.get("You do not have permission to set {0}.", String.join(", ", filled));
-            if (!Boolean.TRUE.equals(importTemplateDTO.getSkipException())) {
+            // A validation reports every row, whatever the template says about stopping at the first:
+            // the pipeline forces that for its own checks, but this one runs before it.
+            if (!validating && !Boolean.TRUE.equals(importTemplateDTO.getSkipException())) {
                 throw new ValidationException(reason);
             }
             Object prior = row.get(FAILED_REASON);
