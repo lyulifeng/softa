@@ -46,7 +46,7 @@ import io.softa.starter.flow.service.support.FlowUserNames;
  * already authorized, as the caller's own or by the monitoring console's grant.
  *
  * <p>On the requester's own approvals waiting on their approvers it also says what the requester may do
- * now — withdraw (the flow's withdraw policy), urge (the urge interval) — from ONE state read per page; and
+ * now — withdraw (the flow's withdraw policy), urge (the flow's urge settings) — from ONE state read per page; and
  * on every record's approval whether the record still exists, from one id read per model on the page.
  */
 @Component
@@ -150,7 +150,7 @@ public class FlowInstanceSummaryComposer {
             FlowInstanceSummaryView view = own.get(state.getInstanceId());
             if (view != null) {
                 view.setWithdrawable(withdrawPolicyGuard.withdrawable(state, requesterId));
-                view.setUrge(urgeThrottle.status(state, now));
+                view.setUrge(urgeThrottle.status(state, requesterId, now));
             }
         }
     }

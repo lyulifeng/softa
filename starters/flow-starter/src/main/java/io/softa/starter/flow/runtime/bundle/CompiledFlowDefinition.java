@@ -13,6 +13,7 @@ import lombok.Builder;
 import lombok.Data;
 import lombok.NoArgsConstructor;
 
+import io.softa.starter.flow.design.FlowCcRule;
 import io.softa.starter.flow.design.FlowFormBinding;
 import io.softa.starter.flow.design.trigger.TriggerSource;
 import io.softa.starter.flow.enums.ApproverDedupStrategy;
@@ -56,8 +57,17 @@ public class CompiledFlowDefinition {
     @Schema(description = "Until when the initiator may withdraw an approval in progress; Never for any other flow")
     private WithdrawPolicy withdrawPolicy;
 
+    @Schema(description = "Whether the initiator may urge the approvers; null = on")
+    private Boolean urgeEnabled;
+
+    @Schema(description = "How often, in minutes, each step an approval waits on may be urged; null = 240")
+    private Integer urgeIntervalMinutes;
+
     @Schema(description = "Whether the approval's notices are also emailed; null = on")
     private Boolean emailNotification;
+
+    @Schema(description = "Who is copied in as the approval is submitted, approved or rejected")
+    private List<FlowCcRule> cc;
 
     @Schema(description = "Whether the flow executes synchronously within the triggering transaction")
     private Boolean sync;

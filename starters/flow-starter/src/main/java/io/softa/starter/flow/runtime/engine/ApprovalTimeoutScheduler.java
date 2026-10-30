@@ -1,12 +1,10 @@
 package io.softa.starter.flow.runtime.engine;
 
-import java.time.Duration;
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Optional;
 
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 
 import io.softa.starter.flow.enums.ApprovalTimeoutStrategy;
@@ -24,58 +22,39 @@ import io.softa.starter.flow.runtime.state.PendingApproval;
 import io.softa.starter.flow.runtime.store.FlowInstanceStore;
 
 /**
- * Scheduled service for handling approval task timeouts.
- * <p>
- * Periodically checks for pending approvals that have configured timeout,
- * sends reminders, and applies timeout strategies (auto-approve, auto-reject, escalate).
- * </p>
+ * Handles the approval steps past their deadline ({@code timeout.timeoutHours} on the approval node), by the
+ * node's timeout strategy: Remind reminds the approvers still to act at the deadline, then every
+ * {@code remindIntervalHours}, at most {@code maxRemindTimes} times (3 unless set) — with no interval, once;
+ * AutoApprove and AutoReject decide for them; Escalate hands the step to {@code escalateToUserId} with a new
+ * deadline. Nothing is sent before the deadline.
  */
 @Slf4j
 @Component
 public class ApprovalTimeoutScheduler {
 
+    /** The most reminders a Remind step gets when its node sets an interval but no most. */
+    static final int DEFAULT_MAX_REMINDERS = 3;
+
     private static final String SYSTEM_ACTOR = "__system__";
 
-    @Autowired
-    private FlowInstanceStore instanceStore;
+    private final FlowInstanceStore instanceStore;
+    private final FlowBundleRegistry bundleRegistry;
+    private final FlowRuntimeEngine runtimeEngine;
+    private final ApprovalNotificationService notificationService;
+    private final PendingApprovalFactory pendingApprovalFactory;
 
-    @Autowired
-    private FlowBundleRegistry bundleRegistry;
-
-    @Autowired
-    private FlowRuntimeEngine runtimeEngine;
-
-    @Autowired
-    private ApprovalNotificationService notificationService;
-
-    @Autowired
-    private PendingApprovalFactory pendingApprovalFactory;
-
-    /**
-     * Check for timeout reminders.
-     * Triggered externally via cron-starter (flow_approval_timeout_remind).
-     */
-    public void checkTimeoutReminders() {
-        List<FlowExecutionState> waitingStates = instanceStore.listByStatus(FlowExecutionStatus.WAITING);
-        if (waitingStates.isEmpty()) {
-            return;
-        }
-
-        LocalDateTime now = LocalDateTime.now();
-        for (FlowExecutionState state : waitingStates) {
-            for (PendingApproval pending : state.getPendingApprovals()) {
-                try {
-                    processReminder(state, pending, now);
-                } catch (Exception e) {
-                    log.error("Error processing timeout reminder for instance {}, node {}: {}",
-                            state.getInstanceId(), pending.getNodeId(), e.getMessage(), e);
-                }
-            }
-        }
+    public ApprovalTimeoutScheduler(FlowInstanceStore instanceStore, FlowBundleRegistry bundleRegistry,
+                                    FlowRuntimeEngine runtimeEngine, ApprovalNotificationService notificationService,
+                                    PendingApprovalFactory pendingApprovalFactory) {
+        this.instanceStore = instanceStore;
+        this.bundleRegistry = bundleRegistry;
+        this.runtimeEngine = runtimeEngine;
+        this.notificationService = notificationService;
+        this.pendingApprovalFactory = pendingApprovalFactory;
     }
 
     /**
-     * Handle timed-out tasks.
+     * Handle the steps past their deadline.
      * Triggered externally via cron-starter (flow_approval_timeout_handle).
      */
     public void handleTimedOutTasks() {
@@ -89,7 +68,7 @@ public class ApprovalTimeoutScheduler {
             for (PendingApproval pending : List.copyOf(state.getPendingApprovals())) {
                 if (pending.getDueTime() != null && pending.getDueTime().isBefore(now)) {
                     try {
-                        handleTimeout(state, pending);
+                        handleTimeout(state, pending, now);
                     } catch (Exception e) {
                         log.error("Error handling timeout for instance {}, node {}: {}",
                                 state.getInstanceId(), pending.getNodeId(), e.getMessage(), e);
@@ -100,75 +79,50 @@ public class ApprovalTimeoutScheduler {
     }
 
     /**
-     * Send a timeout reminder if conditions are met.
+     * Whether a Remind step past its deadline is reminded now: first at the deadline; then, with an interval, once
+     * per interval since the last reminder until the most ({@code maxRemindTimes}, 3 unless set) are sent; with no
+     * interval, never again.
      */
-    private void processReminder(FlowExecutionState state, PendingApproval pending, LocalDateTime now) {
-        if (pending.getDueTime() == null) {
-            return;
+    static boolean remindsNow(PendingApproval pending, ApprovalTimeoutConfig config, LocalDateTime now) {
+        int sent = pending.getRemindCount() == null ? 0 : pending.getRemindCount();
+        Integer interval = config == null ? null : config.getRemindIntervalHours();
+        if (interval == null || interval < 1) {
+            return sent == 0;
         }
-
-        ApprovalTimeoutConfig config = resolveTimeoutConfig(state, pending);
-        if (config == null || config.getRemindIntervalHours() == null || config.getRemindIntervalHours() <= 0) {
-            return;
-        }
-
-        int maxRemind = config.getMaxRemindTimes() != null ? config.getMaxRemindTimes() : 3;
-        int currentRemindCount = pending.getRemindCount() != null ? pending.getRemindCount() : 0;
-        if (currentRemindCount >= maxRemind) {
-            return;
-        }
-
-        long hoursUntilTimeout = Duration.between(now, pending.getDueTime()).toHours();
-        if (hoursUntilTimeout <= 0) {
-            return; // Already timed out — handled by handleTimedOutTasks
-        }
-
-        LocalDateTime lastRemind = pending.getLastRemindTime();
-        boolean shouldRemind;
-        if (lastRemind == null) {
-            shouldRemind = hoursUntilTimeout <= config.getRemindIntervalHours();
-        } else {
-            long hoursSinceLastRemind = Duration.between(lastRemind, now).toHours();
-            shouldRemind = hoursSinceLastRemind >= config.getRemindIntervalHours();
-        }
-
-        if (shouldRemind) {
-            int newCount = currentRemindCount + 1;
-            pending.setRemindCount(newCount);
-            pending.setLastRemindTime(now);
-            instanceStore.save(state);
-
-            notificationService.notify(new FlowNotificationEvent.TimeoutReminded(state, pending, newCount));
-            log.info("Sent timeout reminder for instance {}, node {}, remind count: {}",
-                    state.getInstanceId(), pending.getNodeId(), newCount);
-        }
+        int most = config.getMaxRemindTimes() == null ? DEFAULT_MAX_REMINDERS : config.getMaxRemindTimes();
+        LocalDateTime last = pending.getLastRemindTime();
+        return sent < most && (last == null || !now.isBefore(last.plusHours(interval)));
     }
 
     /**
-     * Handle a timed-out pending approval based on the configured strategy.
+     * Handle a pending approval past its deadline by the configured strategy.
      */
-    private void handleTimeout(FlowExecutionState state, PendingApproval pending) {
+    private void handleTimeout(FlowExecutionState state, PendingApproval pending, LocalDateTime now) {
         ApprovalTimeoutConfig config = resolveTimeoutConfig(state, pending);
         ApprovalTimeoutStrategy strategy = (config != null && config.getTimeoutStrategy() != null)
                 ? config.getTimeoutStrategy()
                 : ApprovalTimeoutStrategy.REMIND;
 
-        log.info("Handling timeout for instance {}, node {}, strategy={}",
-                state.getInstanceId(), pending.getNodeId(), strategy);
-
         switch (strategy) {
             case AUTO_APPROVE -> handleAutoApprove(state, pending);
             case AUTO_REJECT -> handleAutoReject(state, pending);
-            case ESCALATE -> handleEscalate(state, pending, config);
-            case REMIND -> {
-                // Just send another reminder
-                int newCount = (pending.getRemindCount() != null ? pending.getRemindCount() : 0) + 1;
-                pending.setRemindCount(newCount);
-                pending.setLastRemindTime(LocalDateTime.now());
-                instanceStore.save(state);
-                notificationService.notify(new FlowNotificationEvent.TimeoutReminded(state, pending, newCount));
-            }
+            case ESCALATE -> handleEscalate(state, pending, config, now);
+            case REMIND -> remindOverdue(state, pending, config, now);
         }
+    }
+
+    /** The Remind strategy: the approvers still to act are reminded when {@link #remindsNow} says so. */
+    private void remindOverdue(FlowExecutionState state, PendingApproval pending, ApprovalTimeoutConfig config,
+                               LocalDateTime now) {
+        if (!remindsNow(pending, config, now)) {
+            return;
+        }
+        int count = (pending.getRemindCount() == null ? 0 : pending.getRemindCount()) + 1;
+        pending.setRemindCount(count);
+        pending.setLastRemindTime(now);
+        instanceStore.save(state);
+        notificationService.notify(new FlowNotificationEvent.TimeoutReminded(state, pending, count));
+        log.info("Sent overdue reminder {} for instance {}, node {}", count, state.getInstanceId(), pending.getNodeId());
     }
 
     private void handleAutoApprove(FlowExecutionState state, PendingApproval pending) {
@@ -212,12 +166,13 @@ public class ApprovalTimeoutScheduler {
         }
     }
 
-    private void handleEscalate(FlowExecutionState state, PendingApproval pending, ApprovalTimeoutConfig config) {
+    private void handleEscalate(FlowExecutionState state, PendingApproval pending, ApprovalTimeoutConfig config,
+                                LocalDateTime now) {
         String escalateTo = config != null ? config.getEscalateToUserId() : null;
         if (escalateTo == null || escalateTo.isBlank()) {
             log.warn("No escalation user configured for instance {}, node {}. Falling back to REMIND.",
                     state.getInstanceId(), pending.getNodeId());
-            handleTimeout(state, pending);
+            remindOverdue(state, pending, config, now);
             return;
         }
 
@@ -233,7 +188,7 @@ public class ApprovalTimeoutScheduler {
         pending.setRejectedActors(List.of());
         // Reset due time to give the escalation user time
         if (config.getTimeoutHours() != null && config.getTimeoutHours() > 0) {
-            pending.setDueTime(LocalDateTime.now().plusHours(config.getTimeoutHours()));
+            pending.setDueTime(now.plusHours(config.getTimeoutHours()));
         }
         pending.setRemindCount(0);
         pending.setLastRemindTime(null);
@@ -260,6 +215,3 @@ public class ApprovalTimeoutScheduler {
         return pendingApprovalFactory.resolveTimeoutConfig(node);
     }
 }
-
-
-

@@ -168,12 +168,6 @@ public class InProcessFlowClient implements FlowClient {
     }
 
     @Override
-    public FlowExecutionState batchCc(FlowBatchCcRequest r) {
-        r.setActorId(currentUserId());
-        return engine.batchCc(r);
-    }
-
-    @Override
     public FlowExecutionState readCc(FlowCcReadRequest r) {
         r.setActorId(currentUserId());
         return engine.readCc(r);

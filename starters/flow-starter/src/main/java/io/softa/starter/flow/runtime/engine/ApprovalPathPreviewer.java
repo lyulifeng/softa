@@ -5,6 +5,7 @@ import org.springframework.stereotype.Component;
 import org.springframework.util.StringUtils;
 
 import io.softa.framework.orm.compute.ComputeUtils;
+import io.softa.framework.orm.domain.Filters;
 import io.softa.starter.flow.dto.FlowApprovalPreview;
 import io.softa.starter.flow.dto.FlowApprovalPreview.AutoApproval;
 import io.softa.starter.flow.dto.FlowApprovalPreview.AutoApprovalReason;
@@ -17,6 +18,7 @@ import io.softa.starter.flow.enums.FlowNodeType;
 import io.softa.starter.flow.runtime.api.FlowStartRequest;
 import io.softa.starter.flow.runtime.bundle.CompiledFlowDefinition;
 import io.softa.starter.flow.runtime.bundle.CompiledFlowNode;
+import io.softa.starter.flow.runtime.bundle.CompiledFlowTransition;
 import io.softa.starter.flow.runtime.nodeconfig.ScriptNodeConfig;
 import io.softa.starter.flow.runtime.nodeconfig.SubflowNodeConfig;
 import io.softa.starter.flow.runtime.nodeconfig.TaskNodeConfig;
@@ -221,11 +223,14 @@ public class ApprovalPathPreviewer {
         }
 
         /** A route condition, decided over the start variables unless it reads one that is not known. */
-        private boolean decide(String expression) {
-            if (anyVariableUnknown || ComputeUtils.getVariables(expression).stream().anyMatch(unknownVariables::contains)) {
+        private boolean decide(CompiledFlowTransition transition) {
+            Collection<String> reads = Filters.isEmpty(transition.getCondition())
+                    ? ComputeUtils.getVariables(transition.getConditionExpression())
+                    : transition.getCondition().extractFields();
+            if (anyVariableUnknown || reads.stream().anyMatch(unknownVariables::contains)) {
                 throw new UndecidedRoute();
             }
-            return ComputeUtils.executeBoolean(expression, new LinkedHashMap<>(state.getVariables()));
+            return FlowGatewayRouter.holds(definition, transition, state.getVariables());
         }
 
         /** A node the preview does not run: the variables it writes are unknown from here on. */

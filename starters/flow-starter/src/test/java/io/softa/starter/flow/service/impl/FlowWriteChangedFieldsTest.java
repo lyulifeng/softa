@@ -11,7 +11,6 @@ import io.softa.framework.orm.domain.Filters;
 import io.softa.starter.flow.design.DesignFlowDefinition;
 import io.softa.starter.flow.dto.FlowDesignSaveRequest;
 import io.softa.starter.flow.entity.FlowBundle;
-import io.softa.starter.flow.entity.FlowCcConfig;
 import io.softa.starter.flow.entity.FlowDelegation;
 import io.softa.starter.flow.entity.FlowDesign;
 import io.softa.starter.flow.enums.FlowScenario;
@@ -23,7 +22,7 @@ import static org.mockito.ArgumentMatchers.anyBoolean;
 import static org.mockito.Mockito.*;
 
 /**
- * A design, CC configuration, delegation or bundle is read before it is changed. Each change writes only
+ * A design, delegation or bundle is read before it is changed. Each change writes only
  * what it sets, so a read that comes back with fields cut — null where the row has a value — never writes
  * those nulls to the database. The fixtures read back with everything but a name or owner cut.
  */
@@ -99,26 +98,6 @@ class FlowWriteChangedFieldsTest {
         assertNull(patch.getPublishedRevision());
         assertNull(patch.getPublishedChecksum());
         assertNull(patch.getScenario());
-    }
-
-    @Test
-    void deactivatingACcConfigurationWritesOnlyTheFlag() {
-        FlowCcConfigServiceImpl service = spy(new FlowCcConfigServiceImpl());
-        FlowCcConfig cut = new FlowCcConfig();
-        cut.setId(5L);
-        cut.setCcName("Notify HR");
-        doReturn(Optional.of(cut)).when(service).getById(5L);
-        doReturn(true).when(service).updateOne(any(FlowCcConfig.class));
-
-        service.deactivateConfig(5L);
-
-        ArgumentCaptor<FlowCcConfig> patch = ArgumentCaptor.forClass(FlowCcConfig.class);
-        verify(service).updateOne(patch.capture());
-        verify(service, never()).updateOne(any(FlowCcConfig.class), anyBoolean());
-        assertEquals(5L, patch.getValue().getId());
-        assertEquals(Boolean.FALSE, patch.getValue().getActive());
-        assertNull(patch.getValue().getFlowId());
-        assertNull(patch.getValue().getRecipientConfig());
     }
 
     /** A delegation read with every field but id and the owner the cancel check reads cut. */

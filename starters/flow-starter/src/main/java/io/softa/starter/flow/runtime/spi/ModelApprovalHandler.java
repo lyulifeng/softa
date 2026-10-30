@@ -66,10 +66,13 @@ public interface ModelApprovalHandler<T extends ApprovalModel> {
     default void validateCancel(T record) {}
 
     /**
-     * The approval instance's title and the routing variables its flow decides on — amounts, durations,
-     * types, department, company — worked out from the record alone. Called right after {@link #validate},
-     * on every submission and every preview, and again after an approver edits the record, whose variables
-     * then replace the ones the flow started with: change nothing here.
+     * The approval instance's title, and the routing variables its flow decides on beyond the record's own
+     * fields — values worked out from the record alone, such as an amount in the company's currency. The
+     * framework already routes every field of the record a route can compare (its own columns of a plain
+     * type, dates as ISO text, under the field's name); a variable here of the same name replaces it.
+     * Called right after {@link #validate}, on every submission and every preview, and again after an
+     * approver edits the record, whose variables then replace the ones the flow started with: change
+     * nothing here.
      *
      * @param record the record to submit
      * @return the title and the variables

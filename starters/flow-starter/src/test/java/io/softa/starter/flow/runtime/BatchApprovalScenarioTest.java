@@ -101,18 +101,16 @@ class BatchApprovalScenarioTest {
     }
 
     @Test
-    void aHandlingStepOrOneWithFieldsToFillInIsNeverActedOnInABatch() {
-        publishService.publish("handling", flow(Map.of("approvers", List.of(APPROVER), "handling", true)));
+    void aStepWithFieldsToFillInIsNeverActedOnInABatch() {
         publishService.publish("required", flow(Map.of("approvers", List.of(APPROVER),
                 "formPermissions", Map.of("decision", "Required"))));
-        String handling = start("handling");
         String required = start("required");
 
         FlowBatchActionResult result = executor.execute(BatchApprovalExecutor.Action.REJECT,
-                request("Not this time", handling, required), APPROVER);
+                request("Not this time", required), APPROVER);
 
-        assertEquals(2, result.skipped());
-        assertEquals(FlowExecutionStatus.WAITING, engine.getInstance(handling).orElseThrow().getStatus());
+        assertEquals(1, result.skipped());
+        assertEquals("This step has fields to fill in: open it to act on it.", result.items().getFirst().message());
         assertEquals(FlowExecutionStatus.WAITING, engine.getInstance(required).orElseThrow().getStatus());
     }
 

@@ -19,10 +19,11 @@ import io.softa.starter.flow.runtime.spi.FlowNotificationEvent;
 import io.softa.starter.flow.runtime.state.*;
 
 /**
- * Handles urge (催办) actions — reminds the approvers an approval waits on. Its initiator urges it, and an
- * administrator may, authorized by the monitoring console. Either way a step is urged at most once per
- * interval ({@link UrgeThrottle}): each step urged gets its own {@code URGE} entry in the approval history,
- * which the interval is measured from, and steps still inside it are left out.
+ * Handles urge (催办) actions — reminds the approvers an approval waits on. Its initiator urges it, on a flow
+ * that lets them ({@code urgeEnabled}), and an administrator may, authorized by the monitoring console. Either
+ * way a step is urged at most once per the flow's interval ({@link UrgeThrottle}): each step urged gets its own
+ * {@code URGE} entry in the approval history, which the interval is measured from, and steps still inside it
+ * are left out.
  */
 @Component
 public class UrgeActionHandler implements FlowActionHandler<FlowUrgeRequest> {
@@ -59,8 +60,13 @@ public class UrgeActionHandler implements FlowActionHandler<FlowUrgeRequest> {
 
         FlowExecutionState state = contextService.requireState(request.getInstanceId());
         contextService.requireWaitingApproval(state, request.getInstanceId(), "urged");
+        CompiledFlowDefinition definition = contextService.resolveDefinition(state.getBundleId());
         if (!administrator && !request.getActorId().equals(state.getInitiatorId())) {
             throw new FlowAuthorizationException("Only the initiator can urge the approvers of flow instance: "
+                    + request.getInstanceId());
+        }
+        if (!administrator && !UrgeThrottle.initiatorMayUrge(definition)) {
+            throw new FlowActionValidationException("Flow instance does not allow its initiator to urge the approvers: "
                     + request.getInstanceId());
         }
 
@@ -78,7 +84,6 @@ public class UrgeActionHandler implements FlowActionHandler<FlowUrgeRequest> {
                 ? request.getMessage()
                 : "Please process as soon as possible";
 
-        CompiledFlowDefinition definition = contextService.resolveDefinition(state.getBundleId());
         List<String> urgedActorIds = new ArrayList<>();
         for (PendingApproval step : steps) {
             auditService.appendApprovalAudit(state, auditService.baseEntry(definition,

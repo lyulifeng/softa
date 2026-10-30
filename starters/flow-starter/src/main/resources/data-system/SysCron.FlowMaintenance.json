@@ -1,16 +1,6 @@
 {
   "SysCron": [
     {
-      "id": "flow_approval_timeout_remind",
-      "name": "flow_approval_timeout_remind",
-      "cronExpression": "0 */5 * * * ?",
-      "cronSemantic": "Every 5 minutes",
-      "limitExecution": false,
-      "tenantJobMode": "CrossTenant",
-      "active": false,
-      "description": "Send approval timeout reminder notifications"
-    },
-    {
       "id": "flow_approval_timeout_handle",
       "name": "flow_approval_timeout_handle",
       "cronExpression": "0 */10 * * * ?",
@@ -18,7 +8,7 @@
       "limitExecution": false,
       "tenantJobMode": "CrossTenant",
       "active": false,
-      "description": "Handle timed-out approval tasks (auto-approve/reject/escalate)"
+      "description": "Handle approval steps past their deadline (remind/auto-approve/auto-reject/escalate)"
     },
     {
       "id": "flow_delegation_expiry",

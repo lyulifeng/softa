@@ -16,6 +16,7 @@ import io.softa.framework.orm.utils.BeanTool;
 import io.softa.framework.orm.utils.IdUtils;
 import io.softa.starter.flow.entity.ApprovalModel;
 import io.softa.starter.flow.runtime.bundle.CompiledFlowNode;
+import io.softa.starter.flow.runtime.context.RecordVariables;
 import io.softa.starter.flow.runtime.exception.FlowActionValidationException;
 import io.softa.starter.flow.runtime.spi.ModelApprovalHandler;
 import io.softa.starter.flow.runtime.state.FlowExecutionState;
@@ -87,11 +88,14 @@ public class ApprovalFormWriteService {
                 .orElse(Map.of());
     }
 
-    /** The record as the edits left it, through its handler: the variables its flow now routes on. */
+    /** The record as the edits left it, and its handler's on top: the variables its flow now routes on. */
     private <T extends ApprovalModel> void refreshVariables(ModelApprovalHandler<T> handler, FlowExecutionState state) {
         Serializable id = IdUtils.formatId(state.getModelName(), state.getRowId());
         ContextUtils.withoutPermissionChecks(() -> modelService.getById(state.getModelName(), id)).ifPresent(row -> {
             Map<String, Object> variables = new LinkedHashMap<>(state.getVariables() == null ? Map.of() : state.getVariables());
+            // A field the edits cleared no longer routes on its old value.
+            RecordVariables.routedFields(state.getModelName()).forEach(field -> variables.remove(field.getFieldName()));
+            variables.putAll(RecordVariables.of(state.getModelName(), row));
             variables.putAll(handler.submission(BeanTool.mapToObject(row, handler.modelClass())).variables());
             state.setVariables(variables);
         });

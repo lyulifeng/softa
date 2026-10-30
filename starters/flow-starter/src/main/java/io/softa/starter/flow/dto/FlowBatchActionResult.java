@@ -16,7 +16,7 @@ public record FlowBatchActionResult(
         int succeeded,
 
         @Schema(description = "Tasks left as they were because the action does not apply to them — a step that allows "
-                + "no return, a handling step, a step with fields to fill in")
+                + "no return, a step with fields to fill in")
         int skipped,
 
         @Schema(description = "Tasks the action was refused on")

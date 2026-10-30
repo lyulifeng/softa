@@ -140,7 +140,7 @@ class FlowInstanceSummaryComposerTest {
                 .thenReturn(List.of(state));
         when(withdrawPolicyGuard.withdrawable(state, "u-1")).thenReturn(true);
         FlowUrgeStatus urged = new FlowUrgeStatus(false, LocalDateTime.of(2026, 10, 29, 18, 0));
-        when(urgeThrottle.status(eq(state), any())).thenReturn(urged);
+        when(urgeThrottle.status(eq(state), eq("u-1"), any())).thenReturn(urged);
 
         List<FlowInstanceSummaryView> views = composer.summarize(List.of(own, someoneElses, ended), "u-1");
 

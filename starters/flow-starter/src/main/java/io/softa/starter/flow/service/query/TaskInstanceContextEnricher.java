@@ -36,9 +36,9 @@ import io.softa.starter.flow.service.support.FlowUserNames;
  * data permissions: the views were already authorized, as the caller's own tasks or by the
  * access guard.
  *
- * <p>Each view also carries what its step's configuration says about acting on it — a handling
- * step, whether it may be returned, whether it may go in a batch — read from the revision the
- * instance runs on (one bundle lookup per distinct revision on the page), never from the record.
+ * <p>Each view also carries what its step's configuration says about acting on it — whether it may
+ * be returned, whether it may go in a batch — read from the revision the instance runs on (one bundle
+ * lookup per distinct revision on the page), never from the record.
  */
 @Component
 public class TaskInstanceContextEnricher {
@@ -112,21 +112,19 @@ public class TaskInstanceContextEnricher {
     }
 
     /**
-     * A handling step and a return-enabled one, as the node declares them; batchable only while the
-     * task is open to its approver (pending, its add-sign prerequisite met, the instance waiting), the
-     * step is not a handling step and none of its fields is required — a batch fills in nothing.
+     * A return-enabled step, as the node declares it; batchable only while the task is open to its approver
+     * (pending, its add-sign prerequisite met, the instance waiting) and none of the step's fields is required
+     * — a batch fills in nothing.
      */
     private static void applyStepConfig(FlowApprovalTaskView view, CompiledFlowNode node) {
         if (!(node.getParsedConfig() instanceof ApprovalNodeConfig cfg)) {
             return;
         }
-        boolean handling = Boolean.TRUE.equals(cfg.getHandling());
-        view.setHandling(handling);
         view.setReturnAllowed(Boolean.TRUE.equals(cfg.getReturnEnabled()));
         boolean open = view.getStatus() == FlowApprovalTaskStatus.PENDING
                 && view.getTaskType() == FlowApprovalTaskType.APPROVAL
                 && !Boolean.TRUE.equals(view.getBlocked())
                 && view.getInstanceStatus() == FlowExecutionStatus.WAITING;
-        view.setBatchable(open && !handling && FormPermissionService.requiredFields(node).isEmpty());
+        view.setBatchable(open && FormPermissionService.requiredFields(node).isEmpty());
     }
 }

@@ -6,10 +6,11 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Objects;
 
-import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 
 import io.softa.starter.flow.dto.FlowUrgeStatus;
+import io.softa.starter.flow.runtime.bundle.CompiledFlowDefinition;
+import io.softa.starter.flow.runtime.bundle.FlowBundleRegistry;
 import io.softa.starter.flow.runtime.state.ApprovalActionAuditEntry;
 import io.softa.starter.flow.runtime.state.ApprovalActionType;
 import io.softa.starter.flow.runtime.state.FlowExecutionState;
@@ -17,30 +18,45 @@ import io.softa.starter.flow.runtime.state.FlowExecutionStatus;
 import io.softa.starter.flow.runtime.state.PendingApproval;
 
 /**
- * How often the steps an approval waits on may be urged: a step urged — by the initiator or by an
- * administrator — is not urged again until {@code flow.approval.urge-interval-minutes} (default 240) have
- * passed. The interval runs per step and per pass through it: it is measured from the step's last
- * {@code URGE} entry in the approval history on the same node and cycle, so a step reached again starts
- * afresh.
+ * Who may urge the steps an approval waits on, and how often, by its flow's settings. The initiator may unless
+ * the flow turns that off ({@code urgeEnabled}, on when unset); an administrator may either way. A step urged —
+ * by the initiator or by an administrator — is not urged again until the flow's {@code urgeIntervalMinutes}
+ * (240 when unset) have passed. The interval runs per step and per pass through it: it is measured from the
+ * step's last {@code URGE} entry in the approval history on the same node and cycle, so a step reached again
+ * starts afresh.
  */
 @Component
 public class UrgeThrottle {
 
+    /** The interval of a flow that sets none. */
+    public static final int DEFAULT_INTERVAL_MINUTES = 240;
+
+    private final FlowBundleRegistry bundleRegistry;
+
     private final ApprovalAuditReader auditReader;
 
-    private final Duration interval;
-
-    public UrgeThrottle(ApprovalAuditReader auditReader,
-                        @Value("${flow.approval.urge-interval-minutes:240}") long intervalMinutes) {
+    public UrgeThrottle(FlowBundleRegistry bundleRegistry, ApprovalAuditReader auditReader) {
+        this.bundleRegistry = bundleRegistry;
         this.auditReader = auditReader;
-        this.interval = Duration.ofMinutes(intervalMinutes);
+    }
+
+    /** Whether the flow lets the initiator urge: on unless it turned that off. */
+    public static boolean initiatorMayUrge(CompiledFlowDefinition definition) {
+        return definition == null || !Boolean.FALSE.equals(definition.getUrgeEnabled());
+    }
+
+    /** How long after a step is urged it may be urged again: the flow's interval, else the default. */
+    public static Duration intervalOf(CompiledFlowDefinition definition) {
+        Integer minutes = definition == null ? null : definition.getUrgeIntervalMinutes();
+        return Duration.ofMinutes(minutes == null || minutes < 1 ? DEFAULT_INTERVAL_MINUTES : minutes);
     }
 
     /** The steps that may be urged now: they wait on approvers still to act, and none was urged within the interval. */
     public List<PendingApproval> urgeable(FlowExecutionState state, LocalDateTime now) {
+        Duration interval = intervalOf(definitionOf(state));
         List<ApprovalActionAuditEntry> urges = urges(state);
         return waitingSteps(state).stream()
-                .filter(step -> mayUrge(lastUrge(urges, step), now))
+                .filter(step -> mayUrge(lastUrge(urges, step), interval, now))
                 .toList();
     }
 
@@ -53,11 +69,12 @@ public class UrgeThrottle {
         if (state == null || !FlowExecutionStatus.WAITING.equals(state.getStatus())) {
             return new FlowUrgeStatus(false, null);
         }
+        Duration interval = intervalOf(definitionOf(state));
         List<ApprovalActionAuditEntry> urges = urges(state);
         LocalDateTime next = null;
         for (PendingApproval step : waitingSteps(state)) {
             LocalDateTime last = lastUrge(urges, step);
-            if (mayUrge(last, now)) {
+            if (mayUrge(last, interval, now)) {
                 return new FlowUrgeStatus(true, null);
             }
             LocalDateTime again = last.plus(interval);
@@ -66,6 +83,18 @@ public class UrgeThrottle {
             }
         }
         return new FlowUrgeStatus(false, next);
+    }
+
+    /**
+     * As {@link #status(FlowExecutionState, LocalDateTime)}, for {@code requesterId}: the initiator of a flow that
+     * does not let its initiator urge may not urge the approval, now or later.
+     */
+    public FlowUrgeStatus status(FlowExecutionState state, String requesterId, LocalDateTime now) {
+        if (state != null && requesterId != null && requesterId.equals(state.getInitiatorId())
+                && !initiatorMayUrge(definitionOf(state))) {
+            return new FlowUrgeStatus(false, null);
+        }
+        return status(state, now);
     }
 
     /** The approvers of a step still to act: asked, and neither approved nor rejected yet. */
@@ -83,7 +112,11 @@ public class UrgeThrottle {
         return actors;
     }
 
-    private boolean mayUrge(LocalDateTime lastUrge, LocalDateTime now) {
+    private CompiledFlowDefinition definitionOf(FlowExecutionState state) {
+        return state.getBundleId() == null ? null : bundleRegistry.getByBundleId(state.getBundleId()).orElse(null);
+    }
+
+    private static boolean mayUrge(LocalDateTime lastUrge, Duration interval, LocalDateTime now) {
         return lastUrge == null || !now.isBefore(lastUrge.plus(interval));
     }
 

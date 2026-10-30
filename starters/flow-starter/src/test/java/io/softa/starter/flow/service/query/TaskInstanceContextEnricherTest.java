@@ -119,33 +119,28 @@ class TaskInstanceContextEnricherTest {
         FlowInstance instance = instance("i1", "Confirmation · Bob", "EmpConfirmationRequest", "row-1");
         instance.setBundleId(9L);
         CompiledFlowNode plain = approvalNode("plain", ApprovalNodeConfig.builder().returnEnabled(true).build());
-        CompiledFlowNode handling = approvalNode("handling", ApprovalNodeConfig.builder().handling(true).build());
         CompiledFlowNode required = approvalNode("required", ApprovalNodeConfig.builder()
                 .formPermissions(Map.of("decision", FormFieldPermission.REQUIRED)).build());
         CompiledFlowNode editable = approvalNode("editable", ApprovalNodeConfig.builder()
                 .formPermissions(Map.of("comment", FormFieldPermission.EDITABLE)).build());
         CompiledFlowDefinition definition = CompiledFlowDefinition.builder()
-                .nodeIndex(Map.of("plain", plain, "handling", handling, "required", required, "editable", editable))
+                .nodeIndex(Map.of("plain", plain, "required", required, "editable", editable))
                 .build();
         when(instanceService.findByInstanceIds(argThat(ids -> ids.contains("i1")))).thenReturn(List.of(instance));
         when(bundleRegistry.getByBundleId(9L)).thenReturn(Optional.of(definition));
 
         FlowApprovalTaskView plainTask = pendingTask("i1", "plain");
-        FlowApprovalTaskView handlingTask = pendingTask("i1", "handling");
         FlowApprovalTaskView requiredTask = pendingTask("i1", "required");
         FlowApprovalTaskView editableTask = pendingTask("i1", "editable");
         FlowApprovalTaskView blockedTask = pendingTask("i1", "plain");
         blockedTask.setBlocked(true);
         FlowApprovalTaskView doneTask = pendingTask("i1", "plain");
         doneTask.setStatus(FlowApprovalTaskStatus.APPROVED);
-        enricher.enrich(List.of(plainTask, handlingTask, requiredTask, editableTask, blockedTask, doneTask));
+        enricher.enrich(List.of(plainTask, requiredTask, editableTask, blockedTask, doneTask));
 
         assertTrue(plainTask.getBatchable());
         assertTrue(plainTask.getReturnAllowed());
-        assertFalse(plainTask.getHandling());
-        assertTrue(handlingTask.getHandling());
-        assertFalse(handlingTask.getBatchable(), "a handling step is submitted one by one");
-        assertFalse(handlingTask.getReturnAllowed());
+        assertFalse(requiredTask.getReturnAllowed());
         assertFalse(requiredTask.getBatchable(), "a batch cannot fill in a required field");
         assertTrue(editableTask.getBatchable(), "an editable field is left as it is");
         assertFalse(blockedTask.getBatchable(), "an add-sign prerequisite comes first");
