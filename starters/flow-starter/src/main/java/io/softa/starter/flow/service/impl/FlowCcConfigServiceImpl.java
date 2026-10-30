@@ -46,8 +46,8 @@ public class FlowCcConfigServiceImpl extends EntityServiceImpl<FlowCcConfig, Lon
 
     @Override
     public void deactivateConfig(Long configId) {
-        // Only the flag: the configuration read may be cut to its label, and written back whole it would clear
-        // the recipients, condition and template the caller never saw.
+        // Only the flag: written back whole, a configuration read with any field cut would clear that field —
+        // the recipients, condition or template.
         this.getById(configId).ifPresent(c -> {
             FlowCcConfig patch = new FlowCcConfig();
             patch.setId(c.getId());

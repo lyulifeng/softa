@@ -23,16 +23,16 @@ import static org.mockito.ArgumentMatchers.anyBoolean;
 import static org.mockito.Mockito.*;
 
 /**
- * A design, CC configuration, delegation or bundle is read before it is changed, and the read may come back cut — a caller
- * reaching the model only by reference reads its label, every other field null. Each change writes only
- * what it sets, so those nulls never reach the database.
+ * A design, CC configuration, delegation or bundle is read before it is changed. Each change writes only
+ * what it sets, so a read that comes back with fields cut — null where the row has a value — never writes
+ * those nulls to the database. The fixtures read back with everything but a name or owner cut.
  */
 class FlowWriteChangedFieldsTest {
 
     private static final String FLOW = "flow-1";
 
-    /** The label of a published design: id and name, every other field cut. */
-    private static FlowDesign labelOnlyDesign() {
+    /** A published design read with every field but id and name cut. */
+    private static FlowDesign cutDesign() {
         FlowDesign design = new FlowDesign();
         design.setId(FLOW);
         design.setFlowName("Leave approval");
@@ -41,7 +41,7 @@ class FlowWriteChangedFieldsTest {
 
     private static FlowDesignServiceImpl designService() {
         FlowDesignServiceImpl service = spy(new FlowDesignServiceImpl());
-        doReturn(Optional.of(labelOnlyDesign())).when(service).getById(FLOW);
+        doReturn(Optional.of(cutDesign())).when(service).getById(FLOW);
         doReturn(true).when(service).updateOne(any(FlowDesign.class));
         return service;
     }
@@ -104,10 +104,10 @@ class FlowWriteChangedFieldsTest {
     @Test
     void deactivatingACcConfigurationWritesOnlyTheFlag() {
         FlowCcConfigServiceImpl service = spy(new FlowCcConfigServiceImpl());
-        FlowCcConfig label = new FlowCcConfig();
-        label.setId(5L);
-        label.setCcName("Notify HR");
-        doReturn(Optional.of(label)).when(service).getById(5L);
+        FlowCcConfig cut = new FlowCcConfig();
+        cut.setId(5L);
+        cut.setCcName("Notify HR");
+        doReturn(Optional.of(cut)).when(service).getById(5L);
         doReturn(true).when(service).updateOne(any(FlowCcConfig.class));
 
         service.deactivateConfig(5L);
@@ -121,13 +121,13 @@ class FlowWriteChangedFieldsTest {
         assertNull(patch.getValue().getRecipientConfig());
     }
 
-    /** The label of a delegation: id and the owner the cancel check reads, every other field cut. */
+    /** A delegation read with every field but id and the owner the cancel check reads cut. */
     private static FlowDelegationServiceImpl delegationService() {
-        FlowDelegation label = new FlowDelegation();
-        label.setId(9L);
-        label.setDelegatorId("emp-1");
+        FlowDelegation cut = new FlowDelegation();
+        cut.setId(9L);
+        cut.setDelegatorId("emp-1");
         FlowDelegationServiceImpl service = spy(new FlowDelegationServiceImpl());
-        doReturn(Optional.of(label)).when(service).getById(9L);
+        doReturn(Optional.of(cut)).when(service).getById(9L);
         doReturn(true).when(service).updateOne(any(FlowDelegation.class));
         return service;
     }

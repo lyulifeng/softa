@@ -137,8 +137,8 @@ public class FlowBundleServiceImpl extends EntityServiceImpl<FlowBundle, Long>
     }
 
     /**
-     * Only the flag: a bundle read here may come back cut to its label, and written back whole it
-     * would clear the compiled definition the reader never saw.
+     * Only the flag: written back whole, a bundle read with any field cut would clear that field — the
+     * compiled definition among them.
      */
     private void writeActive(Long bundleId, boolean active) {
         FlowBundle patch = new FlowBundle();

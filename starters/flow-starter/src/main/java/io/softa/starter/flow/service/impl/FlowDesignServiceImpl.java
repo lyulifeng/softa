@@ -134,9 +134,8 @@ public class FlowDesignServiceImpl extends EntityServiceImpl<FlowDesign, String>
     }
 
     /**
-     * An update carrying only the fields a method sets. The design read before it may come back cut — a caller
-     * reaching designs only by reference reads their label — and written back whole, with its nulls, it would
-     * clear what the caller never saw: the published revision, the checksum, the document itself.
+     * An update carrying only the fields a method sets. Written back whole, with its nulls, a design read with
+     * any field cut would clear that field: the published revision, the checksum, the document itself.
      */
     private static FlowDesign patchOf(String id) {
         FlowDesign patch = new FlowDesign();

@@ -114,9 +114,8 @@ public class FlowDelegationServiceImpl extends EntityServiceImpl<FlowDelegation,
     // --- private helpers ---
 
     /**
-     * A delegation read before it is changed may come back cut to its label; written back whole it
-     * would clear the delegate, scope and dates the reader never saw. Each change writes only the id
-     * and the fields it sets.
+     * Written back whole, a delegation read with any field cut would clear that field — the delegate,
+     * scope or dates. Each change writes only the id and the fields it sets.
      */
     private static FlowDelegation patchOf(FlowDelegation delegation) {
         FlowDelegation patch = new FlowDelegation();
