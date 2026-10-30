@@ -105,8 +105,6 @@ public interface FlowClient {
 
     FlowExecutionState cc(FlowCcRequest request);
 
-    FlowExecutionState batchCc(FlowBatchCcRequest request);
-
     FlowExecutionState readCc(FlowCcReadRequest request);
 
     FlowExecutionState returnApproval(FlowReturnRequest request);

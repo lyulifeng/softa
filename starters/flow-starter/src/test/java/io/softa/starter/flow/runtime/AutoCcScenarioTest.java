@@ -3,17 +3,16 @@ package io.softa.starter.flow.runtime;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
-import java.util.Objects;
 import org.junit.jupiter.api.Test;
 
 import io.softa.starter.flow.compiler.DefaultFlowCompiler;
 import io.softa.starter.flow.design.DesignFlowDefinition;
+import io.softa.starter.flow.design.FlowCcRule;
 import io.softa.starter.flow.design.FlowGraphDocument;
 import io.softa.starter.flow.design.FlowGraphEdge;
 import io.softa.starter.flow.design.FlowGraphNode;
 import io.softa.starter.flow.design.trigger.SubmitTrigger;
 import io.softa.starter.flow.entity.FlowApprovalTask;
-import io.softa.starter.flow.entity.FlowCcConfig;
 import io.softa.starter.flow.enums.CcTiming;
 import io.softa.starter.flow.enums.FlowApprovalTaskType;
 import io.softa.starter.flow.enums.FlowNodeType;
@@ -34,20 +33,20 @@ import io.softa.starter.flow.runtime.state.ApprovalActionAuditEntry;
 import io.softa.starter.flow.runtime.state.ApprovalActionType;
 import io.softa.starter.flow.runtime.state.FlowExecutionState;
 import io.softa.starter.flow.runtime.state.FlowExecutionStatus;
-import io.softa.starter.flow.service.FlowCcConfigService;
 import io.softa.starter.flow.service.impl.FlowPublishServiceImpl;
 import io.softa.starter.flow.service.support.FlowApprovalTaskProjector;
 
 import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
- * Automatic CC rules over a single-step approval (START → Approval → END): a rule's recipients are recorded
- * like a manual CC's — a CC entry with no actor on the node the rule fired at — so they get a CC task,
- * take part in the instance (they comment on it) and mark the CC read. A step's own rules fire at it; a
- * recipient is CC'd once per node and cycle.
+ * An approval flow's CC rules (part of its definition) over a single-step approval (START → Approval → END): a
+ * rule's recipients are recorded like a manual CC's — a CC entry with no actor on the start node or the step that
+ * ended the approval — so they get a CC task, take part in the instance (they comment on it) and mark the CC read.
+ * The rules are the approval's: they fire as it is submitted, approved or rejected, not at each step.
  */
 class AutoCcScenarioTest {
 
@@ -60,23 +59,20 @@ class AutoCcScenarioTest {
     private final StubFlowBundleRegistry bundleRegistry = new StubFlowBundleRegistry();
     private final FlowPublishServiceImpl publishService = new FlowPublishServiceImpl(compiler, bundleRegistry);
     private final ApprovalNodeExecutionHandler approvalHandler = new ApprovalNodeExecutionHandler();
-    private final List<FlowCcConfig> rules = new ArrayList<>();
     private final List<FlowNotificationEvent> notices = new ArrayList<>();
     private final FlowApprovalTaskProjector projector =
             new FlowApprovalTaskProjector(new ApprovalAuditReader(new NoopApprovalActionLedger()));
 
-    private final FlowRuntimeEngine engine = TestFlowRuntimeFactory.createWithCcRules(
+    private final FlowRuntimeEngine engine = TestFlowRuntimeFactory.createWithNotifications(
             bundleRegistry,
             new StubFlowInstanceStore(),
             new DefaultNodeHandlerRegistry(List.of(approvalHandler, new PassThroughNodeExecutionHandler())),
             approvalHandler,
-            new RuleList(rules),
             notices::add);
 
     @Test
     void aRuleCcsItsRecipientsAsAManualCcWould() {
-        publish("AnyOne");
-        rules.add(rule(null, CcTiming.ON_SUBMIT, "cc-1", true));
+        publish("AnyOne", rule(CcTiming.ON_SUBMIT, "cc-1"));
 
         FlowExecutionState started = start();
         ApprovalActionAuditEntry cc = ccsOf(started).getFirst();
@@ -98,42 +94,27 @@ class AutoCcScenarioTest {
     }
 
     @Test
-    void aStepsOwnRuleCcsOnceWhenItsApproversApproveIt() {
-        publish("Unanimous");
-        rules.add(rule("approval", CcTiming.ON_APPROVE, "cc-2", true));
-        rules.add(rule("elsewhere", CcTiming.ON_APPROVE, "cc-other", true));
+    void theApprovedRuleCcsOnceTheApprovalEndsApprovedNotAtEachApproval() {
+        publish("Unanimous", rule(CcTiming.ON_APPROVED, "cc-2"));
         FlowExecutionState started = start();
+        assertTrue(ccsOf(started).isEmpty(), "not approved yet");
 
-        engine.approve(approve(started, FIRST));
+        FlowExecutionState halfway = engine.approve(approve(started, FIRST));
+        assertEquals(FlowExecutionStatus.WAITING, halfway.getStatus());
+        assertTrue(ccsOf(halfway).isEmpty(), "one approver of two is not the approval ending");
+
         FlowExecutionState completed = engine.approve(approve(started, SECOND));
-
         assertEquals(FlowExecutionStatus.COMPLETED, completed.getStatus());
         List<ApprovalActionAuditEntry> ccs = ccsOf(completed);
-        assertEquals(1, ccs.size(), "one CC per node and cycle, and none for another step's rule");
+        assertEquals(1, ccs.size());
         assertEquals("approval", ccs.getFirst().getNodeId());
         assertEquals("cc-2", ccs.getFirst().getTargetActorId());
         assertEquals(1, ccNotices().size());
     }
 
     @Test
-    void completingTheApprovalCcsTheCompletionRule() {
-        publish("AnyOne");
-        rules.add(rule(null, CcTiming.ON_COMPLETE, "cc-3", false));
-        FlowExecutionState started = start();
-        assertTrue(ccsOf(started).isEmpty(), "not complete yet");
-
-        FlowExecutionState completed = engine.approve(approve(started, FIRST));
-
-        ApprovalActionAuditEntry cc = ccsOf(completed).getFirst();
-        assertEquals("approval", cc.getNodeId());
-        assertEquals("cc-3", cc.getTargetActorId());
-        assertTrue(ccNotices().isEmpty(), "the rule sends no notification, and still CCs");
-    }
-
-    @Test
-    void rejectingAStepCcsItsRejectionRule() {
-        publish("AnyOne");
-        rules.add(rule("approval", CcTiming.ON_REJECT, "cc-4", true));
+    void theRejectedRuleCcsWhenTheApprovalEndsRejected() {
+        publish("AnyOne", rule(CcTiming.ON_REJECTED, "cc-4"), rule(CcTiming.ON_APPROVED, "cc-never"));
         FlowExecutionState started = start();
 
         FlowRejectRequest reject = new FlowRejectRequest();
@@ -144,14 +125,41 @@ class AutoCcScenarioTest {
         FlowExecutionState rejected = engine.reject(reject);
 
         assertEquals(FlowExecutionStatus.REJECTED, rejected.getStatus());
-        assertEquals("cc-4", ccsOf(rejected).getFirst().getTargetActorId());
+        List<ApprovalActionAuditEntry> ccs = ccsOf(rejected);
+        assertEquals(List.of("cc-4"), ccs.stream().map(ApprovalActionAuditEntry::getTargetActorId).toList());
     }
 
-    private void publish(String approvalMode) {
+    @Test
+    void recipientsAreFoundTheWayAStepsApproversAre() {
+        publish("AnyOne", FlowCcRule.builder().timing(CcTiming.ON_SUBMIT)
+                .recipientSource(Map.of("type", "VariableList", "variable", "watchers")).build());
+        FlowStartRequest start = new FlowStartRequest();
+        start.setFlowId(FLOW_ID);
+        start.setInitiatorId(INITIATOR);
+        start.setVariables(Map.of("watchers", List.of("cc-5", "cc-6")));
+
+        FlowExecutionState started = engine.start(start);
+
+        assertEquals(List.of("cc-5", "cc-6"),
+                ccsOf(started).stream().map(ApprovalActionAuditEntry::getTargetActorId).toList());
+    }
+
+    @Test
+    void aFlowWithoutRulesCcsNobody() {
+        publish("AnyOne");
+        FlowExecutionState completed = engine.approve(approve(start(), FIRST));
+
+        assertEquals(FlowExecutionStatus.COMPLETED, completed.getStatus());
+        assertTrue(ccsOf(completed).isEmpty());
+        assertFalse(notices.stream().anyMatch(FlowNotificationEvent.CcSent.class::isInstance));
+    }
+
+    private void publish(String approvalMode, FlowCcRule... rules) {
         publishService.publish(FLOW_ID, DesignFlowDefinition.builder()
                 .name("Auto CC")
                 .scenario(FlowScenario.APPROVAL)
                 .trigger(new SubmitTrigger("LeaveRequest", null))
+                .cc(List.of(rules))
                 .graph(FlowGraphDocument.builder()
                         .nodes(List.of(
                                 node("start", FlowNodeType.START),
@@ -176,17 +184,8 @@ class AutoCcScenarioTest {
         return engine.start(start);
     }
 
-    private static FlowCcConfig rule(String nodeId, CcTiming timing, String recipient, boolean notify) {
-        FlowCcConfig rule = new FlowCcConfig();
-        rule.setFlowId(FLOW_ID);
-        rule.setNodeId(nodeId);
-        rule.setCcTiming(timing);
-        rule.setCcName("rule-" + recipient);
-        rule.setRecipientType("USER");
-        rule.setRecipientConfig(recipient);
-        rule.setSendNotification(notify);
-        rule.setActive(true);
-        return rule;
+    private static FlowCcRule rule(CcTiming timing, String recipient) {
+        return FlowCcRule.builder().timing(timing).recipients(List.of(recipient)).build();
     }
 
     private static FlowApproveRequest approve(FlowExecutionState state, String actorId) {
@@ -233,33 +232,5 @@ class AutoCcScenarioTest {
 
     private static FlowGraphEdge edge(String id, String source, String target) {
         return FlowGraphEdge.builder().id(id).source(source).target(target).build();
-    }
-
-    /** The flow's active rules for a timing: its flow-level ones, and those of the node asked about. */
-    private record RuleList(List<FlowCcConfig> rules) implements FlowCcConfigService {
-
-        @Override
-        public List<FlowCcConfig> getActiveConfigs(String flowId, String nodeId, CcTiming ccTiming) {
-            return rules.stream()
-                    .filter(rule -> Objects.equals(flowId, rule.getFlowId()) && Boolean.TRUE.equals(rule.getActive())
-                            && Objects.equals(ccTiming, rule.getCcTiming())
-                            && (rule.getNodeId() == null || Objects.equals(rule.getNodeId(), nodeId)))
-                    .toList();
-        }
-
-        @Override
-        public FlowCcConfig createConfig(FlowCcConfig config) {
-            throw new UnsupportedOperationException();
-        }
-
-        @Override
-        public List<FlowCcConfig> listByFlowId(String flowId) {
-            throw new UnsupportedOperationException();
-        }
-
-        @Override
-        public void deactivateConfig(Long configId) {
-            throw new UnsupportedOperationException();
-        }
     }
 }

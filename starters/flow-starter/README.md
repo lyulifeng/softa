@@ -62,17 +62,20 @@ Every flow declares a trigger, and **the trigger is the flow's start contract** 
 An explicit start and a Subflow call both run an Automation flow, so `Api` and `Subflow` belong to
 Automation alone. Debug runs of a draft ignore the trigger.
 
-Settings belong to one scenario too: `withdrawPolicy`, `approverDedup`, `selfApproval` and `emailNotification` to
-Approval flows; `sync` / `rollbackOnFail` to Automation flows, and a sync flow — which runs inside the writer's
+Settings belong to one scenario too: `withdrawPolicy`, `urgeEnabled`, `urgeIntervalMinutes`, `approverDedup`,
+`selfApproval`, `emailNotification` and `cc` to Approval flows; `sync` / `rollbackOnFail` to Automation flows, and a sync flow — which runs inside the writer's
 transaction — may not contain a Timer, AsyncTask or Approval node. The compiler rejects a flow that
 breaks any of these rules.
 
 | Approval setting | Values | Default |
 |---|---|---|
 | `withdrawPolicy` | Until when the initiator may withdraw: `Never`, `BeforeFirstAction` (until an approver first approves, rejects, returns, transfers, delegates or adds a signer — an automatic approval does not count), `UntilCompleted` | `Never` |
+| `urgeEnabled` | Whether the initiator may urge the approvers the approval waits on; an administrator may either way | on |
+| `urgeIntervalMinutes` | How often each waiting step may be urged, by the initiator or an administrator alike; at least 1 (`INVALID_URGE_INTERVAL` otherwise) | `240` |
 | `approverDedup` | `Global`, `Contiguous`, `None` — see [Approver Resolution](#approver-resolution) | `Global` |
 | `selfApproval` | `AutoApprove`, `RequireApproval` — see [Approving Business Records](#approving-business-records) | `AutoApprove` |
-| `emailNotification` | Whether its notices are also emailed; the inbox always gets them — see [Notifications](#notifications) | on |
+| `emailNotification` | Whether its notices are also emailed — see [Notifications](#notifications) | on |
+| `cc` | Who is copied in as the approval is submitted, approved or rejected — see [CC](#cc) | none |
 
 ### Node Types
 
@@ -106,6 +109,37 @@ Node-behavior invariants:
   parent fails. Model human steps in an Approval flow, not a child.
 - **`ParallelFork` branches execute serially** (deterministic order), not
   wall-clock-parallel — the gateway models routing topology, not concurrency.
+
+The graph itself has exactly one `Start` — the entry; a node that merely lacks incoming edges is
+not one (`NO_START_NODE` / `MULTIPLE_START_NODES`) — no cycle (`GRAPH_CYCLE`), and every node reachable
+from the `Start` along the edges (`UNREACHABLE_NODE`): an unreachable node would never run, and a
+`ParallelJoin` it feeds counts its edge among the arrivals it waits for, so every instance would stop
+there. A draft may break these rules — saving never validates — but it cannot publish.
+
+### Routing: edge conditions
+
+Conditions live on edges (`FlowGraphEdge`); a node carries none. Every node routes **exclusively** over its
+outgoing edges — at most one conditional edge may hold, else the instance fails; none holding takes the one
+edge without a condition (the default, at most one per node, `MULTIPLE_DEFAULT_EDGES`) — except
+`InclusiveGateway`, which takes every edge that holds plus every edge without a condition, and `ParallelFork`,
+which takes all of them (a condition there is not read). `FlowGatewayRouter` decides; the approval path preview
+decides the same way.
+
+An edge's condition is one of two kinds, never both (`CONFLICTING_EDGE_CONDITIONS`):
+
+| Kind | Field | Use | Judged |
+|---|---|---|---|
+| Rule | `condition` — the platform `Filters` JSON, `["days", ">", 3]` / `[[…], "AND", […]]` | The fields of the record the flow starts on: the designer builds it with the model's own filter builder | By `FilterEvaluator`, like a field condition (`requiredWhen`): typed by the record model's fields, `null` ≡ `""`, ordering needs two values (`days < 3` is false for an empty `days`), options by item code, relations by id |
+| Expression | `conditionExpression` — AviatorScript | What a rule cannot say: arithmetic, functions, what an earlier node produced | By AviatorScript over the instance's variables, its own semantics (`nil` is smaller than any number) |
+
+A rule needs a flow that starts on a record — a `Submit`, `EntityChange` or `FieldChange` trigger — else
+`RULE_WITHOUT_RECORD`. Publishing checks it the way the annotation scan checks a field condition
+(`FieldConstraints.checkCondition`), reporting `INVALID_RULE_CONDITION`: a field the model lacks, a to-many
+field, ordering an option or a relation, `PARENT OF` / `CHILD OF` (they need a query), a placeholder that does
+not resolve, `@mode` / `@userId` (they describe a write). An approval's rule reads only the fields its
+approvals route on (*Routing variables*). `GET /flow/designs/{id}/availableVariables?nodeId=&afterNode=true`
+lists what the edges leaving a node see: the record's fields as `Trigger` variables, typed, and the node's
+own outputs with the upstream ones.
 
 ### Runtime Statuses
 
@@ -154,7 +188,7 @@ data plane and is intentionally not intercepted.
 | `POST` | `/flow/designs/{id}/publish` | Publish the saved draft as a new active revision |
 | `POST` | `/flow/designs/{id}/restore?bundleId=` | Restore the draft canvas from a historical bundle snapshot |
 | `GET` | `/flow/designs/{id}/status` | Publish status: revision badge + dirty flag |
-| `GET` | `/flow/designs/{id}/availableVariables?nodeId=` | Variables visible to a node (expression autocomplete) |
+| `GET` | `/flow/designs/{id}/availableVariables?nodeId=&afterNode=` | Variables visible to a node (expression autocomplete); `afterNode=true` — to the edges leaving it, its own outputs too |
 | `POST` | `/flow/designs/{id}/debugRun` | Compile and run the current draft as a debug bundle (not a sandbox) |
 | `GET` | `/flow/designs/{id}/debugRuns` | Debug-run history, newest first |
 
@@ -190,20 +224,20 @@ Base path: `/flow/instances` — launch, reads and approval actions on runtime i
 | `POST` | `/flow/instances/search` | Paged summaries of the caller's own record approvals, newest first — the initiator filter is always the authenticated user, and automation runs their writes triggered are left out. See [Instance search](#instance-search) for the filters and what each row carries |
 | `POST` | `/flow/instances/approve` | Approve a pending approval |
 | `POST` | `/flow/instances/reject` | Reject a pending approval; the comment saying why is required |
-| `POST` | `/flow/instances/batch/approve` | Approve several of the caller's pending tasks (`tasks`: instance + step, at most 100), each in its own transaction. Returns `FlowBatchActionResult` — succeeded / skipped / failed counts and each task's outcome. See [Batch actions and handling steps](#batch-actions-and-handling-steps) |
+| `POST` | `/flow/instances/batch/approve` | Approve several of the caller's pending tasks (`tasks`: instance + step, at most 100), each in its own transaction. Returns `FlowBatchActionResult` — succeeded / skipped / failed counts and each task's outcome. See [Batch actions](#batch-actions) |
 | `POST` | `/flow/instances/batch/return` | Return several pending tasks to their initiators with one comment (required); a step that allows no return is skipped |
 | `POST` | `/flow/instances/batch/reject` | Reject several pending tasks with one comment (required) |
 | `POST` | `/flow/instances/transfer` | Transfer a pending approval task |
 | `POST` | `/flow/instances/delegate` | Delegate a pending approval task |
 | `POST` | `/flow/instances/add-sign-before` | Insert a prerequisite signer |
 | `POST` | `/flow/instances/add-sign-after` | Insert a follow-up signer |
-| `POST` | `/flow/instances/cc` | Send a CC notification |
+| `POST` | `/flow/instances/cc` | CC one or more people (`targetActorIds`) on the caller's pending step. See [CC](#cc) |
 | `POST` | `/flow/instances/cc/read` | Mark a CC as read |
 | `POST` | `/flow/instances/return` | Return a pending approval to the initiator, ending the instance as `Returned`. Only the step's approver, on a step that allows returns (`returnEnabled`), with a comment saying what to change |
 | `POST` | `/flow/instances/withdraw` | Withdraw an Approval instance: its initiator, while it waits on its approvers and the flow's `withdrawPolicy` permits it (`WithdrawPolicyGuard`) |
 | `GET` | `/flow/instances/{instanceId}/withdraw` | Whether the caller may withdraw the instance now — `true` exactly when a withdrawal would be accepted, by the same `WithdrawPolicyGuard`. Allowed to whoever may view the instance |
-| `POST` | `/flow/instances/urge` | Remind the approvers the approval waits on — its initiator only. Each waiting step is urged at most once per `flow.approval.urge-interval-minutes` (default 240), by the initiator or an administrator alike; each step urged gets its own `URGE` history entry, and when every step is still inside the interval the urge is refused. Returns `FlowUrgeStatus`, not the instance |
-| `GET` | `/flow/instances/{instanceId}/urge` | Whether the approval may be urged now, and if not, when (`FlowUrgeStatus`). Allowed to whoever may view the instance |
+| `POST` | `/flow/instances/urge` | Remind the approvers the approval waits on — its initiator only, on a flow whose `urgeEnabled` is not turned off. Each waiting step is urged at most once per the flow's `urgeIntervalMinutes` (default 240), by the initiator or an administrator alike; each step urged gets its own `URGE` history entry, and when every step is still inside the interval the urge is refused. Returns `FlowUrgeStatus`, not the instance |
+| `GET` | `/flow/instances/{instanceId}/urge` | Whether the caller may urge the approval now, and if not, when (`FlowUrgeStatus`) — never, for the initiator of a flow that turns `urgeEnabled` off. Allowed to whoever may view the instance |
 | `POST` | `/flow/instances/comment` | Add a comment audit entry while the instance runs — its participants only: the initiator and the people it gives or gave a task to. An instance that has ended takes no more comments. Returns `true`, not the instance |
 | `GET` | `/flow/instances/{instanceId}/nodes/{nodeId}/formPermissions` | Get field-level form permissions |
 | `GET` | `/flow/instances/by-record?modelName=&rowId=` | A business record's approval history: its approval instances newest first, with the steps still waiting, the approvers yet to act and the approval actions, every user named (names are resolved only once the caller is allowed); a failed instance says where and why it stopped (`failure`). Allowed to whoever took part in its approvals or can read the record |
@@ -289,10 +323,9 @@ Base path: `/flow/approvalTasks`
 Each task (`FlowApprovalTaskView`) comes with its instance's context — `instanceTitle`, `modelName` / `rowId`,
 `instanceStatus`, the `initiator` and `submittedTime`, and what a record's approval recorded of its record
 (`subject`, `subjectDept`, `effectiveDate`, `recordCode`), every user, employee and department named — and with
-what its step's configuration says about acting on it, read from the revision the instance runs on: `handling`
-(a handling step), `returnAllowed` (the step's `returnEnabled`) and `batchable` (open to its approver now — pending,
-not blocked by an add-sign, the instance waiting — on a step that is not a handling step and makes no field
-required). See [Batch actions and handling steps](#batch-actions-and-handling-steps).
+what its step's configuration says about acting on it, read from the revision the instance runs on:
+`returnAllowed` (the step's `returnEnabled`) and `batchable` (open to its approver now — pending, not blocked by an
+add-sign, the instance waiting — on a step that makes no field required). See [Batch actions](#batch-actions).
 
 ### Approval Records
 
@@ -304,43 +337,41 @@ Base path: `/flow/approvalRecords`
 | `GET` | `/flow/approvalRecords/history` | Actor-scoped approval history |
 | `GET` | `/flow/approvalRecords/cc/sent` | Sender-side CC history |
 
-An entry (`FlowApprovalRecord`, `FlowApprovalRecordView`) records its `action` (`ApprovalActionType`: `Approve`,
-`AutoApprove`, `Reject`, `Transfer`, `Delegate`, `AddSign`, `Cc`, `Read`, `Return`, `Withdraw`, `Urge`, `Comment`,
-`Terminate`), its `actorId` and, for an action done on the actor's behalf, `operatorId` — the administrator who
-reassigned the actor's task (an entry `Transfer` from the approver to the new one); empty when the actor acted
+An entry (`FlowApprovalRecord`, `FlowApprovalRecordView`) records its `action` (`ApprovalActionType`: `APPROVE`,
+`AUTO_APPROVE`, `REJECT`, `TRANSFER`, `DELEGATE`, `ADD_SIGN`, `CC`, `READ`, `RETURN`, `WITHDRAW`, `URGE`, `COMMENT`,
+`TERMINATE`), its `actorId` and, for an action done on the actor's behalf, `operatorId` — the administrator who
+reassigned the actor's task (a `TRANSFER` entry from the approver to the new one); empty when the actor acted
 themselves.
 
-### CC Config
+### CC
 
-Base path: `/flow/ccConfigs`
+An approval flow's CC rules are part of its definition (`cc`, a list of `FlowCcRule`), set in the flow's settings
+and published with each revision — an instance follows the rules of the revision it runs on. A rule says when:
 
-| Method | Path | Description |
-|---|---|---|
-| `POST` | `/flow/ccConfigs` | Create a CC rule |
-| `GET` | `/flow/ccConfigs?flowId=` | List CC rules by `flowId` |
-| `POST` | `/flow/ccConfigs/{id}/deactivate` | Deactivate a CC rule |
+- `OnSubmit`: as the approval is submitted.
+- `OnApproved`: as it ends approved.
+- `OnRejected`: as it ends rejected (a rejection the step's reject threshold does not yet carry is not the end).
 
-A rule (`FlowCcConfig`) CCs its recipients at its timing:
-
-- `OnSubmit`: when the flow starts.
-- `OnApprove` / `OnReject`: after an approver approves or rejects a step.
-- `OnComplete`: when the approval completes approved.
-
-A rule without a `nodeId` is flow-level and fires at every such moment. A rule naming a step fires at
-`OnApprove` / `OnReject` of that step only. `recipientType` `INITIATOR` CCs the initiator; any other type reads
-`recipientConfig` as comma-separated user ids. An optional `ccCondition` is evaluated over the instance
-variables.
+and who: named users (`recipients`), or a source to find them by (`recipientSource`, in an approval step's
+`approverSource` shape — the subject's supervisor, a role, a department's members…), never both; found the way a
+step's approvers are (`ApproverResolutionService.resolvePeople`). CC is the approval's, not a step's: a step that
+should involve someone else has them as its approvers.
 
 An automatic CC is recorded like a manual one: one `CC` entry per recipient in the approval history. The entry
-has no actor, since no person sent it. It sits on the node the rule fired at — the step acted on, or the start
-node at `OnSubmit` (and at `OnComplete` when every step passed on its own) — in that node's current cycle. So the
+has no actor, since no person sent it. It sits on the start node (`OnSubmit`, and `OnApproved` when every step
+passed on its own) or on the step whose action ended the approval, in that node's current cycle. So the
 recipient:
 
-- has a CC task in the inbox, which they mark read;
+- has a CC task in the inbox, which they mark read, and an inbox notice;
 - is a participant of the instance: they open it and comment on it.
 
-A recipient already CC'd on the same node and cycle, by a rule or by hand, is not CC'd again, so a step that
-several approvers approve CCs once. `sendNotification` additionally notifies the recipients CC'd that time.
+A recipient already CC'd on the same node and cycle, by a rule or by hand, is not CC'd again.
+
+An approver whose turn it is — one of the pending step's approvers, still to vote and not waiting on a signer added
+before them — CCs people by hand with `POST /flow/instances/cc`: one or more (`targetActorIds`) in one action, with
+an optional comment. The people who already see the approval from the step are skipped — its approvers, the actor
+among them, and anyone CC'd on it this cycle — and the rest get one `CC` entry each, with the approver as its actor,
+and one inbox notice together. The action is refused when nobody is left.
 
 ### Delegation
 
@@ -368,10 +399,10 @@ under [Instance APIs](#instance-apis), as for any viewer who is not a participan
 |---|---|---|
 | `GET` | `/flow/monitor/health` | Flow runtime health snapshot (per-status instance counts, overdue timers) |
 | `POST` | `/flow/monitor/instances/search` | Cross-initiator paged instance summaries, read with the caller's own permissions: the `FlowInstance` rows their data scope reaches. Honors the request's `initiatorId` filter when present; otherwise as [Instance search](#instance-search) |
-| `POST` | `/flow/monitor/instances/urge` | Urge an approval as an administrator rather than its initiator: whoever may read the instance's `FlowInstance` row with their own permissions. The initiator's interval applies — a step urged within it, by anyone, is not urged again. Returns `FlowUrgeStatus` |
+| `POST` | `/flow/monitor/instances/urge` | Urge an approval as an administrator rather than its initiator: whoever may read the instance's `FlowInstance` row with their own permissions, whether or not the flow's `urgeEnabled` lets its initiator urge. The flow's `urgeIntervalMinutes` applies — a step urged within it, by anyone, is not urged again. Returns `FlowUrgeStatus` |
 | `POST` | `/flow/monitor/instances/terminate` | End each instance named (`instanceIds`, at most 100) that is running, waiting or failed, with one `reason` (required): its pending approvals close, it ends `Cancelled` — a record's approval cancels its record — and the history records a `TERMINATE` entry with the reason, which the initiator is sent. Only instances the caller's permissions read; each in its own transaction. Returns `FlowBatchActionResult` |
 | `POST` | `/flow/monitor/approvers/reassign/preview` | How many of an approver's pending approval tasks (`fromActorId` → `toActorId`), on the instances the caller's permissions read, a reassignment would move: `FlowReassignPreview` (`tasks`, `instances`) |
-| `POST` | `/flow/monitor/approvers/reassign` | Move each of those tasks to the new approver, with a `reason` (required), each in its own transaction: recorded as the approver's `Transfer` with the caller as `operatorId`; the new approver is given the task, the initiator is told who now holds it. Only the steps the instances wait on now move — a step not reached yet resolves its approvers when reached; CC tasks stay. Returns `FlowBatchActionResult` |
+| `POST` | `/flow/monitor/approvers/reassign` | Move each of those tasks to the new approver, with a `reason` (required), each in its own transaction: recorded as the approver's `TRANSFER` with the caller as `operatorId`; the new approver is given the task, the initiator is told who now holds it. Only the steps the instances wait on now move — a step not reached yet resolves its approvers when reached; CC tasks stay. Returns `FlowBatchActionResult` |
 | `POST` | `/flow/monitor/delegations` | Create a delegation rule on an approver's behalf (the body names the `delegatorId` and the `delegateId`): their tasks arriving from then on go to the delegate, and the approver sees the rule among theirs. It affects all of the approver's tasks whatever the caller's data scope, so it is a permission of its own |
 | `GET` | `/flow/monitor/delegations` | Every delegation rule of the tenant, newest first |
 | `POST` | `/flow/monitor/delegations/{id}/cancel` | Deactivate any delegation rule of the tenant |
@@ -435,7 +466,7 @@ those models configures nothing:
 | Account → employee (the initiator's) | `Employee.userId` |
 | Name, department, position | `Employee.fullName`, `departmentId`, `jobPositionId` |
 | Supervisor (an employee id) | `Employee.piEmployeeId` |
-| Department leader, HRBP (employee ids), parent | `Department.picEmpId`, `hrbpEmpId`, `parentId` |
+| Department leader, HRBP (employee ids), parent, name | `Department.picEmpId`, `hrbpEmpId`, `parentId`, `name` |
 | Role holders, role codes | `UserRoleRel.userId` / `roleId`, `Role.code` |
 
 An employee without an account counts as nobody, so a step resolving only to such employees is empty and
@@ -471,9 +502,9 @@ fields the approver edits. Only the fields it marks `EDITABLE` or `REQUIRED` are
 in the approve request's `formData` — a `HIDDEN` or `READONLY` field, or one the node does not list — is
 dropped, and a node with no `formPermissions` writes nothing. A `REQUIRED` field must hold a value once the
 edits land — the one sent, or else the one the record stores — so an approve that sends nothing is still
-refused when the record lacks it. After the write, a record's approval works its handler's `submission` out
-again from the edited record and its variables replace the ones the flow started with: a later route sees what
-the approver changed. An approver whose roles hold no sensitive
+refused when the record lacks it. After the write, a record's approval reads its routing variables again from
+the edited record — its own fields, then its handler's `submission` on top — and they replace the ones the
+flow started with: a later route sees what the approver changed, a cleared field included. An approver whose roles hold no sensitive
 field set covering a field can therefore still write it if the node's form exposes it as editable. Flow
 designers must not make a sensitive field (pay, bank details, identity numbers, …) editable on an approval
 form unless every approver that node can resolve to is meant to edit it; show it read-only, or leave it
@@ -494,34 +525,39 @@ off the form.
 - approve / return / reject in a batch (an approver over several of their tasks)
 - terminate and reassign (an administrator, from the [Monitor](#monitor))
 
-### Batch actions and handling steps
+### Batch actions
 
-An approval step is either judged — approved, rejected, returned — or **handled**: `config.handling = true`
-declares a handling step, whose approver fills in what the step asks for (its `EDITABLE` / `REQUIRED` fields) and
-submits it on. It is still an approval — the ledger records `APPROVE` — but clients word the action "Submit".
-`handling` is declared, never inferred from `formPermissions`. `config.returnEnabled` decides whether the step may
-be returned to the initiator at all.
+What a step's approver may fill in when they approve is its `formPermissions` (`EDITABLE` / `REQUIRED` fields);
+`config.returnEnabled` decides whether the step may be returned to the initiator at all.
 
 `POST /flow/instances/batch/{approve,return,reject}` (`BatchApprovalExecutor`) runs one approver action over up to
 100 of the caller's pending tasks with one comment — required to return or reject. Each task is its own engine
 call and so its own transaction: one refused task changes nothing for the others, and every engine rule holds as
-for a single action. A batch fills in nothing, so before the engine is asked it skips a task whose step is a
-handling step or makes a field `REQUIRED`, and, for a return, a step without `returnEnabled` — the same rule that
+for a single action. A batch fills in nothing, so before the engine is asked it skips a task whose step makes a
+field `REQUIRED`, and, for a return, a step without `returnEnabled` — the same rule that
 sets a task's `batchable` flag. The result (`FlowBatchActionResult`) gives the succeeded / skipped / failed counts
 and each task's outcome with the reason, in request order.
 
 ### Timeout Handling
 
-Approval timeout strategies:
+An approval node's `timeout` gives its step a deadline, `timeoutHours` after the step opens; without
+`timeoutHours` the step has none and the rest of `timeout` is ignored. At the deadline `timeoutStrategy` applies:
 
-- `REMIND`
-- `AUTO_APPROVE`
-- `AUTO_REJECT`
-- `ESCALATE`
+| Strategy | At the deadline | Uses |
+|---|---|---|
+| `Remind` (default) | Reminds the approvers still to act, then every `remindIntervalHours`, at most `maxRemindTimes` times (3 unless set) — with no interval, once. No automatic action | `remindIntervalHours`, `maxRemindTimes` |
+| `AutoApprove` | Approves for the approvers still to act | — |
+| `AutoReject` | Rejects the approval | — |
+| `Escalate` | Hands the step to `escalateToUserId`, with a new deadline | `escalateToUserId` (required) |
 
-`ApprovalTimeoutScheduler` handles reminders, auto actions, and escalation against persisted pending approvals.
+Nothing is sent before the deadline. Reminders belong to `Remind`: set on another strategy they fail the compile
+(`REMINDERS_OUTSIDE_REMIND`), and the designer clears them when another strategy is chosen; an interval or a most
+below 1 fails it too (`INVALID_REMIND_INTERVAL`, `INVALID_MAX_REMINDERS`). The reminder is an inbox notice
+("Approval overdue"), not emailed.
 
-It runs off a cron row. The starter's maintenance crons (approval timeout reminders and handling, delegation
+`ApprovalTimeoutScheduler` handles the steps past their deadline against persisted pending approvals.
+
+It runs off a cron row, `flow_approval_timeout_handle`. The starter's maintenance crons (approval timeouts, delegation
 expiry, timer sweep, stuck-instance scan, debug bundle purge, automation run purge) ship switched off in
 `data-system/SysCron.FlowMaintenance.json`. The app lists that file under `platform` in its
 `seed-manifest.yml`, or the rows never exist; then switch on the ones it uses. See the
@@ -595,6 +631,17 @@ another field (`Transfer::getTransfereeId`); either way a many-to-one onto the e
 (`softa.flow.org.employee-model`), which the boot checks. A record whose subject is empty is not submitted.
 The submission carries it to the flow as the start variable `_subjectId`.
 
+**Routing variables.** An approval starts with every field of the record a route can compare, under the
+field's name (`RecordVariables`): its own columns of a plain type — text, numbers, booleans, dates and times
+(as ISO text), options and multi-options (item codes), multi-strings, to-one relations (the id) — less its
+identity, bookkeeping and approval state (`id`, `tenantId`, `version`, `deleted`, the audit fields,
+`approvalStatus`, `submitterId`, `submittedTime`) and any field declared sensitive — encrypted, or masked when
+read — since an instance's variables are not read through the record's field permissions; a field with no value
+is left out. The handler's
+`submission` adds what it works out from the record on top — a value read through another model, such as the
+company's currency — and one of the same name replaces the field's. The designer offers the same fields, so a
+rule condition (*Routing: edge conditions*) can read every one of them.
+
 The framework keeps the approval state, the same for every model; the handler holds what only the business
 knows:
 
@@ -602,7 +649,7 @@ knows:
 |---|---|
 | The approval fields — `approvalStatus` (`ApprovalStatus`), `submitterId`, `submittedTime` — and every write of them | `validate(record)`: the checks a submission must pass — who may submit the record, what it must hold |
 | The one state machine below: only a draft is submitted or cancelled; one approval of a record at a time | `validateCancel(record)`: who may cancel the draft beyond seeing it, such as only its claimant |
-| Freezing every record that is not a draft (`ApprovalLockValidator`) | `submission(record)`: an `ApprovalSubmission(title, variables, effectiveDate, code)` — the instance title and the routing variables, worked out from the record alone, and, when the model has them, the date the record takes effect and its own number, which the approval lists show and filter on |
+| Freezing every record that is not a draft (`ApprovalLockValidator`) | `submission(record)`: an `ApprovalSubmission(title, variables, effectiveDate, code)` — the instance title and the routing variables it adds to the record's own fields (*Routing variables*), worked out from the record alone, and, when the model has them, the date the record takes effect and its own number, which the approval lists show and filter on |
 | Writing each result back, once | `afterSubmitted(record)`: what a submission sets off, such as reserving a leave balance |
 | What a submission records on the instance: subject, department, effective date, number | `afterOutcome(record, outcome)`: the follow-up actions of a result, such as deducting the balance — or releasing it after a rejection or a cancellation |
 | | `effectStatuses(rowIds)`: for a model whose approval takes effect later, where each approved record's change stands (`RecordEffectStatus`: `Scheduled`, `Applied`, `Failed`), read from the records themselves, never guessed from dates. Empty by default, for a model whose approval takes effect at once |
@@ -631,7 +678,7 @@ report it, so a Withdraw button is offered exactly when the withdrawal would be 
 
 | `FlowClient` | What happens |
 |---|---|
-| `submitRecord(modelName, rowId)` | The submitter must read the record with their own permissions; only a draft with no approval in progress is submitted. `handler.validate` then checks the whole record as the submitter, and `handler.submission` returns the instance title and routing variables. The flow is chosen among the tenant's active flows whose submit trigger names the model and whose condition holds for the record — exactly one must match, else the submission is refused naming why. The record becomes `Pending`, with its submitter and the time, `handler.afterSubmitted` runs, and the record's approval starts. All in the caller's transaction. Every submission starts a new approval from the beginning — after a return too, with the flow chosen again for the record as it is now — and marks the record's earlier approvals `superseded` |
+| `submitRecord(modelName, rowId)` | The submitter must read the record with their own permissions; only a draft with no approval in progress is submitted. `handler.validate` then checks the whole record as the submitter, and `handler.submission` returns the instance title and the routing variables it adds to the record's fields. The flow is chosen among the tenant's active flows whose submit trigger names the model and whose condition holds for the record — exactly one must match, else the submission is refused naming why. The record becomes `Pending`, with its submitter and the time, `handler.afterSubmitted` runs, and the record's approval starts. All in the caller's transaction. Every submission starts a new approval from the beginning — after a return too, with the flow chosen again for the record as it is now — and marks the record's earlier approvals `superseded` |
 | `withdrawRecord(modelName, rowId, comment)` | Withdraws the waiting approval (the engine checks the actor is the initiator and the flow's `withdrawPolicy` permits it); the record is a draft again. When the record's approval **failed**, its submitter takes the record back the same way — the handler is told it was withdrawn; the failed instance stays for flow monitoring. Refused when the record has no approval in progress |
 | `cancelRecord(modelName, rowId)` | Cancels a draft for good: the applicant must read the record with their own permissions, it must be a draft, and `handler.validateCancel` must pass. The record becomes `Cancelled` and `handler.afterOutcome` gets a `Cancelled` result with no instance. In the caller's transaction |
 | `recordApprovals(modelName, rowId)` | The approval history, as `GET /flow/instances/by-record` |
@@ -745,15 +792,49 @@ their own copy in the designer.
 
 ## Notifications
 
-The default `ApprovalNotificationService` is `InboxApprovalNotificationService`: Workflow-type inbox messages
-through message-starter that point at the flow instance (`sourceModel` = `FlowInstance`, `sourceId` = its
-instance id; the client opens the instance and goes on from there) — tasks to the approvers still to act
-(assigned, transferred, delegated, urged, about to time out), CCs to their recipients, and the result to the
-initiator (approved; rejected or returned, with the comment). Only an Approval flow announces its completion:
-an Automation run is not something the user whose write triggered it asked to hear about. Messages are written after the action commits,
-in a transaction of their own: a rolled-back action sends nothing, and a message that cannot be written is
-logged without failing the action. Titles longer than the inbox's 200 characters are cut. Texts are translated
-into the tenant's default language. Provide your own `ApprovalNotificationService` bean for email, SMS or IM.
+The default `ApprovalNotificationService` is `CompositeApprovalNotificationService`, which tells two channels,
+each on its own — one failing neither silences the other nor touches the action:
+
+- **Inbox** (`InboxApprovalNotificationService`), the news: Workflow-type inbox messages through message-starter
+  that point at the flow instance (`sourceModel` = `FlowInstance`, `sourceId` = its instance id; the client opens
+  the instance and goes on from there). Titles longer than the inbox's 200 characters are cut; texts are
+  translated into the tenant's default language. A to-do — a task to act on, a CC to read — is not put in the
+  inbox: My Tasks lists it, and the client counts it in its header, so nothing is counted twice.
+- **Email** (`MailApprovalNotificationService`), on a flow whose `emailNotification` is not turned off: a mail
+  through message-starter to each recipient's account email (`UserAccount.email`; a recipient without one is
+  skipped), worded by the tenant's mail template of the notice's code. The template's variables are `subject`
+  (the instance title, else the flow name), `content` (the comment or reason, when there is one), `flowName`,
+  `recordCode` and `link` — the approval's page, `system.site-url` + `/approvals/{instanceId}`, empty when the
+  site URL is not configured. flow-starter ships no mail templates: a tenant without a template of the code gets
+  no email, and the failure is logged.
+
+One mapping (`ApprovalNotices`) decides who is told what, on both channels, and whether it is a to-do or news:
+
+| Event | Told | Inbox | Mail template |
+|---|---|---|---|
+| A step's approvers still to act are assigned; a task is transferred, delegated or reassigned to someone | The approvers still to act; the new holder | no — a to-do, in My Tasks | `flow.task-assigned` |
+| A CC | Its recipients | no — a to-do, in My Tasks | — (not emailed) |
+| An urge | The approvers urged | yes | `flow.urged` |
+| A step past its deadline, under the `Remind` timeout strategy | Its approvers still to act | yes | — (not emailed) |
+| Approved; rejected or returned (with the comment) | The initiator | yes | `flow.approved`, `flow.rejected`, `flow.returned` |
+| Terminated, or a step reassigned, by an administrator (with the reason) | The initiator | yes | `flow.terminated`, `flow.reassigned` |
+| A record's approval fails (with the error) | The initiator and the holders of the roles in `flow.notification.failure-role-codes` (default `TENANT_ADMIN`) | yes | `flow.failed` |
+
+Only an Approval flow announces its completion: an Automation run is not something the user whose write triggered
+it asked to hear about, and an automation run that fails is the operators' to watch. Messages are written after
+the action commits, in a transaction of their own: a rolled-back action sends nothing, and a message that cannot
+be written is logged without failing the action. A failure is told at once, since the failed attempt's own
+transaction rolls back.
+
+`InboxReadMarker` keeps the inbox current: once an approver acts on an approval — approves, rejects, returns,
+transfers, delegates, adds a signer or reads a CC — their unread inbox messages about that instance (an urge, a
+timeout reminder) are marked read after the action commits, so the bell counts what is still news to them (an
+urge, a comment or a CC sent does not count as acting). The task itself was never in the inbox: My Tasks is the
+work list.
+
+An application `ApprovalNotificationService` bean replaces the default, both channels with it; to add a channel —
+SMS, IM — declare a `CompositeApprovalNotificationService` of your own that lists the inbox and email channels
+with yours.
 
 ## Trigger And Messaging Integration
 
@@ -821,11 +902,10 @@ Validation or Compute flow is evaluated transiently, like any of their runs.
 |---|---|
 | `FlowDesign` | Draft working copy |
 | `FlowBundle` | Published compiled bundle |
-| `FlowInstance` | Persisted runtime instance state (trace and approval history are NOT embedded — see the two dedicated tables). Approval instances are kept; finished Automation runs, with their trace, branches and the trigger event log, are purged after `flow.automation.retention-days` (default 30) by the `flow_automation_purge` cron |
+| `FlowInstance` | Persisted runtime instance state (trace and approval history are NOT embedded — see the two dedicated tables), with what a record's approval recorded at submission: `subjectId`, `departmentId`, `effectiveDate`, `recordCode`, `superseded`. Approval instances are kept; finished Automation runs, with their trace, branches and the trigger event log, are purged after `flow.automation.retention-days` (default 30) by the `flow_automation_purge` cron |
 | `FlowExecutionTrace` | Append-only execution trace rows (the in-memory state keeps only the current attempt's delta) |
 | `FlowApprovalTask` | Pending/completed/CC task projections |
-| `FlowApprovalRecord` | Approval action audit ledger — the authoritative approval history, flushed by the instance store in the same transaction as the instance row |
-| `FlowCcConfig` | Automatic CC rules |
+| `FlowApprovalRecord` | Approval action audit ledger — the authoritative approval history, flushed by the instance store in the same transaction as the instance row; `operatorId` names an administrator who acted on the actor's behalf |
 | `FlowDelegation` | Delegation rules |
 | `FlowEvent` | Trigger event logs |
 | `FlowDebugHistory` | Debug snapshots |
@@ -869,6 +949,7 @@ Design graph DTOs remain aligned with xyflow/react style structures:
 | `Edge.type` | `FlowGraphEdge.type` |
 | `Edge.label` | `FlowGraphEdge.label` |
 | `Edge.data` | `FlowGraphEdge.data` |
+| `Edge.data.condition` / `Edge.data.conditionExpression` (hoisted by the editor) | `FlowGraphEdge.condition` / `conditionExpression` |
 | `Viewport {x, y, zoom}` | `FlowGraphViewport {x, y, zoom}` |
 
 ## Host Application Integration Checklist
@@ -877,9 +958,11 @@ Before enabling `flow-starter` in a real app, verify:
 
 - add `flow-starter` to the application classpath
 - create and expose `FlowDesign` drafts through the generic model APIs
-- provide your own `ApprovalNotificationService` if you need email, SMS or IM beyond the default inbox messages
+- for approval emails: set `system.site-url` (the link in each email) and give each tenant the `flow.*` mail templates — or turn `emailNotification` off on the flows; provide your own `ApprovalNotificationService` for SMS or IM
+- set `flow.notification.failure-role-codes` if failed approvals should reach roles other than `TENANT_ADMIN`
 - check the organization follows the default HR conventions, or override `softa.flow.org.*`, or provide your own `OrganizationService`
-- for business records: extend `ApprovalModel` (with an `employeeId`, or a `subject()` naming the employee field) and `ApprovalModelController`, implement a `ModelApprovalHandler<T>` per model, and ship each default flow as a tenant seed file
+- for business records: extend `ApprovalModel` (with an `employeeId`, or a `subject()` naming the employee field) and `ApprovalModelController`, implement a `ModelApprovalHandler<T>` per model — with `effectStatuses` when its approval takes effect later — and ship each default flow as a tenant seed file
+- grant the monitoring console's endpoints and a data scope on `FlowInstance` to the administrators' roles (a department scope narrows by the subject's department)
 - enable Pulsar topics if using triggers or async tasks
 - provide timer scheduling/publishing if using `TIMER` nodes
 - enable `CALL_SERVICE` explicitly (plus its bean-name allow-list) if flows need to invoke Spring beans; all other task node types ship working executors, conditionally registered on their capability beans

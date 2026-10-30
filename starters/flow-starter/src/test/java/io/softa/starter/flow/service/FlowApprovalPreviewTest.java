@@ -15,6 +15,9 @@ import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.test.util.ReflectionTestUtils;
 
 import io.softa.framework.base.exception.BusinessException;
+import io.softa.framework.orm.domain.Filters;
+import io.softa.framework.orm.enums.FieldType;
+import io.softa.framework.orm.meta.MetaField;
 import io.softa.framework.orm.meta.ModelManager;
 import io.softa.framework.orm.service.ModelService;
 import io.softa.framework.orm.utils.IdUtils;
@@ -299,6 +302,24 @@ class FlowApprovalPreviewTest {
     }
 
     @Test
+    void aRuleRouteIsDecidedOverTheRecordsOwnFields() {
+        MetaField days = mock(MetaField.class);
+        when(days.getFieldName()).thenReturn("days");
+        when(days.getFieldType()).thenReturn(FieldType.INTEGER);
+        modelManager.when(() -> ModelManager.getModelFields(MODEL)).thenReturn(List.of(days));
+        modelManager.when(() -> ModelManager.existField(MODEL, "days")).thenReturn(true);
+        modelManager.when(() -> ModelManager.getModelField(MODEL, "days")).thenReturn(days);
+        // The handler adds nothing: the route reads the record's own field, which every approval carries.
+        when(handler.submission(any())).thenReturn(new ApprovalSubmission("Leave of Alice", Map.of()));
+        publishService.publish("annual", ruledFlow(Filters.of(List.of("days", ">", 5))));
+
+        assertEquals(List.of("manager"), nodeIds(launchService.previewRecord(MODEL, ROW, SUBMITTER)));
+
+        record.put("days", 7);
+        assertEquals(List.of("hr"), nodeIds(launchService.previewRecord(MODEL, ROW, SUBMITTER)));
+    }
+
+    @Test
     void aRouteThatReadsWhatANodeComputesWhenTheApprovalRunsIsUndecided() {
         publishService.publish("annual", routedFlow("weight > 5", script("weigh", "days * 2", "weight")));
 
@@ -504,6 +525,16 @@ class FlowApprovalPreviewTest {
         edges.add(edge("e1", router, "hr", condition));
         edges.add(edge("e2", router, "manager", null));
         return flow("Annual leave", null, nodes, edges);
+    }
+
+    /** {@link #routedFlow} whose HR edge holds a rule condition instead of an expression. */
+    private static DesignFlowDefinition ruledFlow(Filters rule) {
+        DesignFlowDefinition design = routedFlow(null, null);
+        design.getGraph().getEdges().stream()
+                .filter(edge -> "e1".equals(edge.getId()))
+                .findFirst().orElseThrow()
+                .setCondition(rule);
+        return design;
     }
 
     /** start → each of {@code steps} in turn → end. */

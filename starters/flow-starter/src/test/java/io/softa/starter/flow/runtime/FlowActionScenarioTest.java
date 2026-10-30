@@ -66,17 +66,22 @@ class FlowActionScenarioTest {
             new DefaultNodeHandlerRegistry(List.of(approvalHandler, new PassThroughNodeExecutionHandler())),
             approvalHandler);
 
-    /** The engine's interval (240 minutes), reading the same approval history it writes. */
-    private final UrgeThrottle throttle = new UrgeThrottle(new ApprovalAuditReader(new NoopApprovalActionLedger()), 240);
+    /** The engine's urge settings, read from the same bundles and approval history it uses. */
+    private final UrgeThrottle throttle = new UrgeThrottle(bundleRegistry,
+            new ApprovalAuditReader(new NoopApprovalActionLedger()));
 
     @BeforeEach
     void publishFlow() {
-        publishService.publish(FLOW_ID, flowDefinition());
+        publishService.publish(FLOW_ID, flowDefinition().build());
     }
 
     private FlowExecutionState startAndExpectPending() {
+        return startAndExpectPending(FLOW_ID);
+    }
+
+    private FlowExecutionState startAndExpectPending(String flowId) {
         FlowStartRequest start = new FlowStartRequest();
-        start.setFlowId(FLOW_ID);
+        start.setFlowId(flowId);
         start.setInitiatorId(INITIATOR);
         FlowExecutionState state = engine.start(start);
         assertEquals(FlowExecutionStatus.WAITING, state.getStatus());
@@ -205,6 +210,35 @@ class FlowActionScenarioTest {
     }
 
     @Test
+    void theInitiatorOfAFlowThatTurnsUrgingOffMayNotUrgeButAnAdministratorMay() {
+        publishService.publish("9101", flowDefinition().urgeEnabled(false).build());
+        FlowExecutionState started = startAndExpectPending("9101");
+
+        assertEquals(new FlowUrgeStatus(false, null), throttle.status(started, INITIATOR, LocalDateTime.now()));
+        assertTrue(throttle.status(started, "admin", LocalDateTime.now()).urgeable());
+        assertThrows(FlowActionValidationException.class, () -> engine.urge(urge(started, INITIATOR)));
+
+        FlowExecutionState afterUrge = engine.urgeAsAdministrator(urge(started, "admin"));
+        assertEquals("admin", entries(afterUrge, ApprovalActionType.URGE).getFirst().getActorId());
+    }
+
+    @Test
+    void eachStepIsUrgedOncePerItsFlowsInterval() {
+        publishService.publish("9102", flowDefinition().urgeIntervalMinutes(30).build());
+        FlowExecutionState started = startAndExpectPending("9102");
+        LocalDateTime urgedAt = LocalDateTime.now();
+        FlowExecutionState afterUrge = engine.urge(urge(started, INITIATOR));
+
+        LocalDateTime next = throttle.status(afterUrge, LocalDateTime.now()).nextUrgeAt();
+        assertFalse(next.isBefore(urgedAt.plusMinutes(30)));
+        assertTrue(next.isBefore(urgedAt.plusMinutes(UrgeThrottle.DEFAULT_INTERVAL_MINUTES)));
+
+        entries(afterUrge, ApprovalActionType.URGE)
+                .forEach(entry -> entry.setEventTime(entry.getEventTime().minusMinutes(31)));
+        assertTrue(throttle.status(afterUrge, INITIATOR, LocalDateTime.now()).urgeable());
+    }
+
+    @Test
     void anApprovalThatHasEndedIsNotUrged() {
         FlowExecutionState started = startAndExpectPending();
         FlowApproveRequest approve = new FlowApproveRequest();
@@ -273,7 +307,7 @@ class FlowActionScenarioTest {
                 .toList();
     }
 
-    private static DesignFlowDefinition flowDefinition() {
+    private static DesignFlowDefinition.DesignFlowDefinitionBuilder flowDefinition() {
         return DesignFlowDefinition.builder()
                 .name("Action Scenarios")
                 .scenario(FlowScenario.APPROVAL)
@@ -286,8 +320,7 @@ class FlowActionScenarioTest {
                         .edges(List.of(
                                 edge("e1", "start", "approval"),
                                 edge("e2", "approval", "end")))
-                        .build())
-                .build();
+                        .build());
     }
 
     private static FlowGraphNode node(String id, FlowNodeType type) {

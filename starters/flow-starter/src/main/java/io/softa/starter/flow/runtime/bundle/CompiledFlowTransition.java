@@ -2,6 +2,8 @@ package io.softa.starter.flow.runtime.bundle;
 
 import java.util.Map;
 import io.swagger.v3.oas.annotations.media.Schema;
+
+import io.softa.framework.orm.domain.Filters;
 import lombok.AllArgsConstructor;
 import lombok.Builder;
 import lombok.Data;
@@ -32,10 +34,18 @@ public class CompiledFlowTransition {
     @Schema(description = "Target handle")
     private String targetHandle;
 
+    @Schema(description = "Rule condition over the fields of the flow's record (Filters); exclusive with conditionExpression")
+    private Filters condition;
+
     @Schema(description = "Condition expression")
     private String conditionExpression;
 
     @Schema(description = "Transition data")
     private Map<String, Object> data;
+
+    /** Whether the transition is taken only when a condition holds — either kind; one without is a default. */
+    public boolean hasCondition() {
+        return !Filters.isEmpty(condition) || (conditionExpression != null && !conditionExpression.isBlank());
+    }
 }
 

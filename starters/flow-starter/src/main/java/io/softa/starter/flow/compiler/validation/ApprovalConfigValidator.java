@@ -38,6 +38,8 @@ public class ApprovalConfigValidator implements FlowValidator {
     private static final String MISSING_DEPT_VARIABLE        = "MISSING_DEPT_VARIABLE";
     private static final String INVALID_TIMEOUT_HOURS        = "INVALID_TIMEOUT_HOURS";
     private static final String INVALID_REMIND_INTERVAL      = "INVALID_REMIND_INTERVAL";
+    private static final String INVALID_MAX_REMINDERS        = "INVALID_MAX_REMINDERS";
+    private static final String REMINDERS_OUTSIDE_REMIND     = "REMINDERS_OUTSIDE_REMIND";
     private static final String MISSING_ESCALATE_TARGET      = "MISSING_ESCALATE_TARGET";
 
     @Override
@@ -64,24 +66,41 @@ public class ApprovalConfigValidator implements FlowValidator {
 
     // ── Timeout ────────────────────────────────────────────────────────────
 
+    /**
+     * A deadline ({@code timeoutHours}) and what happens at it. Without a deadline nothing times out and the rest
+     * is ignored — the designer hides it then, and keeps what was entered. Reminders belong to the Remind strategy:
+     * the designer clears them when another is chosen, so here they are a mistake.
+     */
     private void validateTimeout(String nodeId, ApprovalNodeConfig cfg, List<CompileDiagnostic> d) {
         ApprovalTimeoutConfig timeout = cfg.getTimeout();
-        if (timeout == null) {
+        if (timeout == null || timeout.getTimeoutHours() == null) {
             return;
         }
-        Integer timeoutHours = timeout.getTimeoutHours();
-        if (timeoutHours != null && timeoutHours <= 0) {
+        if (timeout.getTimeoutHours() <= 0) {
             d.add(CompileDiagnostic.fieldLevel(nodeId, APPROVAL_TYPE, "config.timeout.timeoutHours",
                     INVALID_TIMEOUT_HOURS,
                     "Approval node '" + nodeId + "' config.timeout.timeoutHours must be > 0"));
         }
+        ApprovalTimeoutStrategy strategy = timeout.getTimeoutStrategy() == null
+                ? ApprovalTimeoutStrategy.REMIND : timeout.getTimeoutStrategy();
         Integer remindInterval = timeout.getRemindIntervalHours();
-        if (remindInterval != null && timeoutHours != null && timeoutHours > 0
-                && remindInterval >= timeoutHours) {
+        Integer maxReminders = timeout.getMaxRemindTimes();
+        if (!ApprovalTimeoutStrategy.REMIND.equals(strategy) && (remindInterval != null || maxReminders != null)) {
+            d.add(CompileDiagnostic.fieldLevel(nodeId, APPROVAL_TYPE, remindInterval != null
+                            ? "config.timeout.remindIntervalHours" : "config.timeout.maxRemindTimes",
+                    REMINDERS_OUTSIDE_REMIND,
+                    "Approval node '" + nodeId + "' sets reminders, but only the Remind timeout strategy sends "
+                            + "them and it uses " + strategy.getType()));
+        }
+        if (remindInterval != null && remindInterval < 1) {
             d.add(CompileDiagnostic.fieldLevel(nodeId, APPROVAL_TYPE, "config.timeout.remindIntervalHours",
                     INVALID_REMIND_INTERVAL,
-                    "Approval node '" + nodeId
-                            + "' config.timeout.remindIntervalHours must be less than timeoutHours"));
+                    "Approval node '" + nodeId + "' config.timeout.remindIntervalHours must be at least 1"));
+        }
+        if (maxReminders != null && maxReminders < 1) {
+            d.add(CompileDiagnostic.fieldLevel(nodeId, APPROVAL_TYPE, "config.timeout.maxRemindTimes",
+                    INVALID_MAX_REMINDERS,
+                    "Approval node '" + nodeId + "' config.timeout.maxRemindTimes must be at least 1"));
         }
         if (ApprovalTimeoutStrategy.ESCALATE.equals(timeout.getTimeoutStrategy())
                 && !StringUtils.hasText(timeout.getEscalateToUserId())) {

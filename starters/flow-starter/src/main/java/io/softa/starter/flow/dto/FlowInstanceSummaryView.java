@@ -81,8 +81,8 @@ public class FlowInstanceSummaryView {
             + "the flow's withdraw policy; null on any other row")
     private Boolean withdrawable;
 
-    @Schema(description = "The caller's own approval waiting on its approvers: whether they may urge it now, and if "
-            + "not, when; null on any other row")
+    @Schema(description = "The caller's own approval waiting on its approvers: whether they may urge it now, by the "
+            + "flow's urge settings, and if not, when; null on any other row")
     private FlowUrgeStatus urge;
 
     @Schema(description = "A record's approval whose record no longer exists — a draft deleted after its approval "

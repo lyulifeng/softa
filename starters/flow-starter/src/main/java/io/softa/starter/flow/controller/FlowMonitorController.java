@@ -91,8 +91,9 @@ public class FlowMonitorController {
     @Operation(summary = "Urge pending approvers (administrator)",
             description = "Reminds the approvers an approval waits on, as an administrator rather than its "
                     + "initiator: allowed to whoever may read the instance's FlowInstance row with their own "
-                    + "permissions. The initiator's interval applies: a step urged within it, by anyone, is not "
-                    + "urged again. Returns when the approval may be urged next.")
+                    + "permissions, whether or not the flow lets its initiator urge. The flow's interval applies: a "
+                    + "step urged within it, by anyone, is not urged again. Returns when the approval may be urged "
+                    + "next.")
     public ApiResponse<FlowUrgeStatus> urge(@Valid @RequestBody FlowUrgeRequest request) {
         String userId = currentUserId();
         accessGuard.requireInstanceAdministrator(request.getInstanceId(), userId);

@@ -257,6 +257,14 @@ were planned but removed. AI agents use `Read` / `Edit` / `Write` directly
 - [starters/metadata-starter/README.md](starters/metadata-starter/README.md) — annotation API, scanner-scope behavior matrix, `renamedFrom`, DDL auto-execute policy
 - [framework/softa-orm/README.md](framework/softa-orm/README.md) — full `@Model` / `@Field` / `@Index` property reference
 - [starters/studio-starter/README.md](starters/studio-starter/README.md) — metadata control plane: publish / merge / drift / import, connectors, `DesignAggregate`
+- [starters/flow-starter/README.md](starters/flow-starter/README.md) — flow engine: scenarios and triggers, the approval model, approving business records, notifications, APIs
+
+A change to behaviour in `flow-starter` — the record or instance state machine,
+approval actions, flow or node settings, triggers and automation runs,
+notifications, permissions, configuration keys — updates
+`starters/flow-starter/README.md` and the softa-docs Flow pages
+(`content/{zh-CN,en-US}/docs/features/flow/`, zh-CN first: it is the translation
+source) in the same change; when neither needs to change, the summary says why.
 
 ## Coding Conventions
 

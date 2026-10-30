@@ -230,8 +230,8 @@ public class FlowInstanceController {
     @PostMapping("/batch/approve")
     @Operation(summary = "Approve pending tasks in a batch",
             description = "Approves each of the caller's pending tasks named, each on its own: one refused task changes "
-                    + "nothing for the others. A task whose step is a handling step or has fields to fill in is "
-                    + "skipped. Returns each task's outcome.")
+                    + "nothing for the others. A task whose step has fields to fill in is skipped. Returns each "
+                    + "task's outcome.")
     public ApiResponse<FlowBatchActionResult> batchApprove(@Valid @RequestBody FlowBatchActionRequest request) {
         return ApiResponse.success(batchExecutor.execute(BatchApprovalExecutor.Action.APPROVE, request, currentUserId()));
     }
@@ -239,8 +239,8 @@ public class FlowInstanceController {
     @PostMapping("/batch/return")
     @Operation(summary = "Return pending tasks in a batch",
             description = "Returns each of the caller's pending tasks named to its initiator, each on its own, with one "
-                    + "comment (required). A task whose step allows no return, is a handling step or has fields to "
-                    + "fill in is skipped. Returns each task's outcome.")
+                    + "comment (required). A task whose step allows no return or has fields to fill in is skipped. "
+                    + "Returns each task's outcome.")
     public ApiResponse<FlowBatchActionResult> batchReturn(@Valid @RequestBody FlowBatchActionRequest request) {
         return ApiResponse.success(batchExecutor.execute(BatchApprovalExecutor.Action.RETURN, request, currentUserId()));
     }
@@ -248,8 +248,8 @@ public class FlowInstanceController {
     @PostMapping("/batch/reject")
     @Operation(summary = "Reject pending tasks in a batch",
             description = "Rejects each of the caller's pending tasks named, each on its own, with one comment "
-                    + "(required). A task whose step is a handling step or has fields to fill in is skipped. Returns "
-                    + "each task's outcome.")
+                    + "(required). A task whose step has fields to fill in is skipped. Returns each task's "
+                    + "outcome.")
     public ApiResponse<FlowBatchActionResult> batchReject(@Valid @RequestBody FlowBatchActionRequest request) {
         return ApiResponse.success(batchExecutor.execute(BatchApprovalExecutor.Action.REJECT, request, currentUserId()));
     }
@@ -283,7 +283,10 @@ public class FlowInstanceController {
     }
 
     @PostMapping("/cc")
-    @Operation(summary = "CC an approval recipient", description = "Sends a CC notification to another actor on the same approval node and cycle without changing approval ownership.")
+    @Operation(summary = "CC people on a pending approval", description = "The caller, an approver of the pending "
+            + "step still to vote, CCs one or more people (`targetActorIds`): each gets a read-only copy of the approval "
+            + "and an inbox notice, without changing who approves. Approvers of the step and people already CC'd on it "
+            + "this cycle are skipped; refused when nobody is left.")
     public ApiResponse<FlowExecutionState> cc(@Valid @RequestBody FlowCcRequest request) {
         request.setActorId(currentUserId());
         return ApiResponse.success(runtimeEngine.cc(request));
@@ -314,25 +317,27 @@ public class FlowInstanceController {
 
     @PostMapping("/urge")
     @Operation(summary = "Urge pending approvers",
-            description = "The initiator reminds the approvers the approval waits on. A step urged within the interval "
-                    + "(flow.approval.urge-interval-minutes, default 240) — by the initiator or an administrator — "
-                    + "is not urged again, and when every step is, the urge is refused. Returns when the approval "
-                    + "may be urged next.")
+            description = "The initiator reminds the approvers the approval waits on, on a flow that lets them "
+                    + "(urgeEnabled, default on). A step urged within the flow's interval (urgeIntervalMinutes, "
+                    + "default 240) — by the initiator or an administrator — is not urged again, and when every step "
+                    + "is, the urge is refused. Returns when the approval may be urged next.")
     public ApiResponse<FlowUrgeStatus> urge(@Valid @RequestBody FlowUrgeRequest request) {
         request.setActorId(currentUserId());
         FlowExecutionState state = runtimeEngine.urge(request);
-        return ApiResponse.success(urgeThrottle.status(state, LocalDateTime.now()));
+        return ApiResponse.success(urgeThrottle.status(state, request.getActorId(), LocalDateTime.now()));
     }
 
     @GetMapping("/{instanceId}/urge")
     @Operation(summary = "Get urge status",
-            description = "Whether the approval may be urged now, and if not, when it may be. Allowed to whoever may "
-                    + "view the instance.")
+            description = "Whether the approval may be urged now, and if not, when it may be — never, for its "
+                    + "initiator, on a flow that does not let its initiator urge. Allowed to whoever may view the "
+                    + "instance.")
     public ApiResponse<FlowUrgeStatus> getUrgeStatus(@PathVariable String instanceId) {
         return runtimeEngine.getInstance(instanceId)
                 .map(state -> {
-                    accessGuard.requireInstanceViewer(state, currentUserId());
-                    return ApiResponse.success(urgeThrottle.status(state, LocalDateTime.now()));
+                    String userId = currentUserId();
+                    accessGuard.requireInstanceViewer(state, userId);
+                    return ApiResponse.success(urgeThrottle.status(state, userId, LocalDateTime.now()));
                 })
                 .orElseGet(() -> ApiResponse.error(ResponseCode.REQUEST_NOT_FOUND,
                         "Flow instance not found: " + instanceId));

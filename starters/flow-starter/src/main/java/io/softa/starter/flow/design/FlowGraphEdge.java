@@ -2,6 +2,8 @@ package io.softa.starter.flow.design;
 
 import java.util.Map;
 import io.swagger.v3.oas.annotations.media.Schema;
+
+import io.softa.framework.orm.domain.Filters;
 import lombok.AllArgsConstructor;
 import lombok.Builder;
 import lombok.Data;
@@ -38,10 +40,20 @@ public class FlowGraphEdge {
     @Schema(description = "Custom edge component type for the frontend")
     private String type;
 
-    @Schema(description = "Condition expression used by conditional routing")
+    @Schema(description = "Rule condition over the fields of the flow's record — the platform Filters JSON, "
+            + "evaluated like a field condition. Exclusive with conditionExpression")
+    private Filters condition;
+
+    @Schema(description = "AviatorScript condition for what a rule cannot say — arithmetic, functions, "
+            + "node outputs. Exclusive with condition")
     private String conditionExpression;
 
     @Schema(description = "Opaque data bag passed to the frontend edge component")
     private Map<String, Object> data;
+
+    /** Whether the edge is taken only when a condition holds — either kind; one without is a default edge. */
+    public boolean hasCondition() {
+        return !Filters.isEmpty(condition) || (conditionExpression != null && !conditionExpression.isBlank());
+    }
 }
 

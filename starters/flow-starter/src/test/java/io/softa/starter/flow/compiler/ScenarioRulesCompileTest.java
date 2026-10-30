@@ -7,6 +7,7 @@ import org.junit.jupiter.api.Test;
 
 import io.softa.starter.flow.api.CompileDiagnostic;
 import io.softa.starter.flow.design.DesignFlowDefinition;
+import io.softa.starter.flow.design.FlowCcRule;
 import io.softa.starter.flow.design.FlowGraphDocument;
 import io.softa.starter.flow.design.FlowGraphEdge;
 import io.softa.starter.flow.design.FlowGraphNode;
@@ -17,6 +18,7 @@ import io.softa.starter.flow.design.trigger.SubflowTrigger;
 import io.softa.starter.flow.design.trigger.SubmitTrigger;
 import io.softa.starter.flow.design.trigger.TriggerSource;
 import io.softa.starter.flow.enums.ApproverDedupStrategy;
+import io.softa.starter.flow.enums.CcTiming;
 import io.softa.starter.flow.enums.FlowNodeType;
 import io.softa.starter.flow.enums.FlowScenario;
 import io.softa.starter.flow.enums.WithdrawPolicy;
@@ -80,8 +82,36 @@ class ScenarioRulesCompileTest {
                 "APPROVAL_SETTING_OUTSIDE_APPROVAL", null));
         assertTrue(has(builder(FlowScenario.AUTOMATION, new ApiTrigger(null)).approverDedup(ApproverDedupStrategy.GLOBAL)
                 .build(), "APPROVAL_SETTING_OUTSIDE_APPROVAL", null));
+        assertTrue(has(builder(FlowScenario.AUTOMATION, new ApiTrigger(null)).urgeEnabled(true).build(),
+                "APPROVAL_SETTING_OUTSIDE_APPROVAL", null));
+        assertTrue(has(builder(FlowScenario.AUTOMATION, new ApiTrigger(null)).urgeIntervalMinutes(60).build(),
+                "APPROVAL_SETTING_OUTSIDE_APPROVAL", null));
         assertFalse(has(builder(FlowScenario.APPROVAL, submit()).withdrawPolicy(WithdrawPolicy.BEFORE_FIRST_ACTION)
-                .approverDedup(ApproverDedupStrategy.GLOBAL).build(), "APPROVAL_SETTING_OUTSIDE_APPROVAL", null));
+                .urgeEnabled(false).urgeIntervalMinutes(60).approverDedup(ApproverDedupStrategy.GLOBAL).build(),
+                "APPROVAL_SETTING_OUTSIDE_APPROVAL", null));
+    }
+
+    @Test
+    void theUrgeIntervalIsAtLeastAMinute() {
+        assertTrue(has(builder(FlowScenario.APPROVAL, submit()).urgeIntervalMinutes(0).build(), "INVALID_URGE_INTERVAL", null));
+        assertTrue(has(builder(FlowScenario.APPROVAL, submit()).urgeIntervalMinutes(-5).build(), "INVALID_URGE_INTERVAL", null));
+        assertFalse(has(builder(FlowScenario.APPROVAL, submit()).urgeIntervalMinutes(1).build(), "INVALID_URGE_INTERVAL", null));
+    }
+
+    @Test
+    void ccRulesBelongToApprovalFlowsAndNameTheirRecipientsOneWay() {
+        FlowCcRule named = FlowCcRule.builder().timing(CcTiming.ON_APPROVED).recipients(List.of("u-1")).build();
+        assertTrue(has(builder(FlowScenario.AUTOMATION, new ApiTrigger(null)).cc(List.of(named)).build(),
+                "APPROVAL_SETTING_OUTSIDE_APPROVAL", null));
+        assertFalse(has(builder(FlowScenario.APPROVAL, submit()).cc(List.of(named)).build(), "INVALID_CC_RULE", null));
+
+        FlowCcRule whenless = FlowCcRule.builder().recipients(List.of("u-1")).build();
+        FlowCcRule nobody = FlowCcRule.builder().timing(CcTiming.ON_SUBMIT).build();
+        FlowCcRule both = FlowCcRule.builder().timing(CcTiming.ON_SUBMIT).recipients(List.of("u-1"))
+                .recipientSource(Map.of("type", "Supervisor")).build();
+        for (FlowCcRule invalid : List.of(whenless, nobody, both)) {
+            assertTrue(has(builder(FlowScenario.APPROVAL, submit()).cc(List.of(invalid)).build(), "INVALID_CC_RULE", null));
+        }
     }
 
     @Test

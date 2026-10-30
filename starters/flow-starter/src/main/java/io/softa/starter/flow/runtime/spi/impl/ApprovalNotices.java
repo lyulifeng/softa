@@ -12,17 +12,19 @@ import io.softa.starter.flow.runtime.state.FlowExecutionState;
 import io.softa.starter.flow.runtime.state.PendingApproval;
 
 /**
- * Who an approval event concerns and what they are told — the one mapping every channel sends: the inbox always,
- * email on a flow that sends it. Each notice names its mail template by a fixed code; a notice with none is not
- * emailed (a CC, a timeout reminder).
+ * Who an approval event concerns and what they are told — the one mapping every channel sends. A notice is a
+ * to-do or news. A to-do — a task to act on, a CC to read — is work, which My Tasks lists: the inbox leaves it
+ * out. News goes to the inbox. Either is emailed, on a flow that sends email, when it names a mail template by
+ * its fixed code; one with none is not emailed (a CC, a timeout reminder).
  *
  * <ul>
- *   <li>A step's approvers still to act, and whoever a task is transferred or delegated to: "Pending approval".</li>
- *   <li>Approvers urged or about to time out: "Reminder" / "Approval due soon".</li>
- *   <li>CC recipients: "For your information".</li>
- *   <li>The initiator, when the approval is approved, rejected or returned (with the comment), terminated or
- *       reassigned by an administrator (with the reason).</li>
- *   <li>The initiator and the tenant's administrators, when the approval fails.</li>
+ *   <li>To-do: a step's approvers still to act, and whoever a task is transferred or delegated to: "Pending
+ *       approval".</li>
+ *   <li>To-do: CC recipients: "For your information".</li>
+ *   <li>News: approvers urged, or reminded of a step past its deadline: "Reminder" / "Approval overdue".</li>
+ *   <li>News: the initiator, when the approval is approved, rejected or returned (with the comment), terminated
+ *       or reassigned by an administrator (with the reason).</li>
+ *   <li>News: the initiator and the tenant's administrators, when the approval fails.</li>
  * </ul>
  */
 final class ApprovalNotices {
@@ -39,8 +41,21 @@ final class ApprovalNotices {
     private ApprovalNotices() {
     }
 
-    /** Who to tell, the title template (its {0} is the instance's subject), an optional body, and the mail template. */
-    record Notice(List<String> recipients, String title, String content, String mailTemplate) {
+    /**
+     * Who to tell, the title template (its {0} is the instance's subject), an optional body, the mail template, and
+     * whether it is a to-do, which My Tasks lists, or news.
+     */
+    record Notice(List<String> recipients, String title, String content, String mailTemplate, boolean toDo) {
+
+        /** Work My Tasks lists: emailed, not put in the inbox. */
+        static Notice toDo(List<String> recipients, String title, String content, String mailTemplate) {
+            return new Notice(recipients, title, content, mailTemplate, true);
+        }
+
+        /** News: put in the inbox, and emailed. */
+        static Notice news(List<String> recipients, String title, String content, String mailTemplate) {
+            return new Notice(recipients, title, content, mailTemplate, false);
+        }
     }
 
     /**
@@ -51,35 +66,35 @@ final class ApprovalNotices {
         FlowExecutionState state = event.state();
         return switch (event) {
             case FlowNotificationEvent.TaskAssigned e ->
-                    new Notice(stillToAct(e.pendingApproval()), "Pending approval: {0}", null, TASK_ASSIGNED);
+                    Notice.toDo(stillToAct(e.pendingApproval()), "Pending approval: {0}", null, TASK_ASSIGNED);
             case FlowNotificationEvent.TaskTransferred e ->
-                    new Notice(List.of(e.newActorId()), "Pending approval: {0}", null, TASK_ASSIGNED);
+                    Notice.toDo(List.of(e.newActorId()), "Pending approval: {0}", null, TASK_ASSIGNED);
             case FlowNotificationEvent.TaskDelegated e ->
-                    new Notice(List.of(e.toActorId()), "Pending approval: {0}", null, TASK_ASSIGNED);
-            case FlowNotificationEvent.Urged e ->
-                    new Notice(e.pendingActorIds(), "Reminder to approve: {0}", e.message(), URGED);
-            case FlowNotificationEvent.TimeoutReminded e ->
-                    new Notice(stillToAct(e.pendingApproval()), "Approval due soon: {0}", null, null);
+                    Notice.toDo(List.of(e.toActorId()), "Pending approval: {0}", null, TASK_ASSIGNED);
             case FlowNotificationEvent.CcSent e ->
-                    new Notice(e.recipientActorIds(), "For your information: {0}", e.message(), null);
+                    Notice.toDo(e.recipientActorIds(), "For your information: {0}", e.message(), null);
+            case FlowNotificationEvent.Urged e ->
+                    Notice.news(e.pendingActorIds(), "Reminder to approve: {0}", e.message(), URGED);
+            case FlowNotificationEvent.TimeoutReminded e ->
+                    Notice.news(stillToAct(e.pendingApproval()), "Approval overdue: {0}", null, null);
             case FlowNotificationEvent.FlowCompleted e -> e.approved()
-                    ? new Notice(List.of(state.getInitiatorId()), "Approved: {0}", null, APPROVED)
+                    ? Notice.news(List.of(state.getInitiatorId()), "Approved: {0}", null, APPROVED)
                     : null;
             // Approving one step is no news to the initiator; a rejection ends the approval.
             case FlowNotificationEvent.TaskCompleted e -> e.approved()
                     ? null
-                    : new Notice(List.of(state.getInitiatorId()), "Rejected: {0}",
+                    : Notice.news(List.of(state.getInitiatorId()), "Rejected: {0}",
                             latestComment(state, ApprovalActionType.REJECT), REJECTED);
             case FlowNotificationEvent.Returned e ->
-                    new Notice(List.of(state.getInitiatorId()), "Returned to you: {0}", e.comment(), RETURNED);
+                    Notice.news(List.of(state.getInitiatorId()), "Returned to you: {0}", e.comment(), RETURNED);
             case FlowNotificationEvent.Terminated e ->
-                    new Notice(List.of(state.getInitiatorId()), "Terminated: {0}", e.reason(), TERMINATED);
+                    Notice.news(List.of(state.getInitiatorId()), "Terminated: {0}", e.reason(), TERMINATED);
             // The new approver hears of the task as of any transfer; the initiator, of who now holds it.
             case FlowNotificationEvent.Reassigned e ->
-                    new Notice(List.of(state.getInitiatorId()), "Approver changed: {0}", e.reason(), REASSIGNED);
+                    Notice.news(List.of(state.getInitiatorId()), "Approver changed: {0}", e.reason(), REASSIGNED);
             // Only a record's approval: an automation run that fails is the operators' to watch, not its trigger's.
             case FlowNotificationEvent.FlowFailed e -> Boolean.TRUE.equals(state.getRecordApproval())
-                    ? new Notice(withInitiator(state, administrators.get()), "Approval failed: {0}", e.errorMessage(), FAILED)
+                    ? Notice.news(withInitiator(state, administrators.get()), "Approval failed: {0}", e.errorMessage(), FAILED)
                     : null;
         };
     }

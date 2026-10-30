@@ -12,7 +12,6 @@ import io.softa.starter.flow.runtime.handler.DefaultNodeHandlerRegistry;
 import io.softa.starter.flow.runtime.spi.ApprovalNotificationService;
 import io.softa.starter.flow.runtime.spi.impl.DefaultApprovalNotificationService;
 import io.softa.starter.flow.runtime.store.FlowInstanceStore;
-import io.softa.starter.flow.service.FlowCcConfigService;
 
 /**
  * Test helper to build a fully wired {@link FlowRuntimeFacade} without Spring context.
@@ -66,18 +65,7 @@ public final class TestFlowRuntimeFactory {
                                                      ApprovalNodeExecutionHandler approvalHandler,
                                                      ApprovalNotificationService notificationService) {
         return create(bundleRegistry, instanceStore, nodeHandlerRegistry, approvalHandler, state -> {}, state -> {},
-                Mockito.mock(ModelService.class), notificationService, Mockito.mock(FlowCcConfigService.class));
-    }
-
-    /** With the CC rules the engine applies, and the notification service it reports to. */
-    public static FlowRuntimeFacade createWithCcRules(FlowBundleRegistry bundleRegistry,
-                                               FlowInstanceStore instanceStore,
-                                               DefaultNodeHandlerRegistry nodeHandlerRegistry,
-                                               ApprovalNodeExecutionHandler approvalHandler,
-                                               FlowCcConfigService ccConfigService,
-                                               ApprovalNotificationService notificationService) {
-        return create(bundleRegistry, instanceStore, nodeHandlerRegistry, approvalHandler, state -> {}, state -> {},
-                Mockito.mock(ModelService.class), notificationService, ccConfigService);
+                Mockito.mock(ModelService.class), notificationService);
     }
 
     private static FlowRuntimeFacade create(FlowBundleRegistry bundleRegistry,
@@ -88,19 +76,6 @@ public final class TestFlowRuntimeFactory {
                                     FlowStateChangeListener recordSyncListener,
                                     ModelService<?> recordModelService,
                                     ApprovalNotificationService notificationService) {
-        return create(bundleRegistry, instanceStore, nodeHandlerRegistry, approvalHandler, taskSyncListener,
-                recordSyncListener, recordModelService, notificationService, Mockito.mock(FlowCcConfigService.class));
-    }
-
-    private static FlowRuntimeFacade create(FlowBundleRegistry bundleRegistry,
-                                    FlowInstanceStore instanceStore,
-                                    DefaultNodeHandlerRegistry nodeHandlerRegistry,
-                                    ApprovalNodeExecutionHandler approvalHandler,
-                                    FlowStateChangeListener taskSyncListener,
-                                    FlowStateChangeListener recordSyncListener,
-                                    ModelService<?> recordModelService,
-                                    ApprovalNotificationService notificationService,
-                                    FlowCcConfigService ccConfigService) {
         FlowProjectionPublisher projectionPublisher =
                 new FlowProjectionPublisher(List.of(taskSyncListener, recordSyncListener));
 
@@ -109,7 +84,7 @@ public final class TestFlowRuntimeFactory {
         ApproverResolutionService approverResolutionService = new ApproverResolutionService();
         PendingApprovalFactory pendingApprovalFactory = new PendingApprovalFactory(approverResolutionService, auditReader);
         ApprovalLifecycleService lifecycleService = new ApprovalLifecycleService(pendingApprovalFactory);
-        ApprovalActorValidator actorValidator = new ApprovalActorValidator(lifecycleService, auditReader);
+        ApprovalActorValidator actorValidator = new ApprovalActorValidator(lifecycleService);
         FlowActionContextService contextService = new FlowActionContextService(instanceStore, bundleRegistry, projectionPublisher);
 
         FlowGatewayRouter gatewayRouter = new FlowGatewayRouter();
@@ -120,8 +95,8 @@ public final class TestFlowRuntimeFactory {
                 bundleRegistry, nodeHandlerRegistry, contextService, auditService, pendingApprovalFactory, notificationService,
                 gatewayRouter, retryExecutor, approverDedupService);
 
-        AutoCcService autoCcService = new AutoCcService(ccConfigService, contextService, auditService, auditReader,
-                notificationService);
+        AutoCcService autoCcService = new AutoCcService(contextService, auditService, auditReader, notificationService,
+                approverResolutionService);
 
         return new FlowRuntimeFacade(contextService, orchestrator, instanceStore, autoCcService,
                 new ApproveActionHandler(contextService, actorValidator, lifecycleService, auditService, orchestrator, notificationService,
@@ -132,12 +107,11 @@ public final class TestFlowRuntimeFactory {
                 new AddSignBeforeActionHandler(contextService, actorValidator, lifecycleService, auditService),
                 new AddSignAfterActionHandler(contextService, actorValidator, lifecycleService, auditService),
                 new CcActionHandler(contextService, actorValidator, auditService, notificationService),
-                new BatchCcActionHandler(contextService, actorValidator, auditService),
                 new ReadCcActionHandler(contextService, auditService),
                 new ReturnApprovalActionHandler(contextService, actorValidator, lifecycleService, auditService, notificationService),
                 new WithdrawActionHandler(contextService, auditService, new WithdrawPolicyGuard(bundleRegistry, auditReader)),
                 new UrgeActionHandler(contextService, auditService, notificationService,
-                        new UrgeThrottle(auditReader, 240)),
+                        new UrgeThrottle(bundleRegistry, auditReader)),
                 new CommentActionHandler(contextService, auditService, auditReader),
                 new TerminateActionHandler(contextService, auditService, notificationService),
                 new ReassignActionHandler(contextService, actorValidator, lifecycleService, auditService, notificationService));

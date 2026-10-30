@@ -7,9 +7,13 @@ import java.util.Map;
 import java.util.function.Predicate;
 
 import org.springframework.stereotype.Component;
-import org.springframework.util.StringUtils;
 
 import io.softa.framework.orm.compute.ComputeUtils;
+import io.softa.framework.orm.domain.FilterEvaluator;
+import io.softa.framework.orm.domain.FilterEvaluator.EvalContext;
+import io.softa.framework.orm.domain.Filters;
+import io.softa.framework.orm.enums.FieldType;
+import io.softa.framework.orm.meta.ModelManager;
 import io.softa.starter.flow.enums.FlowNodeType;
 import io.softa.starter.flow.runtime.bundle.CompiledFlowDefinition;
 import io.softa.starter.flow.runtime.bundle.CompiledFlowNode;
@@ -29,8 +33,27 @@ public class FlowGatewayRouter {
                                            CompiledFlowNode node,
                                            FlowVariableContext ctx) {
         Map<String, Object> scope = ctx.toExpressionScope();
-        return resolveNextNodeIds(definition, node,
-                expression -> ComputeUtils.executeBoolean(expression, new LinkedHashMap<>(scope)));
+        return resolveNextNodeIds(definition, node, transition -> holds(definition, transition, scope));
+    }
+
+    /**
+     * Whether a transition's condition holds over {@code variables}: a rule condition the way a field
+     * condition is judged — by the types of the record's fields — and an expression by AviatorScript.
+     */
+    public static boolean holds(CompiledFlowDefinition definition, CompiledFlowTransition transition,
+                                Map<String, Object> variables) {
+        if (!Filters.isEmpty(transition.getCondition())) {
+            String modelName = definition.getTrigger() == null ? null : definition.getTrigger().modelName();
+            return FilterEvaluator.matches(transition.getCondition(), variables, EvalContext.of(null),
+                    field -> fieldTypeOf(modelName, field));
+        }
+        return ComputeUtils.executeBoolean(transition.getConditionExpression(), new LinkedHashMap<>(variables));
+    }
+
+    private static FieldType fieldTypeOf(String modelName, String field) {
+        return modelName != null && ModelManager.existModel(modelName) && ModelManager.existField(modelName, field)
+                ? ModelManager.getModelField(modelName, field).getFieldType()
+                : null;
     }
 
     /**
@@ -39,7 +62,7 @@ public class FlowGatewayRouter {
      */
     public List<String> resolveNextNodeIds(CompiledFlowDefinition definition,
                                            CompiledFlowNode node,
-                                           Predicate<String> condition) {
+                                           Predicate<CompiledFlowTransition> condition) {
         if (FlowNodeType.PARALLEL_FORK.equals(node.getType())) {
             return resolveAllNextNodeIds(definition, node);
         }
@@ -63,7 +86,7 @@ public class FlowGatewayRouter {
 
     private List<String> resolveExclusiveEdgeNextNodeIds(CompiledFlowDefinition definition,
                                                          CompiledFlowNode node,
-                                                         Predicate<String> condition) {
+                                                         Predicate<CompiledFlowTransition> condition) {
         List<CompiledFlowTransition> matches = new ArrayList<>();
         CompiledFlowTransition defaultTransition = null;
         for (String edgeId : node.getOutgoingEdgeIds()) {
@@ -71,7 +94,7 @@ public class FlowGatewayRouter {
             if (transition == null) {
                 continue;
             }
-            if (!StringUtils.hasText(transition.getConditionExpression())) {
+            if (!transition.hasCondition()) {
                 if (defaultTransition != null) {
                     throw new FlowRuntimeException("Node '" + node.getNodeId()
                             + "' has multiple default outgoing edges");
@@ -79,7 +102,7 @@ public class FlowGatewayRouter {
                 defaultTransition = transition;
                 continue;
             }
-            if (condition.test(transition.getConditionExpression())) {
+            if (condition.test(transition)) {
                 matches.add(transition);
             }
         }
@@ -103,15 +126,14 @@ public class FlowGatewayRouter {
 
     private List<String> resolveInclusiveGatewayNextNodeIds(CompiledFlowDefinition definition,
                                                             CompiledFlowNode node,
-                                                            Predicate<String> condition) {
+                                                            Predicate<CompiledFlowTransition> condition) {
         List<String> matched = new ArrayList<>();
         for (String edgeId : node.getOutgoingEdgeIds()) {
             CompiledFlowTransition transition = definition.getTransitionIndex().get(edgeId);
             if (transition == null) {
                 continue;
             }
-            if (!StringUtils.hasText(transition.getConditionExpression())
-                    || condition.test(transition.getConditionExpression())) {
+            if (!transition.hasCondition() || condition.test(transition)) {
                 matched.add(transition.getTarget());
             }
         }

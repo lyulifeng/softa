@@ -5,7 +5,6 @@ import java.time.Duration;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.Comparator;
-import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -38,6 +37,7 @@ import io.softa.starter.flow.enums.ApprovalStatus;
 import io.softa.starter.flow.runtime.engine.FlowLaunchResponse;
 import io.softa.starter.flow.runtime.api.FlowStartRequest;
 import io.softa.starter.flow.runtime.api.FlowWithdrawRequest;
+import io.softa.starter.flow.runtime.context.RecordVariables;
 import io.softa.starter.flow.runtime.api.PublishAndStartRequest;
 import io.softa.starter.flow.runtime.bundle.CompiledFlowDefinition;
 import io.softa.starter.flow.runtime.bundle.FlowBundleRegistry;
@@ -208,8 +208,7 @@ public class FlowLaunchServiceImpl implements FlowLaunchService {
         // The record's earlier approvals are over; this one replaces them — a returned one no longer
         // waits for the record to be edited.
         instanceService.markSuperseded(modelName, rowId);
-        FlowStartRequest request = submitStartRequest(definition, modelName, rowId, initiatorId,
-                submission.subjectId(), submission.approval());
+        FlowStartRequest request = submitStartRequest(definition, modelName, rowId, initiatorId, submission);
         request.setDepartmentId(subjectDeptOf(submission.subjectId()));
         // Started as the record's approval: its result is written back, and the unique open-record
         // key refuses a second approval of the record, a concurrent submission included.
@@ -315,7 +314,7 @@ public class FlowLaunchServiceImpl implements FlowLaunchService {
         }
         CompiledFlowDefinition definition = flows.getFirst();
         return pathPreviewer.preview(definition, submitStartRequest(definition, modelName, rowId, submitterId,
-                submission.subjectId(), submission.approval()));
+                submission));
     }
 
     /**
@@ -462,24 +461,26 @@ public class FlowLaunchServiceImpl implements FlowLaunchService {
     }
 
     private static FlowStartRequest submitStartRequest(CompiledFlowDefinition definition, String modelName,
-                                                       String rowId, String initiatorId, Long subjectId,
-                                                       ApprovalSubmission submission) {
-        Map<String, Object> variables = new LinkedHashMap<>(submission.variables());
+                                                       String rowId, String initiatorId, Submission<?> submission) {
+        ApprovalSubmission approval = submission.approval();
+        // The record's own fields, then what its handler works out on top of them.
+        Map<String, Object> variables = RecordVariables.of(modelName, submission.row());
+        variables.putAll(approval.variables());
         // The trigger metadata every triggered start carries (see FlowAutomationService).
         variables.put("_triggerType", FlowAutomationService.SUBMIT_TRIGGER_TYPE);
         variables.put("_sourceModel", modelName);
         variables.put("_sourceRowId", rowId);
-        variables.put(ApproverResolutionService.SUBJECT_ID_KEY, subjectId);
+        variables.put(ApproverResolutionService.SUBJECT_ID_KEY, submission.subjectId());
         FlowStartRequest request = new FlowStartRequest();
         request.setBundleId(definition.getBundleId());
         request.setInitiatorId(initiatorId);
-        request.setTitle(submission.title());
+        request.setTitle(approval.title());
         request.setModelName(modelName);
         request.setRowId(rowId);
         request.setVariables(variables);
-        request.setSubjectId(subjectId);
-        request.setEffectiveDate(submission.effectiveDate());
-        request.setRecordCode(submission.code());
+        request.setSubjectId(submission.subjectId());
+        request.setEffectiveDate(approval.effectiveDate());
+        request.setRecordCode(approval.code());
         return request;
     }
 
