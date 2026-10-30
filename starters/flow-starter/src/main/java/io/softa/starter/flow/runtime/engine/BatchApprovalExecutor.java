@@ -24,9 +24,9 @@ import io.softa.starter.flow.runtime.nodeconfig.ApprovalNodeConfig;
  * each comes back with its own outcome. Every engine rule holds as for a single action — it must be the
  * caller's turn on the step, a return or rejection needs its comment.
  *
- * <p>A batch fills in nothing, so a task is skipped, before the engine is asked, when its step is a handling
- * step or makes a field required (the same rule that keeps its row out of a selection), and a return when its
- * step allows none. Read from the revision the instance runs on, never from the record.
+ * <p>A batch fills in nothing, so a task is skipped, before the engine is asked, when its step makes a field
+ * required (the same rule that keeps its row out of a selection), and a return when its step allows none. Read
+ * from the revision the instance runs on, never from the record.
  */
 @Slf4j
 @Component
@@ -81,9 +81,6 @@ public class BatchApprovalExecutor {
     private static String skipReason(Action action, CompiledFlowNode node) {
         if (!(node.getParsedConfig() instanceof ApprovalNodeConfig cfg)) {
             return null;
-        }
-        if (Boolean.TRUE.equals(cfg.getHandling())) {
-            return "A handling step is submitted on its own: open it to fill in what it asks for.";
         }
         if (!FormPermissionService.requiredFields(node).isEmpty()) {
             return "This step has fields to fill in: open it to act on it.";

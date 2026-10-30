@@ -80,7 +80,7 @@ public class PendingApprovalFactory {
                                                    FlowExecutionState state,
                                                    boolean recordDelegationUsage) {
         List<String> approvers = approverResolutionService.resolveApprovers(node,
-                buildApproverResolutionVariables(state == null ? null : state.getVariables(),
+                ApproverResolutionService.resolutionVariables(state == null ? null : state.getVariables(),
                         state == null ? null : state.getInitiatorId()));
 
         if (approvers.isEmpty()) {
@@ -140,18 +140,6 @@ public class PendingApprovalFactory {
                     .orElse(0));
         }
         return maxCycle + 1;
-    }
-
-    private Map<String, Object> buildApproverResolutionVariables(Map<String, Object> variables, String initiatorId) {
-        Map<String, Object> resolved = new LinkedHashMap<>(variables == null ? Map.of() : variables);
-        Map<String, Object> approverContext = new LinkedHashMap<>();
-        approverContext.put(ApproverResolutionService.INITIATOR_ID_KEY, initiatorId);
-        approverContext.put(ApproverResolutionService.INITIATOR_MANAGER_ID_KEY,
-                resolved.getOrDefault(ApproverResolutionService.INITIATOR_MANAGER_ID_KEY, null));
-        approverContext.put(ApproverResolutionService.ROLE_APPROVERS_KEY,
-                resolved.getOrDefault(ApproverResolutionService.ROLE_APPROVERS_KEY, Map.of()));
-        resolved.put(ApproverResolutionService.APPROVER_CONTEXT_KEY, approverContext);
-        return resolved;
     }
 
     /**

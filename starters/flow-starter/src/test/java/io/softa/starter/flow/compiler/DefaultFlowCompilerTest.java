@@ -163,11 +163,13 @@ class DefaultFlowCompilerTest {
     }
 
     @Test
-    void shouldCompileFlowWithWithdrawPolicy() {
+    void shouldCompileFlowWithWithdrawAndUrgeSettings() {
         DesignFlowDefinition definition = DesignFlowDefinition.builder()
                 .name("Withdraw Flow")
                 .scenario(FlowScenario.APPROVAL)
                 .withdrawPolicy(WithdrawPolicy.BEFORE_FIRST_ACTION)
+                .urgeEnabled(false)
+                .urgeIntervalMinutes(60)
                 .trigger(new SubmitTrigger("LeaveRequest", null))
                 .graph(FlowGraphDocument.builder()
                         .nodes(List.of(
@@ -184,6 +186,8 @@ class DefaultFlowCompilerTest {
 
         CompiledFlowDefinition compiled = compiler.compile(definition);
         assertEquals(WithdrawPolicy.BEFORE_FIRST_ACTION, compiled.getWithdrawPolicy());
+        assertEquals(false, compiled.getUrgeEnabled());
+        assertEquals(60, compiled.getUrgeIntervalMinutes());
     }
 
     @Test
@@ -675,6 +679,8 @@ class DefaultFlowCompilerTest {
         List<CompileDiagnostic> diagnostics = compiler.validate(definition);
 
         assertTrue(diagnostics.stream().anyMatch(d -> "NO_START_NODE".equals(d.code())));
+        // Without a Start every node would be "unreachable" — the entry rule alone reports the graph.
+        assertTrue(diagnostics.stream().noneMatch(d -> "UNREACHABLE_NODE".equals(d.code())));
     }
 
     @Test
@@ -696,6 +702,40 @@ class DefaultFlowCompilerTest {
 
         assertTrue(diagnostics.stream().anyMatch(d -> "MULTIPLE_START_NODES".equals(d.code())
                 && d.message().contains("startA") && d.message().contains("startB")));
+    }
+
+    @Test
+    void validate_rejectsNodesTheStartCannotReach() {
+        // approval_a → approval_b → manager: a branch with no way in from the Start, merging into the main path
+        DesignFlowDefinition definition = DesignFlowDefinition.builder()
+                .name("Orphan Branch")
+                .scenario(FlowScenario.APPROVAL)
+                .trigger(new SubmitTrigger("LeaveRequest", null))
+                .graph(FlowGraphDocument.builder()
+                        .nodes(List.of(
+                                node("start", FlowNodeType.START),
+                                node("approval_a", FlowNodeType.APPROVAL),
+                                node("approval_b", FlowNodeType.APPROVAL),
+                                node("manager", FlowNodeType.APPROVAL),
+                                node("end", FlowNodeType.END)))
+                        .edges(List.of(
+                                edge("e1", "start", "manager"),
+                                edge("e2", "approval_a", "approval_b"),
+                                edge("e3", "approval_b", "manager"),
+                                edge("e4", "manager", "end")))
+                        .build())
+                .build();
+
+        List<CompileDiagnostic> diagnostics = compiler.validate(definition);
+
+        List<String> unreachable = diagnostics.stream()
+                .filter(d -> "UNREACHABLE_NODE".equals(d.code()))
+                .map(CompileDiagnostic::nodeId)
+                .toList();
+        assertEquals(List.of("approval_a", "approval_b"), unreachable);
+        assertTrue(diagnostics.stream()
+                .filter(d -> "UNREACHABLE_NODE".equals(d.code()))
+                .allMatch(d -> d.severity() == CompileDiagnostic.Severity.ERROR));
     }
 
     private static FlowGraphNode node(String id, FlowNodeType type) {

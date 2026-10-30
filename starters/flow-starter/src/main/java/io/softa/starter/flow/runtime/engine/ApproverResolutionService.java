@@ -14,6 +14,7 @@ import io.softa.starter.flow.runtime.bundle.CompiledFlowNode;
 import io.softa.starter.flow.runtime.nodeconfig.ApprovalNodeConfig;
 import io.softa.starter.flow.runtime.spi.ApproverInfo;
 import io.softa.starter.flow.runtime.spi.OrganizationService;
+import io.softa.starter.flow.runtime.state.FlowExecutionState;
 
 /**
  * Resolves approvers and vote thresholds from compiled approval node configuration.
@@ -42,6 +43,31 @@ public class ApproverResolutionService {
                 .filter(Objects::nonNull)
                 .filter(StringUtils::hasText)
                 .toList();
+    }
+
+    /**
+     * The variables approvers are resolved against: the instance's own, with the approver context — the
+     * initiator, their manager, the role approvers — the dynamic sources read.
+     */
+    public static Map<String, Object> resolutionVariables(Map<String, Object> variables, String initiatorId) {
+        Map<String, Object> resolved = new LinkedHashMap<>(variables == null ? Map.of() : variables);
+        Map<String, Object> approverContext = new LinkedHashMap<>();
+        approverContext.put(INITIATOR_ID_KEY, initiatorId);
+        approverContext.put(INITIATOR_MANAGER_ID_KEY, resolved.getOrDefault(INITIATOR_MANAGER_ID_KEY, null));
+        approverContext.put(ROLE_APPROVERS_KEY, resolved.getOrDefault(ROLE_APPROVERS_KEY, Map.of()));
+        resolved.put(APPROVER_CONTEXT_KEY, approverContext);
+        return resolved;
+    }
+
+    /**
+     * People found the way an approval step's approvers are — named users, or a dynamic source in
+     * {@code approverSource}'s shape — for a list that is not a step's: a flow's CC rule.
+     */
+    public List<String> resolvePeople(List<String> users, Map<String, Object> source, FlowExecutionState state) {
+        CompiledFlowNode asStep = CompiledFlowNode.builder()
+                .parsedConfig(ApprovalNodeConfig.builder().approvers(users).approverSource(source).build())
+                .build();
+        return resolveApprovers(asStep, resolutionVariables(state.getVariables(), state.getInitiatorId()));
     }
 
     public List<String> resolveApprovers(CompiledFlowNode node, Map<String, Object> variables) {

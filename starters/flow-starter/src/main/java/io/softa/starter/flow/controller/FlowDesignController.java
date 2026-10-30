@@ -175,13 +175,15 @@ public class FlowDesignController extends EntityController<FlowDesignService, Fl
     @Operation(summary = "List variables available to a node",
             description = "Trigger payload keys, outputs declared by upstream nodes, and engine builtins — "
                     + "the data source for expression autocomplete and variableRef pickers. Omit nodeId "
-                    + "for trigger + builtin variables only.")
+                    + "for trigger + builtin variables only; afterNode=true lists what the conditions of "
+                    + "the edges leaving nodeId see, the node's own outputs included.")
     public ApiResponse<List<FlowVariableView>> availableVariables(@PathVariable String id,
-                                                                  @RequestParam(required = false) String nodeId) {
+                                                                  @RequestParam(required = false) String nodeId,
+                                                                  @RequestParam(defaultValue = "false") boolean afterNode) {
         DesignFlowDefinition definition = service.getById(id)
                 .map(FlowDesign::getDesignJson)
                 .orElse(null);
-        return ApiResponse.success(variableCatalogService.availableVariables(definition, nodeId));
+        return ApiResponse.success(variableCatalogService.availableVariables(definition, nodeId, afterNode));
     }
 
     @PostMapping("/{id}/debugRun")

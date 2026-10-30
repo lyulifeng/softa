@@ -56,9 +56,19 @@ public class DesignFlowDefinition implements DTOFieldObject {
             + "unset = Never")
     private WithdrawPolicy withdrawPolicy;
 
-    @Schema(description = "Approval flows only: whether its notices are also emailed (the inbox always gets them); "
-            + "unset = on")
+    @Schema(description = "Approval flows only: whether the initiator may urge the approvers an approval waits on; "
+            + "an administrator may either way. Unset = on")
+    private Boolean urgeEnabled;
+
+    @Schema(description = "Approval flows only: how often, in minutes, each step an approval waits on may be urged, "
+            + "by its initiator or an administrator. Unset = 240")
+    private Integer urgeIntervalMinutes;
+
+    @Schema(description = "Approval flows only: whether its notices are also emailed; unset = on")
     private Boolean emailNotification;
+
+    @Schema(description = "Approval flows only: who is copied in as the approval is submitted, approved or rejected")
+    private List<FlowCcRule> cc;
 
     @Schema(description = "Whether the flow executes synchronously within the triggering transaction")
     private Boolean sync;

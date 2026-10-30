@@ -36,7 +36,6 @@ public class FlowRuntimeFacade implements FlowRuntimeEngine {
     private final AddSignBeforeActionHandler addSignBeforeHandler;
     private final AddSignAfterActionHandler addSignAfterHandler;
     private final CcActionHandler ccHandler;
-    private final BatchCcActionHandler batchCcHandler;
     private final ReadCcActionHandler readCcHandler;
     private final ReturnApprovalActionHandler returnApprovalHandler;
     private final WithdrawActionHandler withdrawHandler;
@@ -56,7 +55,6 @@ public class FlowRuntimeFacade implements FlowRuntimeEngine {
                              AddSignBeforeActionHandler addSignBeforeHandler,
                              AddSignAfterActionHandler addSignAfterHandler,
                              CcActionHandler ccHandler,
-                             BatchCcActionHandler batchCcHandler,
                              ReadCcActionHandler readCcHandler,
                              ReturnApprovalActionHandler returnApprovalHandler,
                              WithdrawActionHandler withdrawHandler,
@@ -75,7 +73,6 @@ public class FlowRuntimeFacade implements FlowRuntimeEngine {
         this.addSignBeforeHandler = addSignBeforeHandler;
         this.addSignAfterHandler = addSignAfterHandler;
         this.ccHandler = ccHandler;
-        this.batchCcHandler = batchCcHandler;
         this.readCcHandler = readCcHandler;
         this.returnApprovalHandler = returnApprovalHandler;
         this.withdrawHandler = withdrawHandler;
@@ -128,7 +125,7 @@ public class FlowRuntimeFacade implements FlowRuntimeEngine {
             CompiledFlowNode startNode = contextService.requiredNode(definition, entryNodeIds.getFirst());
             autoCcService.processCc(state, startNode, CcTiming.ON_SUBMIT);
             if (FlowExecutionStatus.COMPLETED.equals(state.getStatus())) {
-                autoCcService.processCc(state, startNode, CcTiming.ON_COMPLETE);
+                autoCcService.processCc(state, startNode, CcTiming.ON_APPROVED);
             }
         }
         return state;
@@ -211,10 +208,9 @@ public class FlowRuntimeFacade implements FlowRuntimeEngine {
     @Override
     public FlowExecutionState approve(FlowApproveRequest request) {
         FlowExecutionState state = approveHandler.handle(request);
-        CompiledFlowNode step = actedStep(state, request.getNodeId());
-        autoCcService.processCc(state, step, CcTiming.ON_APPROVE);
+        // The approval's CC: once the approval ends approved, not at each step.
         if (FlowExecutionStatus.COMPLETED.equals(state.getStatus())) {
-            autoCcService.processCc(state, step, CcTiming.ON_COMPLETE);
+            autoCcService.processCc(state, actedStep(state, request.getNodeId()), CcTiming.ON_APPROVED);
         }
         return state;
     }
@@ -222,11 +218,14 @@ public class FlowRuntimeFacade implements FlowRuntimeEngine {
     @Override
     public FlowExecutionState reject(FlowRejectRequest request) {
         FlowExecutionState state = rejectHandler.handle(request);
-        autoCcService.processCc(state, actedStep(state, request.getNodeId()), CcTiming.ON_REJECT);
+        // A rejection that the step's reject threshold does not yet carry leaves the approval waiting.
+        if (FlowExecutionStatus.REJECTED.equals(state.getStatus())) {
+            autoCcService.processCc(state, actedStep(state, request.getNodeId()), CcTiming.ON_REJECTED);
+        }
         return state;
     }
 
-    /** The step an approval action was taken on: its CC rules apply, and the CCs are recorded on it. */
+    /** The step whose action ended the approval: the flow's CCs at that moment are recorded on it. */
     private CompiledFlowNode actedStep(FlowExecutionState state, String nodeId) {
         return contextService.requiredNode(contextService.resolveDefinition(state.getBundleId()), nodeId);
     }
@@ -254,11 +253,6 @@ public class FlowRuntimeFacade implements FlowRuntimeEngine {
     @Override
     public FlowExecutionState cc(FlowCcRequest request) {
         return ccHandler.handle(request);
-    }
-
-    @Override
-    public FlowExecutionState batchCc(FlowBatchCcRequest request) {
-        return batchCcHandler.handle(request);
     }
 
     @Override

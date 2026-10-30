@@ -19,7 +19,9 @@ import io.softa.starter.flow.runtime.state.FlowExecutionStatus;
 import io.softa.starter.flow.runtime.state.PendingApproval;
 
 /**
- * Handles single-recipient CC actions for pending approvals.
+ * Handles an approver CC'ing people on their pending step — one or more in one action. People who already see the
+ * approval from this step — its approvers, the actor among them, and anyone CC'd on it this cycle — are skipped;
+ * the others get one {@code CC} entry each and are told together. Refused when nobody is left.
  */
 @Component
 public class CcActionHandler implements FlowActionHandler<FlowCcRequest> {
@@ -44,12 +46,12 @@ public class CcActionHandler implements FlowActionHandler<FlowCcRequest> {
         if (request == null
                 || !StringUtils.hasText(request.getInstanceId())
                 || !StringUtils.hasText(request.getNodeId())
-                || !StringUtils.hasText(request.getActorId())
-                || !StringUtils.hasText(request.getTargetActorId())) {
-            throw new FlowActionValidationException("instanceId, nodeId, actorId, and targetActorId are required to CC a pending task");
+                || !StringUtils.hasText(request.getActorId())) {
+            throw new FlowActionValidationException("instanceId, nodeId and actorId are required to CC on a pending task");
         }
-        if (request.getActorId().equals(request.getTargetActorId())) {
-            throw new FlowActionValidationException("CC target must be different from the source actor");
+        List<String> chosen = actorValidator.normalizeCcRecipients(request.getTargetActorIds());
+        if (chosen.isEmpty()) {
+            throw new FlowActionValidationException("Choose at least one person to CC");
         }
 
         ApprovalContext ctx = contextService.loadApprovalContext(request.getInstanceId(), request.getNodeId(), "CCed");
@@ -59,12 +61,23 @@ public class CcActionHandler implements FlowActionHandler<FlowCcRequest> {
         CompiledFlowNode node = ctx.node();
         FlowExecutionStatus statusBefore = ctx.statusBefore();
 
-        actorValidator.validateCcRequest(state, pendingApproval, request, node);
-        auditService.appendCcAudit(state, pendingApproval, definition, node,
-                request.getActorId(), request.getTargetActorId(), request.getComment(), statusBefore);
+        actorValidator.validateCcActor(pendingApproval, request.getActorId(), node);
+        List<String> recipients = chosen.stream()
+                .filter(recipient -> !pendingApproval.getApprovers().contains(recipient))
+                .filter(recipient -> auditService.findCcAudit(state, node.getNodeId(), pendingApproval.getCycleNumber(),
+                        recipient).isEmpty())
+                .toList();
+        if (recipients.isEmpty()) {
+            throw new FlowActionValidationException(
+                    "Nobody to CC: everyone chosen is an approver of this step or has been CC'd on it already");
+        }
+        for (String recipient : recipients) {
+            auditService.appendCcAudit(state, pendingApproval, definition, node,
+                    request.getActorId(), recipient, request.getComment(), statusBefore);
+        }
         contextService.persistState(state);
-        notificationService.notify(new FlowNotificationEvent.CcSent(state, request.getNodeId(),
-                List.of(request.getTargetActorId()), request.getComment()));
+        notificationService.notify(new FlowNotificationEvent.CcSent(state, request.getNodeId(), recipients,
+                request.getComment()));
         return state;
     }
 }

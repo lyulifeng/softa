@@ -2,7 +2,6 @@ package io.softa.starter.flow.runtime.engine;
 
 import java.util.LinkedHashSet;
 import java.util.List;
-import java.util.Objects;
 import java.util.Set;
 import org.springframework.stereotype.Component;
 import org.springframework.util.StringUtils;
@@ -11,8 +10,6 @@ import io.softa.starter.flow.runtime.api.*;
 import io.softa.starter.flow.runtime.bundle.CompiledFlowNode;
 import io.softa.starter.flow.runtime.exception.FlowActionValidationException;
 import io.softa.starter.flow.runtime.state.AddSignPosition;
-import io.softa.starter.flow.runtime.state.ApprovalActionType;
-import io.softa.starter.flow.runtime.state.FlowExecutionState;
 import io.softa.starter.flow.runtime.state.PendingApproval;
 
 /**
@@ -23,11 +20,8 @@ public class ApprovalActorValidator {
 
     private final ApprovalLifecycleService lifecycleService;
 
-    private final ApprovalAuditReader auditReader;
-
-    public ApprovalActorValidator(ApprovalLifecycleService lifecycleService, ApprovalAuditReader auditReader) {
+    public ApprovalActorValidator(ApprovalLifecycleService lifecycleService) {
         this.lifecycleService = lifecycleService;
-        this.auditReader = auditReader;
     }
 
     public void validateApprovalActor(PendingApproval pendingApproval, String actorId, CompiledFlowNode node) {
@@ -105,33 +99,15 @@ public class ApprovalActorValidator {
         }
     }
 
-    public void validateCcRequest(FlowExecutionState state,
-                                  PendingApproval pendingApproval,
-                                  FlowCcRequest request,
-                                  CompiledFlowNode node) {
+    /**
+     * The actor CC'ing on a step: one of its approvers, still to vote and not waiting on a signer added before them.
+     * Who they CC is the action's to sort out — it skips the people who already see the approval.
+     */
+    public void validateCcActor(PendingApproval pendingApproval, String actorId, CompiledFlowNode node) {
         requireNonEmptyApprovers(pendingApproval, node, "CC");
-        requireActorIsApprover(pendingApproval, request.getActorId(), node);
-        requireTargetNotExisting(pendingApproval, request.getTargetActorId(), node);
-        lifecycleService.assertActorNotBlockedByPrerequisite(pendingApproval, request.getActorId(), node);
-        requireActorNotAlreadyVoted(pendingApproval, request.getActorId());
-        boolean duplicateCc = auditReader.fullHistory(state).stream()
-                .anyMatch(entry -> ApprovalActionType.CC.equals(entry.getAction())
-                        && Objects.equals(pendingApproval.getNodeId(), entry.getNodeId())
-                        && Objects.equals(pendingApproval.getCycleNumber(), entry.getCycleNumber())
-                        && Objects.equals(request.getTargetActorId(), entry.getTargetActorId()));
-        if (duplicateCc) {
-            throw new FlowActionValidationException("Target actor '" + request.getTargetActorId() + "' is already CCed for node: " + node.getNodeId());
-        }
-    }
-
-    public FlowCcRequest buildCcRequest(FlowBatchCcRequest request, String targetActorId) {
-        FlowCcRequest ccRequest = new FlowCcRequest();
-        ccRequest.setInstanceId(request.getInstanceId());
-        ccRequest.setNodeId(request.getNodeId());
-        ccRequest.setActorId(request.getActorId());
-        ccRequest.setTargetActorId(targetActorId);
-        ccRequest.setComment(request.getComment());
-        return ccRequest;
+        requireActorIsApprover(pendingApproval, actorId, node);
+        lifecycleService.assertActorNotBlockedByPrerequisite(pendingApproval, actorId, node);
+        requireActorNotAlreadyVoted(pendingApproval, actorId);
     }
 
     public List<String> normalizeCcRecipients(List<String> targetActorIds) {

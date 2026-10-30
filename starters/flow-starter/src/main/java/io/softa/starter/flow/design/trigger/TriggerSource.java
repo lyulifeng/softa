@@ -33,4 +33,12 @@ import com.fasterxml.jackson.annotation.JsonTypeInfo;
 public sealed interface TriggerSource
         permits EntityChangeTrigger, ApiTrigger, CronTrigger,
                 SubflowTrigger, FieldChangeTrigger, SubmitTrigger {
+
+    /**
+     * The model of the record the flow starts on — whose fields its route rules read — or null for a
+     * start that carries no record. The record triggers' {@code modelName} component answers it.
+     */
+    default String modelName() {
+        return null;
+    }
 }

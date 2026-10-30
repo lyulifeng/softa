@@ -25,9 +25,9 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.*;
 
 /**
- * Who hears about what: approvers about their tasks, the initiator about the result, every message
- * a Workflow inbox message pointing at the flow instance — written after the action commits, and
- * never failing it.
+ * Who hears about what: approvers about a nudge on their tasks, the initiator about the result, every message
+ * a Workflow inbox message pointing at the flow instance — written after the action commits, and never failing
+ * it. The tasks and CCs themselves are My Tasks', not the inbox's.
  */
 class InboxApprovalNotificationServiceTest {
 
@@ -43,28 +43,31 @@ class InboxApprovalNotificationServiceTest {
     }
 
     @Test
-    void theStepsApproversAreToldTheyHaveATask() {
-        PendingApproval step = PendingApproval.builder().nodeId("manager").approvers(List.of("2001", "2002", "robot")).build();
+    void aTaskOrACcIsListedInMyTasksAndNotPutInTheInbox() {
+        PendingApproval step = PendingApproval.builder().nodeId("manager").approvers(List.of("2001", "2002")).build();
 
         notifications.notify(new FlowNotificationEvent.TaskAssigned(state(), step));
+        notifications.notify(new FlowNotificationEvent.TaskTransferred(state(), step, "2003"));
+        notifications.notify(new FlowNotificationEvent.TaskDelegated(state(), step, "2001", "2004"));
+        notifications.notify(new FlowNotificationEvent.CcSent(state(), "manager", List.of("3001"), "for the record"));
 
-        List<SendInboxDTO> sent = sent();
-        assertEquals(List.of(2001L, 2002L), sent.stream().map(SendInboxDTO::getRecipientId).toList());
-        assertEquals("Pending approval: Leave of Alice", sent.getFirst().getTitle());
-        assertEquals(NotificationType.WORKFLOW, sent.getFirst().getNotificationType());
-        assertEquals("FlowInstance", sent.getFirst().getSourceModel());
-        assertEquals("i1", sent.getFirst().getSourceId());
+        verify(messageService, never()).sendInboxBatch(any());
     }
 
     @Test
-    void anApproverWhoAlreadyApprovedTheStepIsNotToldOfIt() {
+    void theApproversStillToActAreToldTheirStepIsOverdue() {
         // The submitter in their own step, approved on record when the step opened.
-        PendingApproval step = PendingApproval.builder().nodeId("manager").approvers(List.of("1001", "2001"))
+        PendingApproval step = PendingApproval.builder().nodeId("manager").approvers(List.of("1001", "2001", "robot"))
                 .approvedActors(List.of("1001")).build();
 
-        notifications.notify(new FlowNotificationEvent.TaskAssigned(state(), step));
+        notifications.notify(new FlowNotificationEvent.TimeoutReminded(state(), step, 1));
 
-        assertEquals(List.of(2001L), sent().stream().map(SendInboxDTO::getRecipientId).toList());
+        List<SendInboxDTO> sent = sent();
+        assertEquals(List.of(2001L), sent.stream().map(SendInboxDTO::getRecipientId).toList());
+        assertEquals("Approval overdue: Leave of Alice", sent.getFirst().getTitle());
+        assertEquals(NotificationType.WORKFLOW, sent.getFirst().getNotificationType());
+        assertEquals("FlowInstance", sent.getFirst().getSourceModel());
+        assertEquals("i1", sent.getFirst().getSourceId());
     }
 
     @Test

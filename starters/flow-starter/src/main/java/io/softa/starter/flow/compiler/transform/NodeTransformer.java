@@ -50,6 +50,7 @@ public final class NodeTransformer {
                     .sourceHandle(edge.getSourceHandle())
                     .target(edge.getTarget())
                     .targetHandle(edge.getTargetHandle())
+                    .condition(edge.getCondition())
                     .conditionExpression(edge.getConditionExpression())
                     .data(edge.getData())
                     .build());

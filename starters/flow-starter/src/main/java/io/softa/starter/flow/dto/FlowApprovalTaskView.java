@@ -142,11 +142,8 @@ public class FlowApprovalTaskView {
     @Schema(description = "A record's approval: the record's own number, when its model has one")
     private String recordCode;
 
-    @Schema(description = "Whether the task's step is a handling step: its approver fills in the step's fields and submits")
-    private Boolean handling;
-
-    @Schema(description = "Whether the task can be acted on in a batch: open to its approver now, not a handling step, "
-            + "and no field the step makes required")
+    @Schema(description = "Whether the task can be acted on in a batch: open to its approver now, and no field the step "
+            + "makes required")
     private Boolean batchable;
 
     @Schema(description = "Whether the task's step lets its approver return the request to the initiator")

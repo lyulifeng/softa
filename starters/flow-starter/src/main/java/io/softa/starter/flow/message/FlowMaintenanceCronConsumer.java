@@ -31,7 +31,6 @@ import io.softa.starter.flow.service.impl.FlowDebugPurgeService;
 @ConditionalOnProperty(name = "mq.topics.cron-task.topic")
 public class FlowMaintenanceCronConsumer {
 
-    static final String APPROVAL_TIMEOUT_REMIND = "flow_approval_timeout_remind";
     static final String APPROVAL_TIMEOUT_HANDLE = "flow_approval_timeout_handle";
     static final String DELEGATION_EXPIRY = "flow_delegation_expiry";
     static final String TIMER_SWEEP = "flow_timer_sweep";
@@ -83,7 +82,6 @@ public class FlowMaintenanceCronConsumer {
     private void dispatch(CronTaskMessage message) {
         try {
             switch (message.getCronName()) {
-                case APPROVAL_TIMEOUT_REMIND -> approvalTimeoutScheduler.checkTimeoutReminders();
                 case APPROVAL_TIMEOUT_HANDLE -> approvalTimeoutScheduler.handleTimedOutTasks();
                 case DELEGATION_EXPIRY -> delegationExpiryScheduler.expireDelegations();
                 case TIMER_SWEEP -> {

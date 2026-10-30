@@ -310,8 +310,26 @@ public record FieldConstraints(
 
     private static void validateCondition(String attribute, Filters filters, String where,
                                           Function<String, @Nullable FieldRef> fieldOf) {
+        checkCondition(filters, "@Field(" + attribute + ") on " + where + ": ", fieldOf, true);
+    }
+
+    /**
+     * Checks a condition over one row against the fields it reads — the checks every field condition
+     * gets, for any other condition evaluated by {@link FilterEvaluator}: a flow's route rule reads its
+     * record the same way. {@code PARENT OF} / {@code CHILD OF} are refused, every field read must be one
+     * the row carries, ordering needs a type with an order, and every placeholder must resolve.
+     *
+     * @param filters the condition
+     * @param prefix what each message opens with, naming where the condition is declared
+     * @param fieldOf the field a name reads, or null for a name the row does not have
+     * @param reservedAllowed whether {@code @mode} / {@code @userId} may be named in the field slot — they
+     *                        describe a write, so only a field condition has them
+     * @throws IllegalStateException naming the first problem
+     */
+    public static void checkCondition(Filters filters, String prefix,
+                                      Function<String, @Nullable FieldRef> fieldOf, boolean reservedAllowed) {
         if (FilterType.TREE.equals(filters.getType())) {
-            filters.getChildren().forEach(child -> validateCondition(attribute, child, where, fieldOf));
+            filters.getChildren().forEach(child -> checkCondition(child, prefix, fieldOf, reservedAllowed));
             return;
         }
         if (!FilterType.LEAF.equals(filters.getType())) {
@@ -322,7 +340,6 @@ public record FieldConstraints(
             return sibling == null ? null : sibling.type();
         };
         FilterUnit unit = filters.getFilterUnit();
-        String prefix = "@Field(" + attribute + ") on " + where + ": ";
         Operator op = unit.getOperator();
         if (Operator.PARENT_OF.equals(op) || Operator.CHILD_OF.equals(op)) {
             throw new IllegalStateException(prefix + op.getName()
@@ -331,6 +348,10 @@ public record FieldConstraints(
         FieldType leftType = null;
         for (String field : unit.getEffectiveFields()) {
             if (field.startsWith("@")) {
+                if (!reservedAllowed) {
+                    throw new IllegalStateException(prefix + "`" + field + "` describes a write being made,"
+                            + " which this condition is not part of.");
+                }
                 if (!FilterEvaluator.RESERVED_VARIABLES.contains(field)) {
                     throw new IllegalStateException(prefix + "unknown reserved variable `" + field
                             + "`; only " + FilterEvaluator.RESERVED_VARIABLES + " are available.");

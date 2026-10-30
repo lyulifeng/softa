@@ -4,6 +4,7 @@ import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -22,6 +23,7 @@ import io.softa.starter.flow.design.trigger.EntityChangeTrigger;
 import io.softa.starter.flow.design.trigger.SubmitTrigger;
 import io.softa.starter.flow.dto.FlowVariableView;
 import io.softa.starter.flow.enums.FlowNodeType;
+import io.softa.starter.flow.runtime.context.RecordVariables;
 import io.softa.starter.flow.runtime.engine.ApproverResolutionService;
 
 /**
@@ -57,6 +59,15 @@ public class FlowVariableCatalogService {
      * are returned.
      */
     public List<FlowVariableView> availableVariables(DesignFlowDefinition definition, String nodeId) {
+        return availableVariables(definition, nodeId, false);
+    }
+
+    /**
+     * Variables available to {@code nodeId}'s expressions, or with {@code afterNode} to the conditions of
+     * the edges leaving it — which run once the node has, so its own outputs are in scope too.
+     */
+    public List<FlowVariableView> availableVariables(DesignFlowDefinition definition, String nodeId,
+                                                     boolean afterNode) {
         Map<String, FlowVariableView> byName = new LinkedHashMap<>();
 
         collectTriggerVariables(definition, byName);
@@ -71,21 +82,30 @@ public class FlowVariableCatalogService {
                     FieldType.LONG.getType(), null));
         }
         if (definition != null && definition.getGraph() != null && nodeId != null) {
-            collectUpstreamOutputs(definition, nodeId, byName);
+            collectUpstreamOutputs(definition, nodeId, afterNode, byName);
         }
         return new ArrayList<>(byName.values());
     }
 
+    /**
+     * The record the flow starts on: an entity change's every field, an approval's the fields its
+     * approvals route on ({@link RecordVariables}) — what the instance carries, so what a rule may read.
+     */
     private void collectTriggerVariables(DesignFlowDefinition definition,
                                          Map<String, FlowVariableView> byName) {
-        if (definition == null || !(definition.getTrigger() instanceof EntityChangeTrigger trigger)) {
+        if (definition == null) {
             return;
         }
-        String modelName = trigger.modelName();
-        if (!StringUtils.hasText(modelName) || !ModelManager.existModel(modelName)) {
+        List<MetaField> fields;
+        if (definition.getTrigger() instanceof EntityChangeTrigger trigger && isModel(trigger.modelName())) {
+            fields = ModelManager.getModelFields(trigger.modelName());
+        } else if (definition.getTrigger() instanceof SubmitTrigger trigger && isModel(trigger.modelName())) {
+            fields = RecordVariables.routedFields(trigger.modelName());
+        } else {
             return;
         }
-        for (MetaField field : ModelManager.getModelFields(modelName)) {
+        String modelName = definition.getTrigger().modelName();
+        for (MetaField field : fields) {
             String fieldType = field.getFieldType() == null ? null : field.getFieldType().getType();
             byName.putIfAbsent(field.getFieldName(), new FlowVariableView(
                     field.getFieldName(), FlowVariableView.Source.TRIGGER, null, modelName,
@@ -93,11 +113,15 @@ public class FlowVariableCatalogService {
         }
     }
 
+    private static boolean isModel(String modelName) {
+        return StringUtils.hasText(modelName) && ModelManager.existModel(modelName);
+    }
+
     private static String relatedModelOf(MetaField field) {
         return StringUtils.hasText(field.getRelatedModel()) ? field.getRelatedModel() : null;
     }
 
-    private void collectUpstreamOutputs(DesignFlowDefinition definition, String nodeId,
+    private void collectUpstreamOutputs(DesignFlowDefinition definition, String nodeId, boolean afterNode,
                                         Map<String, FlowVariableView> byName) {
         List<CompileDiagnostic> ignored = new ArrayList<>();
         List<FlowGraphNode> nodes = definition.getGraph().getNodes() == null
@@ -108,7 +132,11 @@ public class FlowVariableCatalogService {
         Map<String, FlowGraphEdge> edgeMap = GraphIndexBuilder.indexEdges(edges, ignored);
         Map<String, List<String>> incomingEdgeIds = GraphIndexBuilder.buildIncomingEdgeIds(edgeMap.values());
 
-        for (String upstreamId : upstreamNodeIds(nodeId, edgeMap, incomingEdgeIds)) {
+        Set<String> producers = new LinkedHashSet<>(upstreamNodeIds(nodeId, edgeMap, incomingEdgeIds));
+        if (afterNode) {
+            producers.add(nodeId);
+        }
+        for (String upstreamId : producers) {
             FlowGraphNode upstream = nodeMap.get(upstreamId);
             if (upstream == null || upstream.getConfig() == null) {
                 continue;
