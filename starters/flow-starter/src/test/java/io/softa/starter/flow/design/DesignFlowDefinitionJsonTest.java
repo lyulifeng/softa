@@ -6,6 +6,7 @@ import java.util.List;
 import org.junit.jupiter.api.Test;
 
 import io.softa.starter.flow.design.trigger.ApiTrigger;
+import io.softa.starter.flow.design.trigger.SubmitTrigger;
 import io.softa.starter.flow.enums.FlowFormUsage;
 import io.softa.starter.flow.enums.FlowNodeType;
 import io.softa.starter.flow.enums.FlowScenario;
@@ -22,9 +23,8 @@ class DesignFlowDefinitionJsonTest {
     void shouldDeserializeUsingNewEnumValues() throws Exception {
         String json = """
                 {
-                  "code": "leave-flow",
                   "name": "Leave Flow",
-                  "scenario": "Process",
+                  "scenario": "Automation",
                   "trigger": {
                     "type": "Api",
                     "description": null
@@ -50,7 +50,7 @@ class DesignFlowDefinitionJsonTest {
 
         DesignFlowDefinition definition = objectMapper.readValue(json, DesignFlowDefinition.class);
 
-        assertEquals(FlowScenario.PROCESS, definition.getScenario());
+        assertEquals(FlowScenario.AUTOMATION, definition.getScenario());
         assertInstanceOf(ApiTrigger.class, definition.getTrigger());
         assertEquals(FlowNodeType.START, definition.getGraph().getNodes().getFirst().getType());
         assertEquals(FlowFormUsage.START_FORM, definition.getForms().getFirst().getUsage());
@@ -58,7 +58,8 @@ class DesignFlowDefinitionJsonTest {
 
     @Test
     void shouldDeserializeFlowScenarioCaseInsensitively() throws Exception {
-        assertEquals(FlowScenario.PROCESS, objectMapper.readValue("\"Process\"", FlowScenario.class));
+        assertEquals(FlowScenario.APPROVAL, objectMapper.readValue("\"Approval\"", FlowScenario.class));
+        assertEquals(FlowScenario.AUTOMATION, objectMapper.readValue("\"Automation\"", FlowScenario.class));
         assertEquals(FlowScenario.VALIDATION, objectMapper.readValue("\"Validation\"", FlowScenario.class));
         assertEquals(FlowScenario.COMPUTE, objectMapper.readValue("\"Compute\"", FlowScenario.class));
     }
@@ -74,10 +75,9 @@ class DesignFlowDefinitionJsonTest {
     @Test
     void shouldSerializeUsingNewEnumValues() throws Exception {
         DesignFlowDefinition definition = DesignFlowDefinition.builder()
-                .code("leave-flow")
                 .name("Leave Flow")
-                .scenario(FlowScenario.PROCESS)
-                .trigger(new ApiTrigger(null))
+                .scenario(FlowScenario.APPROVAL)
+                .trigger(new SubmitTrigger("LeaveRequest", null))
                 .graph(FlowGraphDocument.builder()
                         .nodes(List.of(FlowGraphNode.builder()
                                 .id("approval")
@@ -94,8 +94,8 @@ class DesignFlowDefinitionJsonTest {
 
         String json = objectMapper.writeValueAsString(definition);
 
-        assertTrue(json.contains("\"scenario\":\"Process\""));
-        assertTrue(json.contains("\"type\":\"Api\""));
+        assertTrue(json.contains("\"scenario\":\"Approval\""));
+        assertTrue(json.contains("\"type\":\"Submit\""));
         assertTrue(json.contains("\"type\":\"Approval\""));
         assertTrue(json.contains("\"usage\":\"StartForm\""));
     }
@@ -103,9 +103,8 @@ class DesignFlowDefinitionJsonTest {
     @Test
     void shouldRoundTripTriggerSourcePolymorphically() throws Exception {
         DesignFlowDefinition definition = DesignFlowDefinition.builder()
-                .code("test-flow")
                 .name("Test Flow")
-                .scenario(FlowScenario.PROCESS)
+                .scenario(FlowScenario.AUTOMATION)
                 .trigger(new ApiTrigger("leave-form"))
                 .graph(FlowGraphDocument.builder()
                         .nodes(List.of())

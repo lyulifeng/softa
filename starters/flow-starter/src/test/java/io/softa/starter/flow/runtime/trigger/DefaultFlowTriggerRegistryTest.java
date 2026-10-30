@@ -11,6 +11,7 @@ import io.softa.framework.base.context.Context;
 import io.softa.framework.base.context.ContextHolder;
 import io.softa.starter.flow.design.DesignFlowDefinition;
 import io.softa.starter.flow.design.trigger.ChangeEvent;
+import io.softa.starter.flow.design.trigger.CronTrigger;
 import io.softa.starter.flow.design.trigger.EntityChangeTrigger;
 import io.softa.starter.flow.design.trigger.FieldChangeTrigger;
 import io.softa.starter.flow.message.ChangeLogTriggerMapper;
@@ -29,10 +30,10 @@ class DefaultFlowTriggerRegistryTest {
 
     private DefaultFlowTriggerRegistry registryFor(CompiledFlowDefinition... flows) {
         FlowBundleRegistry bundleRegistry = new FlowBundleRegistry() {
-            @Override public CompiledFlowDefinition register(CompiledFlowDefinition d, DesignFlowDefinition design, Long designId) { return d; }
+            @Override public CompiledFlowDefinition register(CompiledFlowDefinition d, DesignFlowDefinition design, String flowId) { return d; }
             @Override public Optional<CompiledFlowDefinition> getByBundleId(Long bundleId) { return Optional.empty(); }
-            @Override public Optional<CompiledFlowDefinition> getActiveByDesignId(Long designId) { return Optional.empty(); }
-            @Override public List<CompiledFlowDefinition> listRevisionsByDesignId(Long designId) { return List.of(); }
+            @Override public Optional<CompiledFlowDefinition> getActiveByFlowId(String flowId) { return Optional.empty(); }
+            @Override public List<CompiledFlowDefinition> listRevisionsByFlowId(String flowId) { return List.of(); }
             @Override public Collection<CompiledFlowDefinition> list() { return List.of(flows); }
         };
         return new DefaultFlowTriggerRegistry(bundleRegistry);
@@ -40,14 +41,14 @@ class DefaultFlowTriggerRegistryTest {
 
     private CompiledFlowDefinition entityFlow(String code, String model, List<ChangeEvent> events) {
         return CompiledFlowDefinition.builder()
-                .flowCode(code)
+                .flowId(code)
                 .trigger(new EntityChangeTrigger(model, events, null))
                 .build();
     }
 
     private CompiledFlowDefinition entityFlow(String code, String model, List<ChangeEvent> events, Long tenantId) {
         return CompiledFlowDefinition.builder()
-                .flowCode(code)
+                .flowId(code)
                 .tenantId(tenantId)
                 .trigger(new EntityChangeTrigger(model, events, null))
                 .build();
@@ -55,7 +56,7 @@ class DefaultFlowTriggerRegistryTest {
 
     private CompiledFlowDefinition fieldChangeFlow(String code, String model, List<String> fieldNames) {
         return CompiledFlowDefinition.builder()
-                .flowCode(code)
+                .flowId(code)
                 .trigger(new FieldChangeTrigger(model, fieldNames))
                 .build();
     }
@@ -72,9 +73,9 @@ class DefaultFlowTriggerRegistryTest {
             List<CompiledFlowDefinition> matched = registry.findMatchingFlows(entityEvent("Order", "CREATE"));
             // tenant 7 fires its own flow + the platform-shared (tenant 0) flow, never tenant 9's
             assertEquals(2, matched.size());
-            assertTrue(matched.stream().anyMatch(f -> "tenantA".equals(f.getFlowCode())));
-            assertTrue(matched.stream().anyMatch(f -> "platform".equals(f.getFlowCode())));
-            assertTrue(matched.stream().noneMatch(f -> "tenantB".equals(f.getFlowCode())));
+            assertTrue(matched.stream().anyMatch(f -> "tenantA".equals(f.getFlowId())));
+            assertTrue(matched.stream().anyMatch(f -> "platform".equals(f.getFlowId())));
+            assertTrue(matched.stream().noneMatch(f -> "tenantB".equals(f.getFlowId())));
         });
     }
 
@@ -123,6 +124,27 @@ class DefaultFlowTriggerRegistryTest {
     void modelFilterStillApplies() {
         DefaultFlowTriggerRegistry registry = registryFor(entityFlow("f", "Order", List.of(ChangeEvent.CREATE)));
         assertTrue(registry.findMatchingFlows(entityEvent("Customer", "CREATE")).isEmpty());
+    }
+
+    /**
+     * A Cron flow is started by its own schedule only: the Cron event every cron tick used to become no longer
+     * matches it, nor does any other event.
+     */
+    @Test
+    void cronTriggerIsNeverMatchedByAnEvent() {
+        CompiledFlowDefinition cronFlow = CompiledFlowDefinition.builder()
+                .flowId("report")
+                .trigger(new CronTrigger("0 0 9 ? * MON-FRI"))
+                .build();
+        DefaultFlowTriggerRegistry registry = registryFor(cronFlow);
+        FlowTriggerEvent cronTick = FlowTriggerEvent.builder()
+                .type("Cron")
+                .sourceModel("cron:6")
+                .parameters(Map.of("_cronName", "flow_timer_sweep"))
+                .build();
+
+        assertTrue(registry.findMatchingFlows(cronTick).isEmpty());
+        assertTrue(registry.findMatchingFlows(entityEvent("Order", "CREATE")).isEmpty());
     }
 
     @Test

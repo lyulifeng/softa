@@ -9,8 +9,9 @@ import lombok.NoArgsConstructor;
 import io.softa.starter.flow.enums.ApprovalTimeoutStrategy;
 
 /**
- * Timeout configuration for an approval node.
- * Extracted from {@code CompiledFlowNode.config} when present.
+ * Timeout configuration for an approval node: the step's deadline and what happens at it.
+ * Extracted from {@code CompiledFlowNode.config} when present. Without {@code timeoutHours} the step has no
+ * deadline and the rest is ignored.
  */
 @Data
 @Builder
@@ -19,16 +20,19 @@ import io.softa.starter.flow.enums.ApprovalTimeoutStrategy;
 @Schema(name = "ApprovalTimeoutConfig")
 public class ApprovalTimeoutConfig {
 
-    @Schema(description = "Timeout duration in hours")
+    @Schema(description = "Hours the step may wait before it is past its deadline; unset = no deadline, and the "
+            + "rest of the timeout is ignored")
     private Integer timeoutHours;
 
-    @Schema(description = "Strategy when the timeout is reached")
+    @Schema(description = "What happens at the deadline; unset = Remind")
     private ApprovalTimeoutStrategy timeoutStrategy;
 
-    @Schema(description = "Remind interval in hours before timeout")
+    @Schema(description = "Remind only: hours between reminders, the first sent at the deadline; unset = one "
+            + "reminder, at the deadline")
     private Integer remindIntervalHours;
 
-    @Schema(description = "Maximum number of reminders")
+    @Schema(description = "Remind only, with an interval: the most reminders sent, the one at the deadline "
+            + "included; unset = 3")
     private Integer maxRemindTimes;
 
     @Schema(description = "Escalation target user ID when strategy is ESCALATE")

@@ -10,7 +10,7 @@ import io.softa.starter.flow.design.DesignFlowDefinition;
 import io.softa.starter.flow.design.FlowGraphDocument;
 import io.softa.starter.flow.design.FlowGraphEdge;
 import io.softa.starter.flow.design.FlowGraphNode;
-import io.softa.starter.flow.design.trigger.ApiTrigger;
+import io.softa.starter.flow.design.trigger.SubmitTrigger;
 import io.softa.starter.flow.enums.FlowNodeType;
 import io.softa.starter.flow.enums.FlowScenario;
 import io.softa.starter.flow.runtime.api.FlowApproveRequest;
@@ -33,7 +33,7 @@ import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
  */
 class FlowActionReplayTest {
 
-    private static final Long DESIGN_ID = 7600L;
+    private static final String FLOW_ID = "7600";
     private static final String X = "manager-1";
 
     private final DefaultFlowCompiler compiler = new DefaultFlowCompiler();
@@ -49,12 +49,12 @@ class FlowActionReplayTest {
 
     @BeforeEach
     void publishFlow() {
-        publishService.publish(DESIGN_ID, singleApproverFlow());
+        publishService.publish(FLOW_ID, singleApproverFlow());
     }
 
     private FlowExecutionState start() {
         FlowStartRequest start = new FlowStartRequest();
-        start.setDesignId(DESIGN_ID);
+        start.setFlowId(FLOW_ID);
         start.setInitiatorId("initiator-1");
         FlowExecutionState state = engine.start(start);
         assertEquals(FlowExecutionStatus.WAITING, state.getStatus());
@@ -91,10 +91,9 @@ class FlowActionReplayTest {
 
     private static DesignFlowDefinition singleApproverFlow() {
         return DesignFlowDefinition.builder()
-                .code("replay-flow")
                 .name("Replay Flow")
-                .scenario(FlowScenario.PROCESS)
-                .trigger(new ApiTrigger(null))
+                .scenario(FlowScenario.APPROVAL)
+                .trigger(new SubmitTrigger("LeaveRequest", null))
                 .graph(FlowGraphDocument.builder()
                         .nodes(List.of(
                                 node("start", FlowNodeType.START),

@@ -1,27 +1,24 @@
 package io.softa.starter.tenant.provisioning;
 
-import java.time.LocalDateTime;
-
+import java.time.LocalDate;
+import java.util.List;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.util.Assert;
 
-import static io.softa.framework.base.context.ContextUtils.inSystemContext;
-import java.time.LocalDate;
-import java.util.List;
-
 import io.softa.framework.base.enums.Operator;
 import io.softa.framework.base.enums.Timezone;
-import io.softa.framework.orm.domain.FlexQuery;
+import io.softa.framework.base.exception.BusinessException;
 import io.softa.framework.orm.domain.Filters;
+import io.softa.framework.orm.domain.FlexQuery;
 import io.softa.framework.orm.service.ModelService;
 import io.softa.starter.tenant.entity.Plan;
 import io.softa.starter.tenant.entity.TenantInfo;
 import io.softa.starter.tenant.entity.TenantSubscription;
-import io.softa.starter.tenant.enums.TenantStatus;
 import io.softa.starter.tenant.enums.SubscriptionPeriodType;
+import io.softa.starter.tenant.enums.TenantStatus;
 import io.softa.starter.tenant.service.PlanCatalog;
 import io.softa.starter.tenant.service.SubscriptionPeriodPatch;
 import io.softa.starter.tenant.service.TenantSubscriptionPeriodService;
@@ -29,13 +26,15 @@ import io.softa.starter.tenant.service.TenantSubscriptionService;
 import io.softa.starter.tenant.service.impl.TenantInfoServiceImpl;
 import io.softa.starter.tenant.service.impl.TenantProvisioningStatusService;
 
+import static io.softa.framework.base.context.ContextUtils.inSystemContext;
+
 /**
  * Tenant provisioning — a reusable tenant-starter feature. Creates the tenant registry row + its owned
  * 1:1 {@link TenantSubscription} (the version: planId + lifecycle + effective dates) in a <b>system
  * context</b> (crossTenant + skip-permission; both rows are shared / non-tenant-scoped), then publishes
  * {@link TenantProvisionedEvent} so the app can react.
  *
- * <p><b>Why an event, not direct calls:</b> per-tenant seeding lives in metadata-starter and the first
+ * <p><b>Why an event, not direct calls:</b> per-tenant seeding lives in seed-starter and the first
  * admin lives in user-starter — both are ⊥ to tenant-starter, so tenant-starter must not call them.
  * The app (which depends on all of them) listens for the event and does the seeding / admin creation.
  * The event fires <b>synchronously inside this transaction</b>, so those app-side reactions stay atomic
@@ -76,8 +75,8 @@ public class TenantProvisioningService {
         // System context — persist the subscription row + the registry row that links it.
         Long tenantId = inSystemContext(() -> {
             // Every tenant gets a subscription row at birth: it is the projection carrier the tenant list
-            // and authorization read. Its projected columns are left unset — ensureFreePeriod writes the
-            // free period below and the projection refresh fills them in from the period rows, which is the
+            // and authorization read. Its projected columns are left unset — ensureBasePeriod writes the
+            // base period below and the projection refresh fills them in from the period rows, which is the
             // only writer of this row's projected state. Seeding a status here would be a guess that the
             // refresh immediately overwrites, and a wrong one for the window in between.
             TenantSubscription subscription = new TenantSubscription();
@@ -119,20 +118,50 @@ public class TenantProvisioningService {
         // Initial periods are optional: a tenant sold nothing yet simply has none and runs on the floor
         // plan. Recorded after the tenant row exists so the projection refresh can read its timezone.
         recordInitialPeriods(tenantId, request.getSubscriptionId());
-        // After the operator's periods, not before: the create form pre-populates the free row, so if one
+        // After the operator's periods, not before: the create form pre-populates the base row, so if one
         // arrived in the patch this finds it and adds nothing. Running first would create a second one.
-        ensureFreePeriod(tenantId);
+        ensureBasePeriod(tenantId);
 
         // Mark the initialization axis before broadcasting: no expected seeders (single-tenant / no-MQ)
-        // → READY immediately; otherwise INITIALIZING until the expected seeders report done.
+        // → ACTIVE immediately; otherwise INITIALIZING until the expected seeders report done.
         provisioningStatusService.beginProvisioning(tenantId);
 
         // Synchronous, same-transaction: app-side listeners (seed per-tenant data, create first admin)
         // run before commit, so any failure there rolls back tenant creation too.
-        eventPublisher.publishEvent(new TenantProvisionedEvent(tenantId, code, request.getName().trim(), false));
+        eventPublisher.publishEvent(new TenantProvisionedEvent(tenantId, code, request.getName().trim()));
 
         log.info("Provisioned tenant id={} code={}", tenantId, code);
         return new ProvisionResult(tenantId, code);
+    }
+
+    /**
+     * Run a failed setup again: announce the tenant once more, exactly as {@link #provision} did, so every
+     * seeder takes it up where it stopped.
+     *
+     * <p>Nothing is discarded, and nothing needs to be. The announcement is delivered at least once anyway, so
+     * every seeder already treats a second one as normal: seed-starter runs only the seed files the tenant has
+     * not run successfully, and the business seeders skip what they find in place. Their progress rows stay
+     * as well — a seeder that had finished reports done again as it re-runs, and the tenant becomes ACTIVE
+     * when the one that failed does.
+     *
+     * <p><b>Draft only.</b> A tenant still Initializing has seeders running, and announcing it again next to
+     * them would run two rounds of the same seeds at once. One whose setup finished has nothing to retry.
+     *
+     * @param tenantId the tenant whose setup failed
+     */
+    @Transactional(rollbackFor = Exception.class)
+    public void retrySetup(Long tenantId) {
+        TenantInfo tenant = tenantInfoService.getById(tenantId)
+                .orElseThrow(() -> new BusinessException("Tenant {0} does not exist.", String.valueOf(tenantId)));
+        if (!TenantStatus.DRAFT.equals(tenant.getStatus())) {
+            throw new BusinessException("Tenant {0} is {1}. Only a tenant whose setup failed (Draft) can retry "
+                    + "it; one that is Initializing still has its setup running.", tenant.getName(),
+                    tenant.getStatus() == null ? "without a status" : tenant.getStatus().getStatus());
+        }
+        // Same order as provision(): the axis reopens before the announcement goes out.
+        provisioningStatusService.beginProvisioning(tenantId);
+        eventPublisher.publishEvent(new TenantProvisionedEvent(tenantId, tenant.getCode(), tenant.getName()));
+        log.info("Tenant {} ({}) setup retried", tenantId, tenant.getCode());
     }
 
     /**
@@ -162,14 +191,14 @@ public class TenantProvisioningService {
     }
 
     /**
-     * Guarantee the tenant has its free period — the row that makes "what is this tenant entitled to" a
+     * Guarantee the tenant has its base period — the row that makes "what is this tenant entitled to" a
      * question about data rather than about a fallback rule.
      *
      * <p>Every tenant gets exactly one, and it is the reason the entitlement resolver no longer needs a
      * floor-plan fallback: a tenant always has at least one period, so its standing is always derivable
      * from dates. That also makes {@code NEVER_SUBSCRIBED} unreachable.
      *
-     * <p><b>Idempotent by search, not by flag.</b> The create form pre-populates the free row so the
+     * <p><b>Idempotent by search, not by flag.</b> The create form pre-populates the base row so the
      * operator can set an expiry at creation time, so the row may already have arrived through
      * {@link #recordInitialPeriods}. Checking for it is what keeps the UI path and the API / seed paths
      * from producing two.
@@ -180,7 +209,7 @@ public class TenantProvisioningService {
      * sells versions has a catalog; one that does not should not have tenant-starter's period machinery
      * writing rows at all.
      */
-    private void ensureFreePeriod(Long tenantId) {
+    private void ensureBasePeriod(Long tenantId) {
         TenantInfo tenant = tenantInfoService.getById(tenantId).orElse(null);
         if (tenant == null || tenant.getSubscriptionId() == null) {
             return;
@@ -196,21 +225,21 @@ public class TenantProvisioningService {
             if (alreadyThere) {
                 return null;
             }
-            SubscriptionPeriodPatch.PeriodInput free = new SubscriptionPeriodPatch.PeriodInput();
-            free.setPlanId(floor.getId());
+            SubscriptionPeriodPatch.PeriodInput base = new SubscriptionPeriodPatch.PeriodInput();
+            base.setPlanId(floor.getId());
             // TRIAL, not PAID: nobody paid for it. The projection turns this into "on trial" while the row
-            // is open, and into "expired" if an operator later sets an end date — which is how a free tenant
+            // is open, and into "expired" if an operator later sets an end date — which is how a base-only tenant
             // can be cut off without deleting anything.
-            free.setPeriodType(SubscriptionPeriodType.TRIAL);
+            base.setPeriodType(SubscriptionPeriodType.TRIAL);
             // The tenant's own today, not the server's: a tenant whose day has not started yet would
             // otherwise get a period beginning "tomorrow" and spend its first hours uncovered.
-            free.setEffectiveStartDate(LocalDate.now(Timezone.zoneIdOrUtc(tenant.getDefaultTimezone())));
+            base.setEffectiveStartDate(LocalDate.now(Timezone.zoneIdOrUtc(tenant.getDefaultTimezone())));
             // Open-ended = permanent. An operator may set an end date afterwards; that is the whole
-            // mechanism for time-boxing a free tenant (a competitor evaluating the product, say).
-            free.setEffectiveEndDate(null);
+            // mechanism for time-boxing a base-only tenant (a competitor evaluating the product, say).
+            base.setEffectiveEndDate(null);
 
             SubscriptionPeriodPatch patch = new SubscriptionPeriodPatch();
-            patch.setCreate(List.of(free));
+            patch.setCreate(List.of(base));
             periodService.applyPatch(tenant.getSubscriptionId(), patch);
             return null;
         });

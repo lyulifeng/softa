@@ -10,6 +10,7 @@ import io.softa.starter.flow.design.FlowGraphDocument;
 import io.softa.starter.flow.design.FlowGraphEdge;
 import io.softa.starter.flow.design.FlowGraphNode;
 import io.softa.starter.flow.design.trigger.ApiTrigger;
+import io.softa.starter.flow.design.trigger.SubmitTrigger;
 import io.softa.starter.flow.enums.FlowNodeType;
 import io.softa.starter.flow.enums.FlowScenario;
 import io.softa.starter.flow.runtime.api.FlowApproveRequest;
@@ -38,7 +39,7 @@ import static org.junit.jupiter.api.Assertions.*;
  */
 class FlowEndToEndExecutionTest {
 
-    private static final Long DESIGN_ID = 7001L;
+    private static final String FLOW_ID = "7001";
     private static final String APPROVER = "manager-1";
 
     private final DefaultFlowCompiler compiler = new DefaultFlowCompiler();
@@ -70,10 +71,10 @@ class FlowEndToEndExecutionTest {
 
     @Test
     void shouldSuspendOnApprovalAndResumeThroughCallServiceToEnd() {
-        publishService.publish(DESIGN_ID, flowDefinition());
+        publishService.publish(FLOW_ID, flowDefinition());
 
         FlowStartRequest startRequest = new FlowStartRequest();
-        startRequest.setDesignId(DESIGN_ID);
+        startRequest.setFlowId(FLOW_ID);
         startRequest.setInitiatorId("initiator-1");
         startRequest.setVariables(Map.of("requestId", 42L));
 
@@ -112,11 +113,11 @@ class FlowEndToEndExecutionTest {
 
     @Test
     void parallelBranchesSuspendingOnDifferentWaitsParkTheInstanceWithoutFailing() {
-        long designId = 7002L;
-        publishService.publish(designId, parallelMixedWaitFlow());
+        String flowId = "7002";
+        publishService.publish(flowId, parallelMixedWaitFlow());
 
         FlowStartRequest startRequest = new FlowStartRequest();
-        startRequest.setDesignId(designId);
+        startRequest.setFlowId(flowId);
         startRequest.setInitiatorId("initiator-1");
 
         FlowExecutionState state = runtimeEngine.start(startRequest);
@@ -133,11 +134,11 @@ class FlowEndToEndExecutionTest {
 
     @Test
     void returnValueNodePopulatesSynchronousReturnData() {
-        long designId = 7003L;
-        publishService.publish(designId, returnValueFlow());
+        String flowId = "7003";
+        publishService.publish(flowId, returnValueFlow());
 
         FlowStartRequest startRequest = new FlowStartRequest();
-        startRequest.setDesignId(designId);
+        startRequest.setFlowId(flowId);
         startRequest.setInitiatorId("initiator-1");
         startRequest.setVariables(Map.of("amount", 500L));
 
@@ -152,9 +153,8 @@ class FlowEndToEndExecutionTest {
 
     private static DesignFlowDefinition returnValueFlow() {
         return DesignFlowDefinition.builder()
-                .code("e2e-return-value")
                 .name("E2E Return Value")
-                .scenario(FlowScenario.PROCESS)
+                .scenario(FlowScenario.AUTOMATION)
                 .trigger(new ApiTrigger(null))
                 .graph(FlowGraphDocument.builder()
                         .nodes(List.of(
@@ -181,10 +181,9 @@ class FlowEndToEndExecutionTest {
 
     private static DesignFlowDefinition parallelMixedWaitFlow() {
         return DesignFlowDefinition.builder()
-                .code("e2e-parallel-mixed-wait")
                 .name("E2E Parallel Mixed Wait")
-                .scenario(FlowScenario.PROCESS)
-                .trigger(new ApiTrigger(null))
+                .scenario(FlowScenario.APPROVAL)
+                .trigger(new SubmitTrigger("LeaveRequest", null))
                 .graph(FlowGraphDocument.builder()
                         .nodes(List.of(
                                 node("start", FlowNodeType.START),
@@ -217,7 +216,7 @@ class FlowEndToEndExecutionTest {
 
     @Test
     void failedStartRecordsFailedInstanceAndRethrows() {
-        long designId = 7004L;
+        String flowId = "7004";
         StubFlowBundleRegistry localBundles = new StubFlowBundleRegistry();
         StubFlowInstanceStore localStore = new StubFlowInstanceStore();
         ApprovalNodeExecutionHandler approval = new ApprovalNodeExecutionHandler();
@@ -230,10 +229,10 @@ class FlowEndToEndExecutionTest {
                         approval,
                         new PassThroughNodeExecutionHandler())),
                 approval);
-        new FlowPublishServiceImpl(compiler, localBundles).publish(designId, failingFlow());
+        new FlowPublishServiceImpl(compiler, localBundles).publish(flowId, failingFlow());
 
         FlowStartRequest request = new FlowStartRequest();
-        request.setDesignId(designId);
+        request.setFlowId(flowId);
         request.setInitiatorId("initiator-1");
 
         // The failing node propagates, so start() rethrows — callers (e.g. trigger dispatch) rely on
@@ -243,7 +242,7 @@ class FlowEndToEndExecutionTest {
 
         List<FlowExecutionState> failed = localStore.listByStatus(FlowExecutionStatus.FAILED);
         assertEquals(1, failed.size(), "a FAILED instance must be recorded even when start fails");
-        assertEquals("e2e-failing", failed.get(0).getFlowCode());
+        assertEquals(flowId, failed.get(0).getFlowId());
     }
 
     /** Test stub: a CALL_WEBHOOK executor that always throws, to force a node failure during start. */
@@ -276,9 +275,8 @@ class FlowEndToEndExecutionTest {
 
     private static DesignFlowDefinition failingFlow() {
         return DesignFlowDefinition.builder()
-                .code("e2e-failing")
                 .name("E2E Failing")
-                .scenario(FlowScenario.PROCESS)
+                .scenario(FlowScenario.AUTOMATION)
                 .trigger(new ApiTrigger(null))
                 .graph(FlowGraphDocument.builder()
                         .nodes(List.of(
@@ -297,10 +295,9 @@ class FlowEndToEndExecutionTest {
 
     private static DesignFlowDefinition flowDefinition() {
         return DesignFlowDefinition.builder()
-                .code("e2e-approval-then-service")
                 .name("E2E Approval Then Service")
-                .scenario(FlowScenario.PROCESS)
-                .trigger(new ApiTrigger(null))
+                .scenario(FlowScenario.APPROVAL)
+                .trigger(new SubmitTrigger("LeaveRequest", null))
                 .graph(FlowGraphDocument.builder()
                         .nodes(List.of(
                                 node("start", FlowNodeType.START),

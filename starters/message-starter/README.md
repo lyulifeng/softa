@@ -80,13 +80,15 @@ ORM. `tenant_id = -1` rows (`BaseConstant.PLATFORM_TENANT_ID`) form the
 The two tiers are fully separate namespaces; there is no overlay:
 
 - **Templates are seeded per tenant, not shared.** Each tenant receives its
-  template rows at provisioning from the APPLICATION's per-tenant seed files
-  (`SysPreDataService.loadPreTenantData`, driven by the app's
-  tenant-provisioned seeder — e.g. hcm's `TenantSeedListener` — with
-  SysPreData-ledger idempotency and rebuild cleanup). From then on the tenant
-  owns and edits its rows freely; seed-file changes do NOT propagate to
-  existing tenants. The platform tier holds only the templates PLATFORM-scoped
-  sends render (billing, security); a code needed on both tiers (e.g. a public
+  template rows at provisioning from the APPLICATION's tenant seed files (the
+  tenant files of its `seed-manifest.yml`, run by seed-starter when the tenant
+  is set up — e.g. by hcm's `TenantSeedListener`). From then on the tenant
+  owns and edits its rows freely. A tenant runs a seed file once, so a new
+  template reaches existing tenants as a new tenant file the platform admin
+  runs, and a change to a template they already have goes out as a data
+  migration (the seed file is edited too, for tenants created after). The
+  platform tier holds only the templates PLATFORM-scoped sends render
+  (billing, security); a code needed on both tiers (e.g. a public
   password-reset fallback) appears in both seed sets. Send-time resolution is
   tier-pure: `scope = TENANT` reads the current scope's own rows only,
   `scope = PLATFORM` reads the platform tier only — no fallback in either

@@ -28,15 +28,23 @@ final class FlowExecutionStateMapper {
         entity.setInstanceId(state.getInstanceId());
         entity.setVersion(state.getVersion());
         entity.setBundleId(state.getBundleId());
-        entity.setDesignId(state.getDesignId());
-        entity.setFlowCode(state.getFlowCode());
+        entity.setFlowId(state.getFlowId());
         entity.setFlowRevision(state.getFlowRevision());
         entity.setTitle(state.getTitle());
         entity.setModelName(state.getModelName());
         entity.setRowId(state.getRowId());
         entity.setInitiatorId(state.getInitiatorId());
+        entity.setRecordApproval(state.getRecordApproval());
+        entity.setSubjectId(state.getSubjectId());
+        entity.setDepartmentId(state.getDepartmentId());
+        entity.setEffectiveDate(state.getEffectiveDate());
+        entity.setRecordCode(state.getRecordCode());
+        entity.setTriggerEventId(state.getTriggerEventId());
+        // Held while the record's approval is unfinished; the unique index on it keeps a record
+        // to one approval in progress, concurrent submissions included.
+        boolean open = state.isApprovalOfRecord() && state.getStatus() != null && !state.getStatus().isTerminal();
+        entity.setOpenRecordId(open ? state.getRowId() : null);
         entity.setStatus(state.getStatus());
-        entity.setResubmissionCount(state.getResubmissionCount());
         entity.setErrorMessage(state.getErrorMessage());
         entity.setFailedNodeId(state.getFailedNodeId());
         entity.setInputPayload(JsonUtils.objectToString(state.getInputPayload()));
@@ -45,7 +53,6 @@ final class FlowExecutionStateMapper {
         entity.setNextFireAt(state.earliestTimerDueAt());
         entity.setCompletedNodeIds(JsonUtils.objectToString(state.getCompletedNodeIds()));
         entity.setPendingApprovals(JsonUtils.objectToString(state.getPendingApprovals()));
-        entity.setReturnedApproval(JsonUtils.objectToString(state.getReturnedApproval()));
         entity.setJoinArrivalCounts(JsonUtils.objectToString(state.getJoinArrivalCounts()));
         // trace is persisted separately via flow_execution_trace
         entity.setReturnData(JsonUtils.objectToString(state.getReturnData()));
@@ -60,15 +67,20 @@ final class FlowExecutionStateMapper {
                 .instanceId(entity.getInstanceId())
                 .version(entity.getVersion())
                 .bundleId(entity.getBundleId())
-                .designId(entity.getDesignId())
-                .flowCode(entity.getFlowCode())
+                .flowId(entity.getFlowId())
+                .flowName(entity.getFlowName())
                 .flowRevision(entity.getFlowRevision())
                 .title(entity.getTitle())
                 .modelName(entity.getModelName())
                 .rowId(entity.getRowId())
                 .initiatorId(entity.getInitiatorId())
+                .recordApproval(entity.getRecordApproval())
+                .subjectId(entity.getSubjectId())
+                .departmentId(entity.getDepartmentId())
+                .effectiveDate(entity.getEffectiveDate())
+                .recordCode(entity.getRecordCode())
+                .triggerEventId(entity.getTriggerEventId())
                 .status(entity.getStatus())
-                .resubmissionCount(entity.getResubmissionCount())
                 .errorMessage(entity.getErrorMessage())
                 .failedNodeId(entity.getFailedNodeId())
                 .inputPayload(JsonUtils.stringToObject(entity.getInputPayload(), new TypeReference<>() {}, new LinkedHashMap<>()))
@@ -76,7 +88,6 @@ final class FlowExecutionStateMapper {
                 .waitTokens(JsonUtils.stringToObject(entity.getWaitTokens(), new TypeReference<>() {}, new ArrayList<>()))
                 .completedNodeIds(JsonUtils.stringToObject(entity.getCompletedNodeIds(), new TypeReference<>() {}, new ArrayList<>()))
                 .pendingApprovals(JsonUtils.stringToObject(entity.getPendingApprovals(), new TypeReference<>() {}, new ArrayList<>()))
-                .returnedApproval(JsonUtils.stringToObject(entity.getReturnedApproval(), new TypeReference<>() {}, null))
                 // approval audit is a delta buffer: loads keep it empty; history lives in
                 // flow_approval_record. -1 = sequence base unknown, resolved lazily on first flush.
                 .approvalAuditDelta(new ArrayList<>())

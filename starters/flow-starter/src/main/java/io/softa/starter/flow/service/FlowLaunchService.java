@@ -1,11 +1,14 @@
 package io.softa.starter.flow.service;
 
+import io.softa.starter.flow.dto.FlowApprovalPreview;
 import io.softa.starter.flow.runtime.engine.FlowLaunchResponse;
 import io.softa.starter.flow.runtime.api.FlowStartRequest;
 import io.softa.starter.flow.runtime.api.PublishAndStartRequest;
+import io.softa.starter.flow.runtime.state.FlowExecutionState;
 
 /**
- * Launch facade for revision-aware runtime starts and publish-and-start flows.
+ * Launch facade: the editor's publish-and-start and debug runs, and the submission (and
+ * withdrawal) of business records for approval, with its preview.
  */
 public interface FlowLaunchService {
 
@@ -18,5 +21,70 @@ public interface FlowLaunchService {
      * and executes it through the normal engine. NOT a sandbox — node side
      * effects (record writes, notifications) are real.
      */
-    FlowLaunchResponse debugRunDraft(Long designId, FlowStartRequest request);
+    FlowLaunchResponse debugRunDraft(String flowId, FlowStartRequest request);
+
+    /**
+     * Submits a business record for approval, in the caller's transaction: the submitter must read the
+     * record with their own permissions and it must be a draft; its model's
+     * {@code ModelApprovalHandler} checks it and supplies the title and routing variables, the flow
+     * is chosen by the flows' submit triggers (exactly one active flow of the tenant must match the
+     * model and the record), the record becomes {@code Pending} and the record's approval starts.
+     * Every submission starts a new approval from the beginning — a record returned to its
+     * submitter, a draft again, included — and a record has at most one approval in progress.
+     *
+     * @param modelName   the record's model
+     * @param rowId       the record
+     * @param initiatorId the submitting user
+     * @return the new approval instance's state
+     */
+    FlowExecutionState submitRecord(String modelName, String rowId, String initiatorId);
+
+    /**
+     * What submitting the record would do now, worked out without submitting it: the same checks and
+     * the same choice of flow as {@link #submitRecord}, then the approval path that flow would take —
+     * its steps in order, each with the approvers who would be asked or why it passes on its own. For a
+     * record whose approval is in progress, the rest of that approval's path ({@code InProgress}): the
+     * step it waits on now, then those after it, from the instance's own variables.
+     * The handler's {@code validate} runs with the requester's own permissions; {@code afterSubmitted}
+     * is never called, and nothing is started or written. A refusal, no applicable flow or several are
+     * reported, not thrown.
+     *
+     * @param modelName   the record's model
+     * @param rowId       the record
+     * @param requesterId the user who would submit it
+     * @return the preview, users named
+     * @throws io.softa.starter.flow.runtime.exception.FlowAuthorizationException when the requester
+     *         cannot read the record with their own permissions
+     */
+    FlowApprovalPreview previewRecord(String modelName, String rowId, String requesterId);
+
+    /**
+     * Withdraws a record's approval while it waits for approvers, in the caller's transaction. The
+     * engine checks that the actor is the submitter and that the flow allows withdrawal; the record
+     * is then written back as a draft like any other withdrawal and handed to its handler. When the
+     * record's approval failed, its submitter takes the record back the same way — the handler is told
+     * it was withdrawn — while the failed instance stays as it is for flow monitoring.
+     *
+     * @param modelName the record's model
+     * @param rowId     the record
+     * @param actorId   the withdrawing user
+     * @param comment   optional reason
+     * @return the withdrawn (or failed) approval instance's state
+     * @throws io.softa.framework.base.exception.BusinessException when the record has no approval in
+     *         progress
+     */
+    FlowExecutionState withdrawRecord(String modelName, String rowId, String actorId, String comment);
+
+    /**
+     * Cancels a draft for good, in the caller's transaction: the actor must read the record with their
+     * own permissions, it must be a draft, and its handler's {@code validateCancel} must pass. The record
+     * becomes {@code Cancelled} and its handler is handed a {@code CANCELLED} result with no instance.
+     *
+     * @param modelName the record's model
+     * @param rowId     the record
+     * @param actorId   the cancelling applicant
+     * @throws io.softa.framework.base.exception.BusinessException when the record is not a draft, or its
+     *         handler refuses
+     */
+    void cancelRecord(String modelName, String rowId, String actorId);
 }

@@ -66,9 +66,8 @@ class TypedTaskConfigCompileTest {
 
     private static DesignFlowDefinition flowWithTaskNode(FlowNodeType nodeType, Map<String, Object> input) {
         return DesignFlowDefinition.builder()
-                .code("typed-config-" + nodeType.getType().toLowerCase())
                 .name("Typed Config " + nodeType.getType())
-                .scenario(FlowScenario.PROCESS)
+                .scenario(FlowScenario.AUTOMATION)
                 .trigger(new ApiTrigger(null))
                 .graph(FlowGraphDocument.builder()
                         .nodes(List.of(

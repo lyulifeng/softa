@@ -41,8 +41,17 @@ you get, auto-wired:
   `IdentityScopeCompiler` (data-driven identity scopes) + `ScopeContributor`
   implementations → row-level `Filters`.
 - **`EndpointIndex`** (endpoint → required permission) and
-  **`SensitiveFieldSetCache`** (model → masked fields), each built once at
-  `@PostConstruct` from an SPI (seed data; redeploy to refresh).
+  **`SensitiveFieldSetCache`** (model → masked fields), each a softa-orm
+  `StartupSnapshot` built once from an SPI — after the seed files the build owns
+  have loaded, before the web server takes traffic. Their rows change only at
+  startup, so they never reload; read before they are built, they throw. The
+  scope registries (`ScopeApplicabilityResolver`, `IdentityScopeCompiler`,
+  `ModelDefaultScopeRegistry`) and the snapshot provider's navigation ancestry
+  are startup snapshots too.
+- **Cached permission snapshots** (`perm:{tenant}:user:{user}`) carry the build
+  that computed them (`buildStamp`: version@buildTime, from build-info); the
+  provider reads another build's entry as a miss, so during a rolling deploy
+  neither version serves snapshots the other computed from its own startup state.
 - **`EndpointCoverageValidator`** — startup (`ApplicationReadyEvent`) check that
   every Spring MVC handler URL is covered by a permission in the `EndpointIndex`
   (or a public / authenticated-bypass pattern); log-only, never fail-fast.
@@ -182,7 +191,9 @@ standalone service with DB access needs no extra wiring.
 
 Scope **types are data**; their compilation is **code only where it must be**.
 
-- **Type registry (data)** — `DataScopeType` (seed `data-system/DataScopeType.Builtin.json`)
+- **Type registry (data)** — `DataScopeType` (seed `data-system/DataScopeType.Builtin.json`; it and
+  `data-system/ModelDefaultScope.Builtin.json` are platform files the app lists under `platform` in its
+  `seed-manifest.yml`, since an unlisted file never loads)
   holds each scope type's metadata: `appliesToAll` (ALL / CUSTOM); for **identity
   types** a `filter` template (+ `identityModel` / `identityFilter` for the model-swap);
   for **code-contributor types** an explicit `applicableFields`.
@@ -209,6 +220,15 @@ Scope **types are data**; their compilation is **code only where it must be**.
   idPath via `DepartmentIdPathResolver`, build a subtree prefix filter) and `Custom`
   (evaluate an admin-authored `scopeExpr`). These read `Employee` / `Department` by
   model name via `ModelService`; `ModelManager.existModel` lets a non-HR app degrade.
+  The department anchor is the field named `departmentId`: a ToOne to `Department`
+  (or reached as `employeeId.departmentId`) is filtered on its `idPath` through the
+  join; a **plain department-id column** under that name — a framework model that
+  cannot relate to the application's `Department`, such as `FlowInstance` — is
+  filtered `departmentId IN (the subtree's department ids)`, the ids picked from the
+  cached department tree (`DepartmentCascadePathResolver.resolveIdColumn`,
+  `DepartmentIdPathResolver.subtreeIdsOf`). The same name is what makes the two types
+  applicable to the model (`DataScopeType.applicableFields`), so the role wizard offers
+  them either way.
 
 `ScopeRuleCompiler` dispatches each rule: `ALL` → no filter → a registered
 `ScopeContributor` → its `compile` → the `IdentityScopeCompiler` data path →
@@ -275,7 +295,11 @@ fixed order, and each step is there because the one before it would answer the w
    `SELECT model_name FROM sys_model WHERE multi_country = 1 AND multi_tenant = 0` — note the column is
    `tinyint(1)`, so comparing it to `'true'` silently matches the complement.
 4. **An anchorless child follows its owner.** `findReferencer` looks through the models the caller *was*
-   granted for one pointing at this one, and re-enters scope for that parent.
+   granted for one pointing at this one, and re-enters scope for that parent. The join model of a
+   many-to-many field counts as the granted record's child, through its left key (`joinLeft`): the links
+   are that record's own, and are written as the caller, so without the edge a link could be added but
+   never removed. A record a many-to-many field links to is a shared reference, as a many-to-one target
+   is.
 5. **Otherwise, closed.**
 
 Step 3 exists because steps 2 and 4 between them left a hole. `IdType` is referenced only from
@@ -340,7 +364,7 @@ grant with the value baked into its `scopeExpr` (no longer a type-level column).
 > `ScopeType.valueOf` and `ScopeRuleCompiler` dispatches on an `EnumMap`, so a code
 > with no enum value is silently dropped. Keeping the enum (rather than a plain
 > String code — an intentionally-deferred design, see the split ADR's decision ④)
-> is a deliberate trade: `DataScopeType` is **seed data (redeploy to refresh)**, so
+> is a deliberate trade: `DataScopeType` is **seed data the build owns (it loads at startup)**, so
 > the enum value and the seed row are *both* build-time anyway — dropping the enum
 > would save one line, not unlock runtime/no-deploy scope-type addition (that also
 > needs `DataScopeType` writable at runtime). The enum buys compile-time safety for
@@ -514,7 +538,7 @@ box.
      consultant's menus are the tenant's subscription in full. Two rules that agree
      today, not one rule.
    An **unregistered** endpoint passes SUPER_ADMIN only — the platform's own
-   operations (pre-data loading, cron triggers, upgrades) are such endpoints. A
+   operations (seed data loading, cron triggers, upgrades) are such endpoints. A
    tenant admin and a consultant are refused it like anyone else, so a new controller
    or model verb is closed inside a tenant until a permission lists it.
    `EndpointCoverageValidator` logs every endpoint no permission lists.

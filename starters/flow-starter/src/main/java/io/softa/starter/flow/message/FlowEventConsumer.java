@@ -18,9 +18,11 @@ import io.softa.starter.flow.runtime.trigger.FlowTriggerEvent;
 /**
  * Consumes flow trigger events from Pulsar and executes them.
  * <p>
- * If the message specifies a {@code flowCode}, the flow is started directly.
+ * If the message names a {@code bundleId} or {@code flowId}, that flow is started directly.
  * Otherwise, the message is mapped to a {@link FlowTriggerEvent} and fired
- * through the trigger registry to find matching flows.
+ * through the trigger registry to find matching flows. Only flows with {@code sync=false} run
+ * here: these events come from {@link FlowAutomationService#fireAsync}, and the sync flows
+ * matching the same change already ran in the writer's transaction, before it committed.
  * </p>
  */
 @Slf4j
@@ -43,7 +45,7 @@ public class FlowEventConsumer {
     public void onMessage(FlowEventMessage message) {
         Context ctx = message.getContext();
         Runnable task = () -> {
-            if (message.getBundleId() != null || message.getDesignId() != null) {
+            if (message.getBundleId() != null || message.getFlowId() != null) {
                 startDirect(message);
             } else {
                 fireTrigger(message);
@@ -59,24 +61,25 @@ public class FlowEventConsumer {
 
     private void startDirect(FlowEventMessage message) {
         FlowStartRequest request = new FlowStartRequest();
-        request.setDesignId(message.getDesignId());
+        request.setFlowId(message.getFlowId());
         request.setBundleId(message.getBundleId());
         request.setInitiatorId(message.getActorId());
         request.setVariables(message.getParameters());
-        runtimeEngine.start(request);
-        log.info("Async flow started: designId={}, bundleId={}",
-                message.getDesignId(), message.getBundleId());
+        runtimeEngine.startAutomation(request);
+        log.info("Async flow started: flowId={}, bundleId={}",
+                message.getFlowId(), message.getBundleId());
     }
 
     private void fireTrigger(FlowEventMessage message) {
         FlowTriggerEvent event = FlowTriggerEvent.builder()
                 .type(message.getTriggerType())
+                .eventId(message.getEventId())
                 .sourceModel(message.getSourceModel())
                 .sourceRowId(message.getSourceRowId())
                 .parameters(message.getParameters())
                 .actorId(message.getActorId())
                 .build();
-        automationService.fire(event);
+        automationService.fireAsyncOnly(event);
         log.info("Async trigger fired: type={}, sourceModel={}", message.getTriggerType(), message.getSourceModel());
     }
 }

@@ -6,10 +6,13 @@ import java.util.Optional;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.EnumSource;
 import org.mockito.ArgumentCaptor;
 import org.mockito.InOrder;
 import org.springframework.context.ApplicationEventPublisher;
 
+import io.softa.framework.base.exception.BusinessException;
 import io.softa.framework.orm.domain.FlexQuery;
 import io.softa.framework.orm.service.ModelService;
 import io.softa.starter.tenant.entity.Plan;
@@ -35,6 +38,7 @@ import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 /**
@@ -43,7 +47,7 @@ import static org.mockito.Mockito.when;
  * <p>Every customer goes through this once, and the failure modes are not gradual. If the subscription row is
  * missing, the tenant list and authorization both read a null projection. If the back-link is skipped, billing
  * cannot find its way from a subscription to its tenant. If the periods a sales rep entered on the create form
- * are dropped, the customer is created on the free plan having paid for Pro — and nothing reports an error,
+ * are dropped, the customer is created on the floor plan having paid for Pro — and nothing reports an error,
  * because provisioning itself succeeded.
  *
  * <p>The class this replaces tested a subscription model that no longer exists (one interval and a lifecycle
@@ -73,11 +77,11 @@ class TenantProvisioningServiceTest {
         modelService = mock(ModelService.class);
 
         // The plan catalog, stubbed to the shape provisioning depends on: a lowest-tier plan exists, so
-        // ensureFreePeriod has a baseline to write. Without it provisioning refuses outright — see its
+        // ensureBasePeriod has a baseline to write. Without it provisioning refuses outright — see its
         // javadoc for why a tenant with no period is worse than a tenant that failed to be created.
         when(modelService.searchList(eq("Plan"), any(FlexQuery.class), eq(Plan.class)))
                 .thenReturn(List.of(plan("plan.free", 0), plan("plan.pro", 10)));
-        // No period exists yet, so the free row gets written. Overridden per test where the point is that
+        // No period exists yet, so the base row gets written. Overridden per test where the point is that
         // one arrived with the request.
         when(periodService.searchList(any(FlexQuery.class))).thenReturn(List.of());
 
@@ -186,10 +190,10 @@ class TenantProvisioningServiceTest {
     }
 
     @Test
-    @DisplayName("no periods sold — the free period is still written, open-ended and on the floor plan")
-    void noPeriods_freePeriodStillWritten() {
+    @DisplayName("no periods sold — the base period is still written, open-ended and on the floor plan")
+    void noPeriods_basePeriodStillWritten() {
         // Replaces the former "nothing recorded" rule. A tenant nobody sold anything to used to have no
-        // periods at all and lean on the resolver's floor-plan fallback; it now owns a real free period, which
+        // periods at all and lean on the resolver's floor-plan fallback; it now owns a real base period, which
         // is what lets the fallback go away and makes its entitlement a fact about data.
         service.provision(request(null));
 
@@ -207,10 +211,10 @@ class TenantProvisioningServiceTest {
     }
 
     @Test
-    @DisplayName("a free period already in the request is used, not duplicated")
-    void freePeriodAlreadyPresent_notDuplicated() {
-        // The create form pre-populates the free row so an operator can set an expiry at creation time, so it
-        // arrives through the patch. "Exactly one free period" is the invariant; finding the existing one is
+    @DisplayName("a base period already in the request is used, not duplicated")
+    void basePeriodAlreadyPresent_notDuplicated() {
+        // The create form pre-populates the base row so an operator can set an expiry at creation time, so it
+        // arrives through the patch. "Exactly one base period" is the invariant; finding the existing one is
         // what keeps the UI path from producing a second alongside the API and seed paths.
         TenantSubscriptionPeriod existingFree = new TenantSubscriptionPeriod();
         existingFree.setPlanId("plan.free");
@@ -256,6 +260,47 @@ class TenantProvisioningServiceTest {
         verify(eventPublisher).publishEvent(captor.capture());
         assertThat(captor.getValue().tenantId()).isEqualTo(TENANT_ID);
         assertThat(captor.getValue().code()).isEqualTo("acme-corp");
+    }
+
+    // ─── retrying a failed setup ───
+
+    @Test
+    @DisplayName("a Draft tenant is announced again — after its axis reopens, under its own id, code and name")
+    void retry_announcesADraftTenantAgain() {
+        when(tenantInfoService.getById(TENANT_ID)).thenReturn(Optional.of(tenantIn(TenantStatus.DRAFT)));
+
+        service.retrySetup(TENANT_ID);
+
+        // The same order as provision(), for the same reason: a fast seeder's report must find the axis open.
+        InOrder order = inOrder(provisioningStatusService, eventPublisher);
+        order.verify(provisioningStatusService).beginProvisioning(TENANT_ID);
+        ArgumentCaptor<TenantProvisionedEvent> captor = ArgumentCaptor.forClass(TenantProvisionedEvent.class);
+        order.verify(eventPublisher).publishEvent(captor.capture());
+        assertThat(captor.getValue()).isEqualTo(new TenantProvisionedEvent(TENANT_ID, "acme-corp", "Acme Corp"));
+    }
+
+    @Test
+    @DisplayName("a retry writes nothing of its own: the tenant, its subscription and its periods stay as they are")
+    void retry_writesNothingItself() {
+        when(tenantInfoService.getById(TENANT_ID)).thenReturn(Optional.of(tenantIn(TenantStatus.DRAFT)));
+
+        service.retrySetup(TENANT_ID);
+
+        verify(tenantInfoService, never()).createOne(any(TenantInfo.class));
+        verify(subscriptionService, never()).createOne(any(TenantSubscription.class));
+        verifyNoInteractions(periodService);
+    }
+
+    @ParameterizedTest
+    @EnumSource(value = TenantStatus.class, names = "DRAFT", mode = EnumSource.Mode.EXCLUDE)
+    @DisplayName("only a Draft tenant can retry: an Initializing one is still running, the others finished")
+    void retry_refusesAnyOtherStatus(TenantStatus status) {
+        when(tenantInfoService.getById(TENANT_ID)).thenReturn(Optional.of(tenantIn(status)));
+
+        assertThatThrownBy(() -> service.retrySetup(TENANT_ID)).isInstanceOf(BusinessException.class);
+
+        verify(provisioningStatusService, never()).beginProvisioning(anyLong());
+        verify(eventPublisher, never()).publishEvent(any(TenantProvisionedEvent.class));
     }
 
     // ─── the code slug ───
@@ -309,6 +354,15 @@ class TenantProvisioningServiceTest {
         TenantInfo tenant = new TenantInfo();
         tenant.setId(TENANT_ID);
         tenant.setSubscriptionId(SUB_ID);
+        return tenant;
+    }
+
+    /** An existing tenant in the given status. */
+    private TenantInfo tenantIn(TenantStatus status) {
+        TenantInfo tenant = provisionedTenant();
+        tenant.setName("Acme Corp");
+        tenant.setCode("acme-corp");
+        tenant.setStatus(status);
         return tenant;
     }
 }

@@ -14,14 +14,17 @@ import io.softa.framework.base.context.Context;
 @NoArgsConstructor
 public class FlowEventMessage {
 
-    /** Flow design id to start directly (optional — when null, trigger matching is used). */
-    private Long designId;
+    /** Flow id to start directly (optional — when null, trigger matching is used). */
+    private String flowId;
 
-    /** Pinned bundle id to start directly (optional; overrides {@link #designId} when set). */
+    /** Pinned bundle id to start directly (optional; overrides {@link #flowId} when set). */
     private Long bundleId;
 
     /** Trigger type string (maps to FlowTriggerType). */
     private String triggerType;
+
+    /** Identity of the event (a change log's uuid), carried so a run is started at most once per event. */
+    private String eventId;
 
     /** Source model for entity-related triggers. */
     private String sourceModel;

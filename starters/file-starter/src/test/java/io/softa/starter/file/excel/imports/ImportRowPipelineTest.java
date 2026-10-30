@@ -8,9 +8,11 @@ import java.util.Map;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.EnumSource;
+import org.mockito.MockedStatic;
 import org.springframework.test.util.ReflectionTestUtils;
 
 import io.softa.framework.base.exception.IllegalArgumentException;
+import io.softa.framework.base.utils.SpringContextUtils;
 import io.softa.framework.orm.constant.FileConstant;
 import io.softa.framework.orm.service.ModelService;
 import io.softa.starter.file.dto.ImportDataDTO;
@@ -21,6 +23,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.mockStatic;
 import static org.mockito.Mockito.when;
 
 class ImportRowPipelineTest {
@@ -99,6 +102,95 @@ class ImportRowPipelineTest {
                 .contains("An earlier row in this file already has code=ADR001");
     }
 
+    @Test
+    void aHandlerNamedForAnotherModelIsRefused() {
+        // The wizard names the handler; one written for another model must not run on these rows.
+        ImportRowPipeline pipeline = wiredPipeline();
+        CustomImportHandler employeeOnly = new CustomImportHandler() {
+            @Override
+            public boolean supports(String modelName) {
+                return "Employee".equals(modelName);
+            }
+
+            @Override
+            public void handleImportData(List<Map<String, Object>> rows, Map<String, Object> env,
+                                         boolean validateOnly) {
+                rows.forEach(row -> row.put("touched", true));
+            }
+        };
+        ImportDataDTO data = new ImportDataDTO();
+        data.setRows(new ArrayList<>(List.of(new LinkedHashMap<>(Map.of("code", "ADR001")))));
+        data.setOriginalRows(new ArrayList<>(List.of(new LinkedHashMap<>(Map.of("Code", "ADR001")))));
+
+        try (MockedStatic<SpringContextUtils> spring = mockStatic(SpringContextUtils.class)) {
+            spring.when(() -> SpringContextUtils.getBean("employeeOnly", CustomImportHandler.class))
+                    .thenReturn(employeeOnly);
+
+            IllegalArgumentException refused = assertThrows(IllegalArgumentException.class,
+                    () -> pipeline.importData(template("EmpAddress", "employeeOnly"), data));
+            assertThat(refused.getMessage()).contains("employeeOnly", "EmpAddress");
+            assertThat(data.getRows().getFirst()).doesNotContainKey("touched");
+
+            assertDoesNotThrow(() -> pipeline.validateData(template("Employee", "employeeOnly"), data));
+            assertThat(data.getRows().getFirst()).containsEntry("touched", true);
+        }
+    }
+
+    @Test
+    void aHandlerThatNamesNoModelServesNone() {
+        ImportRowPipeline pipeline = wiredPipeline();
+        CustomImportHandler silent = (rows, env, validateOnly) -> { };
+        ImportDataDTO data = new ImportDataDTO();
+        data.setRows(new ArrayList<>(List.of(new LinkedHashMap<>(Map.of("code", "ADR001")))));
+        data.setOriginalRows(new ArrayList<>(List.of(new LinkedHashMap<>(Map.of("Code", "ADR001")))));
+
+        try (MockedStatic<SpringContextUtils> spring = mockStatic(SpringContextUtils.class)) {
+            spring.when(() -> SpringContextUtils.getBean("silent", CustomImportHandler.class)).thenReturn(silent);
+
+            assertThrows(IllegalArgumentException.class,
+                    () -> pipeline.importData(template("EmpAddress", "silent"), data));
+        }
+    }
+
+    private static ImportTemplateDTO template(String modelName, String handler) {
+        ImportTemplateDTO template = new ImportTemplateDTO();
+        template.setModelName(modelName);
+        template.setImportRule(ImportRule.CREATE_OR_UPDATE);
+        template.setSkipException(true);
+        template.setCustomHandler(handler);
+        return template;
+    }
+
+    @Test
+    void aBlankRequiredColumnFailsOnlyTheCreatingRowAndTheNoteNeverReachesTheWrite() {
+        ImportRowPipeline pipeline = wiredPipeline();
+        ImportTemplateDTO template = new ImportTemplateDTO();
+        template.setModelName("Employee");
+        template.setImportRule(ImportRule.CREATE_OR_UPDATE);
+        template.setUniqueConstraints(List.of("code"));
+        template.setSkipException(true);
+        template.setIgnoreEmpty(true);
+
+        Map<String, Object> updating = new LinkedHashMap<>(Map.of("code", "E1"));
+        RequiredOnCreateResolver.record(updating, "Name");
+        Map<String, Object> creating = new LinkedHashMap<>(Map.of("code", "E2"));
+        RequiredOnCreateResolver.record(creating, "Name");
+        ImportDataDTO data = new ImportDataDTO();
+        data.setRows(new ArrayList<>(List.of(updating, creating)));
+        data.setOriginalRows(new ArrayList<>(List.of(
+                new LinkedHashMap<>(Map.of("Code", "E1")), new LinkedHashMap<>(Map.of("Code", "E2")))));
+
+        pipeline.importData(template, data);
+
+        assertThat(data.getRows()).hasSize(1);
+        assertThat(data.getRows().getFirst()).containsEntry("code", "E1")
+                .doesNotContainKey(RequiredOnCreateResolver.MARKER);
+        assertThat(data.getFailedRows()).hasSize(1);
+        assertThat(data.getFailedRows().getFirst())
+                .containsEntry(FileConstant.FAILED_REASON, "The field `Name` is required")
+                .doesNotContainKey(RequiredOnCreateResolver.MARKER);
+    }
+
     /**
      * The pipeline with its collaborators stubbed out to no-ops, except the two under test: the
      * in-file duplicate pass and the failure collector that acts on what it marks.
@@ -121,6 +213,18 @@ class ImportRowPipelineTest {
                 org.mockito.ArgumentMatchers.any())).thenReturn(List.of());
         ReflectionTestUtils.setField(validator, "modelService", modelService);
         ReflectionTestUtils.setField(pipeline, "uniqueConstraintValidator", validator);
+        RequiredOnCreateResolver requiredResolver = new RequiredOnCreateResolver();
+        when(modelService.splitByExistence(org.mockito.ArgumentMatchers.anyString(),
+                org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any()))
+                .thenAnswer(inv -> {
+                    // Code E1 is stored; every other row creates.
+                    List<Map<String, Object>> given = inv.getArgument(1);
+                    return new io.softa.framework.orm.domain.CreateOrUpdateResult(
+                            given.stream().filter(r -> !"E1".equals(r.get("code"))).toList(),
+                            given.stream().filter(r -> "E1".equals(r.get("code"))).toList());
+                });
+        ReflectionTestUtils.setField(requiredResolver, "modelService", modelService);
+        ReflectionTestUtils.setField(pipeline, "requiredOnCreateResolver", requiredResolver);
         ReflectionTestUtils.setField(pipeline, "importFailureCollector", new ImportFailureCollector());
         ReflectionTestUtils.setField(pipeline, "importPersistenceService", mock(ImportPersistenceService.class));
         return pipeline;

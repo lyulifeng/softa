@@ -1,11 +1,9 @@
 package io.softa.starter.flow.runtime.action;
 
-import io.softa.framework.base.context.Context;
-import io.softa.framework.base.context.ContextHolder;
-
 import org.springframework.stereotype.Component;
 import org.springframework.util.StringUtils;
 
+import io.softa.framework.base.context.ContextUtils;
 import io.softa.starter.flow.runtime.api.FlowApproveRequest;
 import io.softa.starter.flow.runtime.bundle.CompiledFlowDefinition;
 import io.softa.starter.flow.runtime.bundle.CompiledFlowNode;
@@ -93,7 +91,7 @@ public class ApproveActionHandler implements FlowActionHandler<FlowApproveReques
             }
             pendingApproval.getApprovedActors().add(request.getActorId());
             if (!lifecycleService.canCompleteApproval(pendingApproval)) {
-                auditService.addTrace(state, definition.getFlowCode(), node, FlowTraceEventType.WAIT_APPROVAL,
+                auditService.addTrace(state, definition.getFlowId(), node, FlowTraceEventType.WAIT_APPROVAL,
                         auditService.buildPartialApprovalMessage(node, pendingApproval, request.getActorId()));
                 auditService.appendApprovalAudit(state, auditService.baseEntry(definition, node, pendingApproval, statusBefore, state.getStatus()).toBuilder()
                         .action(ApprovalActionType.APPROVE)
@@ -129,8 +127,6 @@ public class ApproveActionHandler implements FlowActionHandler<FlowApproveReques
      * that node is meant to edit it.
      */
     private static FlowExecutionState asApprover(java.util.function.Supplier<FlowExecutionState> work) {
-        Context ctx = ContextHolder.cloneContext();
-        ctx.setSkipPermissionCheck(true);
-        return ContextHolder.callWith(ctx, work::get);
+        return ContextUtils.withoutPermissionChecks(work);
     }
 }

@@ -30,8 +30,8 @@ public enum FlowTraceEventType {
     @OptionItem(label = "Approval CC Read")
     APPROVAL_CC_READ("ApprovalCcRead"),
     APPROVAL_RETURNED("ApprovalReturned"),
-    FLOW_RESUBMITTED("FlowResubmitted"),
     FLOW_WITHDRAWN("FlowWithdrawn"),
+    FLOW_TERMINATED("FlowTerminated"),
     FORK_PARALLEL("ForkParallel"),
     JOIN_PARALLEL("JoinParallel"),
     SUBFLOW_START("SubflowStart"),

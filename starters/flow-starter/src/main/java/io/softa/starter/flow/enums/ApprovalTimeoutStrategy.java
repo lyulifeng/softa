@@ -12,7 +12,10 @@ import lombok.Getter;
 @Getter
 @AllArgsConstructor
 public enum ApprovalTimeoutStrategy {
-    /** Just send reminders, no auto-action (default). */
+    /**
+     * Remind the approvers still to act at the deadline, then every {@code remindIntervalHours}, at most
+     * {@code maxRemindTimes} times; no automatic action (default).
+     */
     REMIND("Remind"),
     /** Auto-approve the task on timeout. */
     AUTO_APPROVE("AutoApprove"),

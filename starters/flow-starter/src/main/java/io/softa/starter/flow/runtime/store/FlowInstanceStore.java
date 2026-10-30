@@ -1,5 +1,6 @@
 package io.softa.starter.flow.runtime.store;
 
+import java.util.Collection;
 import java.util.List;
 import java.util.Optional;
 
@@ -29,9 +30,17 @@ public interface FlowInstanceStore {
     }
 
     /**
-     * List all instances matching the given flow code (trace not hydrated).
+     * The states of these instances, those that exist, in no particular order (trace not hydrated) — for
+     * a list page that shows what can be done to each of its rows. One read where the store can batch it.
      */
-    List<FlowExecutionState> listByFlowCode(String flowCode);
+    default List<FlowExecutionState> listByInstanceIds(Collection<String> instanceIds) {
+        return instanceIds.stream().map(this::get).flatMap(Optional::stream).toList();
+    }
+
+    /**
+     * List all instances of the given flow (trace not hydrated).
+     */
+    List<FlowExecutionState> listByFlowId(String flowId);
 
     /**
      * List all instances matching the given execution status (trace not hydrated).

@@ -1,59 +1,32 @@
 package io.softa.starter.permission.service;
 
+import java.io.Serializable;
+import java.util.*;
+import java.util.function.Supplier;
+import java.util.stream.Collectors;
+import lombok.extern.slf4j.Slf4j;
+import org.apache.commons.lang3.StringUtils;
+import tools.jackson.databind.JsonNode;
+
 import io.softa.framework.base.context.Context;
 import io.softa.framework.base.context.ContextHolder;
-import io.softa.framework.base.exception.PermissionException;
-import io.softa.framework.orm.domain.CreateAccess;
-import io.softa.framework.orm.domain.AggFunctions;
-import io.softa.framework.orm.domain.FilterUnit;
-import io.softa.framework.orm.domain.FlexQuery;
-import io.softa.framework.orm.domain.Orders;
-import io.softa.framework.orm.domain.Filters;
-import io.softa.framework.orm.domain.Page;
-import io.softa.framework.orm.domain.RecordAccess;
+import io.softa.framework.base.context.ContextUtils;
 import io.softa.framework.base.enums.Operator;
+import io.softa.framework.base.exception.PermissionException;
 import io.softa.framework.orm.constant.ModelConstant;
-import io.softa.framework.orm.enums.AccessType;
-import io.softa.framework.orm.enums.FieldType;
-import io.softa.framework.orm.enums.FilterType;
-import io.softa.framework.orm.enums.LogicOperator;
-import io.softa.framework.orm.enums.OnDelete;
+import io.softa.framework.orm.domain.*;
+import io.softa.framework.orm.enums.*;
 import io.softa.framework.orm.meta.MetaField;
-import org.apache.commons.lang3.StringUtils;
-
 import io.softa.framework.orm.meta.MetaModel;
 import io.softa.framework.orm.meta.ModelManager;
 import io.softa.framework.orm.service.AccessScope;
 import io.softa.framework.orm.service.ImportScope;
 import io.softa.framework.orm.service.ModelService;
 import io.softa.framework.orm.service.PermissionService;
-import io.softa.starter.permission.spi.PermissionInfo;
-import io.softa.starter.permission.spi.RoleGrant;
-import io.softa.starter.permission.spi.ScopeRule;
-import io.softa.starter.permission.spi.ScopeType;
-import io.softa.starter.permission.sensitive.SensitiveFieldSetCache;
 import io.softa.starter.permission.index.EndpointIndex;
-import io.softa.starter.permission.scope.IdPath;
-import io.softa.starter.permission.scope.SubtreeFilterRewriter;
-import io.softa.starter.permission.scope.ModelDefaultScopeRegistry;
-import io.softa.starter.permission.scope.ScopeApplicabilityResolver;
-import io.softa.starter.permission.scope.ScopeRuleCompiler;
-import io.softa.starter.permission.spi.PermissionSnapshotProvider;
-import lombok.extern.slf4j.Slf4j;
-import tools.jackson.databind.JsonNode;
-
-import java.io.Serializable;
-import java.util.ArrayList;
-import java.util.Collection;
-import java.util.EnumSet;
-import java.util.LinkedHashSet;
-import java.util.List;
-import java.util.Map;
-import java.util.Optional;
-import java.util.Set;
-import java.util.TreeSet;
-import java.util.function.Supplier;
-import java.util.stream.Collectors;
+import io.softa.starter.permission.scope.*;
+import io.softa.starter.permission.sensitive.SensitiveFieldSetCache;
+import io.softa.starter.permission.spi.*;
 
 /**
  * Bridges the framework's {@link PermissionService} contract to the
@@ -65,7 +38,7 @@ import java.util.stream.Collectors;
  *       {@code Context.skipPermissionCheck=true}, or when {@code userId}
  *       is null (bootstrap / async / cron paths).</li>
  *   <li>Loads {@link PermissionInfo} via
- *       {@link PermissionInfoEnricher#enrich} (request-scoped + Redis
+ *       PermissionInfoEnricher#enrich (request-scoped + Redis
  *       cached — repeat calls in one request are free).</li>
  *   <li>Super-admin short-circuits every check.</li>
  *   <li>Delegates rule → SQL translation to {@link ScopeRuleCompiler}
@@ -103,7 +76,7 @@ public class PermissionServiceImpl implements PermissionService {
 
     /** The endpoint gate's own index, asked directly by {@link #hasModelActionGrant} for the endpoints
      *  it cannot reach by URL. Resolved through a supplier, not injected directly, and deliberately:
-     *  {@link EndpointIndex#init()} reads the permission table at {@code @PostConstruct}, which needs
+     *  EndpointIndex#init() reads the permission table at {@code @PostConstruct}, which needs
      *  {@code ModelManager} already loaded. Taking the index as a constructor argument made Spring
      *  build it the moment THIS bean is built — before {@code AppStartup} runs {@code ModelManager.init()}
      *  — so the index read an unloaded catalog and came back empty, and every endpoint answered
@@ -189,7 +162,7 @@ public class PermissionServiceImpl implements PermissionService {
         if (PermissionInfo.hasFullDataAccess(pi)) return originalFilters;
         // A read performed for another action — the count behind "may I update these ids", an
         // export — reaches the rows of the roles holding that action, not every role's.
-        AccessType access = AccessScope.current();
+        AccessType access = AccessScope.currentFor(model);
         originalFilters = expandConditionFields(model, originalFilters);
         originalFilters = guardSensitiveConditions(pi, model, access, originalFilters);
         originalFilters = boundRelatedConditions(pi, model, originalFilters);
@@ -214,7 +187,7 @@ public class PermissionServiceImpl implements PermissionService {
      */
     private Filters guardSensitiveConditions(PermissionInfo pi, String model, AccessType access, Filters filters) {
         if (filters == null || Filters.isEmpty(filters) || sfsCache == null) return filters;
-        AccessType read = readAccess(access);
+        AccessType read = readAccess(model, access);
         Map<String, FieldPlan> plans = new java.util.HashMap<>();
         if (!mentionsMasked(pi, model, read, filters, plans)) return filters;
         return guardNode(pi, model, read, filters, plans);
@@ -517,7 +490,7 @@ public class PermissionServiceImpl implements PermissionService {
         }
         Set<String> candidates = actionPermissions(model, access);
         if (candidates.isEmpty()) {
-            return all;
+            return WRITES.contains(access) ? ownersHolders(all, model, access) : all;
         }
         List<Grant> holding = all.stream()
                 .filter(g -> g.permissions().stream().anyMatch(candidates::contains))
@@ -526,6 +499,28 @@ public class PermissionServiceImpl implements PermissionService {
             return access == AccessType.EXPORT ? List.of() : all;
         }
         return holding;
+    }
+
+    private static final Set<AccessType> WRITES = EnumSet.of(AccessType.CREATE, AccessType.UPDATE, AccessType.DELETE);
+
+    /**
+     * Who may write an owned child that has no write action of its own: the roles holding the same action
+     * on a model that owns it in that role. A bank account is written as part of its employee, so it is
+     * written by whoever may write the employee — and not, as falling back to every role made it, by a
+     * role that may only read employees, lending its range and its field sets to another role's edit.
+     *
+     * <p>Every role, as before, when the model is owned by nothing or no role holds an owner's action:
+     * whatever reached the write was then authorized elsewhere, a flow or a service acting for the caller.
+     */
+    private List<Grant> ownersHolders(List<Grant> all, String model, AccessType access) {
+        List<Grant> holding = all.stream().filter(g -> findReferencers(model, g).stream()
+                        .filter(ref -> ref.kind() != Kind.SHARED)
+                        .anyMatch(ref -> {
+                            Set<String> ownerCandidates = actionPermissions(ref.parentModel(), access);
+                            return g.permissions().stream().anyMatch(ownerCandidates::contains);
+                        }))
+                .toList();
+        return holding.isEmpty() ? all : holding;
     }
 
     /**
@@ -684,7 +679,7 @@ public class PermissionServiceImpl implements PermissionService {
         PermissionInfo pi = currentPi();
         if (PermissionInfo.hasFullDataAccess(pi)) return originalFilters;
         originalFilters = expandConditionFields(model, originalFilters);
-        originalFilters = guardSensitiveConditions(pi, model, AccessScope.current(), originalFilters);
+        originalFilters = guardSensitiveConditions(pi, model, AccessScope.currentFor(model), originalFilters);
         return boundRelatedConditions(pi, model, originalFilters);
     }
 
@@ -698,7 +693,7 @@ public class PermissionServiceImpl implements PermissionService {
      * standing on that owner's row.
      *
      * <p>An anchored child is not lost by answering true: read under the range, a one-to-many child of a
-     * granted model still follows its owner ({@link #followOwner}), so the sub-rows of a row the caller
+     * granted model still follows its owner followOwner, so the sub-rows of a row the caller
      * sees come back, and those of a row they do not, do not.
      *
      * <p>False where the range would add nothing — no bound context, a bypass, full data access — so the
@@ -990,10 +985,23 @@ public class PermissionServiceImpl implements PermissionService {
      * already computed and passes in as a filter. Re-entering the scope chain would apply every role
      * of the caller on top of the one grant being asked about.
      */
+    /**
+     * The rows named by {@code ids}, enabled or not.
+     *
+     * <p>A read of an active-controlled model adds {@code active = true} by itself, so a disabled row
+     * counted as out of range: a disabled cost centre — the only kind that may be deleted — could not
+     * be deleted by anyone whose range is checked.
+     */
+    private static Filters byIds(String model, List<? extends Serializable> ids) {
+        Filters byId = Filters.of(ModelConstant.ID, Operator.IN, ids);
+        if (ModelManager.existModel(model) && ModelManager.isActiveControl(model)) {
+            return Filters.and(byId, Filters.of(ModelConstant.ACTIVE_CONTROL_FIELD, Operator.IN, List.of(true, false)));
+        }
+        return byId;
+    }
+
     private static <T> T unscoped(Supplier<T> read) {
-        Context ctx = ContextHolder.cloneContext();
-        ctx.setSkipPermissionCheck(true);
-        return ContextHolder.callWith(ctx, read::get);
+        return ContextUtils.withoutPermissionChecks(read);
     }
 
     // ─────────────────────── field mask ───────────────────────
@@ -1010,7 +1018,7 @@ public class PermissionServiceImpl implements PermissionService {
         if (requested == null || requested.isEmpty() || shouldBypass()) return requested;
         PermissionInfo pi = currentPi();
         if (PermissionInfo.hasFullDataAccess(pi)) return requested;
-        Set<String> blocked = fieldPlan(pi, model, readAccess(accessType)).blocked();
+        Set<String> blocked = fieldPlan(pi, model, readAccess(model, accessType)).blocked();
         if (blocked.isEmpty()) return requested;
         List<String> out = new ArrayList<>(requested.size());
         for (String f : requested) if (!blocked.contains(f)) out.add(f);
@@ -1030,7 +1038,7 @@ public class PermissionServiceImpl implements PermissionService {
         if (value == null || shouldBypass()) return value;
         PermissionInfo pi = currentPi();
         if (PermissionInfo.hasFullDataAccess(pi)) return value;
-        FieldPlan plan = fieldPlan(pi, model, readAccess(accessType));
+        FieldPlan plan = fieldPlan(pi, model, readAccess(model, accessType));
         if (plan.isEmpty()) return value;
         List<Map<String, Object>> rows = new ArrayList<>();
         collectRows(value, rows);
@@ -1049,15 +1057,15 @@ public class PermissionServiceImpl implements PermissionService {
         if (rows == null || rows.isEmpty() || shouldBypass()) return;
         PermissionInfo pi = currentPi();
         if (PermissionInfo.hasFullDataAccess(pi)) return;
-        FieldPlan plan = fieldPlan(pi, model, readAccess(AccessType.READ));
+        FieldPlan plan = fieldPlan(pi, model, readAccess(model, AccessType.READ));
         if (!plan.isEmpty()) {
             maskRows(model, rows, plan);
         }
     }
 
-    /** A read performed for an export masks by the exporting roles; any other read by the readers. */
-    private static AccessType readAccess(AccessType requested) {
-        AccessType bound = AccessScope.current();
+    /** A read performed for an export of this model masks by the exporting roles; any other read by the readers. */
+    private static AccessType readAccess(String model, AccessType requested) {
+        AccessType bound = AccessScope.currentFor(model);
         return bound == AccessType.EXPORT ? bound : (requested == null ? AccessType.READ : requested);
     }
 
@@ -1127,7 +1135,7 @@ public class PermissionServiceImpl implements PermissionService {
         if (scope == null) {
             return ids.stream().map(PermissionServiceImpl::normalizeId).collect(Collectors.toSet());
         }
-        Filters target = Filters.and(Filters.of(ModelConstant.ID, Operator.IN, ids), scope);
+        Filters target = Filters.and(byIds(model, ids), scope);
         List<?> reached = unscoped(() -> modelService.getIds(model, target));
         return reached.stream().map(PermissionServiceImpl::normalizeId).collect(Collectors.toSet());
     }
@@ -1226,7 +1234,7 @@ public class PermissionServiceImpl implements PermissionService {
         if (flexQuery == null || shouldBypass()) return;
         PermissionInfo pi = currentPi();
         if (PermissionInfo.hasFullDataAccess(pi)) return;
-        AccessType read = readAccess(AccessType.READ);
+        AccessType read = readAccess(model, AccessType.READ);
         Map<String, FieldPlan> plans = new java.util.HashMap<>();
         // A declared cascaded field is judged by the path it stands for, and a path into a related row the
         // caller reads under a range — past its label — is held back as a masked field is: sorted or
@@ -1434,7 +1442,7 @@ public class PermissionServiceImpl implements PermissionService {
         if (fields == null || fields.isEmpty() || shouldBypass()) return;
         PermissionInfo pi = currentPi();
         if (PermissionInfo.hasFullDataAccess(pi)) return;
-        Set<String> blocked = fieldPlan(pi, model, readAccess(accessType)).blocked();
+        Set<String> blocked = fieldPlan(pi, model, readAccess(model, accessType)).blocked();
         if (blocked.isEmpty()) return;
         for (String f : fields) {
             if (blocked.contains(f)) {
@@ -1496,7 +1504,7 @@ public class PermissionServiceImpl implements PermissionService {
                     .map(g -> judgedOnOwner(g, model, accessType) ? null : grantScope(g, model))
                     .toList());
             if (scope == null) return;
-            Filters target = Filters.and(Filters.of(ModelConstant.ID, Operator.IN, idList), scope);
+            Filters target = Filters.and(byIds(model, idList), scope);
             long reached = unscoped(() -> modelService.count(model, target));
             if (reached != idList.size()) {
                 throw sensitiveWriteDenied(model, written.getFirst());
@@ -1648,11 +1656,49 @@ public class PermissionServiceImpl implements PermissionService {
         if (scope == null) {
             return;
         }
-        Filters target = Filters.and(Filters.of(ModelConstant.ID, Operator.IN, idList), scope);
+        Filters target = Filters.and(byIds(model, idList), scope);
         long visible = unscoped(() -> modelService.count(model, target));
-        if (visible != idList.size()) {
+        if (visible != idList.size()
+                && !(ModelManager.existModel(model) && ModelManager.isTimelineModel(model)
+                        && reachedOnAnySlice(model, idList, scope))) {
             throw outOfScope(model, accessType);
         }
+    }
+
+    /**
+     * For a timeline model: whether every id is in range, an entity with no slice at the effective date
+     * judged by its slices at any date.
+     *
+     * <p>The count above sees only the slice in effect at the effective date — today unless the request
+     * names one. An employee hired next month has no such slice, so every write to them was refused as out
+     * of range. An entity that does have one is still judged by it: its history must not lend a range it
+     * has since left.
+     *
+     * <p>Every read names its rows {@link #byIds enabled or not}, as the count above does: otherwise a
+     * disabled record with a slice today reads as having none, and is judged by a history it cannot
+     * reach either.
+     */
+    private boolean reachedOnAnySlice(String model, List<Serializable> ids, Filters scope) {
+        Filters byId = byIds(model, ids);
+        Set<String> reachedNow = texts(unscoped(() -> modelService.getIds(model, Filters.and(byId, scope))));
+        Set<String> existNow = texts(unscoped(() -> modelService.getIds(model, byId)));
+        List<Serializable> withoutSlice = ids.stream().filter(id -> !existNow.contains(id.toString())).toList();
+        if (reachedNow.size() + withoutSlice.size() < ids.size() || withoutSlice.isEmpty()) {
+            return false;
+        }
+        FlexQuery anySlice = new FlexQuery(List.of(ModelConstant.ID),
+                Filters.and(byIds(model, withoutSlice), scope)).acrossTimelineData();
+        Set<String> reachedEver = texts(unscoped(() -> modelService.searchList(model, anySlice)).stream()
+                .map(row -> row.get(ModelConstant.ID)).toList());
+        return reachedEver.size() == withoutSlice.size();
+    }
+
+    private static Set<String> texts(Collection<?> ids) {
+        Set<String> out = new java.util.HashSet<>();
+        for (Object id : ids) {
+            if (id != null) out.add(id.toString());
+        }
+        return out;
     }
 
     /**
@@ -1682,20 +1728,24 @@ public class PermissionServiceImpl implements PermissionService {
         if (hasExplicitRules(g, model)) {
             return grantScope(g, model);
         }
+        // Rows a grant reaches without rules of its own still stay inside its companies. Reads were bounded
+        // so (computeGrantScope); the writes below returned "no restriction" and were not, so a role granted
+        // one company could change or delete another company's cost centres by id.
+        Filters company = companyScope(model, g.companies());
         if (judgedOnOwner(g, model, accessType)) {
-            return null;
+            return company;
         }
         List<Referencer> refs = findReferencers(model, g);
         Kind kind = refs.isEmpty() ? null : refs.getFirst().kind();
         if (kind == Kind.OWNED_ONE_TO_ONE) {
-            return followOwners(refs, g);
+            return allOf(company, followOwners(refs, g));
         }
         if (kind == Kind.SHARED && !hasForwardAnchor(model)) {
-            return null;
+            return company;
         }
         if (kind == null && !hasForwardAnchor(model)) {
             if (AccessType.CREATE.equals(accessType)) {
-                return null;
+                return company;
             }
             // A model declaring a default scope says who its rows belong to — an import history row to
             // whoever ran the import. Its own rows can then be named by id: the import that ran under
@@ -1703,7 +1753,7 @@ public class PermissionServiceImpl implements PermissionService {
             ScopeType declared = declaredScope(model);
             return declared == null
                     ? ScopeRuleCompiler.matchNone()
-                    : scopeCompiler.compile(List.of(ruleOf(declared)), model);
+                    : allOf(company, scopeCompiler.compile(List.of(ruleOf(declared)), model));
         }
         return grantScope(g, model);
     }
@@ -1753,7 +1803,7 @@ public class PermissionServiceImpl implements PermissionService {
         if (shouldBypass()) return Set.of();
         PermissionInfo pi = currentPi();
         if (PermissionInfo.hasFullDataAccess(pi)) return Set.of();
-        return new java.util.HashSet<>(fieldPlan(pi, model, readAccess(accessType)).blocked());
+        return new java.util.HashSet<>(fieldPlan(pi, model, readAccess(model, accessType)).blocked());
     }
 
     // ─────────────────────── helpers ───────────────────────
@@ -1927,7 +1977,9 @@ public class PermissionServiceImpl implements PermissionService {
      *       ({@link Kind#CHILD_BY_BACKREF}); the FK lives on the CHILD
      *       ({@code relatedField}) and holds the parent's id — the inverse direction,
      *       so the two cannot share one filter shape;</li>
-     *   <li>else a {@code MANY_TO_ONE} referrer → shared reference/config
+     *   <li>the join model of a {@code MANY_TO_MANY} field → the same kind, keyed on the join
+     *       model's left column ({@code joinLeft}): the links are the granted record's own;</li>
+     *   <li>else a {@code MANY_TO_ONE} or {@code MANY_TO_MANY} referrer → shared reference/config
      *       ({@link Kind#SHARED});</li>
      *   <li>failing all three, a {@code MANY_TO_ONE} referrer on an <b>owned child</b> of a granted
      *       model → also shared ({@link #sharedThroughOwnedChild});</li>
@@ -1948,6 +2000,11 @@ public class PermissionServiceImpl implements PermissionService {
      * tighter statement than a shared reference, so it wins when a model is reachable
      * both ways.
      */
+    private static boolean isProjection(String model) {
+        MetaModel meta = ModelManager.getModel(model);
+        return meta != null && meta.isProjection();
+    }
+
     private List<Referencer> findReferencers(String childModel, Grant g) {
         List<Referencer> owners = new ArrayList<>();
         List<Referencer> backRefs = new ArrayList<>();
@@ -1956,13 +2013,30 @@ public class PermissionServiceImpl implements PermissionService {
         // Sorted, so the answer never depends on the order the grant happens to hold its models in.
         for (String granted : new TreeSet<>(g.scopes().keySet())) {
             if (!ModelManager.existModel(granted)) continue;
+            // A projection reads another model's table and owns no row: what it points at one-to-one
+            // or one-to-many it only refers to. Taken for an owner, a report over the employee table
+            // opened every person's profile to whoever reads the report.
+            boolean projection = isProjection(granted);
             for (MetaField f : ModelManager.getModelFields(granted)) {
+                // The join rows of a many-to-many field are the granted record's own, like a
+                // one-to-many child: the join model's left key holds the record's id. Without this
+                // edge a join model is reached by nothing, fail-closes, and a many-to-many write
+                // checked as the caller could not remove a single link.
+                if (f.getFieldType() == FieldType.MANY_TO_MANY && childModel.equals(f.getJoinModel())
+                        && StringUtils.isNotBlank(f.getJoinLeft())) {
+                    backRefs.add(new Referencer(granted, f.getJoinLeft(), Kind.CHILD_BY_BACKREF));
+                    continue;
+                }
                 String related = f.getRelatedModel();
                 if (related == null) continue;
-                boolean owned = f.getFieldType() == FieldType.ONE_TO_ONE
-                        || f.getFieldType() == FieldType.ONE_TO_MANY;
+                boolean owned = !projection && (f.getFieldType() == FieldType.ONE_TO_ONE
+                        || f.getFieldType() == FieldType.ONE_TO_MANY);
                 if (!childModel.equals(related)) {
                     if (owned) ownedChildren.add(related);
+                    continue;
+                }
+                if (projection) {
+                    if (shared == null) shared = new Referencer(granted, f.getFieldName(), Kind.SHARED);
                     continue;
                 }
                 if (f.getFieldType() == FieldType.ONE_TO_ONE) {
@@ -1977,7 +2051,10 @@ public class PermissionServiceImpl implements PermissionService {
                 if (f.getFieldType() == FieldType.ONE_TO_MANY && StringUtils.isNotBlank(f.getRelatedField())) {
                     backRefs.add(new Referencer(granted, f.getRelatedField(), Kind.CHILD_BY_BACKREF));
                 }
-                if (f.getFieldType() == FieldType.MANY_TO_ONE && shared == null) {
+                // A record a many-to-many field links to is referenced as a many-to-one target is: the
+                // granted record points at it without owning it.
+                if ((f.getFieldType() == FieldType.MANY_TO_ONE || f.getFieldType() == FieldType.MANY_TO_MANY)
+                        && shared == null) {
                     shared = new Referencer(granted, f.getFieldName(), Kind.SHARED);
                 }
             }
@@ -2056,6 +2133,16 @@ public class PermissionServiceImpl implements PermissionService {
      * <p>Asked by the action segment of the permission id, the way {@link #actionPermissions} asks for an
      * export: no endpoint path names the model.
      */
+    @Override
+    public boolean hasModelExportGrant(String model) {
+        if (shouldBypass() || model == null) return true;
+        EndpointIndex endpointIndex = endpointIndexSupplier.get();
+        if (endpointIndex == null) return true;
+        PermissionInfo pi = currentPi();
+        if (PermissionInfo.isAdmin(pi)) return true;
+        return holdsAny(pi, endpointIndex.actionPermissions(model, "export"));
+    }
+
     @Override
     public boolean hasModelImportGrant(String model) {
         if (shouldBypass() || model == null) return true;

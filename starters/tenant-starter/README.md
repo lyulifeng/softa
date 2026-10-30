@@ -18,7 +18,7 @@ and a separate commerce sub-domain (service catalog, orders, payments).
 
 Depends on `softa-web`, `reference-data-starter` (for `Currency` / `CountryRegion`
 lookups on `TenantInfo`), `stripe-java` (payments), and `cron-starter` (**optional** — powers the built-in
-`TenantMaintenanceCronConsumer` for the provisioning-timeout guard + subscription-expiry; a deployment
+`TenantMaintenanceCronConsumer` for subscription-expiry; a deployment
 on a different scheduler omits it, the consumer stays dormant via `@ConditionalOnClass`, and the app
 drives the jobs itself). Auto-configured by
 `io.softa.starter.tenant.TenantAutoConfiguration` (component-scan). Requires
@@ -107,9 +107,9 @@ tenant-starter needs no user-starter dependency:
   their own query — only the batch owner-load is shared with the refresh (no per-row `TenantInfo` N+1).
 - **`TenantSubscriptionPeriodService`** is the single guarded entry point for period writes. Four guards:
   the end must not precede the start; **at most one** period on the floor plan (that row is the tenant's
-  baseline free access, written by provisioning — a second would put one entitlement in two places); the
+  base access, written by provisioning — a second would put one entitlement in two places); the
   floor period's **start date is immutable** (it is the tenant's creation day, which is history, not a
-  setting — its *end* date is settable and that is the whole mechanism for time-boxing free access); and the
+  setting — its *end* date is settable and that is the whole mechanism for time-boxing base access); and the
   floor period **cannot be deleted** (the resolver reads a missing floor row as "predates the migration" and
   falls back to granting the floor plan's modules, so deleting it would silently restore access an operator
   had just revoked by ending it). Update guards check the *stored* row, so a half-specified patch cannot slip
@@ -148,8 +148,13 @@ run, `ACTIVE` once they are all in.
 There used to be a second, orthogonal `provisioningStatus` axis (`INITIALIZING` / `READY` / `FAILED`)
 alongside it. It was merged away: two columns described one tenant, so "is this tenant usable" needed both
 and the pair could disagree. `READY` became `ACTIVE`, and `FAILED` became `DRAFT` — a tenant that was never
-built and one whose build failed are the same thing to look at, and `DRAFT` is where the rebuild starts
-from. Unlike the old axis this one **does** gate login: a tenant mid-setup is refused with "still being set
+built and one whose build failed are the same thing to look at. There is no rebuild: a seeder is expected to
+be idempotent, so a failed setup is finished by running the seeders again, not by discarding what they wrote.
+**`POST /TenantInfo/retrySetup?id=`** does that for a `DRAFT` tenant: it reopens the status and announces the
+tenant again exactly as provisioning did, and each seeder continues where it stopped — seed-starter runs only
+the seed files the tenant has not run successfully, and the business seeders skip what they find in place.
+An `INITIALIZING` tenant is refused, because its seeders are still running. Unlike the old
+axis this one **does** gate login: a tenant mid-setup is refused with "still being set
 up" rather than a generic failure, checked before the active check so that specific message survives.
 
 - **`TenantProvisioningStatusService`** — the per-tenant completion latch. Owns `TenantSeedProgress`
@@ -159,14 +164,53 @@ up" rather than a generic failure, checked before the active check so that speci
   `seederKey` strings, never imports a business module.
 - **Dependency gate** — `dependenciesSatisfied(tenantId, dependsOn, justCompletedKey)` = `doneKeys ⊇
   dependsOn` (set-containment, order-independent), so a downstream seeder can wait on its upstreams.
-- **Timeout guard (authoritative failure source)** — `failTimedOut()` sweeps tenants stuck in
-  `INITIALIZING` past `readyTimeoutSeconds` (default 600s) → `DRAFT` (idempotent, self-heals back to
-  `ACTIVE` if the seed later completes). Triggered by tenant-starter's own `TenantMaintenanceCronConsumer`
-  (`ProvisioningTimeout` sys_cron, shipped in `data-system/SysCron.TenantMaintenance.json`) — softa
-  self-sufficient, no dependency on an app-side DLQ. The same consumer also carries `SubscriptionExpiry`.
-  **cron-starter is optional** (`@ConditionalOnClass` on the consumer + `<optional>true</optional>` in the
-  pom): a deployment on a different scheduler (Quartz, `@Scheduled`, XXL-Job, …) omits cron-starter — the
-  consumer stays dormant and the app drives `failTimedOut()` / `SubscriptionProjectionJob` from its own trigger.
+- **Failure** — each seed consumer calls `markSeederFailed(tenantId, seederKey, redeliveryCount)` from its
+  catch block, passing the failed message's Pulsar redelivery count, then rethrows. Every failure names the
+  seeder on its progress row at once. While MQ still has deliveries left (the `tenantSeedRetryPolicy` cap) the
+  tenant stays `INITIALIZING`; the last delivery's failure moves it to `DRAFT`, where Retry Setup takes it — so
+  a retry never runs beside a redelivery of the same setup. Only an `INITIALIZING` tenant is moved, by one
+  conditional update, and a failure reported for a tenant past setup (`ACTIVE`, `SUSPENDED`, `CLOSED`) — which
+  can only come from a duplicate message — changes nothing. `markSeederReady` brings a tenant on to `ACTIVE`
+  once the seed completes. There is **no timeout sweep**:
+  the `ProvisioningTimeout` cron that once moved a tenant stuck in `INITIALIZING` to `DRAFT` was removed, so a
+  seed that never reaches a catch block (message lost, consumer down) leaves the tenant `INITIALIZING`. Find
+  such a tenant by querying `INITIALIZING` rows, and set it to `DRAFT` by hand before retrying its setup.
+- **`TenantMaintenanceCronConsumer`** carries `SubscriptionExpiry` (shipped in
+  `data-system/SysCron.TenantMaintenance.json`, which the app lists under `platform` in its `seed-manifest.yml`;
+  an unlisted file never loads, and the cron never runs). **cron-starter is optional** (`@ConditionalOnClass` on the
+  consumer + `<optional>true</optional>` in the pom): a deployment on a different scheduler (Quartz,
+  `@Scheduled`, XXL-Job, …) omits cron-starter — the consumer stays dormant and the app drives
+  `SubscriptionProjectionJob` from its own trigger.
+
+## Platform tenant
+
+Platform operators' accounts belong to the platform tenant, `BaseConstant.PLATFORM_TENANT_ID` — `-1`, not
+`0`, because `IdUtils.validId` treats `0` as no id at all. Login checks the tenant of every account, so no
+operator can sign in until this row exists and is `ACTIVE`. It is never provisioned: nothing seeds it and
+nothing moves its status, so `TenantInfoService.ensurePlatformTenant()` creates it already `ACTIVE`, and only
+when it is missing — an existing row, in any state, soft-deleted included, is left alone.
+
+```yaml
+softa:
+  tenant:
+    platform:
+      default-country: SG          # required, no default; ISO 3166-1 alpha-2 — which country is the application's call
+      default-timezone: UTC+08:00  # required
+      default-language: en-US      # optional; name / code default to Platform / platform
+```
+
+The row is written through JDBC rather than the model layer, because its id is fixed and `IdProcessor`
+replaces the id of every insert unless the global `enableInsertId` switch is on. What that bypass could let
+drift is held in place:
+
+- **A new required `TenantInfo` field** without a default fails `PlatformTenantCreatorTest`, which holds the
+  inserted fields to the entity — the build breaks instead of the next fresh deployment.
+- **A renamed field** fails to compile: the field names come from `TenantInfo`'s getters.
+- **A renamed table or column** needs nothing: both are read from the metadata.
+
+user-starter's `PlatformAdminBootstrap` calls it before creating the first super-administrator, and nothing
+else does. These keys are read only when the row has to be inserted, so once it exists they can be removed
+without affecting startup.
 
 ## How isolation works
 

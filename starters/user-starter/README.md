@@ -24,7 +24,9 @@ invites the person into it.
 Depends on `softa-web`, `reference-data-starter`, and `cron-starter` (**optional** —
 powers the built-in `UserMaintenanceCronConsumer` for the nightly `DynamicRoleSync` job; a deployment on
 a different scheduler omits it, the consumer stays dormant via `@ConditionalOnClass`, and the app drives
-`DynamicRoleSyncJob.syncAll()` itself. The job + Role / UserRoleRel entities live here).
+`DynamicRoleSyncJob.syncAll()` itself. The job + Role / UserRoleRel entities live here). The cron row
+ships in `data-system/SysCron.UserMaintenance.json`, which the app lists under `platform` in its
+`seed-manifest.yml`; an unlisted file never loads, and the job never runs.
 Auto-configured by `io.softa.starter.user.UserAutoConfiguration` (component-scans the
 module — no enabling flag). Sessions require Redis; password-reset emails require a
 `MessageService` (message-starter).
@@ -193,6 +195,7 @@ it, and the active tab of a tabbed page (empty when there is none, so the key en
 | `columns` | The columns the person shows, left to right: `[{"id":"fullName","frozen":true},{"id":"code"},{"id":"employeeProfileId.passType"}]`. An id is a field of the list's model, a field one level into a one-to-one record, or a column of the list's own (a pivot column, a cascaded path the page declares); `frozen` is present only when true |
 | `exportFields` / `exportObjectFields` | Dynamic Export fields in order, and each related object's, keyed by its collection field |
 | `viewSettings` | Other view state (`sidePanelCollapsed` …), saved key by key; a key sent as `null` is removed |
+| `columnWidths` | The widths the person dragged columns to, as a share of the table's width in percent: `{"fullName":18.5,"code":10}`. Saved key by key like `viewSettings`; each width is above 0 and at most 100, kept to two decimals. Filtered as the columns are, and cleared with them by `part = columns` |
 
 `UserListViewPreferenceController` (`/UserListViewPreference/*`) has only three endpoints —
 `getMyPreference`, `saveMyPreference`, `resetMyPreference` (`part = columns | export | settings`,
@@ -217,6 +220,10 @@ a path that is not one level into a one-to-one record is dropped, as is a field 
 a column the page adds is not shown until the person ticks it, and one it stops declaring stays while
 the field does. Freezing is marked on the columns, not counted, so a frozen column that goes does not
 pull the next one in. Without saved columns, or after a reset, the list shows its own.
+
+**Widths are not an arrangement.** They are kept apart from `columns`, so dragging a column wider on
+a list whose columns the person never arranged leaves the list's own columns in charge. A share of
+the table rather than pixels, so a column keeps its proportion on a narrower or wider screen.
 
 **Not seeing is not deleting.** A column — or an export field — the caller cannot see *right now* (a
 sensitive set withdrawn, a country no longer theirs) is not erased by their next save: it is put back
@@ -257,5 +264,52 @@ social-oauth:
   linkedin: { enable: false, client-id: ..., client-secret: ... }
 ```
 
-There are no `softa.user.*` property keys — password and login policy live in
+### First platform administrator
+
+`PlatformAdminBootstrap` creates the platform's first super-administrator at startup, so a fresh
+deployment needs no hand-run SQL (prefix `softa.user.platform-admin`, bound by `PlatformAdminProperties`):
+
+```yaml
+softa:
+  user:
+    platform-admin:
+      enabled: ${PLATFORM_ADMIN_BOOTSTRAP:false}
+      email: ${PLATFORM_ADMIN_EMAIL:}
+      password: ${PLATFORM_ADMIN_PASSWORD:}   # from the environment — never commit it
+```
+
+- Runs on `ApplicationReadyEvent`, after the boot DDL, so every table it writes exists.
+- **First deployment only.** Once the platform tenant has any account holding `SUPER_ADMIN`, it does
+  nothing, whatever address is configured — changing the variable never mints a second platform
+  administrator. Only a platform left with no super-administrator gets one again, under an address that has
+  no account yet, which makes it the way back in.
+- **Creates, never repairs.** An account with that address already in the platform tenant is never touched —
+  its password above all, or the setting would reset it on every restart — and a revoked role is not
+  re-granted.
+- **Refuses an address that already signs a person in.** Credentials belong to the person, not the
+  account, so the configured password would replace theirs in every tenant they belong to.
+- On a platform with no super-administrator, either refusal **fails the boot** and says what to do: carrying
+  on would leave nobody able to administer the platform.
+- Fails the boot when enabled without an email or password, or when the password fails the password
+  policy. Several instances starting together on a fresh database race safely.
+- Under multi-tenancy the admin belongs to the platform tenant, which it creates first through
+  `TenantInfoService.ensurePlatformTenant` — see tenant-starter's `softa.tenant.platform`.
+- The role and the grant are written through `ModelService`: the typed `RoleService` and
+  `UserRoleRelService` refuse a coded role and a `SUPER_ADMIN` binding whoever asks, while the write root's
+  validators let system paths through. Fields are added through the same services, so they get their
+  defaults and validation from the metadata; only a new required field without a default on one of these
+  models stops the boot, naming the field.
+
+A fresh deployment, end to end:
+
+1. Start with the three variables set, and under multi-tenancy `softa.tenant.platform`. The scanner creates
+   the tables, then the platform tenant and the administrator are created.
+2. Sign in as that administrator.
+3. Load the platform seed data — the Seed Data page, or `POST /SeedData/platform/load` — and restart every
+   instance (see seed-starter's *Platform load*). It loads no seed data itself; the administrator it creates
+   is the one who does.
+4. Unset the password, or set `PLATFORM_ADMIN_BOOTSTRAP` back to `false`. Startup does not depend on these
+   keys afterwards: disabled, it returns before reading anything.
+
+Apart from that, there are no `softa.user.*` keys — password and login policy live in
 `UserSecurityPolicy` rows, not in `application.yml`.

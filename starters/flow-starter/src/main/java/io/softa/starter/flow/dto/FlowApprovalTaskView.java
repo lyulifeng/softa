@@ -1,5 +1,6 @@
 package io.softa.starter.flow.dto;
 
+import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.List;
 import io.swagger.v3.oas.annotations.media.Schema;
@@ -30,8 +31,11 @@ public class FlowApprovalTaskView {
     @Schema(description = "Runtime instance id")
     private String instanceId;
 
-    @Schema(description = "Flow code")
-    private String flowCode;
+    @Schema(description = "Flow ID")
+    private String flowId;
+
+    @Schema(description = "Flow name")
+    private String flowName;
 
     @Schema(description = "Published flow revision")
     private Integer flowRevision;
@@ -119,5 +123,30 @@ public class FlowApprovalTaskView {
 
     @Schema(description = "Current execution status of the owning instance")
     private FlowExecutionStatus instanceStatus;
+
+    @Schema(description = "Initiator of the owning instance, named")
+    private FlowRecordApprovalsView.Actor initiator;
+
+    @Schema(description = "When the owning instance started — a record's approval: when the record was submitted")
+    private LocalDateTime submittedTime;
+
+    @Schema(description = "A record's approval: the employee the record is about, named")
+    private FlowRecordApprovalsView.Actor subject;
+
+    @Schema(description = "A record's approval: the subject's department at submission, named")
+    private FlowInstanceSummaryView.Department subjectDept;
+
+    @Schema(description = "A record's approval: the date the record takes effect, when its model has one")
+    private LocalDate effectiveDate;
+
+    @Schema(description = "A record's approval: the record's own number, when its model has one")
+    private String recordCode;
+
+    @Schema(description = "Whether the task can be acted on in a batch: open to its approver now, and no field the step "
+            + "makes required")
+    private Boolean batchable;
+
+    @Schema(description = "Whether the task's step lets its approver return the request to the initiator")
+    private Boolean returnAllowed;
 }
 

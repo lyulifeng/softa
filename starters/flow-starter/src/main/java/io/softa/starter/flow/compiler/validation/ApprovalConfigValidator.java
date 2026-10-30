@@ -13,13 +13,8 @@ import io.softa.starter.flow.runtime.nodeconfig.ApprovalNodeConfig;
 import io.softa.starter.flow.runtime.spi.ApprovalTimeoutConfig;
 
 /**
- * Validates approval node configs: mode parsing, approver constraints,
- * deadlock detection, return-policy rules, and SPECIFIC_NODE target validation.
- *
- * <p>Return policy is now read exclusively from {@link ApprovalNodeConfig} (inside the
- * {@code config} map), using {@code returnEnabled}, {@code returnTarget}, and
- * {@code returnTargetNodeId}. The former separate {@code returnPolicy} field on
- * {@code FlowGraphNode} has been removed.</p>
+ * Validates approval node configs: mode parsing, approver constraints, deadlock detection and
+ * timeouts. A return always goes to the initiator, so {@code returnEnabled} needs no validation.
  */
 public class ApprovalConfigValidator implements FlowValidator {
 
@@ -33,17 +28,18 @@ public class ApprovalConfigValidator implements FlowValidator {
     private static final String PERCENTAGE_NEEDS_APPROVERS = "PERCENTAGE_NEEDS_APPROVERS";
     private static final String INVALID_PERCENTAGE         = "INVALID_PERCENTAGE";
     private static final String DEADLOCK_THRESHOLD         = "DEADLOCK_THRESHOLD";
-    private static final String MISSING_RETURN_TARGET      = "MISSING_RETURN_TARGET";
-    private static final String MISSING_RETURN_TARGET_NODE = "MISSING_RETURN_TARGET_NODE";
-    private static final String UNKNOWN_RETURN_TARGET_NODE = "UNKNOWN_RETURN_TARGET_NODE";
-    private static final String INVALID_RETURN_TARGET_TYPE = "INVALID_RETURN_TARGET_TYPE";
     private static final String UNKNOWN_APPROVER_SOURCE_TYPE = "UNKNOWN_APPROVER_SOURCE_TYPE";
     private static final String INVALID_SUPERVISOR_LEVEL     = "INVALID_SUPERVISOR_LEVEL";
     private static final String MISSING_ROLE_IDS             = "MISSING_ROLE_IDS";
     private static final String MISSING_POSITION_IDS         = "MISSING_POSITION_IDS";
     private static final String MISSING_DEPT_IDS             = "MISSING_DEPT_IDS";
+    private static final String INVALID_RELATIVE_TO          = "INVALID_RELATIVE_TO";
+    private static final String INVALID_DEPT_SCOPE           = "INVALID_DEPT_SCOPE";
+    private static final String MISSING_DEPT_VARIABLE        = "MISSING_DEPT_VARIABLE";
     private static final String INVALID_TIMEOUT_HOURS        = "INVALID_TIMEOUT_HOURS";
     private static final String INVALID_REMIND_INTERVAL      = "INVALID_REMIND_INTERVAL";
+    private static final String INVALID_MAX_REMINDERS        = "INVALID_MAX_REMINDERS";
+    private static final String REMINDERS_OUTSIDE_REMIND     = "REMINDERS_OUTSIDE_REMIND";
     private static final String MISSING_ESCALATE_TARGET      = "MISSING_ESCALATE_TARGET";
 
     @Override
@@ -64,31 +60,47 @@ public class ApprovalConfigValidator implements FlowValidator {
             }
             validateApproverSource(node.getId(), cfg, d);
             validateVoteThresholds(node.getId(), cfg, d);
-            validateReturnPolicy(node.getId(), cfg, nodes, d);
             validateTimeout(node.getId(), cfg, d);
         }
     }
 
     // ── Timeout ────────────────────────────────────────────────────────────
 
+    /**
+     * A deadline ({@code timeoutHours}) and what happens at it. Without a deadline nothing times out and the rest
+     * is ignored — the designer hides it then, and keeps what was entered. Reminders belong to the Remind strategy:
+     * the designer clears them when another is chosen, so here they are a mistake.
+     */
     private void validateTimeout(String nodeId, ApprovalNodeConfig cfg, List<CompileDiagnostic> d) {
         ApprovalTimeoutConfig timeout = cfg.getTimeout();
-        if (timeout == null) {
+        if (timeout == null || timeout.getTimeoutHours() == null) {
             return;
         }
-        Integer timeoutHours = timeout.getTimeoutHours();
-        if (timeoutHours != null && timeoutHours <= 0) {
+        if (timeout.getTimeoutHours() <= 0) {
             d.add(CompileDiagnostic.fieldLevel(nodeId, APPROVAL_TYPE, "config.timeout.timeoutHours",
                     INVALID_TIMEOUT_HOURS,
                     "Approval node '" + nodeId + "' config.timeout.timeoutHours must be > 0"));
         }
+        ApprovalTimeoutStrategy strategy = timeout.getTimeoutStrategy() == null
+                ? ApprovalTimeoutStrategy.REMIND : timeout.getTimeoutStrategy();
         Integer remindInterval = timeout.getRemindIntervalHours();
-        if (remindInterval != null && timeoutHours != null && timeoutHours > 0
-                && remindInterval >= timeoutHours) {
+        Integer maxReminders = timeout.getMaxRemindTimes();
+        if (!ApprovalTimeoutStrategy.REMIND.equals(strategy) && (remindInterval != null || maxReminders != null)) {
+            d.add(CompileDiagnostic.fieldLevel(nodeId, APPROVAL_TYPE, remindInterval != null
+                            ? "config.timeout.remindIntervalHours" : "config.timeout.maxRemindTimes",
+                    REMINDERS_OUTSIDE_REMIND,
+                    "Approval node '" + nodeId + "' sets reminders, but only the Remind timeout strategy sends "
+                            + "them and it uses " + strategy.getType()));
+        }
+        if (remindInterval != null && remindInterval < 1) {
             d.add(CompileDiagnostic.fieldLevel(nodeId, APPROVAL_TYPE, "config.timeout.remindIntervalHours",
                     INVALID_REMIND_INTERVAL,
-                    "Approval node '" + nodeId
-                            + "' config.timeout.remindIntervalHours must be less than timeoutHours"));
+                    "Approval node '" + nodeId + "' config.timeout.remindIntervalHours must be at least 1"));
+        }
+        if (maxReminders != null && maxReminders < 1) {
+            d.add(CompileDiagnostic.fieldLevel(nodeId, APPROVAL_TYPE, "config.timeout.maxRemindTimes",
+                    INVALID_MAX_REMINDERS,
+                    "Approval node '" + nodeId + "' config.timeout.maxRemindTimes must be at least 1"));
         }
         if (ApprovalTimeoutStrategy.ESCALATE.equals(timeout.getTimeoutStrategy())
                 && !StringUtils.hasText(timeout.getEscalateToUserId())) {
@@ -133,13 +145,22 @@ public class ApprovalConfigValidator implements FlowValidator {
                                 "Approval node '" + nodeId + "' supervisor level must be >= 1"));
                     }
                 }
-            }
-            case "RoleQuery" -> {
-                if (isEmptyCollection(source.get("roleIds"))) {
-                    d.add(CompileDiagnostic.fieldLevel(nodeId, APPROVAL_TYPE, "config.approverSource.roleIds",
-                            MISSING_ROLE_IDS,
-                            "Approval node '" + nodeId + "' RoleQuery requires non-empty roleIds"));
+                try {
+                    ApproverRelativeTo.of(source.get("relativeTo"), ApproverRelativeTo.SUBJECT);
+                } catch (IllegalArgumentException e) {
+                    d.add(CompileDiagnostic.fieldLevel(nodeId, APPROVAL_TYPE, "config.approverSource.relativeTo",
+                            INVALID_RELATIVE_TO, "Approval node '" + nodeId + "' supervisor relativeTo must be one of "
+                                    + Arrays.toString(ApproverRelativeTo.values())));
                 }
+            }
+            case "DeptLeader", "DeptHrbp" -> validateDeptScope(nodeId, type, source, ApproverDeptScope.SUBJECT_DEPT, d);
+            case "RoleQuery" -> {
+                if (isEmptyCollection(source.get("roleCodes")) && isEmptyCollection(source.get("roleIds"))) {
+                    d.add(CompileDiagnostic.fieldLevel(nodeId, APPROVAL_TYPE, "config.approverSource.roleCodes",
+                            MISSING_ROLE_IDS,
+                            "Approval node '" + nodeId + "' RoleQuery requires non-empty roleCodes or roleIds"));
+                }
+                validateDeptScope(nodeId, type, source, ApproverDeptScope.ALL, d);
             }
             case "Position" -> {
                 if (isEmptyCollection(source.get("positionIds"))) {
@@ -148,17 +169,48 @@ public class ApprovalConfigValidator implements FlowValidator {
                             "Approval node '" + nodeId + "' Position requires non-empty positionIds"));
                 }
             }
-            case "Department" -> {
-                Object deptScope = source.get("deptScope");
-                boolean isInitiatorDept = deptScope != null && "INITIATOR_DEPT".equals(deptScope.toString());
-                if (!isInitiatorDept && isEmptyCollection(source.get("deptIds"))) {
-                    d.add(CompileDiagnostic.fieldLevel(nodeId, APPROVAL_TYPE, "config.approverSource.deptIds",
-                            MISSING_DEPT_IDS,
-                            "Approval node '" + nodeId + "' Department requires deptIds or deptScope=INITIATOR_DEPT"));
-                }
-            }
-            default -> { /* VariableList, Expression, InitiatorManager, Role, DeptLeader: no extra validation */ }
+            case "Department" -> validateDeptScope(nodeId, type, source, ApproverDeptScope.SPECIFIC_DEPT, d);
+            default -> { /* VariableList, Expression, InitiatorManager, Role: no extra validation */ }
         }
+    }
+
+    /**
+     * A department-based source's {@code deptScope} — {@code fallback} when it names none — and what that
+     * scope needs: {@code ALL} only for a role query (whose fallback it is), the department(s) for
+     * {@code SPECIFIC_DEPT} ({@code deptIds} for department members, {@code deptId} otherwise), the
+     * variable for {@code VARIABLE_DEPT}.
+     */
+    private static void validateDeptScope(String nodeId, String type, Map<String, Object> source,
+                                          ApproverDeptScope fallback, List<CompileDiagnostic> d) {
+        ApproverDeptScope scope;
+        try {
+            scope = ApproverDeptScope.of(source.get("deptScope"), fallback);
+        } catch (IllegalArgumentException e) {
+            scope = null;
+        }
+        if (scope == null || (scope == ApproverDeptScope.ALL && fallback != ApproverDeptScope.ALL)) {
+            d.add(CompileDiagnostic.fieldLevel(nodeId, APPROVAL_TYPE, "config.approverSource.deptScope",
+                    INVALID_DEPT_SCOPE, "Approval node '" + nodeId + "' " + type + " has an unsupported deptScope: "
+                            + source.get("deptScope")));
+            return;
+        }
+        boolean multiple = "Department".equals(type);
+        if (scope == ApproverDeptScope.SPECIFIC_DEPT
+                && (multiple ? isEmptyCollection(source.get("deptIds")) : !StringUtils.hasText(asText(source.get("deptId"))))) {
+            String field = multiple ? "deptIds" : "deptId";
+            d.add(CompileDiagnostic.fieldLevel(nodeId, APPROVAL_TYPE, "config.approverSource." + field,
+                    MISSING_DEPT_IDS, "Approval node '" + nodeId + "' " + type + " requires " + field
+                            + " for deptScope SPECIFIC_DEPT"));
+        }
+        if (scope == ApproverDeptScope.VARIABLE_DEPT && !StringUtils.hasText(asText(source.get("deptVariable")))) {
+            d.add(CompileDiagnostic.fieldLevel(nodeId, APPROVAL_TYPE, "config.approverSource.deptVariable",
+                    MISSING_DEPT_VARIABLE, "Approval node '" + nodeId + "' " + type
+                            + " requires deptVariable for deptScope VARIABLE_DEPT"));
+        }
+    }
+
+    private static String asText(Object value) {
+        return value == null ? null : value.toString();
     }
 
     private static int parseIntSafe(Object val) {
@@ -283,53 +335,6 @@ public class ApprovalConfigValidator implements FlowValidator {
                         INVALID_PERCENTAGE,
                         "Approval node '" + nodeId + "' must define config.rejectPercentage between 1 and 100"));
             }
-        }
-    }
-
-    // ── Return policy ──────────────────────────────────────────────────────
-
-    private void validateReturnPolicy(String nodeId, ApprovalNodeConfig cfg,
-                                      Collection<FlowGraphNode> nodes, List<CompileDiagnostic> d) {
-        if (!Boolean.TRUE.equals(cfg.getReturnEnabled())) {
-            return;
-        }
-        ApprovalReturnTarget target = cfg.getReturnTarget();
-        if (target == null) {
-            d.add(CompileDiagnostic.fieldLevel(nodeId, APPROVAL_TYPE, "config.returnTarget",
-                    MISSING_RETURN_TARGET,
-                    "Approval node '" + nodeId + "' must define config.returnTarget when config.returnEnabled is true"));
-            return;
-        }
-        if (ApprovalReturnTarget.SPECIFIC_NODE.equals(target)) {
-            validateSpecificNodeTarget(nodeId, cfg, nodes, d);
-        }
-    }
-
-    private void validateSpecificNodeTarget(String nodeId, ApprovalNodeConfig cfg,
-                                            Collection<FlowGraphNode> nodes, List<CompileDiagnostic> d) {
-        if (!StringUtils.hasText(cfg.getReturnTargetNodeId())) {
-            d.add(CompileDiagnostic.fieldLevel(nodeId, APPROVAL_TYPE, "config.returnTargetNodeId",
-                    MISSING_RETURN_TARGET_NODE,
-                    "Approval node '" + nodeId
-                            + "' uses SPECIFIC_NODE return target but config.returnTargetNodeId is not set"));
-            return;
-        }
-        FlowGraphNode targetNode = nodes.stream()
-                .filter(n -> cfg.getReturnTargetNodeId().equals(n.getId()))
-                .findFirst()
-                .orElse(null);
-        if (targetNode == null) {
-            d.add(CompileDiagnostic.fieldLevel(nodeId, APPROVAL_TYPE, "config.returnTargetNodeId",
-                    UNKNOWN_RETURN_TARGET_NODE,
-                    "Approval node '" + nodeId + "' references unknown returnTargetNodeId '"
-                            + cfg.getReturnTargetNodeId() + "'"));
-            return;
-        }
-        if (!FlowNodeType.APPROVAL.equals(targetNode.getType())) {
-            d.add(CompileDiagnostic.fieldLevel(nodeId, APPROVAL_TYPE, "config.returnTargetNodeId",
-                    INVALID_RETURN_TARGET_TYPE,
-                    "Approval node '" + nodeId + "' returnTargetNodeId '"
-                            + cfg.getReturnTargetNodeId() + "' must point to an Approval node"));
         }
     }
 

@@ -1,5 +1,6 @@
 package io.softa.starter.file.excel.imports;
 
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 
@@ -39,6 +40,9 @@ public class ImportRowPipeline {
     @Autowired
     private UniqueConstraintValidator uniqueConstraintValidator;
 
+    @Autowired
+    private RequiredOnCreateResolver requiredOnCreateResolver;
+
     /**
      * Run the full import row pipeline:
      * 1. Standard field handlers (type conversion, validation, etc.)
@@ -47,7 +51,7 @@ public class ImportRowPipeline {
      * 4. Unique constraint pre-check against the database (for ONLY_CREATE rule)
      * 5. Custom handler
      * 6. Failure collection (when skipException=true) or fail-fast (when skipException=false)
-     * 7. Persistence
+     * 7. Persistence — in layers when rows name other rows of the file, see {@link InFileReferences}
      * 8. Custom handler, again, for whatever needed the rows to exist
      */
     public void importData(ImportTemplateDTO importTemplateDTO, ImportDataDTO importDataDTO) {
@@ -98,7 +102,7 @@ public class ImportRowPipeline {
      * 2. Relation lookup resolution (dotted-path fields -> FK ids)
      * 3. In-file duplicate suppression (first row with a given unique key wins)
      * 4. Unique constraint pre-check against the database (for ONLY_CREATE rule)
-     * 5. Custom handler
+     * 5. Custom handler, then the references to other rows of the file are settled
      * 6. Failure collection
      */
     public void validateData(ImportTemplateDTO importTemplateDTO, ImportDataDTO importDataDTO) {
@@ -118,7 +122,7 @@ public class ImportRowPipeline {
      * 2. Relation lookup resolution (dotted-path fields -> FK ids)
      * 3. In-file duplicate suppression (first row with a given unique key wins)
      * 4. Unique constraint pre-check against the database (for ONLY_CREATE rule)
-     * 5. Custom handler
+     * 5. Custom handler, then the references to other rows of the file are settled
      * 6. Failure collection
      *
      * <p>Every step above runs in BOTH modes — the mode reaches only the custom handler, which is the
@@ -135,8 +139,9 @@ public class ImportRowPipeline {
         List<RelationLookupResolver.LookupGroup> lookupGroups =
                 relationLookupResolver.detectLookupGroups(importTemplateDTO.getModelName(), importTemplateDTO.getImportFields());
         if (!lookupGroups.isEmpty()) {
-            relationLookupResolver.resolveRows(importTemplateDTO.getModelName(), importDataDTO.getRows(),
-                    lookupGroups, skipException);
+            List<InFileReferences.Reference> inFile = relationLookupResolver.resolveRows(
+                    importTemplateDTO.getModelName(), importDataDTO.getRows(), lookupGroups, skipException);
+            importDataDTO.setInFileReferences(inFile == null ? new ArrayList<>() : inFile);
         }
         // Keep only the first of any rows in this file sharing a unique key. Before the database
         // check, so that only sees first occurrences; after the lookup resolution, because a unique
@@ -149,11 +154,19 @@ public class ImportRowPipeline {
             uniqueConstraintValidator.validate(importTemplateDTO.getModelName(),
                     importTemplateDTO.getUniqueConstraints(), importDataDTO.getRows(), skipException);
         }
-        executeCustomHandler(importTemplateDTO.getCustomHandler(), importDataDTO, mode);
+        // Required columns left blank under ignoreEmpty fail only the rows that create a record. After
+        // the lookups and the duplicate marking, so the key it matches on is the resolved one and a
+        // duplicate is not looked up; before the custom handler, which never sees the transient note.
+        requiredOnCreateResolver.resolve(importTemplateDTO, importDataDTO.getRows(), skipException);
+        executeCustomHandler(importTemplateDTO.getCustomHandler(), importTemplateDTO.getModelName(), importDataDTO, mode);
+        // Last, so a row a check above has refused takes the rows naming it down with it — in the
+        // preview too, where nothing is written but the reader is owed the same answer.
+        InFileReferences.settle(importDataDTO.getInFileReferences(), skipException);
         importFailureCollector.collect(importDataDTO);
     }
 
-    private void executeCustomHandler(String handlerName, ImportDataDTO importDataDTO, ImportMode mode) {
+    private void executeCustomHandler(String handlerName, String modelName, ImportDataDTO importDataDTO,
+                                      ImportMode mode) {
         if (StringUtils.isBlank(handlerName)) {
             return;
         }
@@ -162,10 +175,17 @@ public class ImportRowPipeline {
         }
         try {
             CustomImportHandler handler = SpringContextUtils.getBean(handlerName, CustomImportHandler.class);
+            if (!handler.supports(modelName)) {
+                throw new IllegalArgumentException(
+                        "The custom import handler `{0}` does not serve imports into {1}.", handlerName, modelName);
+            }
             List<Map<String, Object>> rows = importDataDTO.getRows();
             int originalSize = rows.size();
             List<Integer> rowIdentitySnapshot = rows.stream().map(System::identityHashCode).toList();
-            handler.handleImportData(rows, importDataDTO.getEnv(), mode.isValidateOnly());
+            // The rows naming other rows of this file carry nothing in those fields yet; the handler
+            // can ask InFileReferences.targetOf which row they name rather than read them as empty.
+            InFileReferences.exposedTo(importDataDTO.getInFileReferences(),
+                    () -> handler.handleImportData(rows, importDataDTO.getEnv(), mode.isValidateOnly()));
             validateCustomHandlerContract(handlerName, rows, originalSize, rowIdentitySnapshot);
         } catch (NoSuchBeanDefinitionException e) {
             throw new IllegalArgumentException("The custom import handler `{0}` is not found.", handlerName);

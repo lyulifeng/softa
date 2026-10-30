@@ -50,6 +50,7 @@ public final class NodeTransformer {
                     .sourceHandle(edge.getSourceHandle())
                     .target(edge.getTarget())
                     .targetHandle(edge.getTargetHandle())
+                    .condition(edge.getCondition())
                     .conditionExpression(edge.getConditionExpression())
                     .data(edge.getData())
                     .build());
@@ -59,7 +60,6 @@ public final class NodeTransformer {
 
     public static CompiledFlowCapabilitySummary buildCapabilitySummary(Collection<FlowGraphNode> nodes) {
         return CompiledFlowCapabilitySummary.builder()
-                .hasApproval(nodes.stream().anyMatch(n -> FlowNodeType.APPROVAL.equals(n.getType())))
                 .hasSubflow(nodes.stream().anyMatch(n -> FlowNodeType.SUBFLOW.equals(n.getType())))
                 .hasParallelGateway(nodes.stream().anyMatch(n ->
                         FlowNodeType.PARALLEL_FORK.equals(n.getType()) || FlowNodeType.PARALLEL_JOIN.equals(n.getType())))

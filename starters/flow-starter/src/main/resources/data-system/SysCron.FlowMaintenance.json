@@ -1,16 +1,6 @@
 {
   "SysCron": [
     {
-      "id": "flow_approval_timeout_remind",
-      "name": "flow_approval_timeout_remind",
-      "cronExpression": "0 */5 * * * ?",
-      "cronSemantic": "Every 5 minutes",
-      "limitExecution": false,
-      "tenantJobMode": "CrossTenant",
-      "active": false,
-      "description": "Send approval timeout reminder notifications"
-    },
-    {
       "id": "flow_approval_timeout_handle",
       "name": "flow_approval_timeout_handle",
       "cronExpression": "0 */10 * * * ?",
@@ -18,7 +8,7 @@
       "limitExecution": false,
       "tenantJobMode": "CrossTenant",
       "active": false,
-      "description": "Handle timed-out approval tasks (auto-approve/reject/escalate)"
+      "description": "Handle approval steps past their deadline (remind/auto-approve/auto-reject/escalate)"
     },
     {
       "id": "flow_delegation_expiry",
@@ -59,6 +49,16 @@
       "tenantJobMode": "CrossTenant",
       "active": false,
       "description": "Purge expired debug-run bundles with their instances, traces and approval projections"
+    },
+    {
+      "id": "flow_automation_purge",
+      "name": "flow_automation_purge",
+      "cronExpression": "0 30 2 * * ?",
+      "cronSemantic": "Every day at 02:30",
+      "limitExecution": false,
+      "tenantJobMode": "CrossTenant",
+      "active": false,
+      "description": "Purge finished Automation runs past their retention period, with their traces and trigger event log"
     }
   ]
 }

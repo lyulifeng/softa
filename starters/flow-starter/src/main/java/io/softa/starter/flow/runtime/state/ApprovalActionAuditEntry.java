@@ -8,7 +8,6 @@ import lombok.Builder;
 import lombok.Data;
 import lombok.NoArgsConstructor;
 
-import io.softa.starter.flow.enums.ApprovalReturnTarget;
 import io.softa.starter.flow.enums.VoteThresholdMode;
 
 /**
@@ -30,8 +29,8 @@ public class ApprovalActionAuditEntry {
     @Schema(description = "Audit event time")
     private LocalDateTime eventTime;
 
-    @Schema(description = "Flow code")
-    private String flowCode;
+    @Schema(description = "Flow ID")
+    private String flowId;
 
     @Schema(description = "Resolved flow revision")
     private Integer flowRevision;
@@ -56,9 +55,6 @@ public class ApprovalActionAuditEntry {
 
     @Schema(description = "Execution status after the action")
     private FlowExecutionStatus statusAfter;
-
-    @Schema(description = "Return target type when the action is Return")
-    private ApprovalReturnTarget targetType;
 
     @Schema(description = "Approval mode of the node when applicable")
     private VoteThresholdMode approvalMode;
@@ -87,19 +83,11 @@ public class ApprovalActionAuditEntry {
     @Schema(description = "Target actor id when returning to initiator")
     private String targetActorId;
 
+    @Schema(description = "Who did it on the actor's behalf: an administrator who reassigned the actor's task; "
+            + "null when the actor acted themselves")
+    private String operatorId;
+
     @Schema(description = "Add-sign position when the action is AddSign")
     private AddSignPosition addSignPosition;
-
-    @Schema(description = "Target node id when returning to a previous approval")
-    private String targetNodeId;
-
-    @Schema(description = "Target node label when returning to a previous approval")
-    private String targetNodeLabel;
-
-    @Schema(description = "Resubmission count after a resubmit action")
-    private Integer resubmissionCount;
-
-    @Schema(description = "Updated variable keys during a resubmit action")
-    private List<String> variableKeys;
 }
 

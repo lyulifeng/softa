@@ -11,7 +11,6 @@ import java.util.Optional;
 import org.springframework.stereotype.Component;
 import org.springframework.util.StringUtils;
 
-import io.softa.starter.flow.enums.ApprovalReturnTarget;
 import io.softa.starter.flow.runtime.api.*;
 import io.softa.starter.flow.runtime.bundle.CompiledFlowDefinition;
 import io.softa.starter.flow.runtime.bundle.CompiledFlowNode;
@@ -30,12 +29,12 @@ public class FlowAuditService {
     }
 
     public void addTrace(FlowExecutionState state,
-                         String flowCode,
+                         String flowId,
                          CompiledFlowNode node,
                          FlowTraceEventType eventType,
                          String message) {
         state.getTrace().add(FlowExecutionTraceEntry.builder()
-                .flowCode(flowCode)
+                .flowId(flowId)
                 .nodeId(node.getNodeId())
                 .flowNodeType(node.getType())
                 .eventType(eventType)
@@ -54,6 +53,25 @@ public class FlowAuditService {
         state.getApprovalAuditDelta().add(entry);
     }
 
+    /**
+     * Record that an approval node nobody resolved to passed on its {@code AutoApprove}
+     * empty-approver strategy. There is no actor; the entry makes the step and why it passed visible
+     * in the approval history.
+     */
+    public void appendEmptyStepAutoApproval(FlowExecutionState state, CompiledFlowDefinition definition,
+                                            CompiledFlowNode node) {
+        appendApprovalAudit(state, ApprovalActionAuditEntry.builder()
+                .flowId(definition.getFlowId())
+                .flowRevision(definition.getRevision())
+                .nodeId(node.getNodeId())
+                .nodeLabel(node.getLabel())
+                .statusBefore(state.getStatus())
+                .statusAfter(state.getStatus())
+                .action(ApprovalActionType.AUTO_APPROVE)
+                .comment("Auto-approved (no approver)")
+                .build());
+    }
+
     public void appendCcAudit(FlowExecutionState state,
                               PendingApproval pendingApproval,
                               CompiledFlowDefinition definition,
@@ -62,13 +80,36 @@ public class FlowAuditService {
                               String targetActorId,
                               String comment,
                               FlowExecutionStatus statusBefore) {
-        addTrace(state, definition.getFlowCode(), node, FlowTraceEventType.APPROVAL_CCED,
+        addTrace(state, definition.getFlowId(), node, FlowTraceEventType.APPROVAL_CCED,
                 buildCcMessage(node, actorId, targetActorId, comment));
         appendApprovalAudit(state, baseEntry(definition, node, pendingApproval, statusBefore, state.getStatus()).toBuilder()
                 .action(ApprovalActionType.CC)
                 .actorId(actorId)
                 .targetActorId(targetActorId)
                 .comment(comment)
+                .build());
+    }
+
+    /**
+     * Record that a CC rule CC'd a recipient: a {@code CC} entry like a manual CC's, with no actor — no person
+     * sent it — on the node and cycle the rule fired at.
+     */
+    public void appendAutoCcAudit(FlowExecutionState state,
+                                  CompiledFlowNode node,
+                                  Integer cycleNumber,
+                                  String targetActorId,
+                                  String comment) {
+        appendApprovalAudit(state, ApprovalActionAuditEntry.builder()
+                .action(ApprovalActionType.CC)
+                .flowId(state.getFlowId())
+                .flowRevision(state.getFlowRevision())
+                .nodeId(node.getNodeId())
+                .nodeLabel(node.getLabel())
+                .cycleNumber(cycleNumber)
+                .targetActorId(targetActorId)
+                .comment(comment)
+                .statusBefore(state.getStatus())
+                .statusAfter(state.getStatus())
                 .build());
     }
 
@@ -116,7 +157,7 @@ public class FlowAuditService {
             FlowExecutionStatus statusBefore,
             FlowExecutionStatus statusAfter) {
         return ApprovalActionAuditEntry.builder()
-                .flowCode(definition.getFlowCode())
+                .flowId(definition.getFlowId())
                 .flowRevision(definition.getRevision())
                 .nodeId(node.getNodeId())
                 .nodeLabel(node.getLabel())
@@ -217,60 +258,21 @@ public class FlowAuditService {
 
     public Map<String, Object> buildReturnDecisionPayload(FlowReturnRequest request,
                                                           CompiledFlowNode node,
-                                                          String targetActorId,
-                                                          ApprovalReturnTarget target,
-                                                          CompiledFlowNode targetNode) {
+                                                          String initiatorId) {
         var payload = new LinkedHashMap<String, Object>();
         payload.put("outcome", "Returned");
         payload.put("nodeId", node.getNodeId());
-        payload.put("target", target == null ? null : target.getType());
-        payload.put("targetActorId", targetActorId);
-        payload.put("targetNodeId", targetNode == null ? null : targetNode.getNodeId());
-        payload.put("targetNodeLabel", targetNode == null ? null : targetNode.getLabel());
+        payload.put("targetActorId", initiatorId);
         payload.put("actorId", request.getActorId());
         payload.put("comment", request.getComment());
         payload.put("time", LocalDateTime.now().toString());
         return payload;
     }
 
-    public String buildReturnMessage(CompiledFlowNode node,
-                                     FlowReturnRequest request,
-                                     ApprovalReturnTarget target,
-                                     String targetActorId,
-                                     CompiledFlowNode targetNode) {
+    public String buildReturnMessage(CompiledFlowNode node, FlowReturnRequest request, String initiatorId) {
         StringBuilder builder = new StringBuilder("Approval returned at node ")
-                .append(node.getNodeId()).append(" by ").append(request.getActorId());
-        if (target != null) {
-            builder.append(" to ").append(target.getType());
-        }
-        if (StringUtils.hasText(targetActorId)) {
-            builder.append(" ").append(targetActorId);
-        }
-        if (targetNode != null) {
-            builder.append(" ").append(targetNode.getNodeId());
-        }
-        appendComment(builder, request.getComment());
-        return builder.toString();
-    }
-
-    public Map<String, Object> buildResubmissionDecisionPayload(FlowResubmitRequest request,
-                                                                CompiledFlowNode node,
-                                                                Integer resubmissionCount) {
-        var payload = new LinkedHashMap<String, Object>();
-        payload.put("outcome", "Resubmitted");
-        payload.put("nodeId", node.getNodeId());
-        payload.put("actorId", request.getActorId());
-        payload.put("comment", request.getComment());
-        payload.put("resubmissionCount", resubmissionCount);
-        payload.put("variableKeys", request.getVariables() == null ? List.of() : List.copyOf(request.getVariables().keySet()));
-        payload.put("time", LocalDateTime.now().toString());
-        return payload;
-    }
-
-    public String buildResubmissionMessage(CompiledFlowNode node, FlowResubmitRequest request, Integer resubmissionCount) {
-        StringBuilder builder = new StringBuilder("Flow resubmitted to node ")
                 .append(node.getNodeId()).append(" by ").append(request.getActorId())
-                .append(" (#").append(resubmissionCount).append(")");
+                .append(" to initiator ").append(initiatorId);
         appendComment(builder, request.getComment());
         return builder.toString();
     }

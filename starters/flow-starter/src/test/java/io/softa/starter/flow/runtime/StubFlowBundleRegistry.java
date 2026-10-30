@@ -12,7 +12,7 @@ import io.softa.starter.flow.runtime.exception.FlowRuntimeException;
 
 /**
  * Lightweight test-only bundle registry backed by in-memory maps.
- * All lookups are keyed on {@code designId}, mirroring the production registry.
+ * All lookups are keyed on {@code flowId}, mirroring the production registry.
  */
 public class StubFlowBundleRegistry implements FlowBundleRegistry {
 
@@ -20,30 +20,29 @@ public class StubFlowBundleRegistry implements FlowBundleRegistry {
 
     /** bundleId → definition */
     private final Map<Long, CompiledFlowDefinition> bundleCache = new ConcurrentHashMap<>();
-    /** designId → active bundleId */
-    private final Map<Long, Long> activeBundleIndex = new ConcurrentHashMap<>();
-    /** designId → sorted revision map */
-    private final Map<Long, NavigableMap<Integer, CompiledFlowDefinition>> revisionsByDesign = new ConcurrentHashMap<>();
+    /** flowId → active bundleId */
+    private final Map<String, Long> activeBundleIndex = new ConcurrentHashMap<>();
+    /** flowId → sorted revision map */
+    private final Map<String, NavigableMap<Integer, CompiledFlowDefinition>> revisionsByDesign = new ConcurrentHashMap<>();
 
     @Override
     public CompiledFlowDefinition register(CompiledFlowDefinition definition,
                                            DesignFlowDefinition design,
-                                           Long designId) {
+                                           String flowId) {
         if (definition == null) {
             throw new FlowRuntimeException("definition must not be null");
         }
-        if (designId == null) {
-            throw new FlowRuntimeException("designId is required");
+        if (flowId == null) {
+            throw new FlowRuntimeException("flowId is required");
         }
         NavigableMap<Integer, CompiledFlowDefinition> revisions =
-                revisionsByDesign.computeIfAbsent(designId, _ -> new TreeMap<>());
+                revisionsByDesign.computeIfAbsent(flowId, _ -> new TreeMap<>());
         int nextRevision = revisions.isEmpty() ? 1 : revisions.lastKey() + 1;
         long bundleId = bundleIdSeq.getAndIncrement();
 
         CompiledFlowDefinition published = CompiledFlowDefinition.builder()
                 .bundleId(bundleId)
-                .designId(designId)
-                .flowCode(definition.getFlowCode())
+                .flowId(flowId)
                 .flowName(definition.getFlowName())
                 .scenario(definition.getScenario())
                 .compiledAt(definition.getCompiledAt())
@@ -51,7 +50,11 @@ public class StubFlowBundleRegistry implements FlowBundleRegistry {
                 .publishedAt(LocalDateTime.now())
                 .trigger(definition.getTrigger())
                 .forms(definition.getForms())
-                .allowInitiatorWithdraw(definition.getAllowInitiatorWithdraw())
+                .withdrawPolicy(definition.getWithdrawPolicy())
+                .urgeEnabled(definition.getUrgeEnabled())
+                .urgeIntervalMinutes(definition.getUrgeIntervalMinutes())
+                .emailNotification(definition.getEmailNotification())
+                .cc(definition.getCc())
                 .sync(definition.getSync())
                 .rollbackOnFail(definition.getRollbackOnFail())
                 .approverDedup(definition.getApproverDedup())
@@ -66,7 +69,7 @@ public class StubFlowBundleRegistry implements FlowBundleRegistry {
 
         revisions.put(nextRevision, published);
         bundleCache.put(bundleId, published);
-        activeBundleIndex.put(designId, bundleId);
+        activeBundleIndex.put(flowId, bundleId);
         return published;
     }
 
@@ -76,14 +79,14 @@ public class StubFlowBundleRegistry implements FlowBundleRegistry {
     }
 
     @Override
-    public Optional<CompiledFlowDefinition> getActiveByDesignId(Long designId) {
-        Long bundleId = activeBundleIndex.get(designId);
+    public Optional<CompiledFlowDefinition> getActiveByFlowId(String flowId) {
+        Long bundleId = activeBundleIndex.get(flowId);
         return bundleId != null ? getByBundleId(bundleId) : Optional.empty();
     }
 
     @Override
-    public List<CompiledFlowDefinition> listRevisionsByDesignId(Long designId) {
-        NavigableMap<Integer, CompiledFlowDefinition> revisions = revisionsByDesign.get(designId);
+    public List<CompiledFlowDefinition> listRevisionsByFlowId(String flowId) {
+        NavigableMap<Integer, CompiledFlowDefinition> revisions = revisionsByDesign.get(flowId);
         if (revisions == null || revisions.isEmpty()) {
             return List.of();
         }
@@ -95,7 +98,7 @@ public class StubFlowBundleRegistry implements FlowBundleRegistry {
         return activeBundleIndex.values().stream()
                 .map(bundleCache::get)
                 .filter(Objects::nonNull)
-                .sorted(Comparator.comparing(CompiledFlowDefinition::getFlowCode,
+                .sorted(Comparator.comparing(CompiledFlowDefinition::getFlowName,
                         Comparator.nullsLast(Comparator.naturalOrder())))
                 .toList();
     }

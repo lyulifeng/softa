@@ -67,6 +67,32 @@ public interface TenantInfoService {
     }
 
     /**
+     * Ids of the tenants whose setup has finished — active, suspended or closed. A suspended or closed tenant
+     * keeps its data and may come back, so whatever keeps tenants' data current (the seed data) reaches it too.
+     *
+     * <p>Defaulted, like {@link #isTenantProvisioned}, so an implementation that predates it still compiles;
+     * the default answers with the active tenants, the closest it can tell.
+     *
+     * @return tenant ids, in no particular order
+     */
+    default List<Long> getProvisionedTenantIds() {
+        return getActiveTenantIds();
+    }
+
+    /**
+     * The tenant's default country — its operating country — as an ISO 3166-1 alpha-2 code.
+     *
+     * <p>Default {@code null} so an implementation that predates this method still compiles; callers must
+     * tolerate an unknown country.
+     *
+     * @param tenantId tenant id
+     * @return the country code, or null when unknown
+     */
+    default String getDefaultCountry(Long tenantId) {
+        return null;
+    }
+
+    /**
      * Suspend a tenant — ACTIVE → SUSPENDED. See {@link #activate} for the contract these three share.
      *
      * @param tenantId tenant id
@@ -103,4 +129,25 @@ public interface TenantInfoService {
      * @param tenantId tenant id
      */
     void close(Long tenantId);
+
+    /**
+     * Make sure the platform tenant exists — the row whose id is
+     * {@link io.softa.framework.base.constant.BaseConstant#PLATFORM_TENANT_ID}, ACTIVE, that platform
+     * operators' accounts belong to.
+     *
+     * <p>Login checks the tenant of every account, the platform operators' included, so their accounts
+     * cannot sign in until this row exists. It is not a provisioned tenant: nothing seeds it and nothing
+     * moves its status later, so it is created ACTIVE and only ever by this method.
+     *
+     * <p>Creates, never repairs. A row already there — in any state, soft-deleted included — is left
+     * exactly as it is; changing a live tenant is a decision for a person, not for a boot.
+     *
+     * <p>The default does nothing: an application without the tenant model has no tenant check at
+     * login, so there is no row to need.
+     *
+     * @return true when this call created the row, false when it was already there
+     */
+    default boolean ensurePlatformTenant() {
+        return false;
+    }
 }

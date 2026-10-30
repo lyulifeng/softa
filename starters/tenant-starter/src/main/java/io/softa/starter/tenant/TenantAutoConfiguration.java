@@ -26,8 +26,11 @@ public class TenantAutoConfiguration {
      *
      * <p>The type is {@code DeadLetterPolicy} because that is Pulsar's only way to bound redelivery — an
      * exhausted message has to go somewhere, so it lands on {@code <topic>-<subscription>-DLQ}. Nothing reads
-     * that topic and nothing is meant to: the bucket is a side effect of the cap, not a feature. A tenant whose
-     * setup never completes is surfaced by the timeout guard, and which seeder failed comes from the log.
+     * that topic and nothing is meant to: the bucket is a side effect of the cap, not a feature. The cap is also
+     * how a seeder knows its failure is final: it reports each failure with the message's redelivery count, the
+     * tenant stays Initializing while deliveries remain, and the last one's failure leaves a Draft tenant for
+     * Retry Setup; which seeder failed comes from its progress row and the log. Nothing times a setup out: a tenant
+     * whose message never arrives stays Initializing until someone sets it to Draft.
      */
     @Bean("tenantSeedRetryPolicy")
     @ConditionalOnMissingBean(name = "tenantSeedRetryPolicy")

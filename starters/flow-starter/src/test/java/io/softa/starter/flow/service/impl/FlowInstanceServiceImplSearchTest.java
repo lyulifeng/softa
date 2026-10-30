@@ -21,8 +21,8 @@ import static org.mockito.Mockito.verify;
 
 /**
  * Tests for {@link FlowInstanceServiceImpl#searchSummaries} — the filter and
- * projection builder shared by the runtime "my instances" endpoint and the
- * cross-initiator monitor endpoint.
+ * projection builder shared by the caller's "my instances" reads (REST and
+ * {@code FlowClient}) and the cross-initiator monitor endpoint.
  */
 class FlowInstanceServiceImplSearchTest {
 
@@ -37,8 +37,8 @@ class FlowInstanceServiceImplSearchTest {
     private static FlowInstanceSearchRequest request(String initiatorId,
                                                      LocalDateTime createdFrom, LocalDateTime createdTo,
                                                      Integer pageNumber, Integer pageSize) {
-        return new FlowInstanceSearchRequest(null, null, null, initiatorId, null, null,
-                createdFrom, createdTo, pageNumber, pageSize);
+        return new FlowInstanceSearchRequest(null, null, initiatorId, null, null,
+                createdFrom, createdTo, null, null, null, null, null, null, pageNumber, pageSize);
     }
 
     private void runSearch(FlowInstanceSearchRequest request, String forcedInitiatorId) {
@@ -79,13 +79,35 @@ class FlowInstanceServiceImplSearchTest {
     }
 
     @Test
+    void theCallersOwnListKeepsTheirRecordApprovalsOnly() {
+        runSearch(request(null, null, null, null, null), "u1");
+        assertTrue(queryCaptor.getValue().getFilters().toString().contains("recordApproval"));
+    }
+
+    @Test
+    void theMonitorListKeepsEveryInstance() {
+        runSearch(request("u1", null, null, null, null), null);
+        assertFalse(queryCaptor.getValue().getFilters().toString().contains("recordApproval"));
+    }
+
+    @Test
+    void awaitingRevisionKeepsTheReturnedApprovalsNoLaterSubmissionReplaced() {
+        FlowInstanceSearchRequest request = new FlowInstanceSearchRequest(null, null, null, null, null, null, null,
+                null, null, null, null, null, true, null, null);
+        runSearch(request, "u1");
+        String filters = queryCaptor.getValue().getFilters().toString();
+        assertTrue(filters.contains("Returned") && filters.contains("superseded"), filters);
+    }
+
+    @Test
     void summaryProjectionExcludesJsonStateColumns() {
         runSearch(request(null, null, null, null, null), null);
         List<String> fields = queryCaptor.getValue().getFields();
-        assertEquals(16, fields.size());
-        assertTrue(fields.containsAll(List.of("id", "instanceId", "bundleId", "designId", "flowCode",
-                "flowRevision", "title", "modelName", "rowId", "initiatorId", "status", "failedNodeId",
-                "nextFireAt", "resubmissionCount", "createdTime", "updatedTime")));
+        assertEquals(22, fields.size());
+        assertTrue(fields.containsAll(List.of("id", "instanceId", "bundleId", "flowId", "flowName", "scenario",
+                "flowRevision", "title", "modelName", "rowId", "initiatorId", "recordApproval", "status",
+                "failedNodeId", "nextFireAt", "createdTime", "updatedTime",
+                "subjectId", "departmentId", "effectiveDate", "recordCode", "superseded")));
         assertFalse(fields.contains("variables"));
         assertFalse(fields.contains("inputPayload"));
         assertFalse(fields.contains("pendingApprovals"));

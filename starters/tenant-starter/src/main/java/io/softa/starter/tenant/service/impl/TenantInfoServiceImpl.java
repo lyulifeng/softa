@@ -11,6 +11,7 @@ import tools.jackson.core.type.TypeReference;
 import io.softa.framework.base.constant.BaseConstant;
 import io.softa.framework.base.constant.RedisConstant;
 import io.softa.framework.base.utils.Assert;
+import io.softa.framework.orm.domain.Filters;
 import io.softa.framework.orm.jdbc.JdbcService;
 import io.softa.framework.orm.service.CacheService;
 import io.softa.framework.orm.service.TenantInfoService;
@@ -34,6 +35,9 @@ public class TenantInfoServiceImpl extends EntityServiceImpl<TenantInfo, Long> i
     @Autowired
     private JdbcService<?> jdbcService;
 
+    @Autowired
+    private PlatformTenantCreator platformTenantCreator;
+
     @Override
     public List<Long> getActiveTenantIds() {
         // Try Redis cache first
@@ -48,6 +52,26 @@ public class TenantInfoServiceImpl extends EntityServiceImpl<TenantInfo, Long> i
             cacheService.save(RedisConstant.TENANT_IDS, tenantIds, RedisConstant.ONE_MONTH);
         }
         return tenantIds;
+    }
+
+    /** Read from the table rather than the active-id cache: suspended and closed tenants are not in that one. */
+    @Override
+    public List<Long> getProvisionedTenantIds() {
+        return jdbcService.selectMetaEntityList(TenantInfo.class, null).stream()
+                .filter(tenant -> tenant.getStatus() == TenantStatus.ACTIVE
+                        || tenant.getStatus() == TenantStatus.SUSPENDED
+                        || tenant.getStatus() == TenantStatus.CLOSED)
+                .map(TenantInfo::getId)
+                .toList();
+    }
+
+    @Override
+    public String getDefaultCountry(Long tenantId) {
+        if (tenantId == null) {
+            return null;
+        }
+        TenantInfo tenantInfo = getTenantInfo(tenantId);
+        return tenantInfo == null ? null : tenantInfo.getDefaultCountry();
     }
 
     @Override
@@ -189,6 +213,39 @@ public class TenantInfoServiceImpl extends EntityServiceImpl<TenantInfo, Long> i
     }
 
     /**
+     * Record that a tenant's setup failed: INITIALIZING becomes DRAFT, and nothing else moves.
+     *
+     * <p>A seeder reports its failure from an MQ consumer, and the message it failed on may be a duplicate
+     * running beside the one that set the tenant up — a redelivery, or a retry announced while the first round
+     * was still going. Written as {@link #markStatus} writes, that late failure turned a tenant that had just
+     * become ACTIVE back into DRAFT and refused its users at login. So the move is one conditional update on
+     * the current status rather than a read followed by a write: a tenant that is no longer setting up is left
+     * as it is, however the two rounds interleave.
+     *
+     * <p>Only the status is written. A tenant in INITIALIZING carries none of the three status timestamps, and
+     * DRAFT carries none either, so there is nothing to clear.
+     *
+     * @param tenantId the tenant whose setup failed
+     * @return whether this call moved the tenant to DRAFT
+     */
+    public boolean markSetupFailed(Long tenantId) {
+        Assert.notTrue(BaseConstant.PLATFORM_TENANT_ID.equals(tenantId),
+                "The platform tenant's status cannot be changed.");
+        TenantInfo patch = new TenantInfo();
+        patch.setStatus(TenantStatus.DRAFT);
+        int moved = this.updateByFilter(new Filters()
+                .eq(TenantInfo::getId, tenantId)
+                .eq(TenantInfo::getStatus, TenantStatus.INITIALIZING), patch);
+        if (moved == 0) {
+            return false;
+        }
+        cacheService.clear(RedisConstant.TENANT_INFO + tenantId);
+        cacheService.clear(RedisConstant.TENANT_IDS);
+        log.info("Tenant {} status {} -> {}", tenantId, TenantStatus.INITIALIZING, TenantStatus.DRAFT);
+        return true;
+    }
+
+    /**
      * Set the status and rewrite the timestamp trio so exactly one of them is populated — the one matching
      * the new status.
      *
@@ -203,6 +260,16 @@ public class TenantInfoServiceImpl extends EntityServiceImpl<TenantInfo, Long> i
         tenant.setSuspendedTime(target == TenantStatus.SUSPENDED ? now : null);
         tenant.setClosedTime(target == TenantStatus.CLOSED ? now : null);
         tenant.setStatus(target);
+    }
+
+    /**
+     * Delegates to {@link PlatformTenantCreator}, which writes the row through JDBC because its id is
+     * fixed. No cache to clear afterwards: {@link #getTenantInfo} only ever caches a row it found, so the
+     * absence that came before is not remembered anywhere.
+     */
+    @Override
+    public boolean ensurePlatformTenant() {
+        return platformTenantCreator.createIfAbsent();
     }
 
     /** Cached single-tenant lookup — internal to tenant-starter (not part of the framework SPI). */
